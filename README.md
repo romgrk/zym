@@ -52,6 +52,40 @@ With no argument, quilx opens its own source. In the editor, normal mode is
 active by default — press `i` to insert, `Esc` to return to normal mode, and use
 `:w`, `:e <path>`, `:q`, `:wq` as you would in Vim.
 
+## Configuration
+
+Settings live in `~/.config/quilx/config.json` (or `$XDG_CONFIG_HOME/quilx/`),
+created automatically on first launch and seeded with an empty `{}`. The file is
+a flat map of dotted keys to values, mirroring the schema key paths exactly:
+
+```json
+{
+  "editor.tabLength": 4,
+  "editor.fontSize": 15,
+  "core.followSystemColorScheme": false
+}
+```
+
+Each key is an **override** on top of its built-in default — only list the ones
+you want to change; deleting a key reverts it to the default. Values are coerced
+and validated against the schema (e.g. an out-of-range number is clamped, the
+string `"4"` becomes the integer `4`); a value that can't fit is ignored with a
+warning. The file is **watched live**: saving it applies the changes without a
+restart.
+
+The application-wide schema is declared in [`src/quilx.ts`](src/quilx.ts);
+subsystems contribute their own namespaced keys at load time (e.g. the Vim layer
+registers under `vim-mode-plus.*` — see
+[`src/ui/TextEditor/vim/settings.ts`](src/ui/TextEditor/vim/settings.ts)). The
+baseline keys:
+
+| Key                            | Type      | Default | Description                                        |
+| ------------------------------ | --------- | ------- | -------------------------------------------------- |
+| `core.followSystemColorScheme` | boolean   | `true`  | Follow the system light/dark preference            |
+| `editor.tabLength`             | integer   | `2`     | Spaces a tab is rendered as (1–16)                 |
+| `editor.fontFamily`            | string    | `""`    | Editor font family; empty uses the platform mono   |
+| `editor.fontSize`              | integer   | `13`    | Editor font size in points (6–100)                 |
+
 ## License
 
 [GPL-3.0-or-later](LICENSE).

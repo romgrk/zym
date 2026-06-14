@@ -32,6 +32,8 @@ import { Workbench } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
 import { openCommandPicker } from './CommandPicker.ts';
 import { quilx } from '../quilx.ts';
+import { loadConfig } from '../config/load.ts';
+import { type DisposableLike } from '../util/eventKit.ts';
 import { styles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 
@@ -68,6 +70,10 @@ export class AppWindow {
   // Git integration for the header-bar branch indicator.
   private readonly git: GitRepo;
   private readonly branchButton: BranchButton;
+
+  // Watches the user config file and syncs edits into quilx.config; cancelled on
+  // close.
+  private readonly configWatcher: DisposableLike;
 
   // The vim status line: command bar (`:`, `/`) on the left, pending command
   // preview (e.g. "2dw") on the right. Re-synced to the active editor on switch.
@@ -133,9 +139,14 @@ export class AppWindow {
     this.registerWindowCommands();
     this.registerTerminalCommands();
 
+    // Seed/load the user config and keep it in sync with on-disk edits. Done
+    // before the first file opens so editors read live config values.
+    this.configWatcher = loadConfig();
+
     this.window.on('close-request', () => {
       this.branchButton.dispose();
       this.git.dispose();
+      this.configWatcher.dispose();
       this.onQuit();
       return false;
     });
