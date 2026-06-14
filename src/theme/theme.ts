@@ -2,7 +2,7 @@
  * Theme — loads themes authored in Zed's theme format and adapts them to the
  * small internal shape the editor consumes (UI chrome colors + a flat syntax
  * capture → color map). Themes live as JSON next to this module (e.g.
- * doom-one.json) and are loaded through `loadTheme`; the active theme is exported
+ * quilx.json) and are loaded through `loadTheme`; the active theme is exported
  * as `theme`.
  *
  * On disk a file is a Zed *theme family*: `{ name, author, themes: [...] }`
@@ -32,6 +32,14 @@ export interface UiColors {
   lineNumber?: string;
   /** Separator/border color for chrome (e.g. the header bar's bottom edge). */
   border?: string;
+  /** De-emphasized text (secondary labels, subtitles). */
+  textMuted?: string;
+  /** Semantic text colors for status/feedback (Zed's status keys). */
+  success?: string;
+  warning?: string;
+  error?: string;
+  info?: string;
+  hint?: string;
 }
 
 /*
@@ -120,10 +128,16 @@ function adaptZedTheme(zed: ZedTheme): Theme {
       bg: pick('editor.background', 'background'),
       lineNumber: pick('editor.line_number', 'editor.gutter.foreground'),
       border: pick('border', 'border.variant'),
+      textMuted: pick('text.muted'),
+      success: pick('success'),
+      warning: pick('warning'),
+      error: pick('error'),
+      info: pick('info'),
+      hint: pick('hint'),
     },
     syntax,
   };
 }
 
 /** The active theme. */
-export const theme = loadTheme('doom-one');
+export const theme = loadTheme('quilx');

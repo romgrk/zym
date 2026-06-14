@@ -1,10 +1,10 @@
 {
   "$schema": "https://zed.dev/schema/themes/v0.2.0.json",
-  "name": "Doom One",
+  "name": "Quilx",
   "author": "quilx",
   "themes": [
     {
-      "name": "doom-one",
+      "name": "quilx",
       "appearance": "dark",
       "style": {
         "background": "#2d2d2d",
@@ -14,6 +14,12 @@
         "editor.foreground": "#bbc2cf",
         "editor.line_number": "#888888",
         "editor.active_line_number": "#bbc2cf",
+        "text.muted": "#5b6268",
+        "success": "#98be65",
+        "warning": "#ecbe7b",
+        "error": "#ff6c6b",
+        "info": "#51afef",
+        "hint": "#4db5bd",
         "syntax": {
           "comment": { "color": "#73797e" },
           "operator": { "color": "#51afef" },
