@@ -21,28 +21,27 @@ import { type Grammar, createParser, getGrammar, langIdForPath } from './grammar
 const HIGHLIGHT_DEBOUNCE_MS = 60;
 
 // Capture name → candidate GtkSource style ids (first that resolves wins), plus
-// a hardcoded fallback color if the scheme defines none of them.
-// Capture name → candidate GtkSource style ids (first that resolves wins), plus
-// a hardcoded fallback color if the scheme defines none. The ids favor styles
-// the Adwaita schemes actually theme (e.g. keyword→def:statement, since
-// def:keyword is not themed there).
+// Capture name → foreground color, using the VS Code "Dark+" palette directly
+// rather than the GtkSource style scheme, so highlighting looks like VS Code
+// regardless of the Adwaita light/dark chrome.
 //
 // KEY ORDER MATTERS: tags are created in this order and GtkTextTag priority
 // follows creation order (later = higher). Overlapping captures resolve by
 // priority, so more-specific categories come last: escape > string, and
 // function/type > property (so method calls and constructors win over the bare
 // property/identifier capture).
-const STYLE_MAP: Record<string, { ids: string[]; fallback: string }> = {
-  comment: { ids: ['def:comment'], fallback: '#6a9955' },
-  string: { ids: ['def:string'], fallback: '#ce9178' },
-  number: { ids: ['def:number', 'def:decimal'], fallback: '#b5cea8' },
-  boolean: { ids: ['def:boolean', 'def:constant'], fallback: '#569cd6' },
-  constant: { ids: ['def:constant', 'def:special-constant'], fallback: '#569cd6' },
-  keyword: { ids: ['def:statement', 'def:keyword'], fallback: '#569cd6' },
-  property: { ids: ['def:identifier'], fallback: '#9cdcfe' },
-  type: { ids: ['def:type'], fallback: '#4ec9b0' },
-  function: { ids: ['def:function'], fallback: '#dcdcaa' },
-  escape: { ids: ['def:special-char'], fallback: '#d7ba7d' },
+const COLORS: Record<string, string> = {
+  comment: '#6A9955',
+  string: '#CE9178',
+  number: '#B5CEA8',
+  boolean: '#569CD6',
+  constant: '#569CD6',
+  keyword: '#569CD6',          // declaration/storage keywords (blue)
+  'keyword.control': '#C586C0', // control-flow + import/export (purple)
+  property: '#9CDCFE',
+  type: '#4EC9B0',
+  function: '#DCDCAA',
+  escape: '#D7BA7D',
 };
 
 interface FoldRegion {
@@ -76,9 +75,10 @@ export class SyntaxController {
     this.view = view;
     this.buffer = buffer;
 
-    // One highlight tag per capture; styled in restyle() from the scheme.
-    for (const name of Object.keys(STYLE_MAP)) {
-      const tag = new Gtk.TextTag({ name: `ts:${name}` });
+    // One highlight tag per capture, colored from the VS Code palette. Created
+    // in COLORS order so GtkTextTag priority resolves overlaps (see COLORS).
+    for (const [name, color] of Object.entries(COLORS)) {
+      const tag = new Gtk.TextTag({ name: `ts:${name}`, foreground: color });
       (buffer as any).getTagTable().add(tag);
       this.tags.set(name, tag);
     }
@@ -189,17 +189,14 @@ export class SyntaxController {
     return counts;
   }
 
-  /** Re-resolve highlight tag styles from the buffer's current style scheme. */
+  /**
+   * Re-apply the VS Code token colors. Colors are fixed (not scheme-derived),
+   * so this is independent of the Adwaita light/dark chrome; kept as a method
+   * because the window calls it when the system scheme changes.
+   */
   restyle(): void {
-    const scheme = (this.buffer as any).getStyleScheme?.() ?? null;
-    for (const [name, { ids, fallback }] of Object.entries(STYLE_MAP)) {
-      const tag = this.tags.get(name);
-      const style = scheme ? firstStyle(scheme, ids) : null;
-      if (style) {
-        style.apply(tag);
-      } else {
-        tag.foreground = fallback;
-      }
+    for (const [name, color] of Object.entries(COLORS)) {
+      this.tags.get(name).foreground = color;
     }
   }
 
@@ -366,15 +363,6 @@ export class SyntaxController {
     }
     return false;
   }
-}
-
-/** First style in `scheme` matching one of the candidate ids, or null. */
-function firstStyle(scheme: any, ids: string[]): any {
-  for (const id of ids) {
-    const style = scheme.getStyle(id);
-    if (style) return style;
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------

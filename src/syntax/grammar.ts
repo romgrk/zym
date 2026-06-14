@@ -41,12 +41,16 @@ interface GrammarSpec {
   foldTypes: string[];   // node types that fold when they span >1 line
 }
 
-// JS highlights query. Capture names map to GtkSource style ids in the
-// highlighter (see STYLE_MAP). Patterns are ordered general → specific; tag
-// priority (not query order) resolves overlaps — e.g. a method-call identifier
-// gets both @property and @function, and the higher-priority @function wins.
-// All node types/fields are valid in tree-sitter-javascript 0.20.x.
-const JS_HIGHLIGHTS = `
+// Highlights queries. Capture names map to colors in the highlighter (see
+// COLORS). Patterns are ordered general → specific; tag priority (not query
+// order) resolves overlaps — e.g. a method-call identifier gets both @property
+// and @function, and the higher-priority @function wins. Keywords are split
+// into control-flow (@keyword.control) and declaration/storage (@keyword) to
+// mirror VS Code's purple/blue distinction.
+//
+// COMMON works against JavaScript, TypeScript, and TSX (TS/TSX are supersets).
+// Language specs append the bits that differ (class-name node type, TS types).
+const COMMON_HIGHLIGHTS = `
 (comment) @comment
 
 (string) @string
@@ -60,10 +64,13 @@ const JS_HIGHLIGHTS = `
 (null) @constant
 
 [
-  "const" "let" "var" "function" "return" "if" "else" "for" "while" "do"
-  "switch" "case" "break" "continue" "new" "class" "extends" "import" "export"
-  "from" "default" "async" "await" "yield" "typeof" "instanceof" "in" "of"
-  "delete" "void" "throw" "try" "catch" "finally" "static" "get" "set"
+  "if" "else" "for" "while" "do" "switch" "case" "break" "continue" "return"
+  "throw" "try" "catch" "finally" "yield" "await" "import" "export" "from" "default"
+] @keyword.control
+
+[
+  "const" "let" "var" "function" "class" "extends" "new" "static" "get" "set"
+  "async" "typeof" "instanceof" "in" "of" "delete" "void"
 ] @keyword
 
 ; properties and object keys
@@ -71,21 +78,42 @@ const JS_HIGHLIGHTS = `
 (shorthand_property_identifier) @property
 (pair key: (property_identifier) @property)
 
-; types: class names and constructors
-(class_declaration name: (identifier) @type)
-(new_expression constructor: (identifier) @type)
-
 ; functions: declarations, methods, and call sites
 (function_declaration name: (identifier) @function)
 (generator_function_declaration name: (identifier) @function)
 (method_definition name: (property_identifier) @function)
 (call_expression function: (identifier) @function)
 (call_expression function: (member_expression property: (property_identifier) @function))
+(new_expression constructor: (identifier) @type)
+`;
+
+// JS: class name is a plain identifier.
+const JS_HIGHLIGHTS = COMMON_HIGHLIGHTS + `
+(class_declaration name: (identifier) @type)
+`;
+
+// TS/TSX: class name is a type_identifier, plus type nodes and TS keywords.
+const TS_HIGHLIGHTS = COMMON_HIGHLIGHTS + `
+(class_declaration name: (type_identifier) @type)
+(type_identifier) @type
+(predefined_type) @type
+(interface_declaration name: (type_identifier) @type)
+(type_alias_declaration name: (type_identifier) @type)
+
+[
+  "interface" "type" "enum" "namespace" "declare" "implements" "abstract"
+  "readonly" "public" "private" "protected" "override" "as" "keyof" "satisfies"
+] @keyword
 `;
 
 const JS_FOLD_TYPES = [
   'statement_block', 'object', 'array', 'class_body', 'switch_body',
   'named_imports', 'arguments',
+];
+
+// TS adds type-level containers.
+const TS_FOLD_TYPES = [
+  ...JS_FOLD_TYPES, 'interface_body', 'enum_body', 'object_type',
 ];
 
 const SPECS: Record<string, GrammarSpec> = {
@@ -94,6 +122,18 @@ const SPECS: Record<string, GrammarSpec> = {
     extensions: ['.js', '.jsx', '.mjs', '.cjs'],
     highlights: JS_HIGHLIGHTS,
     foldTypes: JS_FOLD_TYPES,
+  },
+  typescript: {
+    wasm: 'tree-sitter-wasms/out/tree-sitter-typescript.wasm',
+    extensions: ['.ts', '.mts', '.cts'],
+    highlights: TS_HIGHLIGHTS,
+    foldTypes: TS_FOLD_TYPES,
+  },
+  tsx: {
+    wasm: 'tree-sitter-wasms/out/tree-sitter-tsx.wasm',
+    extensions: ['.tsx'],
+    highlights: TS_HIGHLIGHTS,
+    foldTypes: TS_FOLD_TYPES,
   },
 };
 
