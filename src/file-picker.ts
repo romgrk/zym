@@ -12,7 +12,9 @@
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { openFuzzyPicker } from './fuzzy-picker.ts';
-import { GLib, type ApplicationWindow } from './gi.ts';
+import { GLib, Gtk } from './gi.ts';
+
+type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 // Directories that are rarely what you want to open and expensive to walk.
 const IGNORED_DIRS = new Set([
@@ -21,13 +23,12 @@ const IGNORED_DIRS = new Set([
 const MAX_FILES = 20000;
 const DIRS_PER_TICK = 24; // directories scanned per idle iteration
 
-export function openFilePicker(parent: ApplicationWindow, onSelect: (path: string) => void): void {
+export function openFilePicker(host: Overlay, onSelect: (path: string) => void): void {
   const cwd = process.cwd();
   // Open immediately with an empty list; fill it as the background walk streams
   // results, so a large tree never blocks the UI.
   const picker = openFuzzyPicker({
-    parent,
-    title: 'Open File',
+    host,
     placeholder: 'Search files…',
     onSelect: (relative) => onSelect(Path.join(cwd, relative)),
   });

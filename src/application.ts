@@ -4,6 +4,12 @@
  *
  * node-gtk needs both `gi.startLoop()` (to interleave GLib's loop with Node's
  * event loop) and an explicit GLib.MainLoop we run and quit ourselves.
+ *
+ * The app is NON_UNIQUE: each launch runs its own process and window. Without
+ * this, GApplication's default single-instance mode makes a second launch hand
+ * off to the existing instance and exit silently — so the new process "starts
+ * but no window appears". We don't (yet) implement window-raising or file
+ * forwarding to a primary instance, so single-instance has no upside here.
  */
 import { Adw, Gio, GLib, startLoop } from './gi.ts';
 import { EditorWindow } from './editor-window.ts';
@@ -14,7 +20,7 @@ export class Application {
   private readonly loop = GLib.MainLoop.new(null, false);
   private readonly app = new Adw.Application({
     applicationId: APP_ID,
-    flags: Gio.ApplicationFlags.FLAGS_NONE,
+    flags: Gio.ApplicationFlags.NON_UNIQUE,
   });
   private readonly initialFile: string;
 

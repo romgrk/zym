@@ -1,2 +1,2 @@
 overrides:
-  node-gtk: link:../../tmp/node-gtk-ts
+  node-gtk: link:../node-gtk

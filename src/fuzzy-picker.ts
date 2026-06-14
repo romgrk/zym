@@ -1,22 +1,39 @@
 /*
- * FuzzyPicker — a generic, chromeless modal "quick open" overlay: a search
- * entry over a fuzzy-filtered, rank-sorted list with the matched characters
- * highlighted. Type to narrow, Up/Down (or Tab) to move, Enter to choose,
- * Escape to dismiss.
+ * FuzzyPicker — a generic "quick open" overlay: a search entry over a
+ * fuzzy-filtered, rank-sorted list with the matched characters highlighted.
+ * Type to narrow, Up/Down (or Tab) to move, Enter to choose, Escape to dismiss.
  *
- * It knows nothing about files; callers supply the candidate strings and an
- * `onSelect` callback. Items may arrive asynchronously via the returned
- * handle's `setItems` (the file picker collects its list in the background).
+ * It renders as a floating card inside a Gtk.Overlay (supplied by the caller as
+ * `host`) rather than a separate window, so it sits over the editor unobtrusively
+ * and dismisses when it loses focus. It knows nothing about files; callers supply
+ * the candidate strings and an `onSelect` callback. Items may arrive
+ * asynchronously via the returned handle's `setItems`.
  */
-import { Gdk, Gtk, type ApplicationWindow } from './gi.ts';
+import { Gdk, Gtk } from './gi.ts';
 
 const PICKER_WIDTH = 640;
-const PICKER_HEIGHT = 420;
+const PICKER_MAX_HEIGHT = 360;
 const MAX_RESULTS = 200;
+const HIGHLIGHT_COLOR = '#e01b24'; // Adwaita red
+
+type Overlay = InstanceType<typeof Gtk.Overlay>;
+
+// libadwaita's `.card` fill (`@card_bg_color`) is semi-transparent — meant to
+// sit on a window, not float over editor content. Override it with the opaque
+// popover background so the editor doesn't show through. Installed once.
+let stylesInstalled = false;
+function ensureStyles(): void {
+  if (stylesInstalled) return;
+  const display = Gdk.Display.getDefault();
+  if (!display) return;
+  const provider = new Gtk.CssProvider();
+  provider.loadFromString('.quilx-picker-card { background-color: @popover_bg_color; }');
+  Gtk.StyleContext.addProviderForDisplay(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+  stylesInstalled = true;
+}
 
 export interface FuzzyPickerOptions {
-  parent: ApplicationWindow;
-  title?: string;
+  host: Overlay;
   placeholder?: string;
   items?: string[];
   onSelect: (item: string) => void;
@@ -29,37 +46,48 @@ export interface FuzzyPickerHandle {
 }
 
 export function openFuzzyPicker(options: FuzzyPickerOptions): FuzzyPickerHandle {
-  // Chromeless: no header bar, no close button — Escape dismisses it.
-  const window = new Gtk.Window();
-  window.setTitle(options.title ?? 'Pick');
-  window.setDecorated(false);
-  window.setModal(true);
-  window.setTransientFor(options.parent);
-  window.setDefaultSize(PICKER_WIDTH, PICKER_HEIGHT);
+  const { host } = options;
 
   const entry = new Gtk.SearchEntry({ placeholderText: options.placeholder ?? 'Search…' });
   entry.setHexpand(true);
+  entry.setMarginTop(8);
+  entry.setMarginStart(8);
+  entry.setMarginEnd(8);
 
   const listBox = new Gtk.ListBox();
   listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
 
   const scrolled = new Gtk.ScrolledWindow();
   scrolled.setChild(listBox);
-  scrolled.setVexpand(true);
+  scrolled.setPropagateNaturalHeight(true);
+  scrolled.setMaxContentHeight(PICKER_MAX_HEIGHT);
+  scrolled.setMarginStart(8);
+  scrolled.setMarginEnd(8);
+  scrolled.setMarginBottom(8);
 
-  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6 });
-  box.setMarginTop(6);
-  box.setMarginBottom(6);
-  box.setMarginStart(6);
-  box.setMarginEnd(6);
-  box.append(entry);
-  box.append(scrolled);
-  window.setChild(box);
+  // A floating, opaque "card" placed at the top-centre of the overlay.
+  ensureStyles();
+  const panel = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6 });
+  panel.addCssClass('card');
+  panel.addCssClass('quilx-picker-card');
+  panel.setHalign(Gtk.Align.CENTER);
+  panel.setValign(Gtk.Align.START);
+  panel.setMarginTop(12);
+  panel.setSizeRequest(PICKER_WIDTH, -1);
+  panel.append(entry);
+  panel.append(scrolled);
 
   let items = options.items ?? [];
   // The currently displayed matches, parallel to the rows in the list box, so a
   // row can be mapped back to its item by index.
   let results: string[] = [];
+  let closed = false;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    host.removeOverlay(panel);
+  };
 
   const rebuild = () => {
     let child = listBox.getFirstChild();
@@ -90,7 +118,7 @@ export function openFuzzyPicker(options: FuzzyPickerOptions): FuzzyPickerHandle 
     if (!target) return;
     const item = results[target.getIndex()];
     if (item === undefined) return;
-    window.close();
+    close();
     options.onSelect(item);
   };
 
@@ -114,7 +142,7 @@ export function openFuzzyPicker(options: FuzzyPickerOptions): FuzzyPickerHandle 
   keys.on('key-pressed', (keyval: number) => {
     switch (keyval) {
       case Gdk.KEY_Escape:
-        window.close();
+        close();
         return true;
       case Gdk.KEY_Down:
       case Gdk.KEY_KP_Down:
@@ -130,20 +158,23 @@ export function openFuzzyPicker(options: FuzzyPickerOptions): FuzzyPickerHandle 
         return false;
     }
   });
-  window.addController(keys);
+  panel.addController(keys);
 
+  // Dismiss when focus leaves the card (e.g. clicking back into the editor).
+  const focus = new Gtk.EventControllerFocus();
+  focus.on('leave', () => close());
+  panel.addController(focus);
+
+  host.addOverlay(panel);
   rebuild();
-  window.present();
   entry.grabFocus();
 
   return {
     setItems(next: string[]) {
       items = next;
-      rebuild();
+      if (!closed) rebuild();
     },
-    close() {
-      window.close();
-    },
+    close,
   };
 }
 
@@ -211,18 +242,18 @@ function rank(query: string, items: string[]): RankedItem[] {
   return scored;
 }
 
-/** Render `text` as Pango markup with the matched characters bolded. */
+/** Render `text` as Pango markup with the matched characters highlighted red. */
 function highlightMarkup(text: string, positions: number[]): string {
   const matched = new Set(positions);
   let out = '';
-  let bold = false;
+  let highlit = false;
   for (let i = 0; i < text.length; i++) {
     const isMatch = matched.has(i);
-    if (isMatch && !bold) { out += '<b>'; bold = true; }
-    else if (!isMatch && bold) { out += '</b>'; bold = false; }
+    if (isMatch && !highlit) { out += `<span foreground="${HIGHLIGHT_COLOR}" weight="bold">`; highlit = true; }
+    else if (!isMatch && highlit) { out += '</span>'; highlit = false; }
     out += escapeMarkup(text[i]);
   }
-  if (bold) out += '</b>';
+  if (highlit) out += '</span>';
   return out;
 }
 

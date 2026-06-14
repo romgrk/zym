@@ -5,15 +5,15 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  node-gtk: link:../../tmp/node-gtk-ts
+  node-gtk: link:../node-gtk
 
 importers:
 
   .:
     dependencies:
       node-gtk:
-        specifier: link:../../tmp/node-gtk-ts
-        version: link:../../tmp/node-gtk-ts
+        specifier: link:../node-gtk
+        version: link:../node-gtk
     devDependencies:
       '@types/node':
         specifier: ^25.9.3

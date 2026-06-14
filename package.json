@@ -15,7 +15,7 @@
     "generate-types": "node-gtk generate-types Gtk-4.0 Adw-1 GtkSource-5"
   },
   "dependencies": {
-    "node-gtk": "link:../../tmp/node-gtk-ts"
+    "node-gtk": "link:../node-gtk"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
