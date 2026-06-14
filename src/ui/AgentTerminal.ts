@@ -47,6 +47,8 @@ const HOOK_SCRIPT = Path.join(
 export interface AgentTerminalOptions extends TerminalOptions {
   /** Fired when the user presses Enter after the agent process has exited. */
   onCloseRequest?: () => void;
+  /** An initial prompt to launch the agent with (appended to its argv). */
+  prompt?: string;
 }
 
 export class AgentTerminal extends Terminal {
@@ -59,7 +61,12 @@ export class AgentTerminal extends Terminal {
   constructor(options: AgentTerminalOptions = {}) {
     const baseCommand = options.command ?? resolveAgentCommand();
     const integration = buildStatusIntegration(baseCommand);
-    super({ ...options, command: integration.command, title: options.title ?? agentName(baseCommand) });
+    // A launch prompt rides along as a trailing argv element (e.g. `claude
+    // "<prompt>"`), so the agent starts already working on it.
+    const command = options.prompt
+      ? [...integration.command, options.prompt]
+      : integration.command;
+    super({ ...options, command, title: options.title ?? agentName(baseCommand) });
     this.onCloseRequest = options.onCloseRequest;
     this.statusFile = integration.statusFile;
     this.root.setName('AgentTerminal'); // distinct identity from a plain Terminal

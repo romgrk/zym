@@ -15,7 +15,14 @@ import type { AgentTerminal } from './AgentTerminal.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
-export function openAgentPicker(host: Overlay, onActivate: (agent: AgentTerminal) => void): void {
+export interface AgentPickerOptions {
+  /** Reveal and focus an existing agent's terminal. */
+  onActivate: (agent: AgentTerminal) => void;
+  /** Launch a new agent with the typed prompt. */
+  onStart: (prompt: string) => void;
+}
+
+export function openAgentPicker(host: Overlay, options: AgentPickerOptions): void {
   const byLabel = new Map<string, AgentTerminal>();
   const items: string[] = [];
 
@@ -31,7 +38,11 @@ export function openAgentPicker(host: Overlay, onActivate: (agent: AgentTerminal
     items,
     onSelect: (label) => {
       const agent = byLabel.get(label);
-      if (agent) onActivate(agent);
+      if (agent) options.onActivate(agent);
+    },
+    action: {
+      label: (query) => `Start agent: ${query}`,
+      run: (query) => options.onStart(query),
     },
   });
 }

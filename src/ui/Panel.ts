@@ -23,7 +23,8 @@ import { quilx } from '../quilx.ts';
 // installed unconditionally here rather than with the theme chrome (which only
 // applies when the theme defines its own background).
 addStyles(`
-  #Panel tabbar tab { border-radius: 0; margin: 0; }
+  #Panel tabbar taboxchild { border-radius: 0; margin: 0; }
+  #Panel tabbar revealer { width: 0; height: 0; }
   #Panel tabbar tabbox { padding: 0; }
   #Panel tabbar > revealer > box { padding: 0; }
 `);
@@ -132,7 +133,9 @@ export class Panel {
     // The emoticon is a Nerd Font glyph rendered in the bundled icon font (like
     // the file-tree icons); its color is left to CSS so it follows the theme.
     const faceAttrs = Pango.AttrList.new();
-    faceAttrs.insert(Pango.attrFontDescNew(Pango.FontDescription.fromString(`${ICON_FONT_FAMILY} 32`)));
+    faceAttrs.insert(
+      Pango.attrFontDescNew(Pango.FontDescription.fromString(`${ICON_FONT_FAMILY} 32`)),
+    );
     this.emoticon = new Gtk.Label({ label: EMOTICON_NEUTRAL });
     this.emoticon.setName('PanelEmptyEmoticon'); // CSS identity (#PanelEmptyEmoticon)
     this.emoticon.setAttributes(faceAttrs);

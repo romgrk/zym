@@ -68,13 +68,36 @@ addStyles(`
     padding: 0.5em 1em;
     opacity: 0.55;
   }
+  /* The action row uses the current prompt; set it apart from the matches with a
+     separator and the accent color. */
+  #PickerAction {
+    padding: 0.5em 1em;
+    color: var(--accent-color);
+  }
+  #PickerList row.action-row {
+    border-top: 1px solid var(--border-color);
+  }
 `);
+
+/**
+ * An action driven by the current prompt rather than by a listed item. When
+ * supplied, a distinct row is shown (whenever the entry is non-empty) labelled
+ * by `label(query)`; choosing it invokes `run(query)` with the entry's text.
+ * Used e.g. by the agent picker to start a new agent from the typed prompt.
+ */
+export interface PickerAction {
+  /** The action row's text for the current query (e.g. `Start agent: …`). */
+  label: (query: string) => string;
+  /** Run the action with the current query; the picker closes first. */
+  run: (query: string) => void;
+}
 
 export interface PickerOptions {
   host: Overlay;
   placeholder?: string;
   items?: string[];
   onSelect: (item: string) => void;
+  action?: PickerAction;
 }
 
 export interface PickerHandle {
@@ -114,9 +137,12 @@ export function openPicker(options: PickerOptions): PickerHandle {
   panel.overflow = Gtk.Overflow.HIDDEN;
 
   let items = options.items ?? [];
-  // The currently displayed matches, parallel to the rows in the list box, so a
-  // row can be mapped back to its item by index.
+  // The currently displayed matches, parallel to the leading rows in the list
+  // box, so a row can be mapped back to its item by index.
   let results: string[] = [];
+  // The trailing action row, when an action is configured and the entry is
+  // non-empty; checked in `choose` to run the action instead of selecting.
+  let actionRow: InstanceType<typeof Gtk.ListBoxRow> | null = null;
   let closed = false;
 
   // Remember whatever held focus before the picker grabbed it, so that
@@ -138,7 +164,8 @@ export function openPicker(options: PickerOptions): PickerHandle {
       listBox.remove(child);
       child = next;
     }
-    const ranked = rank(entry.getText(), items).slice(0, MAX_RESULTS);
+    const query = entry.getText();
+    const ranked = rank(query, items).slice(0, MAX_RESULTS);
     results = ranked.map((match) => match.item);
     for (const match of ranked) {
       const label = new Gtk.Label({ xalign: 0, useMarkup: true });
@@ -148,7 +175,21 @@ export function openPicker(options: PickerOptions): PickerHandle {
       row.setChild(label);
       listBox.append(row);
     }
-    if (results.length === 0) {
+
+    // The prompt-driven action sits after the matches; it appears only when the
+    // user has typed something for it to act on.
+    actionRow = null;
+    if (options.action && query.length > 0) {
+      const label = new Gtk.Label({ xalign: 0 });
+      label.setText(options.action.label(query));
+      label.setName('PickerAction');
+      actionRow = new Gtk.ListBoxRow();
+      actionRow.setChild(label);
+      actionRow.addCssClass('action-row');
+      listBox.append(actionRow);
+    }
+
+    if (results.length === 0 && !actionRow) {
       // No rows to select — show a non-interactive message row instead so the
       // card doesn't collapse to just the entry.
       const label = new Gtk.Label({ xalign: 0 });
@@ -168,6 +209,12 @@ export function openPicker(options: PickerOptions): PickerHandle {
   const choose = (row: InstanceType<typeof Gtk.ListBoxRow> | null) => {
     const target = row ?? listBox.getSelectedRow();
     if (!target) return;
+    if (target === actionRow) {
+      const query = entry.getText();
+      close(false);
+      options.action?.run(query);
+      return;
+    }
     const item = results[target.getIndex()];
     if (item === undefined) return;
     close(false);
@@ -175,10 +222,12 @@ export function openPicker(options: PickerOptions): PickerHandle {
   };
 
   const move = (delta: number) => {
-    if (results.length === 0) return;
+    // Navigable rows are the matches followed by the optional action row.
+    const count = results.length + (actionRow ? 1 : 0);
+    if (count === 0) return;
     const selected = listBox.getSelectedRow();
     const current = selected ? selected.getIndex() : -1;
-    const next = (current + delta + results.length) % results.length;
+    const next = (current + delta + count) % count;
     const row = listBox.getRowAtIndex(next);
     if (row) listBox.selectRow(row);
   };

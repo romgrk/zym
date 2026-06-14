@@ -19,6 +19,8 @@ GTK 4 and [Adwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/), running o
   window splits — see [Keybindings](#keybindings)
 - Notifications surfaced as transient toasts and kept in a persistent log panel
   — see [Notifications](#notifications)
+- Terminal-based coding **agents** embedded in the workbench, with a live status
+  list and a quick-switcher — see [Agents](#agents)
 
 ## Requirements
 
@@ -69,7 +71,8 @@ the editor in insert mode) `Space` is released so it still types literally.
 | `Space` `Space`     | Open the command picker     |
 | `Space` `q`         | Quit                        |
 | `Space` `t`         | New terminal                |
-| `Space` `a`         | New agent terminal          |
+| `Space` `a` `n`     | New agent                   |
+| `Space` `a` `a`     | Switch agent (picker)       |
 | `Space` `n`         | Toggle the notification log |
 | `Space` `,`         | Open preferences            |
 | `Space` `g` `l`/`p` | Git pull / push             |
@@ -149,6 +152,39 @@ it's focused, `c` clears the history and `q` hides it (commands
 command picker). Window actions
 like saving and the git commands post through this hub, so their results land in
 the log too.
+
+## Agents
+
+quilx can host terminal-based coding agents (such as `claude`) right inside the
+workbench. An agent is a terminal like any other, except it runs the agent CLI
+instead of a login shell and is tracked in the global registry `quilx.agents`.
+When the agent process exits the pane is *not* torn down — a "process exited"
+notice is printed and the agent stays listed, flipped to an `exited` status, so
+you can read its final output.
+
+- `Space` `a` `n` launches a new agent (`agent:new`). The argv comes from the
+  `agent.command` config (default `['claude']`).
+- `Space` `a` `a` opens the agent quick-switcher (`agent:switch`), a fuzzy picker
+  over the running agents. Typing a prompt and choosing **Start agent** launches a
+  fresh agent seeded with that prompt.
+
+Running agents appear in the **Agents list** in the left dock, below the file
+tree. Each row shows the agent's title and a status dot that tracks its state
+live:
+
+| Indicator      | Meaning                          |
+| -------------- | -------------------------------- |
+| green dot      | idle / ready                     |
+| amber dot      | waiting for the user (e.g. a permission prompt) |
+| grey cog       | working                          |
+| muted dot      | the process has exited           |
+
+Activating a row reveals and focuses that agent's terminal.
+
+For a `claude` agent the live status is driven by **Claude Code hooks**: quilx
+launches `claude` with a per-session `--settings` block whose hooks write a status
+word to a file the terminal watches (via a `Gio` file monitor). The reporter
+script is bundled at [`assets/hooks/agent-status.sh`](assets/hooks/agent-status.sh).
 
 ## Configuration
 

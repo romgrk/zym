@@ -123,6 +123,14 @@ export class AppWindow {
     this.center = new PanelGroup({
       onActiveChanged: () => this.onActiveTabChanged(),
       onClosed: (widget) => {
+        // Closing an agent's tab after its process exited retires the agent for
+        // good, so drop it from the agent list. While the process is still alive a
+        // closed tab is just detached (the widget persists and can be reopened via
+        // the agent list), so we keep it registered in that case.
+        const terminal = this.terminals.get(widget);
+        if (terminal instanceof AgentTerminal && terminal.exited) {
+          quilx.agents.remove(terminal);
+        }
         this.editors.delete(widget);
         this.terminals.delete(widget);
         this.agentChildren.delete(widget);
@@ -272,9 +280,10 @@ export class AppWindow {
   }
 
   /** Launch a new agent (the configured CLI) and show it in a center tab. */
-  private openAgent(): AgentTerminal {
+  private openAgent(prompt?: string): AgentTerminal {
     const agent = new AgentTerminal({
       cwd: process.cwd(),
+      prompt,
       // No onExit: when the agent process exits the widget stays put (it prints a
       // "process exited" notice and flips to an exited status). After that, Enter
       // closes the agent's current tab.
@@ -283,6 +292,10 @@ export class AppWindow {
     // One persistent title binding that updates whichever tab currently shows the
     // agent (survives close/reopen, since it reads agentChildren on each change).
     agent.onTitleChange(() => this.agentChildren.get(agent.root)?.setTitle(agent.title));
+    // Focusing the agent's terminal selects its row in the agent list.
+    const focus = new Gtk.EventControllerFocus();
+    focus.on('enter', () => this.agentList.selectAgent(agent));
+    agent.root.addController(focus);
     this.showAgent(agent);
     return agent;
   }
@@ -455,8 +468,8 @@ export class AppWindow {
     if (selectedBg) {
       rules.push(
         `#FileTree:focus-within listview row:selected,
-         #AgentList:focus-within list row:selected,
-         #PickerList row:selected { background-color: ${selectedBg}; }`,
+         #PickerList row:selected,
+         #AgentList list row:selected { background-color: ${selectedBg}; }`,
       );
     }
 
@@ -544,7 +557,10 @@ export class AppWindow {
     quilx.commands.add('#AppWindow', {
       'terminal:new': () => this.openTerminal(),
       'agent:new': () => this.openAgent(),
-      'agent:switch': () => openAgentPicker(this.overlay, (agent) => this.showAgent(agent)),
+      'agent:switch': () => openAgentPicker(this.overlay, {
+        onActivate: (agent) => this.showAgent(agent),
+        onStart: (prompt) => this.openAgent(prompt),
+      }),
     });
   }
 

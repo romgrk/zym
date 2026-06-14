@@ -60,6 +60,9 @@ export class AgentList {
   private readonly iconAttrs: InstanceType<typeof Pango.AttrList>;
   // Agents parallel to the list rows, mapping a row index back to its agent.
   private agents: AgentTerminal[] = [];
+  // The agent whose row is selected (kept stable across rebuilds). Reflects the
+  // last-focused agent; see AppWindow's focus wiring.
+  private selected: AgentTerminal | null = null;
   // Per-row unsubscribes (title + status), cleared on every rebuild.
   private rowUnsubs: Array<() => void> = [];
   private readonly subs = new CompositeDisposable();
@@ -148,6 +151,26 @@ export class AgentList {
     const hasAgents = this.agents.length > 0;
     this.scrolled.setVisible(hasAgents);
     this.empty.setVisible(!hasAgents);
+
+    this.applySelection();
+  }
+
+  /** Select the row for `agent` (or clear selection). Called when an agent is focused. */
+  selectAgent(agent: AgentTerminal | null): void {
+    this.selected = agent;
+    this.applySelection();
+  }
+
+  // Reflect `this.selected` onto the list box; clears it if the agent is gone.
+  private applySelection(): void {
+    const index = this.selected ? this.agents.indexOf(this.selected) : -1;
+    if (index === -1) {
+      this.selected = null;
+      this.listBox.unselectAll();
+      return;
+    }
+    const row = this.listBox.getRowAtIndex(index);
+    if (row) this.listBox.selectRow(row);
   }
 
   private applyStatus(dot: InstanceType<typeof Gtk.Label>, agent: AgentTerminal): void {
