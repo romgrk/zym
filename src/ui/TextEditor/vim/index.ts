@@ -29,10 +29,16 @@ const dasherize = (name: string): string =>
 
 const commandName = (klass: string): string => `vim-mode-plus:${dasherize(klass)}`;
 
-// Mode-entry operations, available only in normal mode.
+// Mode-entry operations, available only in normal mode. These enter insert mode
+// at various positions (or after opening a new line).
 const MODE_BINDINGS: Record<string, string> = {
   i: 'ActivateInsertMode',
   a: 'InsertAfter',
+  o: 'InsertBelowWithNewline',
+  O: 'InsertAboveWithNewline',
+  I: 'InsertAtFirstCharacterOfLine',
+  A: 'InsertAfterEndOfLine',
+  'g I': 'InsertAtBeginningOfLine',
 };
 
 // Visual-mode activation, available in normal and visual modes (so V switches a
@@ -58,6 +64,13 @@ const MOTION_BINDINGS: Record<string, string> = {
   '^': 'MoveToFirstCharacterOfLine',
   $: 'MoveToLastCharacterOfLine',
   G: 'MoveToLastLine',
+  '{': 'MoveToPreviousParagraph',
+  '}': 'MoveToNextParagraph',
+  '%': 'MoveToPair',
+  '|': 'MoveToColumn',
+  '-': 'MoveToFirstCharacterOfLineUp',
+  '+': 'MoveToFirstCharacterOfLineDown',
+  'g _': 'MoveToLastNonblankCharacterOfLineAndDown',
   // `space` is intentionally left UNMAPPED. Upstream vim-mode-plus binds it to
   // MoveRight, but quilx reserves `space` as the leader key, so the editor must
   // never consume it. Do not add a `space`/`' '` binding here (or anywhere in
@@ -159,6 +172,27 @@ const SURROUND_BINDINGS: Record<string, string> = {
   'c s': 'ChangeSurround',
 };
 
+// Single-key operator shortcuts with preset targets (so they run immediately):
+// s/x delete then (s) insert, S/C/D change/delete to end-of-line-or-line, Y yanks
+// a line, X deletes left. In visual mode they operate on the selection.
+const SHORTCUT_OPERATOR_BINDINGS: Record<string, string> = {
+  s: 'Substitute',
+  S: 'SubstituteLine',
+  C: 'ChangeToLastCharacterOfLine',
+  D: 'DeleteToLastCharacterOfLine',
+  Y: 'YankLine',
+  X: 'DeleteLeft',
+  '~': 'ToggleCaseAndMoveRight',
+};
+
+// Indent/outdent operators (>/< await a motion target; >>/<< via same-operator
+// repeat) and join (J, preset target).
+const INDENT_JOIN_BINDINGS: Record<string, string> = {
+  '>': 'Indent',
+  '<': 'Outdent',
+  J: 'Join',
+};
+
 // Misc commands (undo/redo), available while NOT in insert mode.
 const MISC_BINDINGS: Record<string, string> = {
   u: 'Undo',
@@ -175,6 +209,8 @@ const NON_INSERT_BINDINGS: Record<string, string> = {
   ...REPLACE_BINDINGS,
   ...MARK_BINDINGS,
   ...OPERATOR_BINDINGS,
+  ...SHORTCUT_OPERATOR_BINDINGS,
+  ...INDENT_JOIN_BINDINGS,
   ...MISC_BINDINGS,
 };
 

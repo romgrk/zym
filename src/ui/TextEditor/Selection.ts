@@ -117,4 +117,66 @@ export class Selection {
   deleteSelectedText(): void {
     this.editor.setTextInBufferRange(this.getBufferRange(), '');
   }
+
+  // --- Linewise edits (indent / outdent / join) ------------------------------
+
+  /** The `[startRow, endRow]` to edit linewise, dropping a trailing row the
+   *  selection only touches at column 0 (so a `(r,0)-(r+1,0)` span is just `r`). */
+  private linewiseRowRange(): [number, number] {
+    const range = this.getBufferRange();
+    let endRow = range.end.row;
+    if (endRow > range.start.row && range.end.column === 0) endRow -= 1;
+    return [range.start.row, endRow];
+  }
+
+  /** Indent every spanned row by one level (`>`). Blank rows are left alone. */
+  indentSelectedRows(): void {
+    const [startRow, endRow] = this.linewiseRowRange();
+    const indent = this.editor.buildIndentString(1);
+    this.editor.transact(() => {
+      for (let row = endRow; row >= startRow; row--) {
+        if (this.editor.lineTextForBufferRow(row).length === 0) continue;
+        const start = new Point(row, 0);
+        this.editor.setTextInBufferRange(new Range(start, start), indent);
+      }
+    });
+  }
+
+  /** Outdent every spanned row by one level (`<`): a leading tab or up to one
+   *  tab-width of leading spaces. */
+  outdentSelectedRows(): void {
+    const [startRow, endRow] = this.linewiseRowRange();
+    const tabLength = this.editor.getTabLength();
+    this.editor.transact(() => {
+      for (let row = endRow; row >= startRow; row--) {
+        const line = this.editor.lineTextForBufferRow(row);
+        let removeCols = 0;
+        if (line[0] === '\t') removeCols = 1;
+        else while (removeCols < tabLength && line[removeCols] === ' ') removeCols++;
+        if (removeCols > 0) {
+          this.editor.setTextInBufferRange(new Range(new Point(row, 0), new Point(row, removeCols)), '');
+        }
+      }
+    });
+  }
+
+  /** Join the spanned rows into one, replacing each newline (and the next line's
+   *  leading whitespace) with a single space; an empty selection joins with the
+   *  following line. */
+  joinLines(): void {
+    const range = this.getBufferRange();
+    const startRow = range.start.row;
+    let endRow = range.end.row;
+    if (startRow === endRow) endRow = startRow + 1; // empty/single-line: join next
+    if (endRow > this.editor.getLastBufferRow()) return;
+    this.editor.transact(() => {
+      for (let row = endRow - 1; row >= startRow; row--) {
+        const lineEnd = this.editor.bufferRangeForBufferRow(row).end;
+        const nextLine = this.editor.lineTextForBufferRow(row + 1);
+        const leading = nextLine.match(/^\s*/)![0].length;
+        const sep = nextLine.length === leading ? '' : ' '; // no trailing space onto a blank line
+        this.editor.setTextInBufferRange(new Range(lineEnd, new Point(row + 1, leading)), sep);
+      }
+    });
+  }
 }

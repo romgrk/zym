@@ -41,6 +41,7 @@ export class EditorModel {
   // GtkTextBuffer has a single insert/selection-bound pair, so there is exactly
   // one Selection. It is exposed through the array-shaped accessors below.
   private readonly selection: Selection;
+  private defaultMarkerLayer?: MarkerLayer;
   private checkpointCounter = 0;
   private readonly emitter = new Emitter();
   private destroyed = false;
@@ -302,6 +303,44 @@ export class EditorModel {
     });
   }
 
+  /** Move the cursor to the end of its line (just past the last character). */
+  moveToEndOfLine(): void {
+    const row = this.getCursorBufferPosition().row;
+    this.setCursorBufferPosition(this.bufferRangeForBufferRow(row).end);
+  }
+
+  /** Move the cursor to column 0 of its line (`gI`). */
+  moveToBeginningOfLine(): void {
+    this.setCursorBufferPosition(new Point(this.getCursorBufferPosition().row, 0));
+  }
+
+  /** Open a blank line below the cursor's line and put the cursor on it (`o`). */
+  insertNewlineBelow(): void {
+    const row = this.getCursorBufferPosition().row;
+    const lineEnd = this.bufferRangeForBufferRow(row).end;
+    this.setTextInBufferRange(new Range(lineEnd, lineEnd), '\n');
+    this.setCursorBufferPosition(new Point(row + 1, 0));
+  }
+
+  /** Open a blank line above the cursor's line and put the cursor on it (`O`). */
+  insertNewlineAbove(): void {
+    const row = this.getCursorBufferPosition().row;
+    const lineStart = new Point(row, 0);
+    this.setTextInBufferRange(new Range(lineStart, lineStart), '\n');
+    this.setCursorBufferPosition(new Point(row, 0));
+  }
+
+  /**
+   * Whether the view auto-indents new lines. Reported as false to the vim layer
+   * so `o`/`O` open a plain blank line (auto-indent-on-open is not modeled yet).
+   */
+  get autoIndent(): boolean {
+    return false;
+  }
+
+  /** Auto-indent a row. Not modeled yet; no-op (only reached when `autoIndent`). */
+  autoIndentBufferRow(_row: number): void {}
+
   // --- Undo grouping ---------------------------------------------------------
 
   /** Run `fn`, coalescing every buffer change it makes into a single undo step. */
@@ -423,6 +462,11 @@ export class EditorModel {
   /** A fresh marker layer over this buffer (vim marks, search/flash highlights). */
   addMarkerLayer(): MarkerLayer {
     return new MarkerLayer(this);
+  }
+
+  /** Mark a single position on the shared default layer (e.g. `o`/`O` recall). */
+  markBufferPosition(point: PointLike): ReturnType<MarkerLayer['markBufferPosition']> {
+    return (this.defaultMarkerLayer ??= this.addMarkerLayer()).markBufferPosition(Point.fromObject(point));
   }
 
   // --- Folding (deferred) ----------------------------------------------------

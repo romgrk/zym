@@ -192,6 +192,66 @@ class DeleteSurround extends SurroundBase {
   }
 }
 
+// Indent / Outdent
+// -------------------------
+class Indent extends TransformString {
+  stayByMarker = true
+  setToFirstCharacterOnLinewise = true
+  wise = 'linewise'
+
+  mutateSelection (selection) {
+    // Need count times indentation in visual-mode and its repeat(`.`).
+    if (this.target.name === 'CurrentSelection') {
+      let oldText
+      // limit to 100 to avoid freezing by accidental big number.
+      this.countTimes(this.limitNumber(this.getCount(), {max: 100}), ({stop}) => {
+        oldText = selection.getText()
+        this.indent(selection)
+        if (selection.getText() === oldText) stop()
+      })
+    } else {
+      this.indent(selection)
+    }
+  }
+
+  indent (selection) {
+    selection.indentSelectedRows()
+  }
+}
+
+class Outdent extends Indent {
+  indent (selection) {
+    selection.outdentSelectedRows()
+  }
+}
+
+// Join
+// -------------------------
+class JoinTarget extends TransformString {
+  flashTarget = false
+  restorePositions = false
+
+  mutateSelection (selection) {
+    const range = selection.getBufferRange()
+
+    // When cursor is at last BUFFER row, it select last-buffer-row, then
+    // joinning result in "clear last-buffer-row text".
+    // I believe this is BUG of upstream atom-core. guard this situation here
+    if (!range.isSingleLine() || range.end.row !== this.editor.getLastBufferRow()) {
+      if (this.utils.isLinewiseRange(range)) {
+        selection.setBufferRange(range.translate([0, 0], [-1, Infinity]))
+      }
+      selection.joinLines()
+    }
+    const point = selection.getBufferRange().end.translate([0, -1])
+    return selection.cursor.setBufferPosition(point)
+  }
+}
+
+class Join extends JoinTarget {
+  target = 'MoveToRelativeLine'
+}
+
 class ChangeSurround extends DeleteSurround {
   surroundAction = 'change-surround'
   readInputAfterSelect = true
@@ -214,6 +274,10 @@ const __operations = {
   ToggleCaseAndMoveRight,
   Replace,
   ReplaceCharacter,
+  Indent,
+  Outdent,
+  JoinTarget,
+  Join,
   SurroundBase,
   Surround,
   SurroundWord,

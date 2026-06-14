@@ -17,6 +17,7 @@ function focusedEditor(text: string) {
   const buffer = new GtkSource.Buffer();
   buffer.setText(text, -1);
   const view = new GtkSource.View({ buffer });
+  view.setTabWidth(4); // match the real editor (bare GtkSourceView defaults to 8)
   const editor = new EditorModel(view, buffer);
   attachVim(editor);
 
@@ -91,4 +92,52 @@ test('dd deletes a line (d deferral, then d resolves in operator-pending)', () =
   const { type, line } = focusedEditor('one\ntwo\nthree\n');
   type('dd');
   assert.equal(line(0), 'two');
+});
+
+// --- New bindings, exercised through the keymap ------------------------------
+
+test('D deletes to end of line (single-key operator)', () => {
+  const { editor, type, line } = focusedEditor('abcdef\n');
+  editor.setCursorBufferPosition({ row: 0, column: 2 });
+  type('D');
+  assert.equal(line(), 'ab');
+});
+
+test('~ toggles case via the keymap (shifted backtick resolves)', () => {
+  const { type, line } = focusedEditor('aBc\n');
+  type('~');
+  assert.equal(line(), 'ABc');
+});
+
+test('o opens a line below via the keymap', () => {
+  const { editor, view, type } = focusedEditor('one\ntwo\n');
+  type('o');
+  assert.equal(view.getEditable(), true); // insert mode
+  assert.equal(editor.getLineCount(), 4); // one, (new), two, trailing
+});
+
+test('} moves to the next paragraph via the keymap', () => {
+  const { editor, type } = focusedEditor('a\n\nb\n');
+  type('}');
+  assert.equal(editor.getCursorBufferPosition().toArray()[0], 1);
+});
+
+test('gI enters insert at column 0 (g-prefixed sequence)', () => {
+  const { editor, view, type } = focusedEditor('  abc\n');
+  editor.setCursorBufferPosition({ row: 0, column: 4 });
+  type('gI');
+  assert.equal(view.getEditable(), true);
+  assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 0]);
+});
+
+test('>> indents the current line (same-operator repeat via keymap)', () => {
+  const { type, line } = focusedEditor('abc\n');
+  type('>>');
+  assert.equal(line(0), '    abc');
+});
+
+test('J joins lines via the keymap', () => {
+  const { type, line } = focusedEditor('hello\nworld\n');
+  type('J');
+  assert.equal(line(0), 'hello world');
 });
