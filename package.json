@@ -12,7 +12,7 @@
     "start": "node src/editor.ts",
     "poc": "node src/poc/fold-highlight.ts",
     "typecheck": "tsc --noEmit",
-    "generate-types": "node-gtk generate-types Gtk-4.0 Adw-1 GtkSource-5"
+    "generate-types": "node-gtk generate-types Gtk-4.0 Adw-1 GtkSource-5 Vte-3.91"
   },
   "dependencies": {
     "node-gtk": "link:../node-gtk"
