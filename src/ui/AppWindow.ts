@@ -2,8 +2,8 @@
  * AppWindow — the top-level application window. It owns the window chrome (the
  * Adwaita header bar and the vim status line, via Adw.ToolbarView), the toast
  * overlay, and the floating-picker overlay host. It composes the workbench
- * docks: the file tree in the left dock and a tabs container (of text editors)
- * in the center. Actions and accelerators are routed to the active tab's editor;
+ * docks: the file tree in the left dock and the center editor Panel (one tab per
+ * open file). Actions and accelerators are routed to the active tab's editor;
  * the window title and vim status line follow the active tab.
  *
  * One window per application instance. It is given the Adw.Application (for
@@ -21,8 +21,7 @@ import {
   type WindowTitle,
 } from '../gi.ts';
 import { FileTree } from './FileTree.ts';
-import { Panel } from './Panel.ts';
-import { Tabs } from './Tabs.ts';
+import { Panel, type PanelChild } from './Panel.ts';
 import { TextEditor } from './TextEditor.ts';
 import { Workbench } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
@@ -32,11 +31,16 @@ const DEFAULT_WIDTH = 1000;
 const DEFAULT_HEIGHT = 800;
 const TOAST_TIMEOUT = 3;
 
+type Widget = InstanceType<typeof Gtk.Widget>;
+
 export class AppWindow {
   private readonly app: Application;
   private readonly onQuit: () => void;
 
-  private readonly tabs: Tabs;
+  // The center editor group. Each tab hosts one TextEditor, mapped from its root
+  // widget so the active child can be resolved back to its editor.
+  private readonly centerPanel: Panel;
+  private readonly editors = new Map<Widget, TextEditor>();
   private readonly windowTitle: WindowTitle;
   private readonly toastOverlay: ToastOverlay;
   private readonly overlay: InstanceType<typeof Gtk.Overlay>;
@@ -56,20 +60,21 @@ export class AppWindow {
     this.commandBar = new Gtk.Label({ xalign: 0, hexpand: true });
     this.commandPreview = new Gtk.Label({ xalign: 1 });
 
-    this.tabs = new Tabs({
-      onToast: (message) => this.toast(message),
-      onActiveChanged: (editor) => this.onActiveEditorChanged(editor),
-      onOpen: (editor) => this.wireEditor(editor),
+    this.centerPanel = new Panel({
+      onActiveChanged: () => this.onActiveEditorChanged(this.activeEditor),
+      onClosed: (widget) => this.editors.delete(widget),
       onEmpty: () => this.onQuit(),
     });
 
     const workbench = new Workbench();
     const fileTree = new FileTree({
       rootPath: process.cwd(),
-      onOpenFile: (path) => this.tabs.openFile(path),
+      onOpenFile: (path) => this.openFile(path),
     });
-    workbench.setLeft(new Panel(fileTree.root));
-    workbench.setCenter(new Panel(this.tabs.root));
+    const leftPanel = new Panel();
+    leftPanel.add(fileTree.root);
+    workbench.setLeft(leftPanel);
+    workbench.setCenter(this.centerPanel);
 
     const toolbarView = new Adw.ToolbarView();
     toolbarView.addTopBar(this.buildHeaderBar());
@@ -93,7 +98,34 @@ export class AppWindow {
     });
     this.window.present();
 
-    this.tabs.openFile(initialFile);
+    this.openFile(initialFile);
+  }
+
+  // --- Editor lifecycle ------------------------------------------------------
+
+  /** The TextEditor backing the panel's active tab, if any. */
+  private get activeEditor(): TextEditor | null {
+    const widget = this.centerPanel.activeChild;
+    return widget ? this.editors.get(widget) ?? null : null;
+  }
+
+  /** Open `path` in a new center tab, wiring it to the window, and select it. */
+  private openFile(path: string): TextEditor {
+    let child: PanelChild;
+    const editor = new TextEditor({
+      onToast: (message) => this.toast(message),
+      onClose: () => child.close(),
+    });
+    // Register before adding: selecting the new tab fires onActiveChanged, which
+    // resolves the active editor through this map.
+    this.editors.set(editor.root, editor);
+    this.wireEditor(editor);
+    child = this.centerPanel.add(editor.root, { title: editor.title });
+    editor.onTitleChange(() => child.setTitle(editor.title));
+
+    editor.loadFile(path);
+    editor.focus();
+    return editor;
   }
 
   // --- Active-editor wiring (status line + window title) ---------------------
@@ -104,13 +136,13 @@ export class AppWindow {
   private wireEditor(editor: TextEditor) {
     const vim = editor.vim as any;
     vim.on('notify::command-bar-text', () => {
-      if (this.tabs.activeEditor === editor) this.commandBar.setText(vim.getCommandBarText());
+      if (this.activeEditor === editor) this.commandBar.setText(vim.getCommandBarText());
     });
     vim.on('notify::command-text', () => {
-      if (this.tabs.activeEditor === editor) this.commandPreview.setText(vim.getCommandText());
+      if (this.activeEditor === editor) this.commandPreview.setText(vim.getCommandText());
     });
     editor.onTitleChange(() => {
-      if (this.tabs.activeEditor === editor) this.updateTitle(editor);
+      if (this.activeEditor === editor) this.updateTitle(editor);
     });
   }
 
@@ -168,7 +200,7 @@ export class AppWindow {
   private registerActions() {
     this.addAction('open', '<Control>o', () => this.openDialog());
     this.addAction('find-file', '<Alt>o', () =>
-      openFilePicker(this.overlay, (path) => this.tabs.openFile(path)),
+      openFilePicker(this.overlay, (path) => this.openFile(path)),
     );
     this.addAction('save', '<Control>s', () => this.saveActive());
     this.addAction('save-as', '<Control><Shift>s', () => this.saveAsDialog());
@@ -185,7 +217,7 @@ export class AppWindow {
   // --- File operations (routed to the active editor) -------------------------
 
   private saveActive() {
-    const editor = this.tabs.activeEditor;
+    const editor = this.activeEditor;
     if (!editor) return;
     if (editor.currentFile) editor.save();
     else this.saveAsDialog();
@@ -197,7 +229,7 @@ export class AppWindow {
     dialog.open(this.window, null, (self: any, result: any) => {
       try {
         const file = self.openFinish(result);
-        if (file) this.tabs.openFile(file.getPath());
+        if (file) this.openFile(file.getPath());
       } catch {
         // The user dismissed the dialog; nothing to do.
       }
@@ -205,7 +237,7 @@ export class AppWindow {
   }
 
   private saveAsDialog() {
-    const editor = this.tabs.activeEditor;
+    const editor = this.activeEditor;
     if (!editor) return;
     const dialog = new Gtk.FileDialog();
     dialog.setTitle('Save File As');
