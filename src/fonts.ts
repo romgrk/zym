@@ -6,7 +6,28 @@
  * and point size, not part of the family name. Dropping them naively leaves an
  * invalid CSS family, so we parse with Pango and emit each property explicitly.
  */
-import { Gio, Pango } from './gi.ts';
+import * as Path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Gio, Pango, PangoCairo } from './gi.ts';
+
+/** Pango family name of the bundled icon font (see assets/fonts). */
+export const ICON_FONT_FAMILY = 'Symbols Nerd Font Mono';
+
+const BUNDLED_FONTS = ['SymbolsNerdFontMono-Regular.ttf'];
+
+/**
+ * Register the fonts bundled under assets/fonts with GTK's default fontmap, so
+ * the file-tree glyph icons render regardless of what's installed system-wide.
+ * Must run after GTK is initialized (i.e. inside app startup/activate).
+ */
+export function registerBundledFonts(): void {
+  const dir = Path.join(Path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'fonts');
+  const fontMap = PangoCairo.FontMap.getDefault();
+  for (const file of BUNDLED_FONTS) {
+    if (!fontMap.addFontFile(Path.join(dir, file)))
+      console.warn(`quilx: failed to load bundled font ${file}`);
+  }
+}
 
 export interface FontCss {
   family: string;       // CSS-quoted family, e.g. '"JetBrainsMono Nerd Font"'

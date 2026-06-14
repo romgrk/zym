@@ -14,13 +14,16 @@ import { createRequire } from 'node:module';
 const gi = createRequire(import.meta.url)('node-gtk') as typeof import('node-gtk');
 
 export const GLib = gi.require('GLib', '2.0');
+export const GObject = gi.require('GObject', '2.0');
 export const Gio = gi.require('Gio', '2.0');
 export const Pango = gi.require('Pango', '1.0');
+export const PangoCairo = gi.require('PangoCairo', '1.0');
 export const Gdk = gi.require('Gdk', '4.0');
 export const Gtk = gi.require('Gtk', '4.0');
 export const Adw = gi.require('Adw', '1');
 export const GtkSource = gi.require('GtkSource', '5');
 export const Vte = gi.require('Vte', '3.91');
+export const Ggit = gi.require('Ggit', '1.0');
 
 /** Cooperatively drive GLib's main loop from Node's event loop. */
 export function startLoop(): void {

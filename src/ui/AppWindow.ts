@@ -24,12 +24,17 @@ import { FileTree } from './FileTree.ts';
 import { Panel, type PanelChild } from './Panel.ts';
 import { TextEditor } from './TextEditor/index.ts';
 import { Terminal } from './Terminal.ts';
+import { BranchButton } from './BranchButton.ts';
+import { openGitRepo, type GitRepo } from '../git.ts';
 import { Workbench } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
 import { openCommandPicker } from './CommandPicker.ts';
 import { quilx } from '../quilx.ts';
+import { styles } from '../styles.ts';
+import { theme } from '../theme/theme.ts';
 
-const TITLE = 'quilx';
+// The header-bar title is the project name: the last path component of the cwd.
+const PROJECT_NAME = Path.basename(process.cwd());
 const DEFAULT_WIDTH = 1000;
 const DEFAULT_HEIGHT = 800;
 const TOAST_TIMEOUT = 3;
@@ -44,11 +49,11 @@ export class AppWindow {
   // widget so the active child can be resolved back to its editor.
   private readonly centerPanel: Panel;
   private readonly editors = new Map<Widget, TextEditor>();
-
-  // The left dock (file tree), kept as fields so the pane-switching demo
   // Terminal tabs share the center panel with editors; tracked separately so the
   // active child can be resolved back to its Terminal (it has no vim state).
   private readonly terminals = new Map<Widget, Terminal>();
+
+  // The left dock (file tree), kept as fields so the pane-switching demo
   // commands can move focus between the docks.
   private readonly leftPanel: Panel;
   private readonly fileTree: FileTree;
@@ -56,6 +61,10 @@ export class AppWindow {
   private readonly toastOverlay: ToastOverlay;
   private readonly overlay: InstanceType<typeof Gtk.Overlay>;
   private readonly window: ApplicationWindow;
+
+  // Git integration for the header-bar branch indicator.
+  private readonly git: GitRepo;
+  private readonly branchButton: BranchButton;
 
   // The vim status line: command bar (`:`, `/`) on the left, pending command
   // preview (e.g. "2dw") on the right. Re-synced to the active editor on switch.
@@ -66,10 +75,13 @@ export class AppWindow {
     this.app = app;
     this.onQuit = onQuit;
 
-    this.windowTitle = new Adw.WindowTitle({ title: TITLE });
+    this.windowTitle = new Adw.WindowTitle({ title: PROJECT_NAME });
     this.toastOverlay = new Adw.ToastOverlay();
     this.commandBar = new Gtk.Label({ xalign: 0, hexpand: true });
     this.commandPreview = new Gtk.Label({ xalign: 1 });
+
+    this.git = openGitRepo(process.cwd());
+    this.branchButton = new BranchButton(this.git);
 
     this.centerPanel = new Panel({
       onActiveChanged: () => this.onActiveTabChanged(),
@@ -85,6 +97,7 @@ export class AppWindow {
       rootPath: process.cwd(),
       onOpenFile: (path) => this.openFile(path),
     });
+    this.fileTree.root.addCssClass('quilx-filetree');
     this.leftPanel = new Panel();
     this.leftPanel.add(this.fileTree.root);
     workbench.setLeft(this.leftPanel);
@@ -101,9 +114,11 @@ export class AppWindow {
     toolbarView.addBottomBar(this.buildStatusBar());
     this.toastOverlay.setChild(toolbarView);
 
+    this.applyChromeStyles();
     this.registerActions();
 
     this.window = new Adw.ApplicationWindow({ application: app });
+    this.window.setName('AppWindow'); // selector identity for command/keymap rules
     this.window.setDefaultSize(DEFAULT_WIDTH, DEFAULT_HEIGHT);
     this.window.setContent(this.toastOverlay);
 
@@ -113,12 +128,13 @@ export class AppWindow {
     quilx.keymaps.initialize();
     this.registerPaneCommands();
     this.registerWindowCommands();
+    this.registerTerminalCommands();
 
     this.window.on('close-request', () => {
+      this.branchButton.dispose();
+      this.git.dispose();
       this.onQuit();
       return false;
-    this.registerTerminalCommands();
-    this.registerTabCommands();
     });
     this.window.present();
 
@@ -152,10 +168,6 @@ export class AppWindow {
     return editor;
   }
 
-  // --- Active-editor wiring (status line + window title) ---------------------
-
-  // Connect an editor's vim signals once, at creation. The handlers update the
-  // shared status labels only while that editor is active, so no disconnect is
   /** Open a new Terminal tab in the center panel and select it. */
   private openTerminal(): Terminal {
     let child: PanelChild;
@@ -168,14 +180,15 @@ export class AppWindow {
     // resolves the active terminal through this map.
     this.terminals.set(terminal.root, terminal);
     child = this.centerPanel.add(terminal.root, { title: terminal.title });
-    terminal.onTitleChange(() => {
-      child.setTitle(terminal.title);
-      if (this.centerPanel.activeChild === terminal.root) this.updateTerminalTitle(terminal);
-    });
+    terminal.onTitleChange(() => child.setTitle(terminal.title));
     terminal.focus();
     return terminal;
   }
 
+  // --- Active-editor wiring (vim status line) --------------------------------
+
+  // Connect an editor's vim signals once, at creation. The handlers update the
+  // shared status labels only while that editor is active, so no disconnect is
   // needed when tabs switch. The active-switch path re-syncs the labels.
   private wireEditor(editor: TextEditor) {
     const vim = editor.vim as any;
@@ -185,15 +198,8 @@ export class AppWindow {
     vim.on('notify::command-text', () => {
       if (this.activeEditor === editor) this.commandPreview.setText(vim.getCommandText());
     });
-    editor.onTitleChange(() => {
-      if (this.activeEditor === editor) this.updateTitle(editor);
-    });
   }
 
-  private onActiveEditorChanged(editor: TextEditor | null) {
-    const vim = editor?.vim as any;
-    this.commandBar.setText(vim ? vim.getCommandBarText() : '');
-    this.commandPreview.setText(vim ? vim.getCommandText() : '');
   // Route a tab switch to the editor or terminal handler based on what the
   // active child is. Terminals carry no vim state, so they take a separate path.
   private onActiveTabChanged() {
@@ -202,45 +208,24 @@ export class AppWindow {
     if (terminal) {
       this.commandBar.setText('');
       this.commandPreview.setText('');
-      this.updateTerminalTitle(terminal);
       return;
     }
     this.onActiveEditorChanged(this.activeEditor);
   }
 
-    this.updateTitle(editor);
-  }
-
-  private updateTitle(editor: TextEditor | null) {
-    if (!editor) {
-      this.windowTitle.setTitle(TITLE);
-      this.windowTitle.setSubtitle('');
-  private updateTerminalTitle(terminal: Terminal) {
-    this.windowTitle.setTitle(terminal.title);
-    this.windowTitle.setSubtitle('Terminal');
-  }
-
-      return;
-    }
-    this.windowTitle.setTitle(editor.title);
-    this.windowTitle.setSubtitle(editor.currentFile ? Path.dirname(editor.currentFile) : '');
+  private onActiveEditorChanged(editor: TextEditor | null) {
+    const vim = editor?.vim as any;
+    this.commandBar.setText(vim ? vim.getCommandBarText() : '');
+    this.commandPreview.setText(vim ? vim.getCommandText() : '');
   }
 
   // --- Header bar ------------------------------------------------------------
 
   private buildHeaderBar() {
     const header = new Adw.HeaderBar();
+    header.addCssClass('quilx-headerbar');
     header.setTitleWidget(this.windowTitle);
-
-    const openButton = Gtk.Button.newFromIconName('document-open-symbolic');
-    openButton.setTooltipText('Open (Ctrl+O)');
-    openButton.setActionName('app.open');
-    header.packStart(openButton);
-
-    const saveButton = Gtk.Button.newFromIconName('document-save-symbolic');
-    saveButton.setTooltipText('Save (Ctrl+S)');
-    saveButton.setActionName('app.save');
-    header.packEnd(saveButton);
+    header.packStart(this.branchButton.root);
     return header;
   }
 
@@ -251,11 +236,50 @@ export class AppWindow {
     this.commandPreview.addCssClass('monospace');
 
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 12 });
+    box.addCssClass('quilx-statusbar');
     box.setMarginStart(6);
     box.setMarginEnd(6);
     box.append(this.commandBar);
     box.append(this.commandPreview);
     return box;
+  }
+
+  // --- Theme chrome ----------------------------------------------------------
+
+  // Paint the window chrome (header bar, file tree, status/command bar) with the
+  // theme's background. Installed as a single keyed, replaceable stylesheet so a
+  // future theme switch can re-apply it. Themes without their own background
+  // (ui.bg unset) leave the chrome to the system Adwaita styling.
+  private applyChromeStyles() {
+    const bg = theme.ui.bg;
+    if (!bg) {
+      styles.remove('theme-chrome');
+      return;
+    }
+    const border = theme.ui.border ?? 'rgba(0, 0, 0, 0.3)';
+    styles.set(
+      `
+        headerbar.quilx-headerbar {
+          background: ${bg};
+          box-shadow: none;
+          border-bottom: 1px solid ${border};
+        }
+        .quilx-statusbar { background-color: ${bg}; }
+        .quilx-filetree, .quilx-filetree listview { background-color: ${bg}; }
+        .quilx-panel tabbar .box,
+        .quilx-panel tabbar tabbox,
+        .quilx-panel tabbar tab { background-color: ${bg}; }
+        .quilx-panel tabbar .box { box-shadow: none; padding: 0; min-height: 0; }
+        .quilx-panel tabbar tabbox { padding: 0; min-height: 0; }
+        .quilx-panel tabbar tab { min-height: 0; padding: 2px 12px; }
+        .quilx-panel tabbar tab:hover { background-color: shade(${bg}, 1.2); }
+        .quilx-panel tabbar tab:selected {
+          background-color: shade(${bg}, 1.6);
+          box-shadow: inset 0 -2px ${border};
+        }
+      `,
+      { key: 'theme-chrome' },
+    );
   }
 
   // --- Actions & keyboard shortcuts ------------------------------------------
@@ -283,23 +307,22 @@ export class AppWindow {
   // --- Pane switching (demo of the ported command/keymap managers) -----------
 
   // Vim-style window navigation wired through the ported CommandManager +
-  // KeymapManager. The bindings are registered on the window's widget class
-  // (AdwApplicationWindow — node-gtk's `constructor.name`), which is always an
-  // ancestor of the focused widget, so the CAPTURE-phase keymap controller
-  // matches them no matter what is focused:
+  // KeymapManager. The bindings target the `AppWindow` selector (the window's
+  // widget name), which is always an ancestor of the focused widget, so the
+  // CAPTURE-phase keymap controller matches them no matter what is focused:
   //
   //   ctrl-w h        focus the left dock (file tree)
   //   ctrl-w l        focus the center editor group
   //   ctrl-w w        cycle between the two
   //   ctrl-w ctrl-w   cycle between the two
   private registerPaneCommands() {
-    quilx.commands.add('AdwApplicationWindow', {
+    quilx.commands.add('AppWindow', {
       'pane:focus-left': () => this.focusPane('left'),
       'pane:focus-right': () => this.focusPane('center'),
       'pane:focus-next': () => this.focusPane('next'),
     });
     quilx.keymaps.add('AppWindow', {
-      AdwApplicationWindow: {
+      AppWindow: {
         'ctrl-w h': 'pane:focus-left',
         'ctrl-w l': 'pane:focus-right',
         'ctrl-w w': 'pane:focus-next',
@@ -312,12 +335,26 @@ export class AppWindow {
   // the command palette (Ctrl+Shift+P). They share the same handlers as the Gio
   // actions/accelerators above, so both entry points stay in sync.
   private registerWindowCommands() {
-    quilx.commands.add('AdwApplicationWindow', {
+    quilx.commands.add('AppWindow', {
       'file:open': () => this.openDialog(),
       'file:find': () => openFilePicker(this.overlay, (path) => this.openFile(path)),
       'file:save': () => this.saveActive(),
       'file:save-as': () => this.saveAsDialog(),
       'app:quit': () => this.onQuit(),
+    });
+  }
+
+  // Terminal commands: open a shell in a new center-panel tab. Registered on the
+  // window's widget class so the command is always available (command palette)
+  // and bound to ctrl-shift-t.
+  private registerTerminalCommands() {
+    quilx.commands.add('AppWindow', {
+      'terminal:new': () => this.openTerminal(),
+    });
+    quilx.keymaps.add('AppWindow', {
+      AppWindow: {
+        'ctrl-shift-t': 'terminal:new',
+      },
     });
   }
 
@@ -358,48 +395,6 @@ export class AppWindow {
     const dialog = new Gtk.FileDialog();
     dialog.setTitle('Open File');
     dialog.open(this.window, null, (self: any, result: any) => {
-  // Terminal commands: open a shell in a new center-panel tab. Registered on the
-  // window's widget class so the command is always available (command palette)
-  // and bound to ctrl-shift-t.
-  private registerTerminalCommands() {
-    quilx.commands.add('AdwApplicationWindow', {
-      'terminal:new': () => this.openTerminal(),
-    });
-    quilx.keymaps.add('AppWindow', {
-      AdwApplicationWindow: {
-        'ctrl-shift-t': 'terminal:new',
-      },
-    });
-  }
-
-  // Tab switching for whichever panel currently holds focus (defaults to the
-  // center editor group). Registered on the window's widget class so the
-  // commands are always available; bound to ctrl-PageUp/Down, alt-1..8, and
-  // alt-9 for the last tab (matching browser convention).
-  private registerTabCommands() {
-    const commands: Record<string, () => void> = {
-      'tab:next': () => this.currentPanel.selectNextTab(),
-      'tab:previous': () => this.currentPanel.selectPreviousTab(),
-      'tab:go-to-last': () => this.currentPanel.selectLastTab(),
-    };
-    const keymap: Record<string, string> = {
-      'ctrl-Page_Down': 'tab:next',
-      'ctrl-Page_Up': 'tab:previous',
-      'alt-9': 'tab:go-to-last',
-    };
-    for (let n = 1; n <= 8; n++) {
-      commands[`tab:go-to-${n}`] = () => this.currentPanel.selectTab(n - 1);
-      keymap[`alt-${n}`] = `tab:go-to-${n}`;
-    }
-    quilx.commands.add('AdwApplicationWindow', commands);
-    quilx.keymaps.add('AppWindow', { AdwApplicationWindow: keymap });
-  }
-
-  /** The panel that currently holds keyboard focus (defaults to the center). */
-  private get currentPanel(): Panel {
-    return this.isFocusWithin(this.leftPanel.root) ? this.leftPanel : this.centerPanel;
-  }
-
       try {
         const file = self.openFinish(result);
         if (file) this.openFile(file.getPath());

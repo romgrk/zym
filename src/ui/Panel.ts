@@ -12,8 +12,29 @@
  * panel tree (VS Code-style editor groups).
  */
 import { Adw, Gtk } from '../gi.ts';
+import { quilx } from '../quilx.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
+
+// Tab-navigation key bindings, shared by every panel and registered once. They
+// target the `Panel` selector (each panel sets its widget name to "Panel"), so
+// the CAPTURE-phase keymap controller routes a keystroke to whichever panel
+// currently holds focus (its root is in the focus chain). The matching commands
+// are registered per-instance (see `registerTabCommands`), so dispatch lands on
+// the focused panel and the host needs no "which panel has focus?" bookkeeping.
+const TAB_KEYMAP: Record<string, string> = {
+  'ctrl-Page_Down': 'tab:next',
+  'ctrl-Page_Up': 'tab:previous',
+  'alt-9': 'tab:go-to-last',
+};
+for (let n = 1; n <= 8; n++) TAB_KEYMAP[`alt-${n}`] = `tab:go-to-${n}`;
+
+let tabKeymapRegistered = false;
+function ensureTabKeymap(): void {
+  if (tabKeymapRegistered) return;
+  tabKeymapRegistered = true;
+  quilx.keymaps.add('Panel', { Panel: TAB_KEYMAP });
+}
 
 export interface PanelOptions {
   /** Fired when the active child changes (null when the panel is empty). */
@@ -48,6 +69,8 @@ export class Panel {
     bar.setAutohide(true); // a lone child is shown chromeless, with no tab bar
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    this.root.setName('Panel'); // selector identity for command/keymap rules
+    this.root.addCssClass('quilx-panel'); // hook for theme-chrome tab-bar styling
     this.root.append(bar);
     this.root.append(this.view);
 
@@ -58,6 +81,24 @@ export class Panel {
       this.options.onClosed?.(page.getChild());
       if (this.view.getNPages() === 0) this.options.onEmpty?.();
     });
+
+    ensureTabKeymap();
+    this.registerTabCommands();
+  }
+
+  // Each panel owns the commands that switch *its own* tabs, registered against
+  // its root widget instance. The shared `TAB_KEYMAP` (above) routes keystrokes
+  // to the focused panel, which dispatches them back here.
+  private registerTabCommands(): void {
+    const commands: Record<string, () => void> = {
+      'tab:next': () => this.selectNextTab(),
+      'tab:previous': () => this.selectPreviousTab(),
+      'tab:go-to-last': () => this.selectLastTab(),
+    };
+    for (let n = 1; n <= 8; n++) {
+      commands[`tab:go-to-${n}`] = () => this.selectTab(n - 1);
+    }
+    quilx.commands.add(this.root, commands);
   }
 
   /** Add `child` as a new tab and select it. */
@@ -76,7 +117,6 @@ export class Panel {
     const page = this.view.getSelectedPage();
     return page ? page.getChild() : null;
   }
-}
 
   /** Number of open tabs. */
   get tabCount(): number {
@@ -107,3 +147,4 @@ export class Panel {
     const count = this.view.getNPages();
     if (count > 0) this.view.setSelectedPage(this.view.getNthPage(count - 1));
   }
+}

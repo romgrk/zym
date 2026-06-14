@@ -13,7 +13,7 @@
     "poc": "node src/poc/fold-highlight.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'src/**/*.test.ts'",
-    "generate-types": "node-gtk generate-types Gtk-4.0 Adw-1 GtkSource-5 Vte-3.91"
+    "generate-types": "node-gtk generate-types Gtk-4.0 Adw-1 GtkSource-5 Vte-3.91 Ggit-1.0"
   },
   "dependencies": {
     "native-keymap": "^3.3.9",

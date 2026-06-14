@@ -9,12 +9,13 @@
  *   - `remove` now keeps bundles whose source DOESN'T match (the original kept
  *     the matching ones, which removed everything else — inverted).
  *
- * Commands are looked up by the widget's `constructor.name` (and optional CSS
- * selector rule) and dispatched as either a plain callback or a
- * `{ didDispatch }` object, receiving a `CommandEvent`.
+ * Commands are looked up by the widget's selector keys — its `constructor.name`
+ * and its CSS classes (so a class-only selector like `.Panel` works) — and
+ * dispatched as either a plain callback or a `{ didDispatch }` object, receiving
+ * a `CommandEvent`.
  */
 import { Emitter, Disposable } from './util/eventKit.ts';
-import { parseSelector, matchesRule, type Rule } from './util/selectors.ts';
+import { parseSelector, matchesRule, elementMatchKeys, type Rule } from './util/selectors.ts';
 import { unreachable } from './util/assert.ts';
 import { Gtk } from './gi.ts';
 
@@ -37,9 +38,7 @@ export class CommandManager {
   emitter = new Emitter();
 
   get(element: Widget, command: string): CommandEffect | undefined {
-    const commandBundles =
-      (this.commandsByName[element.constructor.name] || [])
-        .concat(this.commandsByElement.get(element) || []);
+    const commandBundles = this.bundlesFor(element);
 
     for (let i = 0; i < commandBundles.length; i++) {
       const bundle = commandBundles[i];
@@ -49,8 +48,17 @@ export class CommandManager {
         return bundle.commands[command];
     }
 
-    console.warn(`Command '${command}' is not registered for ${element.constructor.name}`);
+    console.warn(`Command '${command}' is not registered for ${element.getName()}`);
     return undefined;
+  }
+
+  // All command bundles that could apply to `element`: those indexed under any
+  // of its keys (type, CSS classes, wildcard) plus any registered on the element
+  // instance directly. Callers still confirm each with `matchesRule`.
+  private bundlesFor(element: Widget): CommandBundle[] {
+    const keyed = elementMatchKeys(element)
+      .flatMap((key) => this.commandsByName[key] || []);
+    return keyed.concat(this.commandsByElement.get(element) || []);
   }
 
   /**
@@ -64,9 +72,7 @@ export class CommandManager {
     const result: Array<{ name: string; element: Widget }> = [];
 
     for (const element of elements) {
-      const commandBundles =
-        (this.commandsByName[element.constructor.name] || [])
-          .concat(this.commandsByElement.get(element) || []);
+      const commandBundles = this.bundlesFor(element);
 
       for (const bundle of commandBundles) {
         if (bundle.rule !== true && !matchesRule(element, bundle.rule))
@@ -91,17 +97,12 @@ export class CommandManager {
       const rules = parseSelector(selector);
 
       rules.forEach(rule => {
-        const name = rule.element;
+        const key = rule.key;
 
-        if (!name) {
-          console.warn('No name for rule', rule);
-          return;
-        }
+        if (!this.commandsByName[key])
+          this.commandsByName[key] = [];
 
-        if (!this.commandsByName[name])
-          this.commandsByName[name] = [];
-
-        this.commandsByName[name].push({
+        this.commandsByName[key].push({
           source,
           rule,
           commands,

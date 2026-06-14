@@ -14,7 +14,7 @@
 import { Disposable } from './util/eventKit.ts';
 import { Key } from './keymap/Key.ts';
 import { unreachable } from './util/assert.ts';
-import { parseSelector, matchesRule, type Rule } from './util/selectors.ts';
+import { parseSelector, matchesRule, elementMatchKeys, type Rule } from './util/selectors.ts';
 import { getActiveElements } from './util/getActiveElements.ts';
 import { Gtk } from './gi.ts';
 import { quilx } from './quilx.ts';
@@ -82,12 +82,10 @@ export class KeymapManager {
       const rules = parseSelector(selector);
 
       rules.forEach(rule => {
-        const elementName = rule.element;
-        if (elementName === undefined)
-          return;
-        if (this.keymapsByName[elementName] === undefined)
-          this.keymapsByName[elementName] = [];
-        this.keymapsByName[elementName].push({ rule, keymap });
+        const key = rule.key;
+        if (this.keymapsByName[key] === undefined)
+          this.keymapsByName[key] = [];
+        this.keymapsByName[key].push({ rule, keymap });
       });
     });
 
@@ -109,11 +107,11 @@ export class KeymapManager {
       const rules = parseSelector(selector);
 
       rules.forEach(rule => {
-        const elementName = rule.element;
-        if (elementName === undefined)
+        const key = rule.key;
+        if (this.keymapsByName[key] === undefined)
           return;
-        this.keymapsByName[elementName] =
-          this.keymapsByName[elementName].filter(k => k.keymap !== keymap);
+        this.keymapsByName[key] =
+          this.keymapsByName[key].filter(k => k.keymap !== keymap);
       });
     });
 
@@ -137,9 +135,10 @@ export class KeymapManager {
     const matches: KeybindingMatch[] = [];
 
     for (const element of elements) {
-      const keymaps = this.keymapsByName[element.constructor.name];
+      const keymaps = elementMatchKeys(element)
+        .flatMap((key) => this.keymapsByName[key] || []);
 
-      if (!keymaps)
+      if (keymaps.length === 0)
         continue;
 
       const matchingKeymaps = keymaps.filter(k => matchesRule(element, k.rule));
@@ -165,7 +164,7 @@ export class KeymapManager {
         if (!didDispatch)
           continue;
 
-        console.log(`${element.constructor.name}: [${keybinding}]: ${effect}`);
+        console.log(`${element.getName()}: [${keybinding}]: ${effect}`);
 
         this.queuedKeystrokes = [];
         didCapture = true;

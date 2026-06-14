@@ -30,6 +30,8 @@ export interface UiColors {
   bg?: string;
   /** Line-number gutter foreground. Defaults to `fg` when omitted. */
   lineNumber?: string;
+  /** Separator/border color for chrome (e.g. the header bar's bottom edge). */
+  border?: string;
 }
 
 /*
@@ -117,6 +119,7 @@ function adaptZedTheme(zed: ZedTheme): Theme {
       fg,
       bg: pick('editor.background', 'background'),
       lineNumber: pick('editor.line_number', 'editor.gutter.foreground'),
+      border: pick('border', 'border.variant'),
     },
     syntax,
   };

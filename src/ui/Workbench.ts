@@ -37,6 +37,7 @@ export class Workbench {
     this.vTop.setEndChild(this.vBottom);
 
     this.root = this.vTop;
+    this.root.setName('Workbench'); // selector identity for command/keymap rules
   }
 
   setLeft(panel: Panel | null) {

@@ -15,6 +15,8 @@ import { SyntaxController } from '../../syntax/syntax-controller.ts';
 import { theme } from '../../theme/theme.ts';
 import { createSourceScheme } from '../../theme/createSourceScheme.ts';
 import { addStyles } from '../../styles.ts';
+import { EditorModel } from './EditorModel.ts';
+import { attachVim } from './vim/index.ts';
 import {
   Adw,
   Gtk,
@@ -28,6 +30,26 @@ addStyles(`.quilx-editor { color: ${theme.ui.fg}; }`);
 
 const TAB_WIDTH = 4;
 const RIGHT_MARGIN = 80;
+
+// Opt-in toggle for the custom (vendored vim-mode-plus) modal layer. Off by
+// default: the editor keeps GtkSource.VimIMContext until the port reaches
+// parity. Run with `QUILX_CUSTOM_VIM=1` to drive the new layer instead.
+const USE_CUSTOM_VIM = process.env.QUILX_CUSTOM_VIM === '1';
+
+// AppWindow's status line subscribes to the VimIMContext's command-bar signals.
+// Under the custom layer there is no VimIMContext yet, so we hand the window an
+// inert stand-in; the real command-line/status wiring lands in a later phase.
+function createVimStatusShim(): VimContext {
+  return {
+    on() {},
+    getCommandBarText() {
+      return '';
+    },
+    getCommandText() {
+      return '';
+    },
+  } as unknown as VimContext;
+}
 
 export interface TextEditorOptions {
   /** Surface a load/save message (the toast overlay is window-level). */
@@ -43,6 +65,7 @@ export class TextEditor {
   private readonly buffer: SourceBuffer;
   private readonly view: SourceView;
   private readonly syntax: SyntaxController;
+  private readonly editorModel: EditorModel;
   private readonly onToast: (message: string) => void;
 
   private _currentFile: string | null = null;
@@ -55,8 +78,20 @@ export class TextEditor {
     this.view = this.createView(this.buffer);
     // Tree-sitter highlighting + folding for this view/buffer.
     this.syntax = new SyntaxController(this.view, this.buffer);
-    this.vim = this.createVim(this.view, options.onClose);
+    // The buffer/cursor model the custom vim layer drives.
+    this.editorModel = new EditorModel(this.view, this.buffer);
+
+    if (USE_CUSTOM_VIM) {
+      // Drive modal editing through the vendored vim-mode-plus core. The
+      // VimIMContext is not created, so it doesn't contend for keystrokes.
+      attachVim(this.editorModel);
+      this.vim = createVimStatusShim();
+    } else {
+      this.vim = this.createVim(this.view, options.onClose);
+    }
+
     this.root = this.buildEditorArea();
+    this.root.setName('TextEditor'); // selector identity for command/keymap rules
 
     this.installFoldKeys();
     this.followSystemColorScheme();

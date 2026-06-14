@@ -9,6 +9,7 @@
       "style": {
         "background": "#2d2d2d",
         "foreground": "#bbc2cf",
+        "border": "#434346",
         "editor.background": "#2d2d2d",
         "editor.foreground": "#bbc2cf",
         "editor.line_number": "#888888",

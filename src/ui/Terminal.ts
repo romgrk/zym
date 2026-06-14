@@ -49,6 +49,7 @@ export class Terminal {
 
   private createTerminal(): VteTerminal {
     const terminal = new Vte.Terminal();
+    terminal.setName('Terminal'); // selector identity for command/keymap rules
     terminal.setVexpand(true);
     terminal.setHexpand(true);
     terminal.setScrollbackLines(SCROLLBACK_LINES);
