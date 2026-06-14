@@ -8,6 +8,7 @@
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
+import { openFilePicker } from './file-picker.ts';
 import {
   Adw, Gio, Gtk, GtkSource,
   type Application, type ApplicationWindow, type SourceBuffer,
@@ -252,6 +253,8 @@ export class EditorWindow {
 
   private registerActions() {
     this.addAction('open', '<Control>o', () => this.openDialog());
+    this.addAction('find-file', '<Alt>o', () =>
+      openFilePicker(this.window, (path) => this.loadFile(path)));
     this.addAction('save', '<Control>s', () =>
       this.currentFile ? this.saveTo(this.currentFile) : this.saveAsDialog());
     this.addAction('save-as', '<Control><Shift>s', () => this.saveAsDialog());
@@ -304,7 +307,7 @@ export class EditorWindow {
       } catch {
         // The user dismissed the dialog; nothing to do.
       }
-    }, null);
+    });
   }
 
   private saveAsDialog() {
@@ -318,7 +321,7 @@ export class EditorWindow {
       } catch {
         // Cancelled.
       }
-    }, null);
+    });
   }
 
   // --- Window chrome helpers -------------------------------------------------
