@@ -64,17 +64,15 @@ export class DiagnosticsView {
     const path = this.getPath();
     this.severityByLine.clear();
     const underlines: Underline[] = [];
-    const entry = path ? quilx.lsp.diagnostics.get(path) : undefined;
-    if (entry) {
-      const lineAt = (row: number) => this.model.lineTextForBufferRow(row);
-      for (const diag of entry.diagnostics) {
-        const severity = diag.severity ?? DiagnosticSeverity.Error;
-        const range = lspToRange(diag.range, lineAt, entry.encoding);
-        underlines.push({ range: visibleRange(range), color: severityStyle(severity).color });
-        const line = range.start.row;
-        const worst = this.severityByLine.get(line);
-        if (worst === undefined || severity < worst) this.severityByLine.set(line, severity);
-      }
+    const entries = path ? quilx.lsp.diagnostics.get(path) : [];
+    const lineAt = (row: number) => this.model.lineTextForBufferRow(row);
+    for (const { diagnostic, encoding } of entries) {
+      const severity = diagnostic.severity ?? DiagnosticSeverity.Error;
+      const range = lspToRange(diagnostic.range, lineAt, encoding);
+      underlines.push({ range: visibleRange(range), color: severityStyle(severity).color });
+      const line = range.start.row;
+      const worst = this.severityByLine.get(line);
+      if (worst === undefined || severity < worst) this.severityByLine.set(line, severity);
     }
     this.underlines.setUnderlines(underlines);
     this.renderer.queueDraw();

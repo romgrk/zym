@@ -95,14 +95,55 @@ overrides: disable a server, change priority, force one, or add servers.
    (`languageForPath`, `grammarFor`, `activeServers` with activation + groups +
    priority + injectable `fileExists`). Unit-tested. **Additive — not yet
    consumed** by `grammar.ts`/`LspManager`.
-2. [ ] Repoint `grammar.ts` to read grammar specs from the registry (keep
+2. [x] Repoint `grammar.ts` to read grammar specs from the registry (keep
    wasm/query loading + the preload). `langIdForPath` → `languageForPath`.
-3. [ ] Repoint `LspManager` to `activeServers(file)`; support multiple active
-   servers.
-4. [ ] Namespace `DiagnosticsStore` by `(serverName, path)` + merge.
-5. [ ] Delete `lsp/registry.ts` fetch/cache + vendored `languages.toml` + `smol-toml`.
-6. [ ] User config: `lsp.servers` overrides keep working (now keyed into the
-   registry: disable / priority / command / settings / add).
+   Public API (`langIdForPath`/`loadGrammar`/`getGrammar`/`preloadGrammars`/
+   `createParser`) unchanged, so no callers were touched. `SPECS`/`GrammarSpec`/
+   `FOLD_TYPES` deleted; specs now come from `languages.grammarFor` +
+   `languages.grammarLanguageIds`.
+3. [x] Repoint `LspManager` to `activeServers(file)`; support multiple active
+   servers. `resolve` → `resolveServers` (all active, each with reuse key +
+   `primary` flag); didOpen/didChange/didSave/didClose fan out to every active
+   server (didOpen guarded by `isOpen` so a crash-restart can't double-open a
+   healthy sibling); requests (hover/definition/references) target the primary
+   (grouped server wins over ungrouped linters; tie-break on priority — see
+   `primaryKeyOf`). `LspClient`/`LanguageServer` migrated off `registry.ts`'s
+   `ServerSpec` to `lang/types.ts`'s `ServerDef` (+ `initializationOptions` now
+   sent in `initialize`). `configure` only honors `enable`; overrides deferred
+   to phase 6. `refreshRegistry` is a no-op pending phase-5 removal.
+   **Caveat (fixed in phase 4):** diagnostics are still keyed by path alone, so
+   two servers publishing for the same file (e.g. eslint + tsserver) clobber.
+4. [x] Namespace `DiagnosticsStore` by `(serverName, path)` + merge. Storage is
+   `path → (serverName → {diagnostics, encoding})`; `set` takes a `serverName`
+   and replaces only that server's set (empty clears just it). `get(path)`
+   returns a merged `DiagnosticEntry[]` (each diagnostic paired with its own
+   server's encoding, since servers may negotiate different ones), sorted by
+   position. Added `clearServer(serverName, path)` (crash recovery clears only
+   the dead server, not its live siblings); `clear(path)` still drops the whole
+   path (on close). `DiagnosticsView`/`DiagnosticsPanel` updated to consume the
+   merged entries. Unit-tested (accumulate-not-clobber, per-server replace,
+   clearServer vs clear, did-update). Closes the phase-3 clobber caveat.
+5. [x] Delete `lsp/registry.ts` fetch/cache + `registry.test.ts` + vendored
+   `languages.toml` + the `smol-toml` dependency. Also removed the now-dead
+   `LspManager.refreshRegistry`, the `lsp.configUrl`/`lsp.refreshOnLaunch` config
+   schema + their AppWindow wiring, and `LspConfig.configUrl`. Server configs are
+   now solely the curated built-in pack (`lang/builtin.ts`); Helix's
+   `languages.toml` remains only an authoring *reference* (a comment), not a
+   runtime dependency. `disabledLanguages`/`lsp.servers` config retained for
+   phase 6 (currently accepted but not yet applied).
+6. [x] User config keyed into the registry. `LanguageRegistry.setOverrides({
+   disabledLanguages, servers })` stores config; `effectiveServers(langId)`
+   applies it (disabled language → no servers; per-server override by name to
+   disable/tweak command/args/settings/roots/priority/group; an unknown name
+   with a `command` adds a server). `activeServers` resolves from
+   `effectiveServers`, so overrides flow through activation + groups + priority.
+   `lsp.servers` is now keyed **langId → serverName → override**.
+   `LspManager.configure` applies overrides and reconciles open docs (restart
+   under the new config). Overrides touch server resolution only — detection and
+   grammars (highlighting) are unaffected by `disabledLanguages`. Unit-tested.
+
+**Migration complete** — grammar + LSP config is fully registry-driven, curated,
+and override-able; no runtime fetch remains.
 
 ## Open questions
 

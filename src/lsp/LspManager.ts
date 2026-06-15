@@ -2,13 +2,16 @@
  * LspManager — the orchestration core that ties editors to language servers.
  *
  * Responsibilities:
- *  - resolve a file → language → server config (via `LspRegistry`)
- *  - resolve the project root (root markers → `.git` → file's dir)
+ *  - resolve a file → its active servers (via `LanguageRegistry.activeServers`):
+ *    a language may run several servers per project (e.g. flow + eslint), each
+ *    gated by root markers, so one document can drive more than one server
  *  - spawn/reuse one `LanguageServer` per (server, rootDir), so a project shares
  *    a single process
- *  - drive document sync from editor lifecycle calls (didOpen/Change/Save/Close)
+ *  - drive document sync to *every* active server (didOpen/Change/Save/Close)
  *  - route published diagnostics into a `DiagnosticsStore` keyed by file path
- *  - answer go-to-definition, resolving the LSP target back to a quilx `Point`
+ *  - answer requests (definition/references/hover) against the *primary* server
+ *    (the language server; ungrouped linters contribute diagnostics only),
+ *    resolving the LSP target back to a quilx `Point`
  *
  * This layer is GTK-free: it talks to editors through the small `LspDocument`
  * interface, so the GTK `TextEditor` wiring is a thin adapter added later. The
@@ -16,10 +19,14 @@
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
-import type { Definition, LocationLink, Location, Position, Hover } from 'vscode-languageserver-protocol';
+import { CompletionTriggerKind } from 'vscode-languageserver-protocol';
+import type {
+  Definition, LocationLink, Location, Position, Hover, CompletionItem,
+} from 'vscode-languageserver-protocol';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { Point } from '../text/Point.ts';
-import { LspRegistry, type ServerSpec, type RegistryOptions } from './registry.ts';
+import { languages } from '../lang/index.ts';
+import type { ServerDef, ActiveServer, ServerOverrides } from '../lang/types.ts';
 import { LanguageServer, serverKey, type NavigationKind } from './LanguageServer.ts';
 export type { NavigationKind } from './LanguageServer.ts';
 import { DiagnosticsStore } from './diagnostics/DiagnosticsStore.ts';
@@ -58,10 +65,10 @@ export interface LspNotice {
 
 export interface LspConfig {
   enable?: boolean;
+  /** Language ids to suppress entirely (no servers start). */
   disabledLanguages?: string[];
-  serverOverrides?: Record<string, import('./registry.ts').ServerOverride>;
-  /** Override URL for the languages.toml source; empty/undefined uses the default. */
-  configUrl?: string;
+  /** Per-language server overrides (disable/tweak a server, or add one). */
+  serverOverrides?: ServerOverrides;
 }
 
 // Crash recovery: restart a crashed server with exponential backoff, giving up
@@ -79,9 +86,18 @@ interface RestartState {
   pendingTimer?: ReturnType<typeof setTimeout>;
 }
 
+// One server that should run for a file: its def, located project root, reuse
+// key, and whether it's the primary (the language server requests target).
+interface ResolvedServer {
+  langId: string;
+  server: ServerDef;
+  rootDir: string;
+  key: string;
+  primary: boolean;
+}
+
 export class LspManager {
   readonly diagnostics: DiagnosticsStore;
-  private registry: LspRegistry;
   private enabled = true;
   private readonly servers = new Map<string, LanguageServer>();
   // Open documents (path → adapter), so a restarted server can re-open them.
@@ -90,33 +106,37 @@ export class LspManager {
   private readonly restartState = new Map<string, RestartState>();
   private readonly emitter = new Emitter();
 
-  constructor(registry: LspRegistry = new LspRegistry()) {
-    this.registry = registry;
+  constructor() {
     this.diagnostics = new DiagnosticsStore();
   }
 
   /**
-   * Apply user config (from `lsp.*`). Rebuilds the registry when the source URL
-   * changes; otherwise just updates options. Disabling shuts down running servers.
+   * Apply user config (from `lsp.*`): enable/disable, language suppression, and
+   * per-server overrides (keyed into the `LanguageRegistry`). Since overrides
+   * change which servers a file resolves to, open documents are reconciled —
+   * every server is restarted under the new config (config changes are rare).
    */
   configure(config: LspConfig): void {
     this.enabled = config.enable ?? true;
-    const options: RegistryOptions = {
+    languages.setOverrides({
       disabledLanguages: config.disabledLanguages,
-      serverOverrides: config.serverOverrides,
-    };
-    const url = config.configUrl?.trim();
-    this.registry = url
-      ? new LspRegistry(options, url)
-      : (this.registry.setOptions(options), this.registry);
-    if (!this.enabled) void this.shutdownAll();
+      servers: config.serverOverrides,
+    });
+    void this.reload();
   }
 
-  /** Refresh server configs from upstream Helix data in the background. */
-  async refreshRegistry(): Promise<boolean> {
-    const ok = await this.registry.refresh();
-    if (ok) this.notice('trace', 'server config catalog updated');
-    return ok;
+  // Restart everything under the current config: shut every server down, clear
+  // their diagnostics, then re-open the still-open documents (which re-resolve
+  // against the new overrides). A no-op at startup, when nothing is open yet.
+  private async reload(): Promise<void> {
+    const docs = [...this.openDocs.values()];
+    await this.shutdownAll();
+    for (const doc of docs) {
+      const path = doc.getPath();
+      if (path) this.diagnostics.clear(path);
+    }
+    if (!this.enabled) return;
+    for (const doc of docs) this.didOpen(doc);
   }
 
   /** Subscribe to major LSP events (server start/ready/exit/failure) for logging. */
@@ -134,32 +154,41 @@ export class LspManager {
     if (!this.enabled) return;
     const path = doc.getPath();
     if (!path) return;
-    const server = this.ensureServer(path);
-    if (!server) return;
+    const resolved = this.resolveServers(path);
+    if (resolved.length === 0) return;
     this.openDocs.set(path, doc); // retained so a restart can re-open it
-    server.didOpen(path, server.langId, doc.getText());
+    const text = doc.getText();
+    for (const r of resolved) {
+      const server = this.ensureServer(r);
+      // Guard against a duplicate didOpen (e.g. a crash-restart re-opens the doc
+      // for the one server that died, while its siblings are already open).
+      if (server && !server.isOpen(path)) server.didOpen(path, r.langId, text);
+    }
   }
 
   didChange(doc: LspDocument): void {
     const path = doc.getPath();
     if (!path) return;
-    const server = this.serverForPath(path);
-    if (server?.isOpen(path)) server.didChange(path, doc.getText());
+    const text = doc.getText();
+    for (const server of this.runningServersForPath(path)) {
+      if (server.isOpen(path)) server.didChange(path, text);
+    }
   }
 
   didSave(doc: LspDocument): void {
     const path = doc.getPath();
     if (!path) return;
-    const server = this.serverForPath(path);
-    if (server?.isOpen(path)) server.didSave(path, doc.getText());
+    const text = doc.getText();
+    for (const server of this.runningServersForPath(path)) {
+      if (server.isOpen(path)) server.didSave(path, text);
+    }
   }
 
   didClose(doc: LspDocument): void {
     const path = doc.getPath();
     if (!path) return;
     this.openDocs.delete(path);
-    const server = this.serverForPath(path);
-    server?.didClose(path);
+    for (const server of this.runningServersForPath(path)) server.didClose(path);
     this.diagnostics.clear(path);
   }
 
@@ -170,7 +199,7 @@ export class LspManager {
     if (!this.enabled) return null;
     const path = doc.getPath();
     if (!path) return null;
-    const server = this.serverForPath(path);
+    const server = this.primaryServerForPath(path);
     if (!server || !server.supportsNavigation(kind)) return null;
     const cursor = doc.getCursorBufferPosition();
     const position = pointToPosition(cursor, doc.lineTextForRow(cursor.row), server.positionEncoding);
@@ -185,7 +214,7 @@ export class LspManager {
     if (!this.enabled) return [];
     const path = doc.getPath();
     if (!path) return [];
-    const server = this.serverForPath(path);
+    const server = this.primaryServerForPath(path);
     if (!server || !server.hasReferences) return [];
     const cursor = doc.getCursorBufferPosition();
     const position = pointToPosition(cursor, doc.lineTextForRow(cursor.row), server.positionEncoding);
@@ -199,7 +228,7 @@ export class LspManager {
     if (!this.enabled) return null;
     const path = doc.getPath();
     if (!path) return null;
-    const server = this.serverForPath(path);
+    const server = this.primaryServerForPath(path);
     if (!server || !server.hasHover) return null;
     const cursor = doc.getCursorBufferPosition();
     const position = pointToPosition(cursor, doc.lineTextForRow(cursor.row), server.positionEncoding);
@@ -213,32 +242,74 @@ export class LspManager {
     return markdown || null;
   }
 
-  // --- server management -----------------------------------------------------
-
-  /** The already-running server for a path, if any (no spawn). */
-  private serverForPath(path: string): LanguageServer | null {
-    const resolved = this.resolve(path);
-    if (!resolved) return null;
-    return this.servers.get(resolved.key) ?? null;
+  /**
+   * Completion candidates at the cursor (raw LSP items; the UI source adapts them
+   * to the framework's shape). Targets the primary server. Bounded by a timeout
+   * so a slow server can't stall the popup.
+   */
+  async completion(doc: LspDocument, opts: { triggerCharacter?: string } = {}): Promise<CompletionItem[]> {
+    if (!this.enabled) return [];
+    const path = doc.getPath();
+    if (!path) return [];
+    const server = this.primaryServerForPath(path);
+    if (!server || !server.hasCompletion) return [];
+    const cursor = doc.getCursorBufferPosition();
+    const position = pointToPosition(cursor, doc.lineTextForRow(cursor.row), server.positionEncoding);
+    const context = opts.triggerCharacter
+      ? { triggerKind: CompletionTriggerKind.TriggerCharacter, triggerCharacter: opts.triggerCharacter }
+      : { triggerKind: CompletionTriggerKind.Invoked };
+    const result = await Promise.race([
+      server.completion(path, position, context),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (!result) return [];
+    return Array.isArray(result) ? result : result.items;
   }
 
-  /** The server for a path, spawning + initializing it if needed. */
-  private ensureServer(path: string): LanguageServer | null {
-    const resolved = this.resolve(path);
-    if (!resolved) return null;
-    let server = this.servers.get(resolved.key);
+  /** Trigger characters (e.g. `.`) the primary server wants completion opened on. */
+  completionTriggerCharacters(doc: LspDocument): string[] {
+    const path = doc.getPath();
+    if (!path) return [];
+    return this.primaryServerForPath(path)?.completionTriggerCharacters ?? [];
+  }
+
+  // --- server management -----------------------------------------------------
+
+  /** Already-running servers for a path (no spawn), in resolution order. */
+  private runningServersForPath(path: string): LanguageServer[] {
+    const out: LanguageServer[] = [];
+    for (const r of this.resolveServers(path)) {
+      const server = this.servers.get(r.key);
+      if (server) out.push(server);
+    }
+    return out;
+  }
+
+  /**
+   * The running server requests target — the primary (language server) for the
+   * path, if it is up. Ungrouped linters never become primary, so requests
+   * (hover/definition/references) skip them.
+   */
+  private primaryServerForPath(path: string): LanguageServer | null {
+    const primary = this.resolveServers(path).find((r) => r.primary);
+    return primary ? this.servers.get(primary.key) ?? null : null;
+  }
+
+  /** Spawn + initialize the server for a resolved entry if not already running. */
+  private ensureServer(r: ResolvedServer): LanguageServer | null {
+    const { server: spec, langId, rootDir, key } = r;
+    let server = this.servers.get(key);
     if (!server) {
-      const { spec, langId, key } = resolved;
       // Starting now supersedes any pending backoff restart for this server.
       const pending = this.restartState.get(key)?.pendingTimer;
       if (pending) {
         clearTimeout(pending);
         this.restartState.get(key)!.pendingTimer = undefined;
       }
-      server = new LanguageServer(spec, langId, resolved.rootDir);
+      server = new LanguageServer(spec, langId, rootDir);
       this.servers.set(key, server);
       server.onDiagnostics((e) => {
-        this.diagnostics.set(uriToPath(e.uri), e.diagnostics, server!.positionEncoding);
+        this.diagnostics.set(spec.name, uriToPath(e.uri), e.diagnostics, server!.positionEncoding);
       });
       server.onExit((code) => {
         this.servers.delete(key);
@@ -250,7 +321,7 @@ export class LspManager {
         this.notice('warning', `${spec.name} exited`, code != null ? `exit code ${code}` : undefined);
         this.recoverFromCrash(key, spec, langId);
       });
-      this.notice('trace', `starting ${spec.command} for ${langId}`, resolved.rootDir);
+      this.notice('trace', `starting ${spec.command} for ${langId}`, rootDir);
       void server
         .start()
         .then(() => {
@@ -273,9 +344,10 @@ export class LspManager {
   // A server crashed: clear its now-stale diagnostics, then schedule a restart
   // with exponential backoff (unless disabled, nothing is open, or it's crashing
   // in a tight loop — then give up with an error).
-  private recoverFromCrash(key: string, spec: ServerSpec, langId: string): void {
+  private recoverFromCrash(key: string, spec: ServerDef, langId: string): void {
     const docs = this.docsForKey(key);
-    for (const { path } of docs) this.diagnostics.clear(path);
+    // Clear only this server's now-stale diagnostics; siblings (e.g. eslint) keep theirs.
+    for (const { path } of docs) this.diagnostics.clearServer(spec.name, path);
 
     if (!this.enabled || docs.length === 0) {
       this.restartState.delete(key);
@@ -309,11 +381,11 @@ export class LspManager {
     for (const { doc } of this.docsForKey(key)) this.didOpen(doc);
   }
 
-  // Open documents that currently route to `key`.
+  // Open documents that currently route to `key` (one doc may route to several).
   private docsForKey(key: string): { path: string; doc: LspDocument }[] {
     const out: { path: string; doc: LspDocument }[] = [];
     for (const [path, doc] of this.openDocs) {
-      if (this.resolve(path)?.key === key) out.push({ path, doc });
+      if (this.resolveServers(path).some((r) => r.key === key)) out.push({ path, doc });
     }
     return out;
   }
@@ -327,13 +399,23 @@ export class LspManager {
     return st;
   }
 
-  /** Resolve a path to (langId, server spec, rootDir, reuse key), or null. */
-  private resolve(path: string): { langId: string; spec: ServerSpec; rootDir: string; key: string } | null {
-    const match = this.registry.serverSpecsForPath(path);
-    if (!match || match.servers.length === 0) return null;
-    const spec = match.servers[0]; // Phase 1: first server only
-    const rootDir = resolveRootDir(path, match.roots);
-    return { langId: match.langId, spec, rootDir, key: serverKey(spec.name, rootDir) };
+  /**
+   * Resolve a path to every server that should run for it (per-project: root
+   * markers gate activation, exclusion groups + priority pick within a group;
+   * see `LanguageRegistry.activeServers`). The primary is the language server
+   * requests target (highest-priority grouped server); ungrouped linters are
+   * additive (diagnostics only). Empty when the file maps to no active server.
+   */
+  private resolveServers(path: string): ResolvedServer[] {
+    const langId = languages.languageForPath(path);
+    if (!langId) return [];
+    const active = languages.activeServers(path);
+    if (active.length === 0) return [];
+    const primaryKey = primaryKeyOf(active);
+    return active.map(({ server, rootDir }) => {
+      const key = serverKey(server.name, rootDir);
+      return { langId, server, rootDir, key, primary: key === primaryKey };
+    });
   }
 
 
@@ -348,6 +430,21 @@ export class LspManager {
     this.servers.clear();
     await Promise.all(all.map((s) => s.shutdown()));
   }
+}
+
+// The primary among active servers — the one requests (hover/definition/
+// references) target. Grouped servers are the actual language servers, so a
+// grouped server always wins over ungrouped linters; ties break on priority.
+// Falls back to the first active server when none is grouped. Exported for tests.
+export function primaryKeyOf(active: ActiveServer[]): string | null {
+  const grouped = active.filter((a) => a.server.group);
+  const pool = grouped.length > 0 ? grouped : active;
+  if (pool.length === 0) return null;
+  let best = pool[0];
+  for (const a of pool) {
+    if ((a.server.priority ?? 0) > (best.server.priority ?? 0)) best = a;
+  }
+  return serverKey(best.server.name, best.rootDir);
 }
 
 // --- pure helpers (exported for testing) ------------------------------------

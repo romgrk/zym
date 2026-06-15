@@ -102,23 +102,15 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
   'lsp.disabledLanguages': {
     type: 'array',
     default: [],
-    description: 'Language ids (Helix names, e.g. "python") for which no server starts.',
+    description: 'Language ids (e.g. "typescript") for which no server starts.',
   },
   'lsp.servers': {
     type: 'object',
     default: {},
     description:
-      'Per-language server overrides keyed by language id, e.g. { "typescript": { "command": "…", "args": [], "config": {} } }. Deep-merged over the fetched config.',
-  },
-  'lsp.configUrl': {
-    type: 'string',
-    default: '',
-    description: 'Override URL for the Helix languages.toml server-config source; empty uses the default.',
-  },
-  'lsp.refreshOnLaunch': {
-    type: 'boolean',
-    default: true,
-    description: 'Fetch the latest languages.toml on startup (falls back to the cached/vendored copy).',
+      'Per-language server overrides, keyed by language id then server name, e.g. ' +
+      '{ "typescript": { "deno": { "disable": true }, "typescript-language-server": { "command": "…", "priority": 50 } } }. ' +
+      'Set "disable": true to turn a server off; an unknown name with a "command" adds a new server.',
   },
 };
 

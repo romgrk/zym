@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { languages } from '../lang/index.ts';
 
 const require_ = createRequire(import.meta.url);
 const Parser = require_('web-tree-sitter') as any;
@@ -36,13 +37,6 @@ export interface Grammar {
   foldTypes: Set<string>;
 }
 
-interface GrammarSpec {
-  wasm: string;          // resolvable module path to the grammar .wasm
-  extensions: string[];  // file extensions that select this grammar
-  query: string;         // queries/<name>/highlights.scm to load for this grammar
-  foldTypes: string[];   // node types that fold when they span >1 line
-}
-
 // Highlights queries are vendored verbatim from Zed (GPL-3.0; see /LICENSE and the
 // header in each .scm) under queries/<name>/highlights.scm. They use Zed's capture
 // names; the highlighter maps those to colors with longest-prefix fallback — e.g.
@@ -61,41 +55,20 @@ function loadHighlights(name: string): string {
   return Fs.readFileSync(Path.join(QUERIES_DIR, name, 'highlights.scm'), 'utf8');
 }
 
-const FOLD_TYPES = [
-  'statement_block', 'object', 'array', 'class_body', 'switch_body',
-  'named_imports', 'arguments', 'interface_body', 'enum_body', 'object_type',
-];
-
-const SPECS: Record<string, GrammarSpec> = {
-  typescript: {
-    wasm: 'tree-sitter-wasms/out/tree-sitter-typescript.wasm',
-    extensions: ['.ts', '.mts', '.cts'],
-    query: 'typescript',
-    foldTypes: FOLD_TYPES,
-  },
-  // tsx grammar is the superset that backs TSX, JSX and plain JS.
-  tsx: {
-    wasm: 'tree-sitter-wasms/out/tree-sitter-tsx.wasm',
-    extensions: ['.tsx', '.jsx', '.js', '.mjs', '.cjs'],
-    query: 'tsx',
-    foldTypes: FOLD_TYPES,
-  },
-};
+// The language definitions (extensions, grammar wasm + query + fold types) live
+// in the `LanguageRegistry` (src/lang); this module just loads/caches the wasm
+// and runs the query. Grammar specs come from `languages.grammarFor`.
 
 /** Map a file path to a known language id, or null if unsupported. */
 export function langIdForPath(path: string): string | null {
-  const ext = Path.extname(path).toLowerCase();
-  for (const [id, spec] of Object.entries(SPECS)) {
-    if (spec.extensions.includes(ext)) return id;
-  }
-  return null;
+  return languages.languageForPath(path);
 }
 
 const cache = new Map<string, Grammar>();
 
 /** Load (and cache) a grammar by language id, or null if unknown. */
 export async function loadGrammar(langId: string): Promise<Grammar | null> {
-  const spec = SPECS[langId];
+  const spec = languages.grammarFor(langId);
   if (!spec) return null;
   const cached = cache.get(langId);
   if (cached) return cached;
@@ -123,7 +96,7 @@ export function getGrammar(langId: string): Grammar | null {
  */
 export async function preloadGrammars(): Promise<void> {
   await initTreeSitter();
-  for (const id of Object.keys(SPECS)) await loadGrammar(id);
+  for (const id of languages.grammarLanguageIds()) await loadGrammar(id);
 }
 
 /** Create a fresh parser bound to a grammar's language. */

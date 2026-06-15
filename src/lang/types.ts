@@ -57,3 +57,23 @@ export interface ActiveServer {
   server: ServerDef;
   rootDir: string;
 }
+
+/**
+ * User override for one server within a language, identified by server name.
+ * A name matching a built-in server tweaks it; an unknown name with a `command`
+ * adds a new server. Set fields replace the built-in's; `disable` removes it.
+ */
+export interface ServerOverride {
+  disable?: boolean;
+  command?: string;
+  args?: string[];
+  initializationOptions?: unknown;
+  settings?: unknown;
+  roots?: string[];
+  singleFile?: boolean;
+  group?: string;
+  priority?: number;
+}
+
+/** Per-language server overrides, keyed by language id then by server name. */
+export type ServerOverrides = Record<string, Record<string, ServerOverride>>;

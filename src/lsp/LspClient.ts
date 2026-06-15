@@ -19,10 +19,10 @@ import {
   type MessageConnection,
 } from 'vscode-jsonrpc/node';
 import { Emitter, Disposable } from '../util/eventKit.ts';
-import type { ServerSpec } from './registry.ts';
+import type { ServerDef } from '../lang/types.ts';
 
 export class LspClient {
-  readonly spec: ServerSpec;
+  readonly spec: ServerDef;
   readonly rootDir: string;
   private proc: ChildProcessWithoutNullStreams | null = null;
   private connection: MessageConnection | null = null;
@@ -30,7 +30,7 @@ export class LspClient {
   private stopped = false;
   private exited = false;
 
-  constructor(spec: ServerSpec, rootDir: string) {
+  constructor(spec: ServerDef, rootDir: string) {
     this.spec = spec;
     this.rootDir = rootDir;
   }
@@ -45,9 +45,9 @@ export class LspClient {
    * to spawn (e.g. the command is not on PATH).
    */
   start(): void {
-    const proc = spawn(this.spec.command, this.spec.args, {
+    const proc = spawn(this.spec.command, this.spec.args ?? [], {
       cwd: this.rootDir,
-      env: { ...process.env, ...this.spec.environment },
+      env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.proc = proc;

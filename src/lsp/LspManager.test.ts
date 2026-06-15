@@ -4,7 +4,9 @@ import * as Fs from 'node:fs';
 import * as Os from 'node:os';
 import * as Path from 'node:path';
 import { Point } from '../text/Point.ts';
-import { resolveRootDir, locationToTarget, type LspDocument } from './LspManager.ts';
+import { resolveRootDir, locationToTarget, primaryKeyOf, type LspDocument } from './LspManager.ts';
+import { serverKey } from './LanguageServer.ts';
+import type { ActiveServer } from '../lang/types.ts';
 import { pathToUri } from './position.ts';
 
 function tmpTree(): string {
@@ -52,6 +54,30 @@ test('resolveRootDir prefers a closer marker over a farther .git', () => {
   Fs.writeFileSync(file, '');
   assert.equal(resolveRootDir(file, ['Cargo.toml']), inner);
   Fs.rmSync(root, { recursive: true, force: true });
+});
+
+const active = (name: string, opts: { group?: string; priority?: number } = {}): ActiveServer => ({
+  server: { name, command: name, group: opts.group, priority: opts.priority },
+  rootDir: '/proj',
+});
+
+test('primaryKeyOf: a grouped server wins over an ungrouped linter', () => {
+  // tsserver (grouped) + eslint (ungrouped) → requests target tsserver.
+  const servers = [active('eslint'), active('tsserver', { group: 'js-types', priority: 10 })];
+  assert.equal(primaryKeyOf(servers), serverKey('tsserver', '/proj'));
+});
+
+test('primaryKeyOf: among grouped servers the highest priority wins', () => {
+  const servers = [
+    active('tsserver', { group: 'js-types', priority: 10 }),
+    active('deno', { group: 'js-types', priority: 30 }),
+  ];
+  assert.equal(primaryKeyOf(servers), serverKey('deno', '/proj'));
+});
+
+test('primaryKeyOf: with only ungrouped servers, falls back to the first', () => {
+  assert.equal(primaryKeyOf([active('eslint'), active('other')]), serverKey('eslint', '/proj'));
+  assert.equal(primaryKeyOf([]), null);
 });
 
 const fakeDoc = (path: string | null, lines: string[]): LspDocument => ({

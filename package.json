@@ -20,7 +20,6 @@
     "native-keymap": "^3.3.9",
     "node-gtk": "link:../node-gtk",
     "postcss-selector-parser": "^7.1.4",
-    "smol-toml": "^1.6.1",
     "vscode-jsonrpc": "^9.0.0",
     "vscode-languageserver-protocol": "^3.18.0"
   },

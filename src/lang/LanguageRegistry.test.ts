@@ -58,6 +58,65 @@ test('no project markers: nothing activates', () => {
   assert.deepEqual(reg.activeServers('/proj/a.ts', { fileExists: () => false }), []);
 });
 
+test('disabledLanguages: no servers activate, but detection still works', () => {
+  const reg = builtins();
+  reg.setOverrides({ disabledLanguages: ['typescript'] });
+  assert.deepEqual(reg.effectiveServers('typescript'), []);
+  assert.deepEqual(reg.activeServers('/proj/a.ts', { fileExists: present('/proj/tsconfig.json') }), []);
+  // Detection/grammar are untouched — highlighting keeps working when LSP is off.
+  assert.equal(reg.languageForPath('/proj/a.ts'), 'typescript');
+  assert.equal(reg.grammarFor('typescript')?.query, 'typescript');
+});
+
+test('override can disable a single server, leaving the rest', () => {
+  const reg = builtins();
+  reg.setOverrides({ servers: { typescript: { deno: { disable: true } } } });
+  const names = reg.effectiveServers('typescript').map((s) => s.name).sort();
+  assert.deepEqual(names, ['eslint', 'typescript-language-server']);
+});
+
+test('override priority flips which server wins a group', () => {
+  const reg = builtins();
+  // Force tsserver over deno in a Deno project by lifting its priority above 30.
+  reg.setOverrides({ servers: { typescript: { 'typescript-language-server': { priority: 99 } } } });
+  assert.deepEqual(
+    names(reg, '/proj/a.ts', present('/proj/deno.json', '/proj/tsconfig.json')),
+    ['typescript-language-server'],
+  );
+});
+
+test('override can change a server command/args', () => {
+  const reg = builtins();
+  reg.setOverrides({ servers: { typescript: { 'typescript-language-server': { command: '/custom/tsserver', args: ['--foo'] } } } });
+  const ts = reg.effectiveServers('typescript').find((s) => s.name === 'typescript-language-server');
+  assert.equal(ts?.command, '/custom/tsserver');
+  assert.deepEqual(ts?.args, ['--foo']);
+});
+
+test('an unknown server name with a command adds a server (ignored without one)', () => {
+  const reg = builtins();
+  reg.setOverrides({
+    servers: {
+      typescript: {
+        custom: { command: 'my-lsp', args: ['--stdio'], singleFile: true },
+        noCommand: { priority: 5 }, // no command → not added
+      },
+    },
+  });
+  const effective = reg.effectiveServers('typescript');
+  assert.ok(effective.some((s) => s.name === 'custom' && s.command === 'my-lsp'));
+  assert.ok(!effective.some((s) => s.name === 'noCommand'));
+  // The added singleFile server activates with no project markers.
+  assert.ok(names(reg, '/proj/a.ts', () => false).includes('custom'));
+});
+
+test('setOverrides with empty config clears prior overrides', () => {
+  const reg = builtins();
+  reg.setOverrides({ disabledLanguages: ['typescript'] });
+  reg.setOverrides({});
+  assert.ok(reg.effectiveServers('typescript').length > 0);
+});
+
 test('singleFile server activates without a root (root = file dir)', () => {
   const reg = new LanguageRegistry();
   reg.registerLanguage({ id: 'x', fileTypes: ['x'] });

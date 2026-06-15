@@ -51,18 +51,17 @@ export class DiagnosticsPanel {
     const store = quilx.lsp.diagnostics;
     const items = [];
     for (const path of store.paths().sort()) {
-      const entry = store.get(path);
-      if (!entry) continue;
-      for (const diag of entry.diagnostics) {
-        const sev = severityStyle(diag.severity ?? DiagnosticSeverity.Error);
-        const message = typeof diag.message === 'string' ? diag.message : (diag.message as { value: string }).value;
+      for (const { diagnostic } of store.get(path)) {
+        const sev = severityStyle(diagnostic.severity ?? DiagnosticSeverity.Error);
+        const message =
+          typeof diagnostic.message === 'string' ? diagnostic.message : (diagnostic.message as { value: string }).value;
         items.push({
           path,
-          line: diag.range.start.line,
-          character: diag.range.start.character,
+          line: diagnostic.range.start.line,
+          character: diagnostic.range.start.character,
           glyph: sev.glyph,
           glyphColor: sev.color,
-          location: `${Path.basename(path)}:${diag.range.start.line + 1}`, // 1-based line, no column
+          location: `${Path.basename(path)}:${diagnostic.range.start.line + 1}`, // 1-based line, no column
           text: message,
         });
       }
