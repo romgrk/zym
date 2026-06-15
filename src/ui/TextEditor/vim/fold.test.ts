@@ -68,3 +68,42 @@ test('diz deletes the fold body; daz deletes the whole block', () => {
   around.run('AFold');
   assert.equal(around.editor.getText(), 'after\n'); // whole block gone
 });
+
+test('if / af operate on the function (via the syntax provider)', () => {
+  const text = 'top\nfunction foo() {\n  let y = 2;\n  return y;\n}\nafter\n';
+  const provider = {
+    isFoldedAtRow: () => false,
+    unfoldRow: () => {},
+    foldableRanges: () => [],
+    // foo spans rows 1-4; its body statements are rows 2-3.
+    functionRangeAt: (row: number) =>
+      row >= 1 && row <= 4 ? { outer: { startRow: 1, endRow: 4 }, inner: { startRow: 2, endRow: 3 } } : null,
+  };
+  const build = () => {
+    const buffer = new GtkSource.Buffer();
+    buffer.setText(text, -1);
+    const view = new GtkSource.View({ buffer });
+    const editor = new EditorModel(view, buffer);
+    editor.setFoldProvider(provider);
+    const vimState = new VimState(editor, new StatusBarManager());
+    return { editor, vimState };
+  };
+
+  const inner = build();
+  inner.editor.setCursorBufferPosition(new Point(2, 2));
+  inner.vimState.operationStack.run('Delete');
+  inner.vimState.operationStack.run('InnerFunction');
+  assert.equal(inner.editor.getText(), 'top\nfunction foo() {\n\n}\nafter\n'); // body gone
+
+  const around = build();
+  around.editor.setCursorBufferPosition(new Point(2, 2));
+  around.vimState.operationStack.run('Delete');
+  around.vimState.operationStack.run('AFunction');
+  assert.equal(around.editor.getText(), 'top\n\nafter\n'); // whole function gone
+
+  const off = build();
+  off.editor.setCursorBufferPosition(new Point(5, 0)); // not in a function
+  off.vimState.operationStack.run('Delete');
+  off.vimState.operationStack.run('AFunction');
+  assert.equal(off.editor.getText(), text); // no-op
+});

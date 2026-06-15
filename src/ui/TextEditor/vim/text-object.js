@@ -581,131 +581,15 @@ function unionConjoinedFoldRange (foldRange, foldRanges, {useTreeSitter}) {
 }
 
 class Function extends TextObject {
-  wise = 'linewise'
-  scopeNamesOmittingClosingBrace = ['source.go', 'source.elixir'] // language doesn't include closing `}` into fold.
+  wise = "linewise"
 
-  getFunctionBodyStartRegex ({scopeName}) {
-    if (scopeName === 'source.python') {
-      return /:$/
-    } else if (scopeName === 'source.coffee') {
-      return /-|=>$/
-    } else {
-      return /{$/
-    }
-  }
-
-  isMultiLineParameterFunctionRange (parameterRange, bodyRange, bodyStartRegex) {
-    const isBodyStartRow = row => bodyStartRegex.test(this.editor.lineTextForBufferRow(row))
-    if (isBodyStartRow(parameterRange.start.row)) return false
-    if (isBodyStartRow(parameterRange.end.row)) return parameterRange.end.row === bodyRange.start.row
-    if (isBodyStartRow(parameterRange.end.row + 1)) return parameterRange.end.row + 1 === bodyRange.start.row
-    return false
-  }
-
-  getRangeWithTreeSitter (selection) {
-    const editor = this.editor
-    const cursorPosition = this.getCursorPositionForSelection(selection)
-    const firstCharacterPosition = this.utils.getFirstCharacterPositionForBufferRow(this.editor, cursorPosition.row)
-    const searchStartPoint = Point.max(firstCharacterPosition, cursorPosition)
-    const startNode = editor.languageMode.getSyntaxNodeAtPosition(searchStartPoint)
-
-    const node = this.utils.findParentNodeForFunctionType(editor, startNode)
-    if (node) {
-      let range = node.range
-
-      if (!this.isA()) {
-        const bodyNode = this.utils.findFunctionBodyNode(editor, node)
-        if (bodyNode) {
-          range = bodyNode.range
-        }
-
-        const endRowTranslation = this.utils.doesRangeStartAndEndWithSameIndentLevel(editor, range) ? -1 : 0
-        range = range.translate([1, 0], [endRowTranslation, 0])
-      }
-      if (range.end.column !== 0) {
-        // The 'preproc_function_def' type used in C and C++ header's "#define" returns linewise range.
-        // In this case, we shouldn't translate to linewise since it already contains ending newline.
-        range = this.utils.getBufferRangeForRowRange(editor, [range.start.row, range.end.row])
-      }
-      return range
-    }
-  }
-
+  // quilx: function detection comes from the tree-sitter tree (SyntaxController),
+  // surfaced via EditorModel.getFunctionRange — not Atom's languageMode/scope APIs.
+  // `af` is the whole definition; `if` is the body statements.
   getRange (selection) {
-    const useTreeSitter = this.utils.isUsingTreeSitter(selection.editor)
-    if (useTreeSitter) {
-      return this.getRangeWithTreeSitter(selection)
-    }
-
-    const editor = this.editor
-    const cursorRow = this.getCursorPositionForSelection(selection).row
-    const bodyStartRegex = this.getFunctionBodyStartRegex(editor.getGrammar())
-    const isIncludeFunctionScopeForRow = row => this.utils.isIncludeFunctionScopeForRow(editor, row)
-
-    const functionRanges = []
-    const saveFunctionRange = ({aRange, innerRange}) => {
-      functionRanges.push({
-        aRange: this.buildARange(aRange),
-        innerRange: this.buildInnerRange(innerRange)
-      })
-    }
-
-    const foldRanges = this.utils.getCodeFoldRanges(editor)
-    while (foldRanges.length) {
-      const range = foldRanges.shift()
-      if (isIncludeFunctionScopeForRow(range.start.row)) {
-        const nextRange = foldRanges[0]
-        const nextFoldIsConnected = nextRange && nextRange.start.row <= range.end.row + 1
-        const maybeAFunctionRange = nextFoldIsConnected ? range.union(nextRange) : range
-        if (!maybeAFunctionRange.containsPoint([cursorRow, Infinity])) continue // skip to avoid heavy computation
-        if (nextFoldIsConnected && this.isMultiLineParameterFunctionRange(range, nextRange, bodyStartRegex)) {
-          const bodyRange = foldRanges.shift()
-          saveFunctionRange({aRange: range.union(bodyRange), innerRange: bodyRange})
-        } else {
-          saveFunctionRange({aRange: range, innerRange: range})
-        }
-      } else {
-        const previousRow = range.start.row - 1
-        if (previousRow < 0) continue
-        if (editor.isFoldableAtBufferRow(previousRow)) continue
-        const maybeAFunctionRange = range.union(editor.bufferRangeForBufferRow(previousRow))
-        if (!maybeAFunctionRange.containsPoint([cursorRow, Infinity])) continue // skip to avoid heavy computation
-
-        const isBodyStartOnlyRow = row =>
-          new RegExp('^\\s*' + bodyStartRegex.source).test(editor.lineTextForBufferRow(row))
-        if (isBodyStartOnlyRow(range.start.row) && isIncludeFunctionScopeForRow(previousRow)) {
-          saveFunctionRange({aRange: maybeAFunctionRange, innerRange: range})
-        }
-      }
-    }
-
-    for (const functionRange of functionRanges.reverse()) {
-      const {start, end} = this.isA() ? functionRange.aRange : functionRange.innerRange
-      const range = this.getBufferRangeForRowRange([start.row, end.row])
-      if (!selection.getBufferRange().containsRange(range)) return range
-    }
-  }
-
-  buildInnerRange (range) {
-    const endRowTranslation = this.utils.doesRangeStartAndEndWithSameIndentLevel(this.editor, range) ? -1 : 0
-    return range.translate([1, 0], [endRowTranslation, 0])
-  }
-
-  buildARange (range) {
-    // NOTE: This adjustment shoud not be necessary if language-syntax is properly defined.
-    const endRowTranslation = this.isGrammarDoesNotFoldClosingRow() ? +1 : 0
-    return range.translate([0, 0], [endRowTranslation, 0])
-  }
-
-  isGrammarDoesNotFoldClosingRow () {
-    const {scopeName, packageName} = this.editor.getGrammar()
-    if (this.scopeNamesOmittingClosingBrace.includes(scopeName)) {
-      return true
-    } else {
-      // HACK: Rust have two package `language-rust` and `atom-language-rust`
-      // language-rust don't fold ending `}`, but atom-language-rust does.
-      return scopeName === 'source.rust' && packageName === 'language-rust'
-    }
+    const ranges = this.editor.getFunctionRange(this.getCursorPositionForSelection(selection))
+    if (!ranges) return
+    return this.isA() ? ranges.outer : ranges.inner
   }
 }
 

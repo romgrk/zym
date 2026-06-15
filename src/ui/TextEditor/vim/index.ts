@@ -247,6 +247,9 @@ const TEXT_OBJECT_BINDINGS: Record<string, string> = {
   // fold region (the foldable block at the cursor).
   'i z': 'InnerFold',
   'a z': 'AFold',
+  // function (tree-sitter): `if` body, `af` whole definition.
+  'i f': 'InnerFunction',
+  'a f': 'AFunction',
   // Brackets use the targets.vim-style *AllowForwarding* variants: when the cursor
   // isn't inside a pair, the text object seeks to the next pair on the line (an
   // enclosing pair still wins). `b`/`B` are vim's aliases for ()/{}; either
