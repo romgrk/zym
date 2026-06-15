@@ -83,7 +83,17 @@ export class KeymapPanel {
     // While a multi-key sequence is in progress, narrow the table to the
     // bindings whose keystroke extends the queued prefix (and back to all when
     // the queue clears). Mirrors the which-key hint, but over the full table.
-    this.subscriptions.push(quilx.keymaps.onPendingChanged(() => this.refresh()));
+    // Only when the panel is actually on screen: rebuilding the whole grid is
+    // expensive, this fires on every queued key, and there is one of these
+    // panels per workbench — refreshing hidden ones would stall typing.
+    this.subscriptions.push(
+      quilx.keymaps.onPendingChanged(() => {
+        if (this.root.getMapped()) this.refresh();
+      }),
+    );
+    // Catch up to the current bindings when the panel becomes visible, since
+    // pending-change refreshes are skipped while it is hidden.
+    this.root.on('map', () => this.refresh());
   }
 
   /** Move keyboard focus into the table. */

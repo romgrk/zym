@@ -136,8 +136,9 @@ export class KeymapManager {
     quilx.window!.addController(this.controller);
   }
 
-  addListener(listener: Listener): void {
+  addListener(listener: Listener): Disposable {
     this.listeners.push(listener);
+    return new Disposable(() => this.removeListener(listener));
   }
 
   // --- Macros (vim q / @) ----------------------------------------------------
@@ -316,8 +317,15 @@ export class KeymapManager {
 
   // Set the queued prefix and notify which-key subscribers.
   private setQueue(keystrokes: Key[]): void {
+    // Ordinary typing dead-ends every key with `setQueue([])` (see
+    // `processKeystroke`). Skip notifying when the queue was already empty and
+    // stays empty — there's no prefix change to react to, and a pending listener
+    // (e.g. the keymap reference panel) would otherwise do real work on *every*
+    // keystroke, blocking the main loop and stalling the UI during key repeat.
+    const wasEmpty = this.queuedKeystrokes.length === 0;
     this.queuedKeystrokes = keystrokes;
     if (this.pendingListeners.length === 0) return;
+    if (wasEmpty && keystrokes.length === 0) return;
     const pending =
       keystrokes.length > 0 ? this.getPendingBindings(getActiveElements(), keystrokes) : null;
     for (const listener of this.pendingListeners) listener(pending);
