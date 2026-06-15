@@ -31,9 +31,11 @@ import type { EditorModel } from './EditorModel.ts';
 export type DecorationStyle =
   | 'highlight' // search: every match
   | 'highlight-strong' // search: the current match
-  | 'added' // diff: an inserted line/span
-  | 'removed' // diff: a deleted line/span
+  | 'added' // diff: an inserted line (full-line background)
+  | 'removed' // diff: a deleted line (full-line background)
   | 'filler' // diff (side-by-side): a blank alignment pad on the other side
+  | 'word-add' // diff: the changed chars within an added line
+  | 'word-del' // diff: the changed chars within a removed line
   | 'flash'; // vim: a brief flash over an operated/yanked range
 
 // Style → background color (hex, alpha-capable via #rrggbbaa). Backgrounds rather
@@ -42,11 +44,17 @@ export type DecorationStyle =
 const STYLE_BACKGROUND: Record<DecorationStyle, string> = {
   highlight: '#e5a50a55',
   'highlight-strong': '#f5c21199',
-  added: '#2ec27e33',
-  removed: '#e01b2433',
+  added: '#2ec27e26',
+  removed: '#e01b2426',
   filler: '#88888820', // dimmed neutral pad for an aligned-but-empty row
+  'word-add': '#2ec27e66', // stronger, over the added line's background
+  'word-del': '#e01b2466', // stronger, over the removed line's background
   flash: '#f5c21188',
 };
+
+// Diff line styles paint the *whole line* (paragraph background, full width);
+// the rest are character-span backgrounds (word-level diff, search, flash).
+const LINE_STYLES = new Set<DecorationStyle>(['added', 'removed', 'filler']);
 
 /** Parse a `#rgb(a)`/`#rrggbb(aa)` string into a Gdk.RGBA. */
 function parseColor(hex: string): InstanceType<typeof Gdk.RGBA> {
@@ -107,7 +115,9 @@ export class DecorationLayer {
     if (tag) return tag;
 
     tag = new Gtk.TextTag({ name: `deco:${this.name}:${style}` } as any);
-    (tag as any).backgroundRgba = parseColor(STYLE_BACKGROUND[style]);
+    // Line styles use paragraph-background (full-width); spans use char background.
+    if (LINE_STYLES.has(style)) (tag as any).paragraphBackgroundRgba = parseColor(STYLE_BACKGROUND[style]);
+    else (tag as any).backgroundRgba = parseColor(STYLE_BACKGROUND[style]);
     const table = this.buffer.getTagTable();
     table.add(tag);
     // Sit above the syntax tags so the decoration wins overlaps.

@@ -122,9 +122,20 @@ investigated separately in [virtual-lines.md](virtual-lines.md).
    - Verified it constructs in a real GTK context (panes/gutters/scroll-adjustments
      wire up; padded buffers correct). Live scroll-lock + colors need an
      interactive check.
-4. **Polish** *(next)* — word-level intra-line diff, hunk navigation, fold
-   unchanged, full-line (paragraph) backgrounds, syntax highlighting, a header/
-   stat line, and a `DiffView`/`SideBySide` toggle.
+4. **Polish** — *in progress*
+   - [x] Word-level intra-line diff — `computeIntraLineDiff` (char diff via the
+     `diff` package) annotates modified line pairs with `wordRanges` (skipping
+     wholesale replacements); `word-add`/`word-del` char-span decorations render
+     them over the line background. Pure part unit-tested; carried into
+     side-by-side. Shared `applyDiffDecorations` helper.
+   - [x] Full-line (paragraph) backgrounds — `added`/`removed`/`filler` now paint
+     full-width via `paragraph-background` (a `DecorationController` `LINE_STYLES`
+     split).
+   - [ ] Hunk navigation (`next-change`/`prev-change` over `model.hunks`).
+   - [ ] Fold unchanged regions; syntax highlighting in panes; header/stat line;
+     unified↔side-by-side toggle.
+   - [ ] **Wire real data** — `GitRepo` diff (working-tree/staged/commit) →
+     `DiffModel`, and surface the views in a tab/command (sequences with Git).
 
 Net: no new widget primitive is strictly required — the synthesized-buffer
 approach turns "diff" into "read-only buffer + decorations + a gutter + scroll

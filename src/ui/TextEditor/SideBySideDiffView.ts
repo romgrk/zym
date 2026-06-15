@@ -10,10 +10,9 @@
  * assembled widget is `root`. See tasks/code-editing/diff.md.
  */
 import { Gtk, type SourceView } from '../../gi.ts';
-import { Point } from '../../text/Point.ts';
-import { Range } from '../../text/Range.ts';
 import { TextEditor } from './TextEditor.ts';
 import { DiffGutter } from './DiffGutter.ts';
+import { applyDiffDecorations } from './applyDiffDecorations.ts';
 import { splitSides, type DiffModel, type SideLine } from '../../util/DiffModel.ts';
 
 export class SideBySideDiffView {
@@ -46,12 +45,7 @@ export class SideBySideDiffView {
 /** A read-only pane for one side, with per-line diff backgrounds applied. */
 function makePane(lines: SideLine[]): TextEditor {
   const editor = new TextEditor({ buffer: { readOnly: true, initialText: lines.map((l) => l.text).join('\n') } });
-  const layer = editor.decorations.layer('diff');
-  layer.clear();
-  lines.forEach((line, row) => {
-    if (line.kind === 'context') return;
-    layer.decorate(new Range(new Point(row, 0), new Point(row + 1, 0)), line.kind);
-  });
+  applyDiffDecorations(editor.decorations.layer('diff'), lines);
   return editor;
 }
 

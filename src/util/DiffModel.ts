@@ -9,9 +9,13 @@
  * `hunks` are the contiguous changed regions, for hunk navigation / fold-unchanged
  * (each points at a `lines` row range). See tasks/code-editing/diff.md.
  */
+import { diffChars } from 'diff';
 import { diffLines } from './lineDiff.ts';
 
 export type DiffLineKind = 'context' | 'added' | 'removed';
+
+/** A changed character span within a line, as codepoint offsets `[start, end)`. */
+export type WordRange = [start: number, end: number];
 
 export interface DiffLine {
   kind: DiffLineKind;
@@ -20,6 +24,9 @@ export interface DiffLine {
   oldRow: number | null;
   /** 0-based row in the new text, or null for a removed line. */
   newRow: number | null;
+  /** For a modified line (a removed↔added pair that share content), the char
+   *  spans that actually changed within this line — for intra-line highlighting. */
+  wordRanges?: WordRange[];
 }
 
 export interface DiffHunk {
@@ -76,7 +83,59 @@ export function computeDiff(oldText: string, newText: string): DiffModel {
     }
   }
 
-  return { lines, hunks: buildHunks(lines), stats: { added, removed } };
+  const hunks = buildHunks(lines);
+  annotateWordDiffs(lines, hunks);
+  return { lines, hunks, stats: { added, removed } };
+}
+
+/**
+ * Char-level diff of two line texts: the spans removed from `oldText` and the
+ * spans added in `newText` (codepoint offsets), plus whether the lines share any
+ * content (so a wholesale replacement can skip intra-line highlighting).
+ */
+export function computeIntraLineDiff(
+  oldText: string,
+  newText: string,
+): { oldRanges: WordRange[]; newRanges: WordRange[]; hasCommon: boolean } {
+  const oldRanges: WordRange[] = [];
+  const newRanges: WordRange[] = [];
+  let oi = 0;
+  let ni = 0;
+  let hasCommon = false;
+  for (const part of diffChars(oldText, newText)) {
+    const len = [...part.value].length; // codepoints (buffer columns are codepoints)
+    if (part.added) {
+      newRanges.push([ni, ni + len]);
+      ni += len;
+    } else if (part.removed) {
+      oldRanges.push([oi, oi + len]);
+      oi += len;
+    } else {
+      if (len > 0) hasCommon = true;
+      oi += len;
+      ni += len;
+    }
+  }
+  return { oldRanges, newRanges, hasCommon };
+}
+
+/** Pair each hunk's removed↔added lines and attach intra-line change spans to the
+ *  pairs that share content (a real modification, not a full-line replacement). */
+function annotateWordDiffs(lines: DiffLine[], hunks: DiffHunk[]): void {
+  for (const hunk of hunks) {
+    const dels: DiffLine[] = [];
+    const adds: DiffLine[] = [];
+    for (let row = hunk.startRow; row < hunk.startRow + hunk.rowCount; row++) {
+      if (lines[row].kind === 'removed') dels.push(lines[row]);
+      else if (lines[row].kind === 'added') adds.push(lines[row]);
+    }
+    for (let i = 0; i < Math.min(dels.length, adds.length); i++) {
+      const { oldRanges, newRanges, hasCommon } = computeIntraLineDiff(dels[i].text, adds[i].text);
+      if (!hasCommon) continue; // wholly different — the full-line bg says enough
+      dels[i].wordRanges = oldRanges;
+      adds[i].wordRanges = newRanges;
+    }
+  }
 }
 
 export type SideLineKind = 'context' | 'added' | 'removed' | 'filler';
@@ -86,6 +145,8 @@ export type SideLineKind = 'context' | 'added' | 'removed' | 'filler';
 export interface SideLine {
   kind: SideLineKind;
   text: string;
+  /** Intra-line change spans (for a modified row), copied from the source line. */
+  wordRanges?: WordRange[];
 }
 
 export interface SideBySide {
@@ -103,22 +164,26 @@ export interface SideBySide {
 export function splitSides(model: DiffModel): SideBySide {
   const left: SideLine[] = [];
   const right: SideLine[] = [];
-  let dels: string[] = [];
-  let adds: string[] = [];
+  let dels: DiffLine[] = [];
+  let adds: DiffLine[] = [];
 
   const flush = () => {
     const n = Math.max(dels.length, adds.length);
     for (let i = 0; i < n; i++) {
-      left.push(i < dels.length ? { kind: 'removed', text: dels[i] } : { kind: 'filler', text: '' });
-      right.push(i < adds.length ? { kind: 'added', text: adds[i] } : { kind: 'filler', text: '' });
+      left.push(
+        i < dels.length ? { kind: 'removed', text: dels[i].text, wordRanges: dels[i].wordRanges } : { kind: 'filler', text: '' },
+      );
+      right.push(
+        i < adds.length ? { kind: 'added', text: adds[i].text, wordRanges: adds[i].wordRanges } : { kind: 'filler', text: '' },
+      );
     }
     dels = [];
     adds = [];
   };
 
   for (const line of model.lines) {
-    if (line.kind === 'removed') dels.push(line.text);
-    else if (line.kind === 'added') adds.push(line.text);
+    if (line.kind === 'removed') dels.push(line);
+    else if (line.kind === 'added') adds.push(line);
     else {
       flush();
       left.push({ kind: 'context', text: line.text });

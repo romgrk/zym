@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeDiff, splitLines, splitSides } from './DiffModel.ts';
+import { computeDiff, computeIntraLineDiff, splitLines, splitSides } from './DiffModel.ts';
 
 const kinds = (text: string, other: string) => computeDiff(text, other).lines.map((l) => `${l.kind[0]}:${l.text}`);
 
@@ -60,6 +60,38 @@ describe('computeDiff', () => {
   it('handles whole-file insert and delete', () => {
     assert.deepEqual(computeDiff('', 'x\ny').lines.map((l) => l.kind), ['added', 'added']);
     assert.deepEqual(computeDiff('x\ny', '').lines.map((l) => l.kind), ['removed', 'removed']);
+  });
+});
+
+describe('computeIntraLineDiff', () => {
+  it('finds the changed char spans on each side', () => {
+    const { oldRanges, newRanges, hasCommon } = computeIntraLineDiff('const x = 1', 'const x = 2');
+    assert.ok(hasCommon);
+    assert.deepEqual(oldRanges, [[10, 11]]); // the '1'
+    assert.deepEqual(newRanges, [[10, 11]]); // the '2'
+  });
+
+  it('reports no common content for a wholesale replacement', () => {
+    const { hasCommon } = computeIntraLineDiff('aaaa', 'bbbb');
+    assert.equal(hasCommon, false);
+  });
+});
+
+describe('computeDiff word ranges', () => {
+  it('annotates a modified line pair and skips wholesale replacements', () => {
+    const model = computeDiff('foo = 1\nxxxx', 'foo = 2\nyyyy');
+    const removed = model.lines.find((l) => l.kind === 'removed' && l.text === 'foo = 1')!;
+    const added = model.lines.find((l) => l.kind === 'added' && l.text === 'foo = 2')!;
+    assert.deepEqual(removed.wordRanges, [[6, 7]]);
+    assert.deepEqual(added.wordRanges, [[6, 7]]);
+    // 'xxxx' → 'yyyy' shares nothing → no intra-line annotation.
+    assert.equal(model.lines.find((l) => l.text === 'xxxx')!.wordRanges, undefined);
+  });
+
+  it('carries word ranges through to side-by-side rows', () => {
+    const { left, right } = splitSides(computeDiff('foo = 1', 'foo = 2'));
+    assert.deepEqual(left.find((l) => l.kind === 'removed')!.wordRanges, [[6, 7]]);
+    assert.deepEqual(right.find((l) => l.kind === 'added')!.wordRanges, [[6, 7]]);
   });
 });
 

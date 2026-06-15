@@ -9,10 +9,9 @@
  * gutter renderer is a node-gtk vfunc subclass); the assembled widget is `root`.
  */
 import type { Gtk } from '../../gi.ts';
-import { Point } from '../../text/Point.ts';
-import { Range } from '../../text/Range.ts';
 import { TextEditor } from './TextEditor.ts';
 import { DiffGutter } from './DiffGutter.ts';
+import { applyDiffDecorations } from './applyDiffDecorations.ts';
 import type { DiffModel } from '../../util/DiffModel.ts';
 
 export class DiffView {
@@ -25,14 +24,7 @@ export class DiffView {
     this.editor = new TextEditor({ buffer: { readOnly: true, initialText: text } });
     this.root = this.editor.root;
 
-    // Line backgrounds: one decoration per changed line (its full line range).
-    const layer = this.editor.decorations.layer('diff');
-    layer.clear();
-    model.lines.forEach((line, row) => {
-      if (line.kind === 'context') return;
-      layer.decorate(new Range(new Point(row, 0), new Point(row + 1, 0)), line.kind);
-    });
-
+    applyDiffDecorations(this.editor.decorations.layer('diff'), model.lines);
     this.gutter = new DiffGutter(this.editor.sourceView, model.lines);
   }
 
