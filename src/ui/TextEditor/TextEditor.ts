@@ -43,12 +43,17 @@ import type { TabState } from '../../SessionManager.ts';
 import {
   Adw,
   Gdk,
+  Gio,
   GLib,
   Gtk,
   GtkSource,
   type SourceBuffer,
   type SourceView,
 } from '../../gi.ts';
+
+// node-gtk quirk: Gio.File instance methods are undefined on the concrete
+// instance, so reach them through the prototype (see config/load.ts).
+const GioFileProto = (Gio.File as any).prototype;
 
 addStyles(`
   .quilx-editor { color: ${theme.ui.fg}; caret-color: ${theme.ui.fg}; }
@@ -283,6 +288,20 @@ export class TextEditor {
   private placeholderLabel: InstanceType<typeof Gtk.Label> | null = null;
 
   private _currentFile: string | null = null;
+  /** mtime (ms) of `_currentFile` as of the last load/save — guards against
+   *  clobbering an edit made on disk while the file was open here. */
+  private diskMtimeMs: number | null = null;
+  /** How `_currentFile` relates to disk right now: in sync, modified out from
+   *  under us, or deleted. Drives the tab warning icon and the reload prompt. */
+  private diskState: 'synced' | 'changed' | 'deleted' = 'synced';
+  /** Whether the user has already been prompted about the current disk change —
+   *  keeps a focus toggle from re-popping the same notification. */
+  private diskChangePrompted = false;
+  /** GIO monitor on `_currentFile` (re-created on every load/save). */
+  private fileMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
+  /** Pending re-check after the file appeared to vanish — atomic saves unlink
+   *  then re-create, so we confirm a deletion after a short beat. */
+  private deletionCheckTimer = 0;
   private readonly titleHandlers: Array<() => void> = [];
   private readonly modifiedHandlers: Array<() => void> = [];
 
@@ -470,6 +489,10 @@ export class TextEditor {
     this.root.on('destroy', () => {
       this.dismissHover();
       this.dismissSignature();
+      this.fileMonitor?.cancel();
+      this.fileMonitor = null;
+      if (this.deletionCheckTimer) GLib.sourceRemove(this.deletionCheckTimer);
+      this.deletionCheckTimer = 0;
       quilx.lsp.didClose(this.lspDocument);
       this.diagnostics.dispose();
     });
@@ -792,7 +815,11 @@ export class TextEditor {
     this.editorModel.onExtraCursors = (carets) => this.renderExtraCarets(carets);
 
     const focus = new Gtk.EventControllerFocus();
-    focus.on('enter', () => this.editorModel.setFocused(true));
+    focus.on('enter', () => {
+      this.editorModel.setFocused(true);
+      // Gaining focus is the moment to surface a disk change we noticed earlier.
+      if (this.diskState !== 'synced') this.promptDiskChange();
+    });
     focus.on('leave', () => {
       // The search bar is part of the editor: while it holds focus, keep the
       // active caret rather than switching to the unfocused (inactive) one.
@@ -988,6 +1015,9 @@ export class TextEditor {
       // disk, so clear the flag — `isModified()` then tracks genuine edits.
       this.buffer.setModified(false);
       this._currentFile = path;
+      this.diskMtimeMs = this.statMtimeMs(path);
+      this.setDiskState('synced'); // freshly in sync with disk
+      this.watchFile(path);
       this.applyDetectedIndentation(content);
       this.view.grabFocus();
 
@@ -1023,10 +1053,65 @@ export class TextEditor {
       this.buffer.getEndIter(),
       false,
     );
+    // Refuse to silently clobber the current file if it was changed on disk
+    // since we last loaded/saved it — confirm with the user first.
+    if (path === this._currentFile && this.hasExternalChange()) {
+      this.confirmOverwriteThenSave(path, content);
+      return;
+    }
+    this.writeFile(path, content);
+  }
+
+  /** mtime of `path` in ms, or `null` if it can't be stat'd (e.g. doesn't exist). */
+  private statMtimeMs(path: string): number | null {
     try {
+      return Fs.statSync(path).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when the current file's on-disk mtime no longer matches what we
+   *  recorded at load/save time (an external write happened). */
+  private hasExternalChange(): boolean {
+    if (this.diskMtimeMs === null || !this._currentFile) return false;
+    const onDisk = this.statMtimeMs(this._currentFile);
+    return onDisk !== null && onDisk !== this.diskMtimeMs;
+  }
+
+  private confirmOverwriteThenSave(path: string, content: string) {
+    const dialog = new Adw.AlertDialog({
+      heading: 'File changed on disk',
+      body:
+        `${Path.basename(path)} has changed on disk since it was opened. ` +
+        `Saving will overwrite those changes.`,
+    });
+    dialog.addResponse('cancel', 'Cancel');
+    dialog.addResponse('reload', 'Reload from Disk');
+    dialog.addResponse('overwrite', 'Overwrite');
+    dialog.setResponseAppearance('overwrite', Adw.ResponseAppearance.DESTRUCTIVE);
+    dialog.setDefaultResponse('cancel');
+    dialog.setCloseResponse('cancel');
+    dialog.on('response', (response: string) => {
+      if (response === 'overwrite') this.writeFile(path, content);
+      else if (response === 'reload') this.loadFile(path);
+    });
+    dialog.present(this.root);
+  }
+
+  /** Write `content` to `path` and stamp the new on-disk mtime. */
+  private writeFile(path: string, content: string) {
+    try {
+      const wasDeleted = this.diskState === 'deleted';
       Fs.writeFileSync(path, content);
+      this.diskMtimeMs = this.statMtimeMs(path);
+      this.setDiskState('synced'); // our own write reconciles us with disk
       this.buffer.setModified(false);
+      const pathChanged = path !== this._currentFile;
       this._currentFile = path;
+      // Retarget the monitor on "Save As", or re-arm it when re-creating a file
+      // that had been deleted (the old monitor on the gone path may be stale).
+      if (pathChanged || wasDeleted) this.watchFile(path);
       quilx.lsp.didSave(this.lspDocument);
       this.gitGutter?.refresh();
       this.emitTitleChange();
@@ -1034,6 +1119,98 @@ export class TextEditor {
       quilx.notifications.addTrace(`Saved ${Path.basename(path)}`);
     } catch (error) {
       this.onToast(`Could not save: ${(error as Error).message}`);
+    }
+  }
+
+  // --- On-disk change detection ----------------------------------------------
+
+  /** Watch `path` for external modifications, replacing any prior monitor. */
+  private watchFile(path: string) {
+    this.fileMonitor?.cancel();
+    this.fileMonitor = null;
+    try {
+      const file = Gio.File.newForPath(path);
+      const monitor = GioFileProto.monitorFile.call(
+        file,
+        Gio.FileMonitorFlags.WATCH_MOVES,
+        null,
+      ) as InstanceType<typeof Gio.FileMonitor>;
+      monitor.on('changed', () => this.onDiskChanged());
+      this.fileMonitor = monitor;
+    } catch (error) {
+      // Watching is best-effort; the save-time guard still catches clobbers.
+      console.warn(`[editor] could not watch ${path}: ${(error as Error).message}`);
+    }
+  }
+
+  /** Monitor callback: classify the change against disk and surface it. Our own
+   *  writes already reconciled `diskMtimeMs`, so they compare equal and no-op. */
+  private onDiskChanged() {
+    if (!this._currentFile) return;
+    const onDisk = this.statMtimeMs(this._currentFile);
+    if (onDisk === null) {
+      // The file looks gone — but an atomic save (write temp + rename) unlinks it
+      // for a moment, so confirm after a beat before declaring it deleted.
+      this.scheduleDeletionCheck();
+      return;
+    }
+    if (this.diskMtimeMs === null || onDisk === this.diskMtimeMs) return; // our write / unchanged
+    this.setDiskState('changed');
+  }
+
+  /** Re-stat the file shortly; if still missing, mark it deleted. */
+  private scheduleDeletionCheck() {
+    if (this.deletionCheckTimer) return; // a check is already pending
+    this.deletionCheckTimer = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, 200, () => {
+      this.deletionCheckTimer = 0;
+      if (this._currentFile && this.statMtimeMs(this._currentFile) === null) {
+        this.setDiskState('deleted');
+      } else if (this._currentFile) {
+        // It came back (atomic rename) — treat as a normal external change.
+        this.onDiskChanged();
+      }
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  /** Move to a new disk state, repainting the tab and (re)prompting as needed. */
+  private setDiskState(state: 'synced' | 'changed' | 'deleted') {
+    if (state === this.diskState) return;
+    this.diskState = state;
+    this.diskChangePrompted = false;
+    this.emitTitleChange(); // tab repaints with / without the warning icon
+    if (state === 'synced') return;
+    // If the user is already looking at this editor, prompt right away; otherwise
+    // wait until it (re)gains focus.
+    if ((this.view as any).hasFocus()) this.promptDiskChange();
+  }
+
+  /** True once the open file has been changed or deleted on disk underneath us. */
+  hasDiskChange(): boolean {
+    return this.diskState !== 'synced';
+  }
+
+  /** Warn about the out-of-sync file and offer to reconcile (reload, or re-save
+   *  a deleted file). A no-op while in sync or already prompted for this change. */
+  private promptDiskChange() {
+    const path = this._currentFile;
+    if (!path || this.diskState === 'synced' || this.diskChangePrompted) return;
+    this.diskChangePrompted = true;
+    const name = Path.basename(path);
+    if (this.diskState === 'deleted') {
+      quilx.notifications.addWarning(`${name} was deleted on disk`, {
+        detail: path,
+        dismissable: true,
+        onDidClick: () => this.save(),
+        buttons: [{ text: 'Save', onDidClick: () => this.save() }],
+      });
+    } else {
+      quilx.notifications.addWarning(`${name} changed on disk`, {
+        detail: path,
+        dismissable: true,
+        onDidClick: () => this.loadFile(path),
+        buttons: [{ text: 'Reload', onDidClick: () => this.loadFile(path) }],
+      });
     }
   }
 

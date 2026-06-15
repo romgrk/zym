@@ -1081,6 +1081,8 @@ export class AppWindow {
 
   /** The tab title for an editor, prefixed with the modified dot when unsaved. */
   private editorTabTitle(editor: TextEditor): string {
+    // A file changed underneath us takes precedence — it's the more urgent signal.
+    if (editor.hasDiskChange()) return `${Icons.warning} ${editor.title}`;
     return editor.isModified() ? `${Icons.modified} ${editor.title}` : editor.title;
   }
 

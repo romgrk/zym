@@ -23,8 +23,13 @@ export interface NotificationToastsOptions {
 }
 
 const MAX_WIDTH_CHARS = 44;
+// Enter/leave animation: cards fade + slide in (and the stack reflows) instead
+// of popping in as a block. The removal is delayed by this same duration so the
+// collapse plays out before the widget leaves the tree.
+const TRANSITION_MS = 200;
 
 type Box = InstanceType<typeof Gtk.Box>;
+type Revealer = InstanceType<typeof Gtk.Revealer>;
 
 export class NotificationToasts {
   readonly root: Box;
@@ -33,7 +38,10 @@ export class NotificationToasts {
   // Live toasts that can be transformed in place, keyed by `replaceKey`: a later
   // notification with the same key reuses the same card widget instead of
   // stacking a new one (both still appear as separate rows in the log).
-  private readonly replaceable = new Map<string, { card: Box; cancelTimer: () => void; notification: Notification }>();
+  private readonly replaceable = new Map<
+    string,
+    { card: Box; revealer: Revealer; cancelTimer: () => void; notification: Notification }
+  >();
 
   constructor(options: NotificationToastsOptions) {
     this.timeout = options.timeout;
@@ -60,27 +68,52 @@ export class NotificationToasts {
     if (prev) {
       // Reuse the existing widget: stop its timer, drop the old severity class,
       // mark the superseded notification dismissed (it stays in the log), and
-      // refill the card with the new content.
+      // refill the card with the new content. The card stays revealed throughout,
+      // so the swap reads as an in-place content change, not a re-entry.
       prev.cancelTimer();
       prev.card.removeCssClass(`notification-${prev.notification.getType()}`);
       prev.notification.dismiss();
-      const cancelTimer = this.fillCard(prev.card, notification);
-      this.replaceable.set(key!, { card: prev.card, cancelTimer, notification });
+      const cancelTimer = this.fillCard(prev.card, prev.revealer, notification);
+      this.replaceable.set(key!, { card: prev.card, revealer: prev.revealer, cancelTimer, notification });
       notification.setDisplayed(true);
       return;
     }
 
     const card = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 });
     card.addCssClass('NotificationToast'); // CSS identity (.NotificationToast)
-    const cancelTimer = this.fillCard(card, notification);
-    this.root.prepend(card);
-    if (key) this.replaceable.set(key, { card, cancelTimer, notification });
+    // The card rides into the stack inside a revealer so it fades + slides in.
+    const revealer = new Gtk.Revealer({
+      transitionType: Gtk.RevealerTransitionType.FADE_SLIDE_UP,
+      transitionDuration: TRANSITION_MS,
+      revealChild: false,
+    });
+    revealer.setChild(card);
+    const cancelTimer = this.fillCard(card, revealer, notification);
+    this.root.prepend(revealer);
+    // Flip to revealed once mapped so the transition actually plays (toggling it
+    // synchronously on an unmapped widget would snap straight to shown).
+    GLib.idleAdd(GLib.PRIORITY_DEFAULT, () => {
+      revealer.setRevealChild(true);
+      return GLib.SOURCE_REMOVE;
+    });
+    if (key) this.replaceable.set(key, { card, revealer, cancelTimer, notification });
     notification.setDisplayed(true);
+  }
+
+  // Play the collapse transition, then drop the revealer from the tree.
+  private animateOut(revealer: Revealer): void {
+    if (!revealer.getParent()) return; // already removed
+    revealer.setRevealChild(false);
+    GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, TRANSITION_MS, () => {
+      if (revealer.getParent()) this.root.remove(revealer);
+      return GLib.SOURCE_REMOVE;
+    });
   }
 
   // (Re)fill `card` with `notification`'s content + behavior. Returns a function
   // that cancels the auto-expire timer (called when the card is reused in place).
-  private fillCard(card: Box, notification: Notification): () => void {
+  // `revealer` is the card's animated host — removing the toast collapses it.
+  private fillCard(card: Box, revealer: Revealer, notification: Notification): () => void {
     for (let child = card.getFirstChild(); child; ) {
       const next = child.getNextSibling();
       card.remove(child);
@@ -120,11 +153,20 @@ export class NotificationToasts {
     card.append(text);
 
     // The first action button maps onto the toast (the full set lives in the log).
+    // Acting on a terminal button dismisses the toast, mirroring the card-body
+    // gesture below. A `replaceKey` notification instead drives an in-place
+    // lifecycle (e.g. install → installing… → installed): its action transforms
+    // this same card, so leave it alone and let the follow-up notice update it.
+    // `remove` is defined further down but only invoked on click, by which point
+    // its binding is initialized.
     const [button] = notification.getOptions().buttons ?? [];
     if (button) {
       const action = new Gtk.Button({ label: button.text });
       action.setValign(Gtk.Align.CENTER);
-      action.on('clicked', () => button.onDidClick());
+      action.on('clicked', () => {
+        button.onDidClick();
+        if (!notification.getReplaceKey()) remove();
+      });
       card.append(action);
     }
 
@@ -151,7 +193,7 @@ export class NotificationToasts {
     };
     const remove = () => {
       cancelTimer();
-      this.root.remove(card);
+      this.animateOut(revealer);
       notification.dismiss();
       forget();
     };
@@ -171,7 +213,7 @@ export class NotificationToasts {
     if (!notification.isDismissable()) {
       timeoutId = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, this.timeout * 1000, () => {
         timeoutId = 0;
-        this.root.remove(card);
+        this.animateOut(revealer);
         notification.dismiss();
         forget();
         return false; // one-shot: remove the source
