@@ -49,6 +49,7 @@ addStyles(`
   #CompletionPopup row:selected { background-color: ${SELECTED_BG}; border-radius: 0; }
   #CompletionPopup .completion-label { ${MONO.declarations} }
   #CompletionPopup .completion-detail { opacity: 0.6; margin-left: 1em; }
+  #CompletionPopup .completion-source { opacity: 0.45; margin-left: 1em; font-size: 0.85em; }
   #CompletionPopup separator.completion-divider { background-color: var(--border-color); }
   #CompletionPopup .completion-doc { padding: 6px 8px; }
 `);
@@ -176,6 +177,15 @@ export class CompletionPopup {
       detail.setHexpand(true);
       detail.addCssClass('completion-detail');
       box.append(detail);
+    }
+    // Debug tag: which source produced this item. Pinned to the right; expands to
+    // push itself there when there's no detail label already doing so.
+    if (item.source) {
+      const source = new Gtk.Label({ xalign: 1, useMarkup: true });
+      source.setMarkup(`<span foreground="${DETAIL_COLOR}">${escapeMarkup(item.source)}</span>`);
+      source.setHexpand(!item.detail);
+      source.addCssClass('completion-source');
+      box.append(source);
     }
     const row = new Gtk.ListBoxRow();
     row.setChild(box);

@@ -211,23 +211,54 @@ UX, and co-designed with Session management.
 
 ## More ideas
 
+Backlog beyond the three big features above, roughly in priority order. The first
+group builds directly on the change-tracking / transcript plumbing that already
+exists, so it's cheap and high-value; the rest are bigger or more speculative.
+
+### Builds on what exists
+
+- **Review an agent's diff** *(recommended next)* — the natural step past
+  "open changed files": snapshot the working tree (or just the edited files'
+  contents) when an agent starts, then show **what that agent changed** as a diff
+  against its own baseline. Turns the "✎ N" badge into a "review this agent's work"
+  loop — the daily pain point in agent-driven dev. Reuses `AgentTerminal.changedFiles`
+  for the file set and the (planned) editor Diff display for rendering; the baseline
+  is a per-agent snapshot taken on launch. Per-agent, so two agents' edits don't mix.
+- **Live activity timeline** — a panel that tails the agent's transcript JSONL
+  (already parsed by `agentSessions.ts` for resume) into a structured feed: tools
+  used, files touched, assistant messages. A readable "what is it doing" view
+  without watching the terminal scroll. Live via a `Gio.FileMonitor` on the
+  transcript, isolated behind the same format-parsing seam as `agentSessions`.
+- **OS notifications** — when an agent goes `waiting` / `working→idle` while the
+  **window is unfocused**, fire a desktop `Gio.Notification` (today we only post
+  in-app toasts via `notifyAgentAttention`). Gate on window focus; clicking the
+  notification reveals the agent (same `reveal` callback).
+- **Agent interrupt** — `agent:interrupt`: send ESC / `ctrl-c` to the child to stop
+  the current action, a softer alternative to `agent:kill`. Trivial now that the
+  modal terminal already sends ESC (`feedChild('\x1b')`); ctrl-c is `feedChild('\x03')`.
+- **Jump to an agent's latest edit** — open the file the agent last touched **at the
+  exact line** (not just the file). Needs the hook to record a position alongside the
+  path in `<statusFile>.files` (e.g. the edit's first changed line), surfaced via the
+  `o` action / a dedicated command.
+
+### Bigger / speculative
+
 - **Cost / context meter** — the claude `statusLine` JSON exposes `cost` and
   `context_window.used_percentage`; a second `--settings` `statusLine` hook could
-  surface a per-agent cost/▮ context gauge in the row.
-- **Orchestration** — multiple agents on one task, or a "review" agent watching
-  another's diff. Speculative; out of scope until the basics are deep.
-- **Jump to agent activity** — when an agent edits a file, offer to open it (the
-  edited-file list now exists; see file-change awareness below — open-on-click is
-  the remaining piece).
+  surface a per-agent cost/▮ context gauge in the row. (Deferred a couple of times;
+  small and self-contained when picked up.)
+- **Orchestration** — multiple agents on one task, or a "lead"/"review" agent
+  watching another's diff. Speculative; out of scope until the basics are deep.
 
 Done (moved out of ideas): **send-to-agent** (selection/file → current / picked /
 new agent), **resume past conversations** (see the feature above), **file-change
 awareness** (a `PostToolUse` Edit/Write/MultiEdit/NotebookEdit hook appends the
 edited path to `<statusFile>.files`; `AgentTerminal.changedFiles` /
 `onDidChangeFiles` watch it; the agent list shows a clickable "✎ N" badge whose
-click — or the `o` key / `agent:open-changes` — opens the edited files (one
-directly, several via a newest-first picker); each edit also triggers an immediate
-`GitRepo.refresh()`. Remaining: jump straight to an agent's latest edit location).
+click — or the `o` key / `agent:open-changes` — opens the edited files, one
+directly or several via a newest-first picker; each edit also triggers an immediate
+`GitRepo.refresh()`), and **modal terminal input** (normal/insert via a focusable
+container that steals focus from the Vte; see index.md).
 
 ## Shared concerns
 

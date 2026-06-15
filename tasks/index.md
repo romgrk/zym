@@ -13,7 +13,8 @@ See [commands-keymaps.md](commands-keymaps.md). Done: commands with
 args/descriptions/`when`, keymaps with sequences/priority/`unset!`, `#id`
 selectors, user `keymap.json` (live-reloaded), command palette (shortcuts,
 name+description search, dim-when-unavailable), which-key hints, conflict
-detection. Remaining: `when` keymap fall-through; keybinding customization UI.
+detection, keymap reference panel (all bindings + source, `space ?`). Remaining:
+`when` keymap fall-through; keybinding editing UI.
 
 ### Panels & layout
 
@@ -76,9 +77,12 @@ See [code-editing/autocompletion.md](code-editing/autocompletion.md).
 - [x] Fuzzy matching: reuse the picker's fzy scorer (`fuzzyMatch`, subsequence + 1 typo) for ranking, with matched-character highlighting in the popup.
 - [x] Popup: theme background, word-start alignment, square selection, compact (no min-height), and a split documentation pane (`CompletionItem.documentation`).
 - [x] Buffer-words source (`createBufferWordsSource`) — the first real source.
-- [ ] More sources: LSP (`textDocument/completion`, feeds the doc pane), Copilot (ghost text).
+- [x] LSP source (`createLspCompletionSource`): `textDocument/completion` via the primary server → framework items (kind, detail, `documentation` feeds the doc pane). `LanguageServer.completion`/`hasCompletion`/`completionTriggerCharacters`; `LspManager.completion`. Trigger-character support added to the controller (`.`/`::` etc., sourced from the server) so member completion fires on an empty prefix.
+- [x] Source ranking: `CompletionSource.priority` (default 0); a higher-priority source ranks entirely above lower ones (score/`sortText` order within a source). LSP is `priority: 100`, so it sits above buffer-words — which also keeps the buffer-words fallback out of the way on empty-prefix member completion.
+- [x] Per-item source tag (`CompletionItem.source`, stamped by the controller) shown dimmed in the popup — debug aid for which source produced each candidate.
+- [ ] More sources: Copilot (ghost text).
 - [ ] Widget polish: kind icons, scroll-into-view, mouse, flip-above.
-- [ ] Behavior: trigger characters (`.`/`::`), snippet insertion, eagerness config.
+- [ ] Behavior: snippet insertion, eagerness config; honor LSP `textEdit` ranges; de-dupe identical labels across sources.
 
 ### Text editor
 
@@ -136,6 +140,11 @@ See [agents.md](agents.md) for the architecture plan.
 - [x] More management UX: restart (resume conversation), rename, close — keyboard/command driven (`r`/`R`/`X`); status glyph in the tab title
 - [x] File-change awareness: a PostToolUse hook records edited files; agent-list "✎ N" badge (tooltip), click/`o` opens them (newest first), and edits trigger an immediate git refresh
 - [x] Modal terminal input (Terminal & AgentTerminal): normal/insert modes — `Escape`↔`i`; normal frees the `space` leader / `ctrl-w` window-nav, `ctrl-[` sends a literal Escape to the child. Implemented by wrapping the Vte in a focusable container that *steals* focus in normal mode (Vte un-focused → cursor idles, no keys reach it — no key-swallowing guard needed); clicking the Vte re-enters insert
+- [ ] **Review an agent's diff** (next): snapshot the tree when an agent starts, then show what *it* changed as a diff against its baseline — extends the file-change awareness into a "review this agent's work" loop (reuses `changedFiles` + the editor Diff display)
+- [ ] Live activity timeline: tail the agent's transcript JSONL (already parsed for resume) into a structured feed (tools used, files touched, messages)
+- [ ] OS notifications (`Gio.Notification`) when an agent needs attention while the window is unfocused (today: in-app toasts only)
+- [ ] Agent interrupt (`agent:interrupt` → send ESC/ctrl-c to the child) — softer than kill
+- [ ] Jump to an agent's latest edit *location* (file + exact line), not just the file
 - [ ] Agent configuration and customization (name, description, model, tools, etc), integration with other tools than claude.
 - [ ] Integrate agents with git worktree, and support switching to worktree when viewing an agent associated with a different worktree.
-- [ ] More ideas? (cost/context meter; jump to an agent's latest edit; orchestration)
+- [ ] Cost/context meter (per-row `$cost · context%` via a `statusLine` hook); multi-agent orchestration (speculative)

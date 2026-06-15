@@ -51,9 +51,10 @@ import { type SessionParticipant, type TabState } from '../SessionManager.ts';
 import { SessionController } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
 import { NotificationLog } from './NotificationLog.ts';
+import { KeymapPanel } from './KeymapPanel.ts';
 import { LocationList } from './LocationList.ts';
 import { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
-import { type NavigationKind } from '../lsp/LspManager.ts';
+import { type NavigationKind, type LspConfig } from '../lsp/LspManager.ts';
 import { NotificationToasts } from './NotificationToasts.ts';
 import { loadKeymaps } from '../keymaps/load.ts';
 import { loadConfig, configPath } from '../config/load.ts';
@@ -76,7 +77,7 @@ const LEFT_SPLIT_POSITION = 360;
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 // What currently occupies the (otherwise empty) bottom dock.
-type BottomDock = 'notifications' | 'diagnostics' | 'references' | null;
+type BottomDock = 'notifications' | 'diagnostics' | 'references' | 'keymap' | null;
 
 export class AppWindow {
   private readonly app: Application;
@@ -153,6 +154,9 @@ export class AppWindow {
   // The references results list (LSP find-references), its own bottom-dock panel.
   private readonly referencesList: LocationList;
   private readonly referencesDock: Panel;
+  // The keybinding reference list, its own bottom-dock panel.
+  private readonly keymapPanel: KeymapPanel;
+  private readonly keymapDock: Panel;
   private bottomDock: BottomDock = null;
 
   // Git integration for the header-bar branch indicator.
@@ -175,7 +179,7 @@ export class AppWindow {
   // Drives session save/restore/autosave; wired once the center + file tree exist.
   private sessionController!: SessionController;
 
-  constructor(app: Application, onQuit: () => void, initialFile: string, explicitFile = false) {
+  constructor(app: Application, onQuit: () => void, initialFile: string | undefined, explicitFile = false) {
     this.app = app;
     this.onQuit = onQuit;
 
@@ -307,6 +311,12 @@ export class AppWindow {
       onTabCloseRequest: () => this.hideBottomDock('references'),
     });
     this.referencesDock.add(this.referencesList.root, { title: 'References' });
+    // The keybinding reference list (every binding + its source).
+    this.keymapPanel = new KeymapPanel();
+    this.keymapDock = new Panel({
+      onTabCloseRequest: () => this.hideBottomDock('keymap'),
+    });
+    this.keymapDock.add(this.keymapPanel.root, { title: 'Keybindings' });
 
     const toolbarView = new Adw.ToolbarView();
     toolbarView.addTopBar(this.buildHeaderBar());
@@ -370,13 +380,11 @@ export class AppWindow {
     // before the first file opens so editors read live config values.
     this.configWatcher = loadConfig();
 
-    // Configure language servers from `lsp.*` config (and on live edits), then
-    // refresh the server-config catalog from upstream in the background.
+    // Configure language servers from `lsp.*` config (and on live edits).
     this.configureLsp();
-    for (const key of ['lsp.enable', 'lsp.disabledLanguages', 'lsp.servers', 'lsp.configUrl']) {
+    for (const key of ['lsp.enable', 'lsp.disabledLanguages', 'lsp.servers']) {
       quilx.config.onDidChange(key, () => this.configureLsp());
     }
-    if (quilx.config.get('lsp.refreshOnLaunch') === true) void quilx.lsp.refreshRegistry();
 
     // Surface major LSP events (server start/ready/exit/failure) in the
     // notification log; trace-level so they stay out of the way.
@@ -417,7 +425,7 @@ export class AppWindow {
       !explicitFile &&
       this.sessionController.shouldRestoreOnLaunch() &&
       this.sessionController.restore();
-    if (!restored) this.openFile(initialFile);
+    if (!restored && initialFile) this.openFile(initialFile);
   }
 
   // --- Shutdown --------------------------------------------------------------
@@ -434,6 +442,7 @@ export class AppWindow {
     this.agentList.dispose();
     this.gitPanel.dispose();
     this.notificationLog.dispose();
+    this.keymapPanel.dispose();
     this.onQuit();
   }
 
@@ -963,6 +972,7 @@ export class AppWindow {
       }`,
       `#FileTree, #FileTree listview { background-color: ${bg}; }`,
       `#NotificationLog, #NotificationLog list { background-color: ${bg}; }`,
+      `#KeymapPanel, #KeymapPanel list { background-color: ${bg}; }`,
       `#LocationList, #LocationList list { background-color: ${bg}; }`,
       `#AgentList, #AgentList list { background-color: ${bg}; }`,
       `#GitPanel, #GitPanel list { background-color: ${bg}; }`,
@@ -1149,6 +1159,7 @@ export class AppWindow {
       'lsp:find-references': 'Find references',
       'lsp:hover': 'Show hover (type / docs)',
       'lsp:toggle-diagnostics-panel': 'Toggle the Diagnostics panel',
+      'keymap:show': 'Show all keybindings and their source',
       // Notifications / config / session
       'notifications:toggle-log': 'Toggle the notification log',
       'notifications:clear': 'Clear notifications',
@@ -1188,6 +1199,7 @@ export class AppWindow {
       'lsp:find-references': () => void this.findReferences(),
       'lsp:hover': () => void this.activeEditor?.hover(),
       'lsp:toggle-diagnostics-panel': () => this.toggleDiagnosticsPanel(),
+      'keymap:show': () => this.toggleKeymapPanel(),
     });
   }
 
@@ -1201,6 +1213,16 @@ export class AppWindow {
     }
   }
 
+  // Toggle the keybinding reference list in the bottom dock.
+  private toggleKeymapPanel() {
+    if (this.bottomDock === 'keymap') {
+      this.setBottomDock(null);
+    } else {
+      this.setBottomDock('keymap');
+      this.keymapPanel.focus();
+    }
+  }
+
   // Dock the given panel into the bottom slot (or clear it), tracking which is shown.
   private setBottomDock(which: BottomDock) {
     this.bottomDock = which;
@@ -1208,6 +1230,7 @@ export class AppWindow {
       which === 'notifications' ? this.notificationPanel :
       which === 'diagnostics' ? this.diagnosticsDock :
       which === 'references' ? this.referencesDock :
+      which === 'keymap' ? this.keymapDock :
       null;
     this.workbench.setBottom(panel);
   }
@@ -1280,8 +1303,7 @@ export class AppWindow {
     quilx.lsp.configure({
       enable: quilx.config.get('lsp.enable') as boolean,
       disabledLanguages: quilx.config.get('lsp.disabledLanguages') as string[],
-      serverOverrides: quilx.config.get('lsp.servers') as Record<string, never>,
-      configUrl: quilx.config.get('lsp.configUrl') as string,
+      serverOverrides: quilx.config.get('lsp.servers') as LspConfig['serverOverrides'],
     });
   }
 
@@ -1551,6 +1573,7 @@ export class AppWindow {
     if (this.bottomDock === 'notifications') docks.push(this.notificationPanel);
     else if (this.bottomDock === 'diagnostics') docks.push(this.diagnosticsDock);
     else if (this.bottomDock === 'references') docks.push(this.referencesDock);
+    else if (this.bottomDock === 'keymap') docks.push(this.keymapDock);
     return docks.find((p) => this.isFocusWithin(p.root)) ?? null;
   }
 
@@ -1586,6 +1609,11 @@ export class AppWindow {
       zones.push({
         root: this.referencesDock.root,
         focus: () => this.focusDock(this.referencesDock, () => this.referencesList.focus()),
+      });
+    else if (this.bottomDock === 'keymap')
+      zones.push({
+        root: this.keymapDock.root,
+        focus: () => this.focusDock(this.keymapDock, () => this.keymapPanel.focus()),
       });
     return zones;
   }

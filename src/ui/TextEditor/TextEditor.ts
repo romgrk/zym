@@ -30,6 +30,7 @@ import { SearchController } from './SearchController.ts';
 import { SearchBar } from './SearchBar.ts';
 import { CompletionController } from './CompletionController.ts';
 import { createBufferWordsSource } from './createBufferWordsSource.ts';
+import { createLspCompletionSource } from './createLspCompletionSource.ts';
 import type { LspDocument } from '../../lsp/LspManager.ts';
 import type { GitRepo } from '../../git.ts';
 import type { TabState } from '../../SessionManager.ts';
@@ -458,10 +459,12 @@ export class TextEditor {
     this.searchBar = new SearchBar(overlay, this.search, this.view, { onInfo: this.onToast });
 
     // Autocompletion: the popup floats in this overlay; sources are registered
-    // here (buffer words for now — LSP / Copilot land later). It is dismissed
-    // whenever the vim layer leaves insert mode.
+    // here (buffer words + LSP — Copilot lands later). It is dismissed whenever
+    // the vim layer leaves insert mode. The LSP source no-ops for a fileless
+    // buffer (`lspDocument` undefined) or until a server is up.
     this.completion = new CompletionController(this.editorModel, overlay, () => this.vimState.mode === 'insert');
     this.completion.addSource(createBufferWordsSource(() => this.editorModel.getText()));
+    this.completion.addSource(createLspCompletionSource(quilx.lsp, () => this.lspDocument ?? null));
     this.vimState.onDidActivateMode(({ mode }: { mode: string }) => {
       if (mode !== 'insert') this.completion.dismiss();
     });

@@ -48,11 +48,19 @@ Core pieces:
   re-register the user layer live (`keymaps/load.ts`, mirrors `config.json`).
 - [x] **Conflict detection at load** — `KeymapManager.findConflicts()` reports
   keystrokes bound to multiple commands at the same selector + priority.
+- [x] **Keymap reference panel** — `ui/KeymapPanel.ts`, a bottom-dock list of
+  every binding grouped by source (`default` / `user` / layers), each row showing
+  keystroke · command (+ description) · selector, with shadowed (overridden)
+  bindings dimmed. Backed by `KeymapManager.getAllBindings()` +
+  `onBindingsChanged` (each `KeymapEntry` now carries its `source` + original
+  `selector`), so a live `keymap.json` edit updates it. Toggled via `keymap:show`
+  (`space ?`).
 - [ ] **`when` keymap fall-through** — a disabled command currently still
   captures its keystroke (then no-ops); a future step would let the key fall
   through to the next match / the widget when `when` is false.
-- [ ] **Keybinding customization UI** — view/override bindings from a settings
-  surface (like `ConfigEditor` for config), writing to `keymap.json`. Lower
+- [ ] **Keybinding customization UI** — the reference panel above now *views*
+  bindings + their source; the remaining step is *editing* (rebind / unset from
+  the panel, writing to `keymap.json`, like `ConfigEditor` for config). Lower
   priority; the JSON file already covers power users.
 
 ## Notes

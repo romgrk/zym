@@ -37,11 +37,12 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
 });
 
-// With no file argument, open the editor's own source. An explicit file arg also
-// suppresses session restore-on-launch (see SessionController).
+// With no file argument, open no file (an empty window, unless a session is
+// restored). An explicit file arg also suppresses session restore-on-launch
+// (see SessionController).
 const arg = process.argv[2];
 const explicitFile = Boolean(arg);
-const initialFile = arg ? Path.resolve(arg) : import.meta.filename;
+const initialFile = arg ? Path.resolve(arg) : undefined;
 
 // Load tree-sitter grammars before the GLib main loop starts — emscripten's
 // sync wasm init doesn't resolve once the loop is running.

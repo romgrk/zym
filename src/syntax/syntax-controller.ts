@@ -264,25 +264,103 @@ export class SyntaxController {
     this.tree = tree;
     const root = tree.rootNode;
 
-    // Highlighting: clear our tags, re-apply from the query. (Other tags — the
-    // invisible fold tag — are untouched, so folds persist.)
+    // Highlighting: clear our tags, then re-apply by resolving capture overlaps.
+    // (Other tags — the invisible fold tag — are untouched, so folds persist.)
     for (const tag of this.tags.values()) buffer.removeTag(tag, start, end);
-    for (const cap of this.grammar.query.captures(root)) {
-      const tag = this.resolveTag(cap.name);
-      if (!tag) continue;
-      const n = cap.node;
-      buffer.applyTag(
-        tag,
-        this.iterAt(n.startPosition.row, n.startPosition.column),
-        this.iterAt(n.endPosition.row, n.endPosition.column),
-      );
-    }
+    this.applyCaptures(root);
 
     // Recompute fold regions; derive folded state from the live invisible tag so
     // it tracks edits (tags move with the text).
     this.foldsByHeaderLine.clear();
     this.walkFolds(root);
     (this.view as any).queueDraw();
+  }
+
+  /**
+   * Apply highlight tags for one parse, resolving overlapping captures the way
+   * tree-sitter highlighters do: at any character the *innermost* (narrowest)
+   * capture wins, with ties broken in favor of the later query pattern. The
+   * grammar queries lean on this — a broad `(arrow_function) @function` capture
+   * spans the whole `() => {}`, and is meant to show through only where no
+   * narrower capture (a bracket, an operator, an identifier) covers the text.
+   *
+   * GtkTextTag priority can't express this: a tag's priority is global, but the
+   * same `@function` tag is used for both the broad arrow-function span and a
+   * narrow call-name span. So instead of leaning on priority we flatten the
+   * captures into non-overlapping runs here and apply each run's winning tag
+   * over exactly its range. Unstyled captures (no theme color → null tag) still
+   * take part: a narrower unstyled identifier suppresses a broader styled span,
+   * leaving the default foreground rather than bleeding the outer color.
+   */
+  private applyCaptures(root: any): void {
+    const buffer = this.buffer as any;
+
+    // Each capture as a flat interval over UTF-16 offsets, carrying the (row,col)
+    // of both endpoints (so we can build iters without an offset→position scan)
+    // and the resolved tag (possibly null) plus its order in the capture stream.
+    interface Cap {
+      start: number; end: number;
+      sRow: number; sCol: number; eRow: number; eCol: number;
+      tag: any; idx: number;
+    }
+    const caps: Cap[] = [];
+    const posAt = new Map<number, { row: number; col: number }>();
+    const startsAt = new Map<number, Cap[]>();
+    const endsAt = new Map<number, Cap[]>();
+    let idx = 0;
+    for (const cap of this.grammar!.query.captures(root)) {
+      const n = cap.node;
+      const c: Cap = {
+        start: n.startIndex, end: n.endIndex,
+        sRow: n.startPosition.row, sCol: n.startPosition.column,
+        eRow: n.endPosition.row, eCol: n.endPosition.column,
+        tag: this.resolveTag(cap.name), idx: idx++,
+      };
+      if (c.start === c.end) continue; // zero-width capture paints nothing
+      caps.push(c);
+      if (!posAt.has(c.start)) posAt.set(c.start, { row: c.sRow, col: c.sCol });
+      if (!posAt.has(c.end)) posAt.set(c.end, { row: c.eRow, col: c.eCol });
+      (startsAt.get(c.start) ?? startsAt.set(c.start, []).get(c.start)!).push(c);
+      (endsAt.get(c.end) ?? endsAt.set(c.end, []).get(c.end)!).push(c);
+    }
+    if (caps.length === 0) return;
+
+    // Sweep the boundary offsets left to right, tracking which captures are open.
+    // Over each elementary interval the winner is the narrowest open capture
+    // (ties: later idx). Merge consecutive intervals with the same winning tag
+    // into one run to keep applyTag calls down.
+    const points = [...posAt.keys()].sort((a, b) => a - b);
+    const active = new Set<Cap>();
+    let runTag: any = null;
+    let runStart = -1;
+    const flush = (endOffset: number) => {
+      if (runTag && runStart >= 0) {
+        const a = posAt.get(runStart)!;
+        const b = posAt.get(endOffset)!;
+        buffer.applyTag(runTag, this.iterAt(a.row, a.col), this.iterAt(b.row, b.col));
+      }
+      runTag = null;
+      runStart = -1;
+    };
+    for (let i = 0; i < points.length - 1; i++) {
+      const p = points[i];
+      for (const c of endsAt.get(p) ?? []) active.delete(c);
+      for (const c of startsAt.get(p) ?? []) active.add(c);
+      let win: Cap | null = null;
+      for (const c of active) {
+        if (!win) { win = c; continue; }
+        const cs = c.end - c.start;
+        const ws = win.end - win.start;
+        if (cs < ws || (cs === ws && c.idx > win.idx)) win = c;
+      }
+      const tag = win ? win.tag : null;
+      if (tag !== runTag) {
+        flush(p);
+        runTag = tag;
+        runStart = tag ? p : -1;
+      }
+    }
+    flush(points[points.length - 1]);
   }
 
   private walkFolds(node: any): void {

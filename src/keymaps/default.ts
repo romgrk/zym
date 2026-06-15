@@ -45,6 +45,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space a f a': 'agent:send-file-to', // file path → pick an agent
   'space a f n': 'agent:send-file-to-new', // file path → new agent (editable prompt)
   'space n': 'notifications:toggle-log', // show/hide the bottom notification log
+  'space ?': 'keymap:show', // show all keybindings and their source
   'space ,': 'config:open', // preferences (GNOME-style comma == settings)
   'space f f': 'file-tree:focus', // focus the Files tab
   'space g g': 'git-panel:focus', // focus the git (Source Control) tab

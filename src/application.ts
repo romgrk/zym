@@ -24,12 +24,12 @@ export class Application {
     applicationId: APP_ID,
     flags: Gio.ApplicationFlags.NON_UNIQUE,
   });
-  private readonly initialFile: string;
+  private readonly initialFile?: string;
   // Whether `initialFile` came from an explicit CLI arg (vs the default). An
   // explicit file suppresses session restore-on-launch.
   private readonly explicitFile: boolean;
 
-  constructor(initialFile: string, explicitFile = false) {
+  constructor(initialFile: string | undefined, explicitFile = false) {
     this.initialFile = initialFile;
     this.explicitFile = explicitFile;
     this.app.on('activate', () => this.onActivate());

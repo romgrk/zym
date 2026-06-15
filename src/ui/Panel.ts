@@ -46,14 +46,12 @@ addStyles(`
   }
 `);
 
-// Nerd Font emoticons for the empty-state face (bundled icon font). Neutral while
-// the panel is idle, smiling when it is the active panel — see Panel.setActive.
+// Nerd Font emoticon for the empty-state face (bundled icon font); always the
+// neutral face. The active panel is conveyed by the focus outline, not the face.
 const EMOTICON_NEUTRAL = String.fromCodePoint(0xf11a); // nf-fa-meh_o
-const EMOTICON_HAPPY = String.fromCodePoint(0xf118); // nf-fa-smile_o
 
-// Empty-state caption: cheerier once the panel is focused (active).
-const EMPTY_TEXT_IDLE = 'This panel is feeling a little lonely.';
-const EMPTY_TEXT_ACTIVE = 'This panel is feeling ok.';
+// Empty-state caption — constant.
+const EMPTY_TEXT = 'This panel is empty.';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 
@@ -225,7 +223,7 @@ export class Panel {
     const textAttrs = Pango.AttrList.new();
     textAttrs.insert(Pango.attrWeightNew(Pango.Weight.BOLD));
     textAttrs.insert(Pango.attrScaleNew(1.1));
-    this.emptyText = new Gtk.Label({ label: EMPTY_TEXT_IDLE });
+    this.emptyText = new Gtk.Label({ label: EMPTY_TEXT });
     this.emptyText.setName('PanelEmptyText'); // CSS identity (#PanelEmptyText)
     this.emptyText.setAttributes(textAttrs);
 
@@ -267,12 +265,11 @@ export class Panel {
     return Panel.activePanel === this;
   }
 
-  // Reflect whether this is the active panel: the empty-state face smiles in the
-  // foreground color when active, and sits neutral and muted otherwise. Private —
-  // activation goes through `activate` so only one panel is ever active.
+  // Reflect whether this is the active panel: the empty-state face and caption sit
+  // in the foreground color when active, muted otherwise (the glyph and text stay
+  // constant). Private — activation goes through `activate` so only one panel is
+  // ever active.
   private setActive(active: boolean): void {
-    this.emoticon.setLabel(active ? EMOTICON_HAPPY : EMOTICON_NEUTRAL);
-    this.emptyText.setLabel(active ? EMPTY_TEXT_ACTIVE : EMPTY_TEXT_IDLE);
     for (const label of [this.emoticon, this.emptyText]) {
       if (active) label.addCssClass('is-active');
       else label.removeCssClass('is-active');

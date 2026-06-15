@@ -28,6 +28,11 @@ export interface CompletionItem {
   documentation?: string;
   /** Ordering hint within a source (compared as a string; falls back to `label`). */
   sortText?: string;
+  /**
+   * Name of the source that produced this item, stamped by the controller (the
+   * source itself need not set it). Shown dimmed in the popup as a debug tag.
+   */
+  source?: string;
 }
 
 /** A candidate after ranking: the item plus the matched-character positions
@@ -58,6 +63,12 @@ export interface CompletionContext {
 /** A provider of completion candidates (buffer words, LSP, Copilot, …). */
 export interface CompletionSource {
   readonly name: string;
+  /**
+   * Ranking weight relative to other sources (default 0). Higher-priority
+   * sources rank above lower ones regardless of fuzzy score, so e.g. LSP results
+   * sit above buffer words. Score + `sortText` order items within one source.
+   */
+  readonly priority?: number;
   /**
    * Characters that auto-open completion for this source beyond plain word typing
    * (e.g. `.` / `::` for LSP). Optional.
