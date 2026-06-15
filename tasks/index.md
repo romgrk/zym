@@ -12,9 +12,11 @@ The task documents should be updated as the implementation progresses, with note
 See [commands-keymaps.md](commands-keymaps.md). Done: commands with
 args/descriptions/`when`, keymaps with sequences/priority/`unset!`, `#id`
 selectors, user `keymap.json` (live-reloaded), command palette (shortcuts,
-name+description search, dim-when-unavailable), which-key hints, conflict
-detection, keymap reference panel (all bindings + source, `space ?`). Remaining:
-`when` keymap fall-through; keybinding editing UI.
+name+description search, dim-when-unavailable), which-key hints (currently
+disabled — `WhichKey` constructor skips the `onPendingChanged` subscription;
+re-enable in `src/ui/WhichKey.ts`), conflict detection, keymap reference panel
+(all bindings + source, `space ?`). Remaining: `when` keymap fall-through;
+keybinding editing UI.
 
 ### Panels & layout
 
@@ -59,6 +61,7 @@ See [code-editing/lsp-integration.md](code-editing/lsp-integration.md) for the d
 - [x] Diagnostics integration (gutter, inline, panel) — custom-drawn Cairo squiggles (`UnderlineOverlay`), Nerd-Font gutter glyphs, and a "Diagnostics" panel (shared `LocationList`).
 - [x] Go to shortcuts — definition/declaration/type-definition/implementation + find-references (`space l d`/`D`/`t`/`i`/`r`); jumps reveal an already-open tab.
 - [x] Hover tooltips — `space l k` / vim `K`; markdown card above the cursor, code blocks syntax-highlighted by reusing tree-sitter, in the editor monospace.
+- [x] Server install — `ServerDef.install` (npm / raw command) → `lsp/installer.ts` installs into a managed dir (`$XDG_DATA_HOME/quilx/lsp/<server>`), searched + on the spawn PATH. Triggers: "Install" button on the missing-server warning, `lsp:install-server` picker, and `lsp.autoInstall` (default off). Missing servers are skipped (not crash-looped); the warning names the exact missing binary. See language-config.md.
 - [ ] Code actions — `textDocument/codeAction` → pick + apply a `WorkspaceEdit` (diagnostic quick-fixes, auto-imports, refactors). Needs the shared `WorkspaceEdit` applier.
 - [ ] Formatting — `textDocument/formatting` / range formatting (applies `TextEdit`s; on-demand and optionally on save).
 - [ ] Rename — `textDocument/rename` (+ `prepareRename`) → `WorkspaceEdit`.
@@ -139,12 +142,13 @@ See [agents.md](agents.md) for the architecture plan.
 - [x] Resume / continue past conversations (transcript enumeration + `--resume`/`--continue`); capture session id for restore
 - [x] More management UX: restart (resume conversation), rename, close — keyboard/command driven (`r`/`R`/`X`); status glyph in the tab title
 - [x] File-change awareness: a PostToolUse hook records edited files; agent-list "✎ N" badge (tooltip), click/`o` opens them (newest first), and edits trigger an immediate git refresh
+- [x] Agents sidebar moved to its own full-height column at the very left of the window (left of the header bar) — a top-level horizontal `Gtk.Paned` (sidebar | header-bar+workbench), no longer a workbench left-dock panel. Its top is an `Adw.HeaderBar` (robot glyph only); the list's first row is the **user** (default-selected pseudo-agent), the rest are agents; never empty (no empty state). Files/Source-Control moved to the **right** dock (fixed 220px); the left dock is empty/hidden at startup
 - [x] Modal terminal input (Terminal & AgentTerminal): normal/insert modes — `Escape`↔`i`; normal frees the `space` leader / `ctrl-w` window-nav, `ctrl-[` sends a literal Escape to the child. Implemented by wrapping the Vte in a focusable container that *steals* focus in normal mode (Vte un-focused → cursor idles, no keys reach it — no key-swallowing guard needed); clicking the Vte re-enters insert
-- [ ] **Review an agent's diff** (next): snapshot the tree when an agent starts, then show what *it* changed as a diff against its baseline — extends the file-change awareness into a "review this agent's work" loop (reuses `changedFiles` + the editor Diff display)
+- [ ] **Review an agent's work** (next; design in agents.md): per-agent baselines (PreToolUse snapshot → `.baseline/`) make one agent's diff well-defined even in a tree shared by several agents; an "Agent Changes" diff panel (baseline→current), live while it works + after exit; overlap warning when two live agents edit the same file. Needs the editor Diff renderer first
 - [ ] Live activity timeline: tail the agent's transcript JSONL (already parsed for resume) into a structured feed (tools used, files touched, messages)
 - [ ] OS notifications (`Gio.Notification`) when an agent needs attention while the window is unfocused (today: in-app toasts only)
 - [ ] Agent interrupt (`agent:interrupt` → send ESC/ctrl-c to the child) — softer than kill
 - [ ] Jump to an agent's latest edit *location* (file + exact line), not just the file
 - [ ] Agent configuration and customization (name, description, model, tools, etc), integration with other tools than claude.
-- [ ] Integrate agents with git worktree, and support switching to worktree when viewing an agent associated with a different worktree.
+- [ ] Worktree integration: run agents in worktrees (**N agents per worktree**, not 1:1), group the list by worktree, re-root the editor when viewing one; review at worktree (`git diff`) vs per-agent (baseline) granularity; per-worktree keep/merge/discard when the last agent leaves
 - [ ] Cost/context meter (per-row `$cost · context%` via a `statusLine` hook); multi-agent orchestration (speculative)

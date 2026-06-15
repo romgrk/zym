@@ -45,7 +45,9 @@ export class WhichKey {
 
   constructor(host: Overlay) {
     this.host = host;
-    quilx.keymaps.onPendingChanged((pending) => this.update(pending));
+    // which-key interface is disabled for now — don't subscribe to pending
+    // prefix changes so the hint card never shows.
+    // quilx.keymaps.onPendingChanged((pending) => this.update(pending));
   }
 
   private update(pending: PendingBinding[] | null): void {
