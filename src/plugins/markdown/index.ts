@@ -11,9 +11,25 @@
  * day a Markdown wasm is vendored, a `registerGrammar` here lights highlighting
  * up with no other change.
  */
+import * as Fs from 'node:fs';
 import type { Plugin, PluginContext } from '../../plugin/types.ts';
 import type { ServerDef } from '../../lang/types.ts';
 import type { ConfigSchema } from '../../util/Config.ts';
+
+// Tree-sitter Markdown is a split grammar: a block grammar (document structure)
+// plus an inline grammar (emphasis, links, code spans) injected into the block
+// grammar's `inline` nodes, and fenced code blocks inject the fence language's
+// grammar. These node types fold when multi-line.
+const MD_FOLD_TYPES = ['section', 'fenced_code_block', 'list', 'block_quote', 'pipe_table'];
+
+// Injections for the block grammar: every `inline` span re-highlit by the inline
+// grammar (static guest), and every fenced block's content re-highlit by the
+// grammar its info string names (dynamic guest, resolved through the registry —
+// so ```ts uses the TypeScript plugin's grammar; unknown fences stay plain).
+const MD_INJECTIONS = [
+  { query: '((inline) @content)', language: 'markdown-inline' },
+  { query: '(fenced_code_block (info_string (language) @language) (code_fence_content) @content)' },
+];
 
 // marksman (https://github.com/artempyanykh/marksman) — the de-facto Markdown
 // language server: wiki-links, completion, references, document symbols. A
@@ -66,5 +82,30 @@ export const markdownPlugin: Plugin = {
     });
     ctx.languages.registerServer('markdown', MARKSMAN);
     ctx.registerConfig(CONFIG);
+
+    // Tree-sitter highlighting lights up the moment the grammar assets are
+    // vendored (see tasks/code-editing/syntax-injection.md). Until then we
+    // register no grammar, so Markdown falls back cleanly to no tree-sitter
+    // highlighting — registering a grammar whose wasm is missing would throw and
+    // roll back the whole plugin (losing detection + the server too).
+    const block = ctx.resolve('grammars/tree-sitter-markdown.wasm');
+    const inline = ctx.resolve('grammars/tree-sitter-markdown-inline.wasm');
+    const blockQuery = ctx.resolve('queries/markdown/highlights.scm');
+    const inlineQuery = ctx.resolve('queries/markdown-inline/highlights.scm');
+    if ([block, inline, blockQuery, inlineQuery].every((p) => Fs.existsSync(p))) {
+      ctx.languages.registerGrammar('markdown', {
+        wasm: block,
+        highlightsPath: blockQuery,
+        foldTypes: MD_FOLD_TYPES,
+        injections: MD_INJECTIONS,
+      });
+      // Injection-only grammar: no `registerLanguage` (you never open a
+      // `.markdown-inline` file); the block grammar injects it by id.
+      ctx.languages.registerGrammar('markdown-inline', {
+        wasm: inline,
+        highlightsPath: inlineQuery,
+        foldTypes: [],
+      });
+    }
   },
 };

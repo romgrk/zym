@@ -28,6 +28,28 @@ export interface LanguageDef {
   lspIds?: Record<string, string>;
 }
 
+/**
+ * A language injection: a region of a host grammar's tree highlighted by another
+ * grammar (Markdown's fenced code blocks → the code's grammar; Markdown's inline
+ * spans → the markdown-inline grammar). The `query` runs against the host grammar
+ * and captures the regions to inject; the guest language is named per-match.
+ */
+export interface InjectionDef {
+  /**
+   * A tree-sitter query (over the host grammar) capturing the regions to inject.
+   * Capture `@content` (or `@injection.content`) for the node(s) to re-highlight,
+   * and optionally `@language` (or `@injection.language`) for a node whose *text*
+   * names the guest language (e.g. a fenced block's info string).
+   */
+  query: string;
+  /**
+   * Guest language id when the query captures no `@language` — a static injection
+   * such as an inline self-injection (`language: 'markdown-inline'`). A captured
+   * `@language` overrides this.
+   */
+  language?: string;
+}
+
 /** Tree-sitter grammar binding for a language. */
 export interface GrammarDef {
   /** The grammar `.wasm`: an absolute path, or a module specifier resolved
@@ -38,6 +60,8 @@ export interface GrammarDef {
   highlightsPath: string;
   /** Node types that fold when they span >1 line. */
   foldTypes: string[];
+  /** Language injections (e.g. Markdown's code fences + inline spans). Optional. */
+  injections?: InjectionDef[];
 }
 
 /**
