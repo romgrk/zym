@@ -162,9 +162,15 @@ omit the `edit` from the list; advertised via `codeActionLiteralSupport` +
 server, passing the overlapping diagnostics as context. Verified end-to-end
 against tsserver (Organize Imports → resolve → normalize → apply).
 
-**UI follow-up (not yet wired):** a `lsp:code-action` command + picker, and
-applying the chosen edit to live buffers / disk (open editor writes vs on-disk
-files, plus the resource operations).
+**UI:** `lsp:code-action` (`space l a`) picks an action; `lsp:rename`
+(`space l R`) prompts for a name (prefilled with the symbol); `lsp:format`
+(`space l f`) formats the document. All apply via `AppWindow.applyWorkspaceEdit`
+— open editors are edited in their buffer (`TextEditor.applyLspEdits`, one undo
+group), files with no open editor on disk. `LspManager.rename`/`format`/`canRename`
+back rename/format; `FormattingOptions` come from `editor.tabLength`/`insertSpaces`.
+Verified end-to-end against tsserver. **Not yet wired:** command-only code actions
+(`workspace/executeCommand`), resource operations (create/rename/delete file), and
+range-formatting from the selection (the backend supports it).
 
 ## Document sync (incremental)
 

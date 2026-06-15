@@ -36,6 +36,10 @@ import {
   CompletionResolveRequest,
   CodeActionRequest,
   CodeActionResolveRequest,
+  RenameRequest,
+  PrepareRenameRequest,
+  DocumentFormattingRequest,
+  DocumentRangeFormattingRequest,
   TextDocumentSyncKind,
   MessageType,
   type ClientCapabilities,
@@ -53,6 +57,9 @@ import {
   type CodeAction,
   type Command,
   type CodeActionContext,
+  type WorkspaceEdit,
+  type TextEdit,
+  type FormattingOptions,
 } from 'vscode-languageserver-protocol';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { LspClient } from './LspClient.ts';
@@ -415,6 +422,64 @@ export class LanguageServer {
     return this.client.sendRequest(CodeActionResolveRequest.type, action);
   }
 
+  /** Whether the server advertised support for rename. */
+  get hasRename(): boolean {
+    return !!this.capabilities.renameProvider;
+  }
+
+  /** Rename the symbol at `position` to `newName` → a `WorkspaceEdit`, or null. */
+  async rename(path: string, position: Position, newName: string): Promise<WorkspaceEdit | null> {
+    if (!this.hasRename) return null;
+    await this.start();
+    return this.client.sendRequest(RenameRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+      position,
+      newName,
+    });
+  }
+
+  /** Validate a rename at `position` (range + placeholder), or null if not renamable. */
+  async prepareRename(path: string, position: Position): Promise<{ range: LspRange; placeholder?: string } | null> {
+    const provider = this.capabilities.renameProvider;
+    if (typeof provider !== 'object' || !provider.prepareProvider) return null;
+    await this.start();
+    return this.client.sendRequest(PrepareRenameRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+      position,
+    });
+  }
+
+  /** Whether the server can format a whole document. */
+  get hasFormatting(): boolean {
+    return !!this.capabilities.documentFormattingProvider;
+  }
+
+  /** Whether the server can format a range. */
+  get hasRangeFormatting(): boolean {
+    return !!this.capabilities.documentRangeFormattingProvider;
+  }
+
+  /** Format the whole document → `TextEdit`s, or null. */
+  async formatting(path: string, options: FormattingOptions): Promise<TextEdit[] | null> {
+    if (!this.hasFormatting) return null;
+    await this.start();
+    return this.client.sendRequest(DocumentFormattingRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+      options,
+    });
+  }
+
+  /** Format a range → `TextEdit`s, or null. */
+  async rangeFormatting(path: string, range: LspRange, options: FormattingOptions): Promise<TextEdit[] | null> {
+    if (!this.hasRangeFormatting) return null;
+    await this.start();
+    return this.client.sendRequest(DocumentRangeFormattingRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+      range,
+      options,
+    });
+  }
+
   // --- events ----------------------------------------------------------------
 
   onDiagnostics(handler: (event: DiagnosticsEvent) => void): Disposable {
@@ -502,6 +567,9 @@ const CLIENT_CAPABILITIES: ClientCapabilities = {
       resolveSupport: { properties: ['edit'] },
       dataSupport: true,
     },
+    rename: { dynamicRegistration: false, prepareSupport: true },
+    formatting: { dynamicRegistration: false },
+    rangeFormatting: { dynamicRegistration: false },
   },
   workspace: {
     workspaceFolders: true,

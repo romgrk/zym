@@ -22,7 +22,7 @@ import * as Path from 'node:path';
 import { CompletionTriggerKind, MessageType } from 'vscode-languageserver-protocol';
 import type {
   Definition, LocationLink, Location, Position, Hover, CompletionItem,
-  CodeAction, Command, Range as LspRange,
+  CodeAction, Command, Range as LspRange, WorkspaceEdit, TextEdit, FormattingOptions,
 } from 'vscode-languageserver-protocol';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { Point } from '../text/Point.ts';
@@ -382,6 +382,41 @@ export class LspManager {
     const path = doc.getPath();
     if (!path) return action;
     return this.primaryServerForPath(path)?.resolveCodeAction(action) ?? action;
+  }
+
+  /** Whether the cursor's primary server can rename (for command gating). */
+  canRename(doc: LspDocument): boolean {
+    const path = doc.getPath();
+    return !!path && !!this.primaryServerForPath(path)?.hasRename;
+  }
+
+  /** Rename the symbol at the cursor to `newName` → a `WorkspaceEdit`, or null. */
+  async rename(doc: LspDocument, newName: string): Promise<WorkspaceEdit | null> {
+    if (!this.enabled) return null;
+    const path = doc.getPath();
+    if (!path) return null;
+    const server = this.primaryServerForPath(path);
+    if (!server || !server.hasRename) return null;
+    const cursor = doc.getCursorBufferPosition();
+    const position = pointToPosition(cursor, doc.lineTextForRow(cursor.row), server.positionEncoding);
+    return server.rename(path, position, newName);
+  }
+
+  /**
+   * Format the document (or `range`, if given and the server supports range
+   * formatting) → `TextEdit`s. `options` carries the editor's tab settings.
+   */
+  async format(doc: LspDocument, options: FormattingOptions, range?: Range): Promise<TextEdit[]> {
+    if (!this.enabled) return [];
+    const path = doc.getPath();
+    if (!path) return [];
+    const server = this.primaryServerForPath(path);
+    if (!server) return [];
+    if (range && server.hasRangeFormatting) {
+      const lspRange = rangeToLsp(range, (r) => doc.lineTextForRow(r), server.positionEncoding);
+      return (await server.rangeFormatting(path, lspRange, options)) ?? [];
+    }
+    return server.hasFormatting ? (await server.formatting(path, options)) ?? [] : [];
   }
 
   // --- server management -----------------------------------------------------
