@@ -67,6 +67,17 @@ const schema: Record<string, ConfigSchema> = {
     default: true,
     description: 'Yank/paste through the system clipboard by default (like vim clipboard=unnamedplus). Set false for vim-classic separate registers.',
   },
+  sequentialPaste: {
+    type: 'boolean',
+    default: true,
+    description:
+      'Pressing the same paste command again replaces the just-pasted text with the next entry in the yank history (a yank-pop ring). Off restores classic `pp` = paste twice.',
+  },
+  sequentialPasteMaxHistory: {
+    type: 'integer',
+    default: 8,
+    description: 'How many recent yanks/deletes the sequential-paste history keeps.',
+  },
   numberRegex: {
     type: 'string',
     default: '-?[0-9]+',
@@ -140,8 +151,8 @@ const schema: Record<string, ConfigSchema> = {
   },
   findAcrossLines: {
     type: 'boolean',
-    default: false,
-    description: 'Let f/F/t/T search beyond the cursor line (off = single-line, like vim).',
+    default: true,
+    description: 'Let f/F/t/T search beyond the cursor line. Off restores classic single-line vim find.',
   },
   reuseFindForRepeatFind: {
     type: 'boolean',

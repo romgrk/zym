@@ -12,6 +12,7 @@ import OperationStack from './operation-stack.js'
 import MarkManager from './mark-manager.js'
 import RegisterManager from './register-manager.js'
 import MutationManager from './mutation-manager.js'
+import PositionHistory from './position-history.js'
 import swrap from './selection-wrapper.js'
 import globalState from './global-state.js'
 import { CursorStyleManager, HoverManager, FlashManager, OccurrenceManager, SequentialPasteManager, ScrollManager } from './stubs.ts'
@@ -84,6 +85,8 @@ export default class VimState {
   get cursorStyleManager () { return this.__cursorStyleManager || (this.__cursorStyleManager = this.load('./cursor-style-manager')) } // prettier-ignore
   get sequentialPasteManager () { return this.__sequentialPasteManager || (this.__sequentialPasteManager = this.load('./sequential-paste-manager')) } // prettier-ignore
   get scrollManager () { return this.__scrollManager || (this.__scrollManager = this.load('./scroll-manager')) } // prettier-ignore
+  get jumpList () { return this.__jumpList || (this.__jumpList = new PositionHistory(this)) } // prettier-ignore
+  get changeList () { return this.__changeList || (this.__changeList = new PositionHistory(this)) } // prettier-ignore
   get swrap () { return this.__swrap || (this.__swrap = this.load('./selection-wrapper', false)) } // prettier-ignore
   get utils () { return this.__utils || (this.__utils = this.load('./utils', false)) } // prettier-ignore
   get globalState () { return this.__globalState || (this.__globalState = this.load('./global-state', false)) } // prettier-ignore
@@ -110,7 +113,13 @@ export default class VimState {
     this.subscriptions = new CompositeDisposable(
       this.observeMouse(),
       this.editor.onDidAddSelection(selection => this.reconcileVisualModeWithActualSelection()),
-      this.editor.onDidChangeSelectionRange(event => this.reconcileVisualModeWithActualSelection())
+      this.editor.onDidChangeSelectionRange(event => this.reconcileVisualModeWithActualSelection()),
+      // Record edit positions for the change list (g; / g,). Per emitted batch we
+      // log the last change's start; same-row entries collapse (Vim dedups by line).
+      this.editor.onDidChangeText(event => {
+        const changes = event && event.changes
+        if (changes && changes.length) this.changeList.add(changes[changes.length - 1].newRange.start)
+      })
     )
 
     this.editorElement.addCssClass('vim-mode-plus')

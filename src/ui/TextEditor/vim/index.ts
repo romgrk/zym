@@ -206,18 +206,53 @@ const OPERATOR_BINDINGS: Record<string, string> = {
 const TEXT_OBJECT_BINDINGS: Record<string, string> = {
   'i w': 'InnerWord',
   'a w': 'AWord',
-  'i (': 'InnerParenthesis',
-  'a (': 'AParenthesis',
-  'i )': 'InnerParenthesis',
-  'a )': 'AParenthesis',
-  'i [': 'InnerSquareBracket',
-  'a [': 'ASquareBracket',
-  'i {': 'InnerCurlyBracket',
-  'a {': 'ACurlyBracket',
+  'i W': 'InnerWholeWord',
+  'a W': 'AWholeWord',
+  'i p': 'InnerParagraph',
+  'a p': 'AParagraph',
+  'i s': 'InnerSentence',
+  'a s': 'ASentence',
+  'i t': 'InnerTag',
+  'a t': 'ATag',
+  // targets.vim: arguments (with separator handling) and indentation blocks.
+  'i a': 'InnerArguments',
+  'a a': 'AArguments',
+  'i i': 'InnerIndentation',
+  'a i': 'AIndentation',
+  // whole buffer.
+  'i e': 'InnerEntire',
+  'a e': 'AEntire',
+  // Brackets use the targets.vim-style *AllowForwarding* variants: when the cursor
+  // isn't inside a pair, the text object seeks to the next pair on the line (an
+  // enclosing pair still wins). `b`/`B` are vim's aliases for ()/{}; either
+  // member key (open or close) selects the pair.
+  'i (': 'InnerParenthesisAllowForwarding',
+  'a (': 'AParenthesisAllowForwarding',
+  'i )': 'InnerParenthesisAllowForwarding',
+  'a )': 'AParenthesisAllowForwarding',
+  'i b': 'InnerParenthesisAllowForwarding',
+  'a b': 'AParenthesisAllowForwarding',
+  'i [': 'InnerSquareBracketAllowForwarding',
+  'a [': 'ASquareBracketAllowForwarding',
+  'i ]': 'InnerSquareBracketAllowForwarding',
+  'a ]': 'ASquareBracketAllowForwarding',
+  'i {': 'InnerCurlyBracketAllowForwarding',
+  'a {': 'ACurlyBracketAllowForwarding',
+  'i }': 'InnerCurlyBracketAllowForwarding',
+  'a }': 'ACurlyBracketAllowForwarding',
+  'i B': 'InnerCurlyBracketAllowForwarding',
+  'a B': 'ACurlyBracketAllowForwarding',
+  'i <': 'InnerAngleBracketAllowForwarding',
+  'a <': 'AAngleBracketAllowForwarding',
+  'i >': 'InnerAngleBracketAllowForwarding',
+  'a >': 'AAngleBracketAllowForwarding',
+  // Quotes already seek to the next pair on the line (Quote.allowForwarding).
   'i "': 'InnerDoubleQuote',
   'a "': 'ADoubleQuote',
   "i '": 'InnerSingleQuote',
   "a '": 'ASingleQuote',
+  'i `': 'InnerBackTick',
+  'a `': 'ABackTick',
 };
 
 // Case operators (await a motion/text-object target, like d/y). Sequences under
@@ -282,6 +317,14 @@ const MISC_BINDINGS: Record<string, string> = {
   'ctrl-r': 'Redo',
 };
 
+// Jump list (ctrl-o/ctrl-i) and change list (g;/g,) — normal-mode navigation.
+const JUMP_BINDINGS: Record<string, string> = {
+  'ctrl-o': 'JumpBackward',
+  'ctrl-i': 'JumpForward',
+  'g ;': 'GoToOlderChange',
+  'g ,': 'GoToNewerChange',
+};
+
 // Motions + operators are bound in every non-insert mode (notably operator-pending,
 // so the motion that follows `d` resolves). Mode-entry keys (i/a) are normal-only.
 const NON_INSERT_BINDINGS: Record<string, string> = {
@@ -318,6 +361,7 @@ const NORMAL_OPERATIONS: Record<string, string> = {
   ...SURROUND_BINDINGS,
   ...Z_SCROLL_BINDINGS,
   ...SEARCH_MOTION_BINDINGS,
+  ...JUMP_BINDINGS,
 };
 
 let keymapsRegistered = false;
@@ -343,6 +387,8 @@ function registerKeymapsOnce(): void {
       // z-prefix: folds (→ editor `fold:*` commands) + zz/zt/zb cursor-line redraw.
       ...FOLD_KEYMAP,
       ...toKeymap(Z_SCROLL_BINDINGS),
+      // ctrl-o/ctrl-i jump list, g;/g, change list.
+      ...toKeymap(JUMP_BINDINGS),
     },
     // Motions and operators apply in normal, operator-pending, and visual modes.
     'GtkSourceView:not(.insert-mode)': {

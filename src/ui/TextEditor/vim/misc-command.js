@@ -501,8 +501,35 @@ class PreviousTab extends MiscCommand {
   }
 }
 
+// Jump list (ctrl-o / ctrl-i) and change list (g; / g,). Navigation moves the
+// cursor directly (not via a jump motion), so stepping the list doesn't itself
+// record new jumps.
+class JumpBackward extends MiscCommand {
+  list = 'jumpList'
+  direction = 'goBackward'
+  execute () {
+    const point = this.vimState[this.list][this.direction](this.getCursorBufferPosition(), this.getCount())
+    if (point) this.editor.setCursorBufferPosition(point)
+  }
+}
+class JumpForward extends JumpBackward {
+  direction = 'goForward'
+}
+class GoToOlderChange extends JumpBackward {
+  list = 'changeList'
+  direction = 'goBackward'
+}
+class GoToNewerChange extends JumpBackward {
+  list = 'changeList'
+  direction = 'goForward'
+}
+
 const __operations = {
   MiscCommand,
+  JumpBackward,
+  JumpForward,
+  GoToOlderChange,
+  GoToNewerChange,
   Mark,
   ReverseSelections,
   BlockwiseOtherEnd,

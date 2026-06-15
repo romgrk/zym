@@ -52,6 +52,9 @@ class Motion extends Base {
     if (originalPosition && !cursor.getBufferPosition().isEqual(originalPosition)) {
       this.vimState.mark.set('`', originalPosition)
       this.vimState.mark.set("'", originalPosition)
+      // Record the jump for ctrl-o/ctrl-i. Only for true motions — operator
+      // targets (e.g. `d}`) don't populate the jump list in Vim.
+      if (!this.operator) this.vimState.jumpList.add(originalPosition)
     }
   }
 

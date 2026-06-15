@@ -237,9 +237,19 @@ function getScreenPositionForScreenRow (editor, row, which, {allowOffScreenPosit
 }
 
 function trimBufferRange (editor, range) {
+  // Trim to the first and last non-whitespace: the forward scan's first match is
+  // the new start, the backward scan's first match (last in the buffer) the new
+  // end. Each must stop after that first hit — without `stop()` every match
+  // overwrites, leaving start=last / end=first (a reversed, empty range).
   const newRange = range.copy()
-  editor.scanInBufferRange(/\S/, range, event => (newRange.start = event.range.start))
-  editor.backwardsScanInBufferRange(/\S/, range, event => (newRange.end = event.range.end))
+  editor.scanInBufferRange(/\S/, range, event => {
+    newRange.start = event.range.start
+    event.stop()
+  })
+  editor.backwardsScanInBufferRange(/\S/, range, event => {
+    newRange.end = event.range.end
+    event.stop()
+  })
   return newRange
 }
 

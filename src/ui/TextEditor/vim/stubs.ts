@@ -156,15 +156,78 @@ export class OccurrenceManager {
 }
 
 /**
- * Tracks the sequential-paste cycle (paste, then `.`-style cycle through register
- * history). Not ported: `onExecute` reports "not a sequential paste", so paste
- * uses the plain unnamed register.
+ * Sequential paste (vim-mode-plus's `p`-then-`p` register cycling): when a paste
+ * command immediately follows the *same* paste command, the new paste replaces
+ * the just-pasted text with the next entry from the yank history (a yank-pop
+ * ring), grouped into the first paste's undo step. Any other command in between
+ * breaks the chain and paste behaves normally. The register history is fed by
+ * `RegisterManager` (gated on the `sequentialPaste` config), and the previously
+ * pasted range is reselected through the `LastPastedRange` text object.
  */
+// Operations are untyped JS; the manager pokes at operator fields by contract.
+type PasteOperator = {
+  name: string;
+  repeated: boolean;
+  target: unknown;
+  setTarget(target: unknown): void;
+  getInstance(name: string): unknown;
+  onDidSetTarget(fn: (event: { target: unknown }) => void): void;
+};
+
 export class SequentialPasteManager {
-  constructor(_vimState: VimState) {}
-  onInitialize(_operation: unknown): void {}
-  onExecute(_operation: unknown): boolean {
-    return false;
+  private readonly vimState: VimState;
+  private readonly pastedRangeBySelection = new Map<unknown, unknown>();
+  private originalTarget: unknown;
+  private pasteCheckpoint?: number;
+
+  constructor(vimState: VimState) {
+    this.vimState = vimState;
+    vimState.onDidDestroy(() => this.destroy());
   }
-  savePastedRangeForSelection(_selection: unknown, _range: unknown): void {}
+
+  destroy(): void {
+    this.pastedRangeBySelection.clear();
+  }
+
+  savePastedRangeForSelection(selection: unknown, range: unknown): void {
+    this.pastedRangeBySelection.set(selection, range);
+  }
+
+  getPastedRangeForSelection(selection: unknown): unknown {
+    return this.pastedRangeBySelection.get(selection);
+  }
+
+  private isSequentialPaste(operator: PasteOperator): boolean {
+    return (
+      Boolean(this.vimState.getConfig('sequentialPaste')) &&
+      this.vimState.operationStack.getLastCommandName() === operator.name
+    );
+  }
+
+  onInitialize(operator: PasteOperator): void {
+    if (this.isSequentialPaste(operator)) {
+      operator.target = 'LastPastedRange';
+    } else {
+      operator.onDidSetTarget(({ target }) => (this.originalTarget = target));
+    }
+  }
+
+  onExecute(operator: PasteOperator): boolean {
+    const sequentialPaste = this.isSequentialPaste(operator);
+
+    // On `.` repeat, re-point the target (the original isn't re-resolved otherwise).
+    if (operator.repeated) {
+      operator.setTarget(sequentialPaste ? operator.getInstance('LastPastedRange') : this.originalTarget);
+    }
+
+    if (sequentialPaste) {
+      // Fold the replacement into the first paste's undo step.
+      this.vimState.onDidFinishOperation(() => this.vimState.editor.groupChangesSinceCheckpoint(this.pasteCheckpoint!));
+    } else {
+      this.pastedRangeBySelection.clear();
+      const pasteCheckpoint = this.vimState.editor.createCheckpoint();
+      this.vimState.onDidFinishOperation(() => (this.pasteCheckpoint = pasteCheckpoint));
+    }
+    return sequentialPaste;
+  }
 }

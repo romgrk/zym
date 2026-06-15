@@ -794,7 +794,42 @@ class Entire extends TextObject {
   selectOnce = true
 
   getRange (selection) {
-    return this.editor.buffer.getRange()
+    return new Range(Point.ZERO, this.editor.getEofBufferPosition())
+  }
+}
+
+// `is` / `as` — sentence. (vim-mode-plus ships only the sentence *motion*; this
+// is a quilx addition.) A sentence ends at `.`/`!`/`?` (plus any closing
+// brackets/quotes) followed by whitespace, or at a blank line / buffer edge.
+// `is` runs to the terminating punctuation; `as` includes the trailing gap.
+class Sentence extends TextObject {
+  static command = false
+  // [1] = terminator punctuation, then its trailing whitespace; or a blank line.
+  sentenceRegex = /([.!?][)\]"']*)(?:[ \t]+|\n)|\n[ \t]*\n/g
+
+  getRange (selection) {
+    const from = this.getCursorPositionForSelection(selection)
+
+    // End: the first terminator/boundary at or after the cursor.
+    let aEnd = this.editor.getEofBufferPosition()
+    let innerEnd = aEnd
+    this.findInEditor('forward', this.sentenceRegex, {from}, ({range, match}) => {
+      if (range.end.isLessThanOrEqual(from)) return
+      aEnd = range.end
+      // Inner stops after the punctuation (no group 1 = blank-line boundary).
+      innerEnd = match[1] ? range.start.translate([0, match[1].length]) : range.start
+      return true
+    })
+
+    // Start: just past the previous terminator/boundary (or buffer start).
+    let start = Point.ZERO
+    this.findInEditor('backward', this.sentenceRegex, {from}, ({range}) => {
+      if (range.end.isGreaterThan(from)) return
+      start = range.end
+      return true
+    })
+
+    return new Range(start, this.isInner() ? innerEnd : aEnd)
   }
 }
 
@@ -974,6 +1009,7 @@ const __operations = Object.assign(
     Arguments,
     CurrentLine,
     Entire,
+    Sentence,
     Empty,
     LatestChange,
     SearchMatchForward,
@@ -1008,6 +1044,7 @@ const __operations = Object.assign(
   Arguments.deriveClass(true),
   CurrentLine.deriveClass(true),
   Entire.deriveClass(true),
+  Sentence.deriveClass(true),
   LatestChange.deriveClass(true),
   PersistentSelection.deriveClass(true),
   VisibleArea.deriveClass(true),

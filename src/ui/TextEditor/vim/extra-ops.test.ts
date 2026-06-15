@@ -63,6 +63,18 @@ test('S substitutes the whole line', () => {
   assert.equal(vimState.mode, 'insert');
 });
 
+test('cc empties the line and leaves the cursor on it (not the next line)', () => {
+  const { editor, vimState, run, at, line, pos } = setup('foo\nbar\nbaz\n');
+  at(1, 2); // on the middle line "bar"
+  run('Change');
+  run('Change'); // cc -> Change with a linewise MoveToRelativeLine target
+  assert.equal(line(1), ''); // the line is emptied, not removed
+  assert.deepEqual(pos(), [1, 0]); // cursor on the emptied line, not [2,0]
+  assert.equal(vimState.mode, 'insert');
+  editor.insertText('X'); // typing lands on the right line
+  assert.equal(editor.getText(), 'foo\nX\nbaz\n');
+});
+
 test('X deletes the character before the cursor', () => {
   const { run, at, line } = setup('abc\n');
   at(0, 2); // on 'c'

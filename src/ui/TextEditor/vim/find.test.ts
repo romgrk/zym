@@ -72,6 +72,24 @@ test('; and , repeat the last find forwards and backwards', () => {
   assert.deepEqual(pos(), [0, 3]);
 });
 
+test('f / F / t / T search across lines (findAcrossLines default)', () => {
+  const { find, at, pos } = setup('abc\nde xf\n'); // x at row1 col3
+  at(0, 0);
+  find('Find', 'x');
+  assert.deepEqual(pos(), [1, 3]); // crossed to the next line
+  at(0, 0);
+  find('Till', 'x');
+  assert.deepEqual(pos(), [1, 2]); // one before x, across the line
+
+  const back = setup('ax cd\nefg\n'); // x at row0 col1
+  back.at(1, 2);
+  back.find('FindBackwards', 'x');
+  assert.deepEqual(back.pos(), [0, 1]); // backward across the line
+  back.at(1, 2);
+  back.find('TillBackwards', 'x');
+  assert.deepEqual(back.pos(), [0, 2]); // one after x
+});
+
 test('df<char> deletes inclusively up to the found character', () => {
   const { vimState, editor, at } = setup('abcXdef\n'); // X at col 3
   at(0, 0);

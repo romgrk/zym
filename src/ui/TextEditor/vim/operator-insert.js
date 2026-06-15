@@ -437,9 +437,12 @@ class Change extends ActivateInsertModeBase {
         this.setTextToRegister(selection.getText(), selection)
       }
       if (isLinewiseTarget) {
+        // Replace the line(s) with a single empty line, then step back onto it.
+        // The insert leaves the cursor at the start of the *following* line, so
+        // the move must wrap across the newline (to the end of the emptied line,
+        // i.e. after any autoindent) — a plain moveLeft stalls at column 0.
         selection.insertText('\n', {autoIndent: true})
-        // selection.insertText("", {autoIndent: true})
-        selection.cursor.moveLeft()
+        selection.cursor.moveLeft(1, {allowWrap: true})
       } else {
         selection.insertText('', {autoIndent: true})
       }
