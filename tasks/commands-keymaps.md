@@ -48,10 +48,14 @@ Core pieces:
   re-register the user layer live (`keymaps/load.ts`, mirrors `config.json`).
 - [x] **Conflict detection at load** — `KeymapManager.findConflicts()` reports
   keystrokes bound to multiple commands at the same selector + priority.
-- [x] **Keymap reference panel** — `ui/KeymapPanel.ts`, a bottom-dock list of
-  every binding grouped by source (`default` / `user` / layers), each row showing
-  keystroke · command (+ description) · selector, with shadowed (overridden)
-  bindings dimmed. Backed by `KeymapManager.getAllBindings()` +
+- [x] **Keymap reference panel** — `ui/KeymapPanel.ts`, a bottom-dock `Gtk.Grid`
+  table of every binding with columns **keys · command · description · selector ·
+  source** (source = `default` / `user` / layers), sorted by source then
+  selector/keystroke, with shadowed (overridden) bindings dimmed and the command
+  description as a row hover-hint. While a multi-key sequence is in progress the
+  table narrows to the bindings extending the queued prefix (subscribes to
+  `onPendingChanged`, filters by `queuedKeystrokes`). Backed by
+  `KeymapManager.getAllBindings()` +
   `onBindingsChanged` (each `KeymapEntry` now carries its `source` + original
   `selector`), so a live `keymap.json` edit updates it. Toggled via `keymap:show`
   (`space ?`).
