@@ -91,11 +91,40 @@ investigated separately in [virtual-lines.md](virtual-lines.md).
 
 ## Recommended sequence
 
-1. **Read-only buffer mode** + a `DiffModel` (hunks) abstraction.
-2. **Unified (inline) renderer** — synthesized buffer (context/added/removed) +
-   `added`/`removed` decorations + diff gutter. The smaller first step.
-3. **Side-by-side** — two padded panes from the same model + scroll-sync.
-4. **Polish** — word-level intra-line diff, hunk navigation, fold unchanged.
+1. **Read-only buffer mode** + a `DiffModel` (hunks) abstraction. — *done*
+   - [x] `DiffModel` (`src/util/DiffModel.ts`) — `computeDiff(old, new)` over the
+     existing `lineDiff`: `lines` (unified context/added/removed, each with its
+     old/new row), `hunks` (contiguous changed regions by `lines` row range), and
+     `stats`. Pure, unit-tested (`DiffModel.test.ts`).
+   - [x] Read-only buffer mode — `TextEditor({ buffer: { readOnly: true } })` sets
+     `view.setEditable(false)` (vim nav still works; insert keystrokes no-op).
+2. **Unified (inline) renderer** — *done*
+   - [x] `DiffView` (`src/ui/TextEditor/DiffView.ts`) — synthesizes a read-only
+     buffer from `model.lines` (the buffer-only `TextEditor`, so vim/search/
+     decorations come free), paints `added`/`removed` line backgrounds via
+     `editor.decorations`, and attaches a `DiffGutter`.
+   - [x] `DiffGutter` (`src/ui/TextEditor/DiffGutter.ts`) — a
+     `GtkSource.GutterRendererText` subclass (the `GitGutter` pattern) drawing
+     `+`/`−` per line from `DiffModel.lines`. Added `TextEditor.sourceView` to
+     attach it.
+   - Verified it constructs in a real GTK context (decoration tags + vfunc gutter
+     attach without error; synthesized buffer correct). Visual colors/glyphs need
+     an interactive check. Remaining: full-line (paragraph) backgrounds, a
+     language for syntax highlighting, and a header/stat line.
+3. **Side-by-side** — *done*
+   - [x] `splitSides` (`DiffModel.ts`) — pure transform of a `DiffModel` into two
+     line-aligned, equally-tall panes (changed rows paired; shorter side padded
+     with blank `filler` rows). Unit-tested.
+   - [x] `SideBySideDiffView` (`src/ui/TextEditor/SideBySideDiffView.ts`) — two
+     read-only panes in a `Gtk.Paned`, each with `removed`/`added`/`filler` line
+     backgrounds + a `DiffGutter`; the two views' vertical scroll hard-locked
+     (value copy on `value-changed`). Added a `filler` decoration style.
+   - Verified it constructs in a real GTK context (panes/gutters/scroll-adjustments
+     wire up; padded buffers correct). Live scroll-lock + colors need an
+     interactive check.
+4. **Polish** *(next)* — word-level intra-line diff, hunk navigation, fold
+   unchanged, full-line (paragraph) backgrounds, syntax highlighting, a header/
+   stat line, and a `DiffView`/`SideBySide` toggle.
 
 Net: no new widget primitive is strictly required — the synthesized-buffer
 approach turns "diff" into "read-only buffer + decorations + a gutter + scroll

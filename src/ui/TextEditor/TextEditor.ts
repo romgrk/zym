@@ -146,6 +146,8 @@ export interface BufferEditorOptions {
   initialText?: string;
   /** Fired on the submit gesture (Ctrl+Enter) with the current text. */
   onSubmit?: (text: string) => void;
+  /** Non-editable view (vim navigation only) — for diff panes and other viewers. */
+  readOnly?: boolean;
 }
 
 export class TextEditor {
@@ -252,6 +254,9 @@ export class TextEditor {
   private installBufferMode(mode: BufferEditorOptions): void {
     if (mode.initialText) this.setText(mode.initialText);
     this.placeholderLabel?.setVisible(this.buffer.getCharCount() === 0);
+    // Read-only viewer (e.g. a diff pane): block edits at the view; vim normal-mode
+    // navigation still works, and insert-mode keystrokes simply do nothing.
+    if (mode.readOnly) this.view.setEditable(false);
 
     if (mode.onSubmit) {
       // Ctrl+Enter submits. Capture-phase on the view so it fires only when the
@@ -401,6 +406,12 @@ export class TextEditor {
   /** The inline decoration surface (search highlights, inline diff). */
   get decorations(): DecorationController {
     return this.decorationController;
+  }
+
+  /** The underlying GtkSource.View — for attaching gutter renderers (e.g. the
+   *  diff gutter) the way `GitGutter` does. */
+  get sourceView(): SourceView {
+    return this.view;
   }
 
   // --- Source view & buffer --------------------------------------------------

@@ -33,6 +33,7 @@ export type DecorationStyle =
   | 'highlight-strong' // search: the current match
   | 'added' // diff: an inserted line/span
   | 'removed' // diff: a deleted line/span
+  | 'filler' // diff (side-by-side): a blank alignment pad on the other side
   | 'flash'; // vim: a brief flash over an operated/yanked range
 
 // Style → background color (hex, alpha-capable via #rrggbbaa). Backgrounds rather
@@ -43,6 +44,7 @@ const STYLE_BACKGROUND: Record<DecorationStyle, string> = {
   'highlight-strong': '#f5c21199',
   added: '#2ec27e33',
   removed: '#e01b2433',
+  filler: '#88888820', // dimmed neutral pad for an aligned-but-empty row
   flash: '#f5c21188',
 };
 
