@@ -1,6 +1,7 @@
 /*
  * CompletionPopup — the autocompletion dropdown: a list of candidates floated
- * just below the cursor in the editor's `Gtk.Overlay`.
+ * just below the cursor in the editor's `Gtk.Overlay`, optionally with a second
+ * pane to its right that shows the selected item's documentation (LSP docs).
  *
  * Keyboard-driven (the editor keeps focus; the `CompletionController` routes
  * Up/Down/Enter via a capture key controller), so the popup itself never takes
@@ -17,27 +18,47 @@ import type { CompletionItem } from './CompletionSource.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
-const POPOVER_BG = theme.ui.popoverBg ?? theme.ui.bg ?? '#1e1e1e';
+const POPUP_BG = theme.ui.bg ?? theme.ui.popoverBg ?? '#1e1e1e';
+const SELECTED_BG = theme.ui.selectedBg ?? 'rgba(127, 127, 127, 0.25)';
 const DETAIL_COLOR = theme.ui.textMuted ?? theme.ui.lineNumber ?? theme.ui.fg ?? '#888888';
 const MONO = monospaceFontCss();
-const WIDTH_PX = 340;
+const LIST_WIDTH_PX = 340;
+const DOC_WIDTH_PX = 360;
 const MAX_HEIGHT_PX = 240;
+// Left inset of a row's label inside the card: border (1px) + row padding (8px).
+// `showAt`'s anchor is the word start, so we shift left by this to align the
+// candidate text under the typed text rather than the card's edge.
+const CONTENT_INSET_PX = 9;
 
 addStyles(`
   #CompletionPopup {
-    background-color: ${POPOVER_BG};
+    background-color: ${POPUP_BG};
     border: 1px solid var(--border-color);
-    border-radius: var(--popover-radius);
+    border-radius: var(--popover-radius-small);
     box-shadow: 0px 6px 20px 8px rgba(0,0,0,0.18);
   }
+  /* Inner widgets paint nothing — the card's background shows through, and rows
+     get no min-height so a single match is exactly one row tall. */
+  #CompletionPopup scrolledwindow,
+  #CompletionPopup list,
+  #CompletionPopup row {
+    background-color: transparent;
+    min-height: 0;
+  }
   #CompletionPopup row { padding: 1px 8px; }
+  #CompletionPopup row:selected { background-color: ${SELECTED_BG}; border-radius: 0; }
   #CompletionPopup .completion-label { ${MONO.declarations} }
   #CompletionPopup .completion-detail { opacity: 0.6; margin-left: 1em; }
+  #CompletionPopup separator.completion-divider { background-color: var(--border-color); }
+  #CompletionPopup .completion-doc { padding: 6px 8px; }
 `);
 
 export class CompletionPopup {
   private readonly panel: InstanceType<typeof Gtk.Box>;
   private readonly listBox: InstanceType<typeof Gtk.ListBox>;
+  private readonly divider: InstanceType<typeof Gtk.Separator>;
+  private readonly docScroller: InstanceType<typeof Gtk.ScrolledWindow>;
+  private readonly docLabel: InstanceType<typeof Gtk.Label>;
   private items: CompletionItem[] = [];
   private shown = false;
 
@@ -45,19 +66,37 @@ export class CompletionPopup {
     this.listBox = new Gtk.ListBox();
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
 
-    const scrolled = new Gtk.ScrolledWindow();
-    scrolled.setChild(this.listBox);
-    scrolled.setPropagateNaturalHeight(true);
-    scrolled.setMaxContentHeight(MAX_HEIGHT_PX);
+    const listScroller = new Gtk.ScrolledWindow();
+    listScroller.setChild(this.listBox);
+    listScroller.setPropagateNaturalHeight(true);
+    listScroller.setMaxContentHeight(MAX_HEIGHT_PX);
+    listScroller.setSizeRequest(LIST_WIDTH_PX, -1);
 
-    this.panel = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    // Right pane: the selected item's documentation. Hidden until a selected
+    // item actually carries `documentation` (so a plain list stays compact).
+    this.divider = new Gtk.Separator({ orientation: Gtk.Orientation.VERTICAL });
+    this.divider.addCssClass('completion-divider');
+    this.divider.setVisible(false);
+
+    this.docLabel = new Gtk.Label({ label: '', xalign: 0, yalign: 0, wrap: true });
+    this.docLabel.setValign(Gtk.Align.START);
+    this.docLabel.addCssClass('completion-doc');
+    this.docScroller = new Gtk.ScrolledWindow();
+    this.docScroller.setChild(this.docLabel);
+    this.docScroller.setPropagateNaturalHeight(true);
+    this.docScroller.setMaxContentHeight(MAX_HEIGHT_PX);
+    this.docScroller.setSizeRequest(DOC_WIDTH_PX, -1);
+    this.docScroller.setVisible(false);
+
+    this.panel = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
     this.panel.setName('CompletionPopup');
     this.panel.setHalign(Gtk.Align.START);
     this.panel.setValign(Gtk.Align.START);
-    this.panel.setSizeRequest(WIDTH_PX, -1);
     this.panel.overflow = Gtk.Overflow.HIDDEN;
     this.panel.setCanTarget(false); // keyboard-driven; never steal editor focus
-    this.panel.append(scrolled);
+    this.panel.append(listScroller);
+    this.panel.append(this.divider);
+    this.panel.append(this.docScroller);
     this.panel.setVisible(false);
     host.addOverlay(this.panel);
   }
@@ -66,11 +105,11 @@ export class CompletionPopup {
     return this.shown;
   }
 
-  /** Show `items` with the popup's top-left at widget pixel `(x, y)`. */
+  /** Show `items` with the list's first row aligned to widget pixel `(x, y)`. */
   showAt(items: CompletionItem[], x: number, y: number): void {
     this.items = items;
     this.rebuild();
-    this.panel.setMarginStart(Math.max(0, Math.round(x)));
+    this.panel.setMarginStart(Math.max(0, Math.round(x) - CONTENT_INSET_PX));
     this.panel.setMarginTop(Math.max(0, Math.round(y)));
     this.panel.setVisible(true);
     this.shown = true;
@@ -90,6 +129,7 @@ export class CompletionPopup {
     const next = (current + delta + this.items.length) % this.items.length;
     const row = this.listBox.getRowAtIndex(next);
     if (row) this.listBox.selectRow(row);
+    this.updateDoc();
   }
 
   getSelected(): CompletionItem | null {
@@ -107,6 +147,20 @@ export class CompletionPopup {
     for (const item of this.items) this.listBox.append(this.buildRow(item));
     const first = this.listBox.getRowAtIndex(0);
     if (first) this.listBox.selectRow(first);
+    this.updateDoc();
+  }
+
+  /** Mirror the selected item's documentation into the side pane (or hide it). */
+  private updateDoc(): void {
+    const doc = this.getSelected()?.documentation?.trim();
+    if (doc) {
+      this.docLabel.setLabel(doc);
+      this.divider.setVisible(true);
+      this.docScroller.setVisible(true);
+    } else {
+      this.divider.setVisible(false);
+      this.docScroller.setVisible(false);
+    }
   }
 
   private buildRow(item: CompletionItem): InstanceType<typeof Gtk.ListBoxRow> {

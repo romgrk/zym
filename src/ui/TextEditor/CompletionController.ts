@@ -113,7 +113,9 @@ export class CompletionController {
 
   private present(raw: CompletionItem[], context: CompletionContext): void {
     const items = this.rank(raw, context.prefix);
-    const rect = items.length > 0 ? this.editor.pixelRectForBufferPosition(context.cursor) : null;
+    // Anchor at the start of the word being completed, not the cursor, so the
+    // candidate labels line up under the text they're replacing.
+    const rect = items.length > 0 ? this.editor.pixelRectForBufferPosition(context.replaceRange.start) : null;
     if (!rect) {
       this.popup.hide();
       return;

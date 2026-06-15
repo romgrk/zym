@@ -21,6 +21,11 @@ export interface CompletionItem {
   kind?: string;
   /** Right-aligned detail (a type signature, the source name, …). */
   detail?: string;
+  /**
+   * Longer documentation for the item (LSP `documentation`, a signature + doc
+   * comment, …). Shown in the popup's side panel when the item is selected.
+   */
+  documentation?: string;
   /** Ordering hint within a source (compared as a string; falls back to `label`). */
   sortText?: string;
 }

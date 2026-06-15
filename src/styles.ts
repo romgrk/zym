@@ -106,8 +106,11 @@ export function installStyles(): void {
 // which-key, the editor search bar). It deliberately does NOT reuse
 // libadwaita's `--window-radius`, which collapses to 0 when the window is
 // fullscreen/maximised — these surfaces should stay rounded regardless.
+// `--popover-radius-small` is the tighter radius for compact, in-text chrome
+// (the autocompletion popup) that sits flush against the cursor.
 addStyles(`
   window {
     --popover-radius: 15px;
+    --popover-radius-small: 6px;
   }
 `);
