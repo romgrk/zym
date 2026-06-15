@@ -20,15 +20,18 @@ import type { ConfigSchema } from '../../util/Config.ts';
 // plus an inline grammar (emphasis, links, code spans) injected into the block
 // grammar's `inline` nodes, and fenced code blocks inject the fence language's
 // grammar. These node types fold when multi-line.
-const MD_FOLD_TYPES = ['section', 'fenced_code_block', 'list', 'block_quote', 'pipe_table'];
+export const MD_FOLD_TYPES = ['section', 'fenced_code_block', 'list', 'block_quote', 'pipe_table'];
 
 // Injections for the block grammar: every `inline` span re-highlit by the inline
 // grammar (static guest), and every fenced block's content re-highlit by the
 // grammar its info string names (dynamic guest, resolved through the registry —
 // so ```ts uses the TypeScript plugin's grammar; unknown fences stay plain).
-const MD_INJECTIONS = [
+export const MD_INJECTIONS = [
   { query: '((inline) @content)', language: 'markdown-inline' },
   { query: '(fenced_code_block (info_string (language) @language) (code_fence_content) @content)' },
+  // YAML front matter (`--- … ---`). A no-op until a `yaml` grammar is registered
+  // (a future YAML plugin) — the Markdown plugin deliberately doesn't own YAML.
+  { query: '((minus_metadata) @content)', language: 'yaml' },
 ];
 
 // marksman (https://github.com/artempyanykh/marksman) — the de-facto Markdown
