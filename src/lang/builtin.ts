@@ -30,6 +30,14 @@ const TSSERVER: ServerDef = {
   roots: ['tsconfig.json', 'jsconfig.json', 'package.json'], group: 'js-types', priority: 10,
   // typescript-language-server needs the `typescript` package alongside it.
   install: { via: 'npm', package: 'typescript-language-server typescript' },
+  // Offer cross-module symbols in completion (their `import` line arrives via
+  // completionItem/resolve as additionalTextEdits → applied on accept).
+  initializationOptions: {
+    preferences: {
+      includeCompletionsForModuleExports: true,
+      includeCompletionsForImportStatements: true,
+    },
+  },
 };
 const DENO: ServerDef = {
   name: 'deno', command: 'deno', args: ['lsp'],
