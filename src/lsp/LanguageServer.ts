@@ -34,6 +34,7 @@ import {
   HoverRequest,
   CompletionRequest,
   CompletionResolveRequest,
+  SignatureHelpRequest,
   CodeActionRequest,
   CodeActionResolveRequest,
   RenameRequest,
@@ -54,6 +55,7 @@ import {
   type CompletionList,
   type CompletionItem,
   type CompletionContext,
+  type SignatureHelp,
   type CodeAction,
   type Command,
   type CodeActionContext,
@@ -389,6 +391,27 @@ export class LanguageServer {
     return this.client.sendRequest(CompletionResolveRequest.type, item);
   }
 
+  /** Whether the server advertised support for signature help. */
+  get hasSignatureHelp(): boolean {
+    return !!this.capabilities.signatureHelpProvider;
+  }
+
+  /** Characters that (re)trigger signature help (e.g. `(`, `,`), per the server. */
+  get signatureHelpTriggerCharacters(): string[] {
+    const provider = this.capabilities.signatureHelpProvider;
+    return (typeof provider === 'object' && provider.triggerCharacters) || [];
+  }
+
+  /** Signature help (the call's parameter list + active param) at `position`, or null. */
+  async signatureHelp(path: string, position: Position): Promise<SignatureHelp | null> {
+    if (!this.hasSignatureHelp) return null;
+    await this.start();
+    return this.client.sendRequest(SignatureHelpRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+      position,
+    });
+  }
+
   /** Whether the server advertised support for code actions. */
   get hasCodeActions(): boolean {
     return !!this.capabilities.codeActionProvider;
@@ -570,6 +593,14 @@ const CLIENT_CAPABILITIES: ClientCapabilities = {
     rename: { dynamicRegistration: false, prepareSupport: true },
     formatting: { dynamicRegistration: false },
     rangeFormatting: { dynamicRegistration: false },
+    signatureHelp: {
+      dynamicRegistration: false,
+      signatureInformation: {
+        documentationFormat: ['markdown', 'plaintext'],
+        parameterInformation: { labelOffsetSupport: true },
+        activeParameterSupport: true,
+      },
+    },
   },
   workspace: {
     workspaceFolders: true,

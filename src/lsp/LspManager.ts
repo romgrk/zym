@@ -22,7 +22,7 @@ import * as Path from 'node:path';
 import { CompletionTriggerKind, MessageType } from 'vscode-languageserver-protocol';
 import type {
   Definition, LocationLink, Location, Position, Hover, CompletionItem,
-  CodeAction, Command, Range as LspRange, WorkspaceEdit, TextEdit, FormattingOptions,
+  CodeAction, Command, Range as LspRange, WorkspaceEdit, TextEdit, FormattingOptions, SignatureHelp,
 } from 'vscode-languageserver-protocol';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { Point } from '../text/Point.ts';
@@ -346,6 +346,28 @@ export class LspManager {
     const path = doc.getPath();
     if (!path) return [];
     return this.primaryServerForPath(path)?.completionTriggerCharacters ?? [];
+  }
+
+  /** Signature help (call's parameter list + active param) at the cursor, or null. */
+  async signatureHelp(doc: LspDocument): Promise<SignatureHelp | null> {
+    if (!this.enabled) return null;
+    const path = doc.getPath();
+    if (!path) return null;
+    const server = this.primaryServerForPath(path);
+    if (!server || !server.hasSignatureHelp) return null;
+    const cursor = doc.getCursorBufferPosition();
+    const position = pointToPosition(cursor, doc.lineTextForRow(cursor.row), server.positionEncoding);
+    return Promise.race([
+      server.signatureHelp(path, position),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+  }
+
+  /** Characters that (re)trigger signature help (e.g. `(`, `,`) for the primary server. */
+  signatureHelpTriggerCharacters(doc: LspDocument): string[] {
+    const path = doc.getPath();
+    if (!path) return [];
+    return this.primaryServerForPath(path)?.signatureHelpTriggerCharacters ?? [];
   }
 
   /** The primary server's position encoding (for converting `textEdit` ranges). */
