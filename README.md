@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">
-  <b>neovim+agents+LSP<br/>
+  <b>neovim + agents + LSP<br/>
   Native GTK 4 — no Electron.<br/>
   Node.js under the hood — the full npm ecosystem.</b>
 </p>
