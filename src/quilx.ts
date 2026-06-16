@@ -77,6 +77,16 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     default: true,
     description: 'Draw faint vertical guides marking each indentation level.',
   },
+  'editor.errorLens': {
+    type: 'boolean',
+    default: true,
+    description: "Show each line's diagnostic message inline (trailing the line), not just on hover.",
+  },
+  'editor.inlayHints': {
+    type: 'boolean',
+    default: true,
+    description: 'Show LSP inlay hints (parameter names / inferred types) trailing each line.',
+  },
   'editor.scrollPastEnd': {
     type: 'boolean',
     default: true,

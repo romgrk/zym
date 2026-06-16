@@ -33,6 +33,8 @@ import {
   ReferencesRequest,
   HoverRequest,
   CompletionRequest,
+  InlayHintRequest,
+  type InlayHint,
   CompletionResolveRequest,
   SignatureHelpRequest,
   CodeActionRequest,
@@ -374,6 +376,22 @@ export class LanguageServer {
     });
   }
 
+  /** Whether the server advertised support for inlay hints. */
+  get hasInlayHint(): boolean {
+    return !!this.capabilities.inlayHintProvider;
+  }
+
+  /** Inlay hints (parameter names / inferred types) within `range`, or `[]`. */
+  async inlayHint(path: string, range: LspRange): Promise<InlayHint[]> {
+    if (!this.hasInlayHint) return [];
+    await this.start();
+    const hints = await this.client.sendRequest(InlayHintRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+      range,
+    });
+    return hints ?? [];
+  }
+
   /** Completion candidates at `position` (a list or bare array), or null. */
   async completion(
     path: string,
@@ -635,6 +653,8 @@ const CLIENT_CAPABILITIES: ClientCapabilities = {
         activeParameterSupport: true,
       },
     },
+    // Inlay hints (parameter names / inferred types), rendered end-of-line.
+    inlayHint: { dynamicRegistration: false, resolveSupport: { properties: [] } },
   },
   workspace: {
     workspaceFolders: true,

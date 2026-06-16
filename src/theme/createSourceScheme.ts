@@ -65,6 +65,13 @@ function schemeXml(id: string, theme: Theme): string {
   const styles = [
     `<style name="text" foreground="${ui.fg}" background="${ui.bg}"/>`,
     `<style name="line-numbers" foreground="${ui.lineNumber ?? ui.fg}" background="${ui.bg}"/>`,
+    // GtkSourceAnnotation colors come from these scheme styles: AnnotationStyle.ERROR
+    // uses diff:removed-line fg, WARNING uses diff:changed-line fg, ACCENT uses
+    // diff:added-line fg (see GtkSource docs). Define them so error-lens annotations
+    // are colored by severity. (We don't otherwise render diffs through the scheme.)
+    `<style name="diff:removed-line" foreground="${ui.error}"/>`,
+    `<style name="diff:changed-line" foreground="${ui.warning}"/>`,
+    `<style name="diff:added-line" foreground="${ui.info}"/>`,
   ];
   for (const [def, capture] of DEF_STYLES) {
     const color = syntax[capture];

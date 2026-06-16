@@ -23,8 +23,16 @@ import { Range } from '../../text/Range.ts';
 import { lspToRange } from '../position.ts';
 import { isLineFolded } from '../../syntax/syntax-controller.ts';
 import { severityStyle } from './severity.ts';
+import { AnnotationController, type AnnotationStyleName } from '../../ui/TextEditor/AnnotationController.ts';
 import type { EditorModel } from '../../ui/TextEditor/EditorModel.ts';
 import type { UnderlineOverlay, Underline } from '../../ui/TextEditor/UnderlineOverlay.ts';
+
+/** Map an LSP severity to an annotation style for error-lens trailing text. */
+function annotationStyle(severity: number): AnnotationStyleName {
+  if (severity === DiagnosticSeverity.Error) return 'error';
+  if (severity === DiagnosticSeverity.Warning) return 'warning';
+  return 'accent'; // information / hint
+}
 
 export class DiagnosticsView {
   private readonly view: SourceView;
@@ -34,6 +42,8 @@ export class DiagnosticsView {
   private readonly renderer: any;
   // line → most-severe DiagnosticSeverity on that line (lower number = worse).
   private readonly severityByLine = new Map<number, number>();
+  // Error lens: native end-of-line trailing message per line (GtkSourceAnnotations).
+  private readonly annotations: AnnotationController;
   private readonly subscriptions = new CompositeDisposable();
 
   constructor(
@@ -52,18 +62,25 @@ export class DiagnosticsView {
     this.renderer.buffer = (view as any).getBuffer();
     (this.view as any).getGutter(Gtk.TextWindowType.LEFT).insert(this.renderer, 0);
 
+    this.annotations = new AnnotationController(view);
+
     this.subscriptions.add(
       quilx.lsp.diagnostics.onDidUpdate((path) => {
         if (path === this.getPath()) this.render();
       }),
     );
+    // Re-render when the error-lens toggle changes.
+    this.subscriptions.add(quilx.config.observe('editor.errorLens', () => this.render()));
   }
 
-  /** Re-apply squiggles + gutter glyphs for the current file's diagnostics. */
+  /** Re-apply squiggles + gutter glyphs + error-lens annotations for the current
+   *  file's diagnostics. */
   render(): void {
     const path = this.getPath();
     this.severityByLine.clear();
     const underlines: Underline[] = [];
+    // line → the worst diagnostic to trail (message + severity) + how many share the line.
+    const lensByLine = new Map<number, { message: string; severity: number; count: number }>();
     const entries = path ? quilx.lsp.diagnostics.get(path) : [];
     const lineAt = (row: number) => this.model.lineTextForBufferRow(row);
     for (const { diagnostic, encoding } of entries) {
@@ -73,14 +90,39 @@ export class DiagnosticsView {
       const line = range.start.row;
       const worst = this.severityByLine.get(line);
       if (worst === undefined || severity < worst) this.severityByLine.set(line, severity);
+
+      const message = typeof diagnostic.message === 'string' ? diagnostic.message : diagnostic.message.value;
+      const lens = lensByLine.get(line);
+      if (!lens) lensByLine.set(line, { message, severity, count: 1 });
+      else {
+        lens.count++;
+        if (severity < lens.severity) {
+          lens.message = message;
+          lens.severity = severity;
+        }
+      }
     }
     this.underlines.setUnderlines(underlines);
     this.renderer.queueDraw();
+
+    // Error lens: the worst message per line, trailing the line (`+N` when several).
+    if (quilx.config.get('editor.errorLens') !== false) {
+      this.annotations.setAnnotations(
+        [...lensByLine.entries()].map(([line, lens]) => ({
+          line,
+          text: lens.message.split('\n')[0] + (lens.count > 1 ? `  +${lens.count - 1}` : ''),
+          style: annotationStyle(lens.severity),
+        })),
+      );
+    } else {
+      this.annotations.clear();
+    }
   }
 
   dispose(): void {
     this.underlines.clear();
     this.severityByLine.clear();
+    this.annotations.dispose();
     (this.view as any).getGutter(Gtk.TextWindowType.LEFT).remove(this.renderer);
     this.subscriptions.dispose();
   }

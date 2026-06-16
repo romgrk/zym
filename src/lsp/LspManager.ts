@@ -23,8 +23,20 @@ import { CompletionTriggerKind, MessageType } from 'vscode-languageserver-protoc
 import type {
   Definition, LocationLink, Location, Position, Hover, CompletionItem,
   CodeAction, Command, Range as LspRange, WorkspaceEdit, TextEdit, FormattingOptions, SignatureHelp,
-  SymbolInformation, WorkspaceSymbol, DocumentSymbol,
+  SymbolInformation, WorkspaceSymbol, DocumentSymbol, InlayHint,
 } from 'vscode-languageserver-protocol';
+
+/** A normalized inlay hint for end-of-line rendering: which buffer row + the label. */
+export interface InlayHintInfo {
+  line: number;
+  label: string;
+  paddingLeft: boolean;
+}
+
+/** An inlay-hint label is a string or an array of parts ({ value }); join to text. */
+function inlayLabelText(label: InlayHint['label']): string {
+  return typeof label === 'string' ? label : label.map((part) => part.value).join('');
+}
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { Point } from '../text/Point.ts';
 import { Range } from '../text/Range.ts';
@@ -388,6 +400,29 @@ export class LspManager {
       server.signatureHelp(path, position),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
     ]);
+  }
+
+  /** Inlay hints for the whole document (parameter names / inferred types), normalized
+   *  for end-of-line annotation rendering. Bounded by a timeout. */
+  async inlayHints(doc: LspDocument): Promise<InlayHintInfo[]> {
+    if (!this.enabled) return [];
+    const path = doc.getPath();
+    if (!path) return [];
+    const server = this.primaryServerForPath(path);
+    if (!server || !server.hasInlayHint) return [];
+    const lines = doc.getText().split('\n');
+    const lastRow = Math.max(0, lines.length - 1);
+    const end = pointToPosition(new Point(lastRow, [...lines[lastRow]].length), lines[lastRow], server.positionEncoding);
+    const range = { start: { line: 0, character: 0 }, end };
+    const hints = await Promise.race([
+      server.inlayHint(path, range),
+      new Promise<InlayHint[]>((resolve) => setTimeout(() => resolve([]), 3000)),
+    ]);
+    return hints.map((hint) => ({
+      line: hint.position.line,
+      label: inlayLabelText(hint.label),
+      paddingLeft: !!hint.paddingLeft,
+    }));
   }
 
   /** Characters that (re)trigger signature help (e.g. `(`, `,`) for the primary server. */
