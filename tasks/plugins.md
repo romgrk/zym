@@ -93,6 +93,8 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
 - `src/plugin/index.ts` — the `plugins` singleton + `registerBuiltinPlugins()`.
 - `src/plugins/typescript/` — the TypeScript plugin (`index.ts`, `queries/`, `typescript.test.ts`).
 - `src/plugins/markdown/` — the Markdown plugin (`index.ts`, `markdown.test.ts`).
+- `src/plugins/css/` — the CSS plugin (`index.ts`, `queries/`, vendored `grammars/`,
+  `build-grammars.sh`, `css.test.ts`, `grammar.test.ts`).
 
 ## Bundled plugins
 
@@ -108,6 +110,14 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   a Markdown wasm is vendored — at which point one `registerGrammar` call lights
   it up. A good demonstration that a language plugin can supply any subset of the
   contribution points.
+- **css** — CSS/SCSS/Sass detection, tree-sitter grammars, and language servers.
+  First plugin to **mix a bundled grammar with a vendored one**: CSS uses the
+  bundled `tree-sitter-css.wasm`; SCSS uses `tree-sitter-scss.wasm`, vendored under
+  `grammars/` and built by the plugin's own `build-grammars.sh` (the Markdown
+  recipe). Sass (indented) is detection + LSP only — no ABI-14 grammar exists for
+  it. `vscode-css-language-server` (from `vscode-langservers-extracted`, the eslint
+  sibling) serves CSS + SCSS; **SomeSass** serves indented Sass (optional, skipped
+  if absent).
 
 ## What's next
 

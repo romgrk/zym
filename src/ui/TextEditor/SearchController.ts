@@ -59,9 +59,18 @@ export class SearchController {
   // word search, cleared by any bar-driven query.
   private wholeWord = false;
 
+  // Notified with the active search regex whenever a search runs, so the host can
+  // publish it to the vim layer (globalState.lastSearchPattern) for `gn`/`gN`.
+  private onPattern?: (regex: RegExp) => void;
+
   constructor(editor: EditorModel, decorations: DecorationController) {
     this.editor = editor;
     this.decorations = decorations;
+  }
+
+  /** Register a listener for the active search pattern (the vim `gn` bridge). */
+  setPatternListener(fn: (regex: RegExp) => void): void {
+    this.onPattern = fn;
   }
 
   /** Begin a search session: remember the cursor and the direction. */
@@ -220,7 +229,10 @@ export class SearchController {
   private scanMatches(): void {
     const regex = this.buildRegex();
     this.matches = [];
-    if (regex) this.editor.scan(regex, ({ range }) => this.matches.push(range));
+    if (regex) {
+      this.onPattern?.(regex); // publish the live pattern for the vim `gn` text objects
+      this.editor.scan(regex, ({ range }) => this.matches.push(range));
+    }
   }
 
   /** First match strictly after `point`, wrapping to the first. */

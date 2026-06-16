@@ -19,6 +19,15 @@ if [ -n "$sid" ]; then
     mv "$QUILX_STATUS_FILE.session.tmp" "$QUILX_STATUS_FILE.session" 2>/dev/null
 fi
 
+# Capture the current permission mode (default|plan|acceptEdits|auto|dontAsk|
+# bypassPermissions). Present on most events — shift-tab toggling changes it on the
+# next hook, so every payload that carries it refreshes $QUILX_STATUS_FILE.mode.
+mode=$(printf '%s' "$payload" | sed -n 's/.*"permission_mode":"\([^"]*\)".*/\1/p' | head -1)
+if [ -n "$mode" ]; then
+  printf '%s' "$mode" > "$QUILX_STATUS_FILE.mode.tmp" 2>/dev/null &&
+    mv "$QUILX_STATUS_FILE.mode.tmp" "$QUILX_STATUS_FILE.mode" 2>/dev/null
+fi
+
 status="$1"
 
 # PostToolUse(Edit/Write/…) records the touched file for change-awareness: append

@@ -227,3 +227,30 @@ test('dah deletes the LHS through the separator', () => {
   run('ALhs');
   assert.equal(editor.getText(), ' value\n'); // "key:" gone
 });
+
+test('dgn deletes the search match at/after the cursor (uses lastSearchPattern)', () => {
+  const { editor, vimState, run, at } = setup('foo bar foo baz\n');
+  vimState.globalState.set('lastSearchPattern', /foo/g);
+  at(0, 8); // on the 2nd "foo"
+  run('Delete');
+  run('SearchMatchForward');
+  assert.equal(editor.getText(), 'foo bar  baz\n'); // 2nd "foo" gone
+});
+
+test('dgN deletes the previous search match', () => {
+  const { editor, vimState, run, at } = setup('foo bar foo baz\n');
+  vimState.globalState.set('lastSearchPattern', /foo/g);
+  at(0, 8); // on the 2nd "foo"
+  run('Delete');
+  run('SearchMatchBackward');
+  assert.equal(editor.getText(), ' bar foo baz\n'); // 1st "foo" gone
+});
+
+test('gn is inert without a search pattern', () => {
+  const { editor, vimState, run, at } = setup('foo bar\n');
+  vimState.globalState.set('lastSearchPattern', null); // globalState is a singleton
+  at(0, 0);
+  run('Delete');
+  run('SearchMatchForward');
+  assert.equal(editor.getText(), 'foo bar\n'); // nothing to match → no-op
+});

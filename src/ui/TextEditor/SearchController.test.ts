@@ -178,3 +178,14 @@ test('searchWord(wholeWord=false) — g* matches substrings too', () => {
   assert.equal(state.count, 3); // foo, the foo in foobar, foo
   assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 4]); // into "foobar"
 });
+
+test('setPatternListener publishes the active regex on each search', () => {
+  const { search } = setup('foo bar foo\n');
+  const captured: RegExp[] = [];
+  search.setPatternListener((r) => captured.push(r));
+  search.setQuery('foo');
+  const pattern = captured[captured.length - 1];
+  assert.ok(pattern instanceof RegExp);
+  assert.ok(pattern.test('foo'));
+  assert.ok(!pattern.test('xyz'));
+});

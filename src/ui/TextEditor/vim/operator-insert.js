@@ -191,28 +191,10 @@ class ActivateInsertMode extends ActivateInsertModeBase {
 }
 
 class ActivateReplaceMode extends ActivateInsertMode {
-  initialize () {
-    super.initialize()
-
-    const replacedCharsBySelection = new WeakMap()
-    this.vimState.replaceModeDisposable = new CompositeDisposable(
-      this.editor.onWillInsertText(({text = '', cancel}) => {
-        cancel()
-        for (const selection of this.editor.getSelections()) {
-          for (const char of text.split('')) {
-            if (char !== '\n' && !selection.cursor.isAtEndOfLine()) selection.selectRight()
-            if (!replacedCharsBySelection.has(selection)) replacedCharsBySelection.set(selection, [])
-            replacedCharsBySelection.get(selection).push(selection.getText())
-            selection.insertText(char)
-          }
-        }
-      }),
-
-      // Replace-mode backspace restore: not ported yet (needs core:backspace
-      // key wiring); inert until Replace mode lands.
-      new Disposable(() => {})
-    )
-  }
+  // Activates insert mode with the `replace` submode (the execute path calls
+  // `activateMode('insert', 'replace')`); the host (TextEditor) implements the
+  // overwrite-on-type and backspace-restore against that submode, since quilx
+  // routes insert-mode keystrokes through GtkSourceView, not Atom's text events.
 
   repeatInsert (selection, text) {
     for (const char of text) {

@@ -23,8 +23,14 @@ export const Icons = {
   trace: String.fromCodePoint(0xf188), // bug
   close: String.fromCodePoint(0xf00d), // times
   git: String.fromCodePoint(0xf418), // git-branch (matches the header GitBranchButton)
+  gitMerge: String.fromCodePoint(0xf419), // git-merge
   github: String.fromCodePoint(0xf09b), // nf-fa-github — the GitHub mark
   modified: String.fromCodePoint(0xf444), // dot-fill — unsaved/modified marker
+  trash: String.fromCodePoint(0xf1f8), // nf-fa-trash — delete
+  pencil: String.fromCodePoint(0xf040), // nf-fa-pencil — rename/edit
+  stash: String.fromCodePoint(0xf187), // nf-fa-archive — git stash
+  search: String.fromCodePoint(0xf002), // nf-fa-search — magnifying glass
+  symbol: String.fromCodePoint(0xea8b), // nf-cod-symbol_namespace — "{}" go-to-symbol
 } as const;
 
 // One shared, immutable attribute list applying the icon font (built lazily so it
@@ -80,4 +86,19 @@ const DEFAULT_KIND_CODEPOINT = 0xea93; // symbol-misc / text as a neutral fallba
 /** Nerd Font glyph for a completion item's `kind` (see `Icons`/`iconLabel`). */
 export function completionKindGlyph(kind: string | undefined): string {
   return String.fromCodePoint((kind && COMPLETION_KIND_CODEPOINTS[kind]) || DEFAULT_KIND_CODEPOINT);
+}
+
+// LSP `SymbolKind` (1-based) → the kind names `completionKindGlyph` maps, so the
+// workspace-symbol picker reuses the same Codicon glyphs the completion list shows.
+const SYMBOL_KIND_NAMES: Record<number, string> = {
+  1: 'file', 2: 'module', 3: 'module', 4: 'module', 5: 'class', 6: 'method',
+  7: 'property', 8: 'field', 9: 'constructor', 10: 'enum', 11: 'interface',
+  12: 'function', 13: 'variable', 14: 'constant', 15: 'value', 16: 'value',
+  17: 'value', 18: 'value', 19: 'value', 20: 'value', 21: 'value',
+  22: 'enum-member', 23: 'struct', 24: 'event', 25: 'operator', 26: 'type-parameter',
+};
+
+/** Nerd Font glyph for an LSP `SymbolKind` (the workspace-symbol picker rows). */
+export function symbolKindGlyph(kind: number): string {
+  return completionKindGlyph(SYMBOL_KIND_NAMES[kind]);
 }

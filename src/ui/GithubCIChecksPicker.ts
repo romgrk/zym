@@ -46,7 +46,13 @@ interface CiCheckItem extends PickerItem {
 export function openGithubCIChecksPicker(host: Overlay, cwd: string): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({
+      host,
+      placeholder: 'Open CI check…',
+      promptIcon: Icons.github,
+      onSelect: () => {},
+      error: 'Not a git repository',
+    });
     return;
   }
   // Open immediately with a loading state; fill in once `gh pr checks` resolves.

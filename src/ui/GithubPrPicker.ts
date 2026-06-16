@@ -44,7 +44,13 @@ interface PrPickerItem extends PickerItem {
 export function switchToGithubPrPicker(host: Overlay, cwd: string): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({
+      host,
+      placeholder: 'Switch to pull request…',
+      promptIcon: Icons.github,
+      onSelect: () => {},
+      error: 'Not a git repository',
+    });
     return;
   }
   openPicker({

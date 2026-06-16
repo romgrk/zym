@@ -45,6 +45,12 @@ commands, config schema, stylesheets) so deactivation tears everything down. The
   the flow/tsserver/deno/eslint server candidates. Activated at startup
   (`src/index.ts`: `registerBuiltinPlugins()` → `plugins.activateAll()`) before
   `preloadGrammars`, so the registry is populated before anything reads it.
+- [x] **HTML plugin** — `src/plugins/html/`. Detection (`.html`/`.htm`/`.xhtml`),
+  the bundled `tree-sitter-html` grammar (highlights + folds, palette-adapted),
+  and the `vscode-html-language-server` (single-file). Exercises *cross-plugin
+  injections*: `<style>` → a CSS grammar this plugin vendors injection-only, and
+  `<script>` → the TypeScript plugin's tsx grammar (`js`), each a no-op if its
+  guest grammar isn't registered.
 - [ ] UI-component / panel contributions (register a `Panel`/dock widget).
 - [ ] Snippets, menus, and command-palette categories as contribution points.
 - [ ] Out-of-repo plugin discovery + loading (npm-style packages, a manifest
@@ -66,11 +72,22 @@ followed through at runtime** (no restart).
 
 ## Git
 
-See [git/index.md](git/index.md) for the architecture plan.
+See [git/index.md](git/index.md) for the architecture and per-feature status.
 
-- [ ] Git status viewer
-- [ ] Git commit interface
-- [ ] Github PR/issue link when applicable, then gitlab etc
+- [x] **Status viewer** — `GitPanel` (`src/ui/GitPanel.ts`), a sibling tab of the
+  file tree; staged/changes/untracked lists with stage/unstage/discard/stage-all,
+  cursor nav + bare-key bindings (`s`/`u`/`A`/`X`/`c c`). File-level only (no
+  in-panel diffs / hunk staging).
+- [x] **Commit interface** — `c c` opens `.git/COMMIT_EDITMSG` in a normal editor
+  tab; save+close commits (`git commit -F`). No amend/sign-off yet.
+- [x] **GitHub forge** — `src/git/github.ts` + `GithubButtons`/pickers (via `gh`):
+  open repo/actions/issues, PR + CI status in the header, PR/issue/CI pickers,
+  create/checkout PR; remote resolved `upstream`→`origin` (`git.remotes.*` config).
+  Remaining: `#123`-in-text detection, open file/line on web, GitLab.
+- [x] **Branch** (switch/create/delete/merge/rename) + **stash**
+  (push/pop/apply/drop) pickers; per-line **diff gutter** in the editor.
+- [x] **Backend** — `src/git/cli.ts` (`gitSync`/`git` over the CLI, porcelain-v2
+  status parsing); libgit2 `GitRepo` reads (FileTree/branch button) stay as-is.
 
 ## Code editing
 
@@ -148,6 +165,16 @@ Features:
 - [~] Diff display (inline/unified + side-by-side) — **mostly done**. See [code-editing/diff.md](code-editing/diff.md). Synthesized read-only buffers + decorations + diff gutter + scroll-sync (sidesteps GtkTextView's lack of virtual lines). Built: `DiffModel`/`splitSides` (computeDiff + word-level intra-line diff, unit-tested); `DiffView` (unified) + `SideBySideDiffView` (scroll-synced, Tab switches panes); `DiffViewer` wrapper (stats header, icon toggle, hunk nav); per-pane syntax highlighting; full-line backgrounds; fold-unchanged (`foldUnchanged`/`DiffFold` — long context runs collapse to a `⋯ N unchanged lines` row with a ▸/▾ gutter chevron, both panes in lockstep); `git:diff-current` command (`space g d`) → working-tree vs HEAD in a tab. Remaining: more git diff sources (staged/commit/PR) and the bigger Git-workstream integration. (Try it: `node scripts/diff-demo.ts`.)
 - [x] Search interface — `SearchBar` (top-right) + `SearchController` over `EditorModel.scan`: case/regex toggles, replace + replace-all, highlights via `editor.decorations`. Bound to vim `/` `?` `n` `N`.
 - [~] Inline widgets / virtual lines — gap-tag + overlay, two flavors (see [code-editing/inline-widgets.md](code-editing/inline-widgets.md); survey in [virtual-lines.md](code-editing/virtual-lines.md)). **Done:** `InlineBlockController` (text-window `add_overlay`, scrolls natively, non-interactive) → the diff **fold placeholder** (replaced the synthesized `FoldRow`); `InlinePeek` (sibling `Gtk.Overlay` child positioned via `get-child-position`, focusable, no IM leak) → **see-definition** (`lsp:peek-definition` / `space l p`, read-only highlighted slice). The focusable path required a node-gtk fix (`get-child-position` out-struct, **#444 / PR #445**). **Remaining:** make the peek share an open file's live buffer (edits + modified dot) — needs the **document-registry** refactor (chosen, deferred — see [code-editing/document-registry.md](code-editing/document-registry.md)); polish (center the def slice, jump-to button).
+  - Future consumers (ideas to split; detail + infra-reuse + priority in [inline-widgets.md](code-editing/inline-widgets.md)):
+    - [ ] **Error lens** — diagnostic message inline below the line (block; reuses diagnostics). *low–med*
+    - [ ] **Code lens** — `N references` / `run·debug` above a symbol, clickable (block, `placement: above`; LSP `codeLens`). *med*
+    - [ ] **Inline AI ghost text** — multi-line agent completion preview below the cursor (block; agents). *higher*
+    - [ ] **Color swatch / image / math preview** — under CSS colors / markdown `![img]` / `$$` (block; tree-sitter). *low–med*
+    - [ ] **Peek references / implementations / type-def** — list + preview inline (peek; reuses find-references). *med — natural next*
+    - [ ] **Inline AI edit (Cmd-K)** — focusable prompt under the line → apply as diff (peek; agents). *higher; distinctive*
+    - [ ] **Peek commit / blame diff** — inline `DiffViewer` below a line (peek; diff viewer + git). *med*
+    - [ ] **Inline rename** — small inline editor for LSP rename + preview (peek). *med*
+    - [ ] **EOL trailing text** (`GtkSourceAnnotations`, separate mechanism, not built) — inlay hints, git blame, trailing error-lens. Needs its own POC.
 - [ ] Document registry — split `Document` (buffer + syntax + LSP + modified + undo) from the `TextEditor` view, N views per document with per-view cursors. Enables the live see-definition peek and split-view-of-same-file. **Chosen, deferred** (sizable `EditorModel` cursor refactor). See [code-editing/document-registry.md](code-editing/document-registry.md).
 
 #### Vim mode
@@ -187,8 +214,10 @@ See [agents.md](agents.md) for the architecture plan.
 - [x] Send editor context to an agent (selection / file → current / picked / new agent)
 - [x] Resume / continue past conversations (transcript enumeration + `--resume`/`--continue`); capture session id for restore
 - [x] More management UX: restart (resume conversation), rename, stop, close — keyboard/command driven (`r`/`R`/`x`/`d d`); status glyph in the tab title
+- [x] Resume a stopped agent **in place** (`agent:resume`, `space a r`): respawns the claude process in the same terminal pane (`Terminal.respawn` reuses the pty/scrollback) with a fresh `ClaudeSession` resuming `--resume <sessionId>` — vs `agent:restart` which retires the widget and opens a new one. The past-conversation picker was renamed `agent:resume-conversation` (`space a R`)
 - [x] Track Claude's own session name: the built-in `/rename` command (and auto-summaries) writes the session's `.name` to `~/.claude/sessions/<pid>.json` — it is NOT emitted over the PTY as a terminal title (and with `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` there's no OSC at all), so `AgentTerminal` watches that file (keyed by the spawned child's pid = the main claude process) and reflects `.name` as the title. Precedence: quilx `agent:rename` pin > Claude session `.name` > live OSC title / argv basename
-- [ ] **TBD — extract a `ClaudeStatusAdapter` seam** (clean long-term home for the three claude-only watchers now living inline in `AgentTerminal`: status file, edited-files log, and session-title file). The class is meant to stay tool-agnostic (see agents.md: "Claude specifics stay isolated behind the status adapter / arg builder"), but the watchers + `--settings` injection are currently inlined. Lift them into an adapter selected by agent *kind* (`claude` | `generic`), so `AgentTerminal` is the neutral shell and a second tool can slot its own adapter in. Pairs with the agent-profiles work below. Deferred
+- [x] **Extracted the Claude integration out of `AgentTerminal`** → `ClaudeSession` in `src/ui/claudeAgent.ts`: it owns the argv/`--settings` injection, the IPC files, and the three watchers (status / edited-files / session-name `/rename`), translating them into host callbacks (`ClaudeHost`). `ClaudeSession.create()` returns null for a non-claude command, so `AgentTerminal` is now the tool-agnostic host (status, changed-files, rename, serialize) and runs anything else plain (alive/exited only).
+- [ ] **TBD — fuller agent seam** (deferred; only when a second tool actually lands): promote `ClaudeSession` to an `AgentBackend` interface selected by *kind* (`claude` | `generic`) with a `capabilities` flag set so the UI degrades instead of branching, and split a tool-agnostic `Agent` model out of the terminal widget so `AgentManager`/`WorkbenchList`/`AppWindow` depend on the model, not the concrete `AgentTerminal`. Pairs with the agent-profiles + worktree work below.
 - [x] File-change awareness: a PostToolUse hook records edited files; agent-list "✎ N" badge (tooltip), click/`o` opens them (newest first), and edits trigger an immediate git refresh
 - [x] **Per-person workbenches** — `src/ui/Workbench.ts` is a first-class object: one person's dock frame **plus the widgets filling its slots** (its own `center`, Files/Source-Control, `leftPanel`, bottom-dock panels), with an `owner` field naming its person. **Each person owns a fully self-contained `Workbench`; nothing is shared or reparented on switch.** `buildWorkbench(owner)` constructs the widgets and hands them to `new Workbench(owner, contents, { showSideDock })`, registering it in `AppWindow.workbenches` (owner → `Workbench`). AppWindow keeps only `this.workbench` (the active one) and reads per-person state straight off `this.workbench.*` — **no mirror struct, no save/restore on switch**. `activateWorkbench(workbench)` just sets `this.workbench` + `overlay.setChild(workbench.root)`; `cycleWorkbench(±1)` (`super-,` / `super-.`) steps through `[user, …agents]`. Detached workbenches stay alive (tabs/terminal/editors persist — verified). An agent's workbench opens terminal-only (`showSideDock` false — the panel is still built, so `file-tree:focus`/git commands reveal it on demand); any workbench can open/edit files. **Now worktree-ready** (each agent's Files/Git is its own — just needs a per-workbench root/`GitRepo`). Defer: per-worktree roots; session restore of agent workbenches (only the user workbench is serialized); per-workbench NotificationLog/KeymapPanel subscribe to global signals and aren't disposed on close (minor leak, few agents)
 - [x] **WorkbenchSidebar / WorkbenchList** (renamed from agent sidebar / AgentList): its own full-height column at the very left of the window (left of the header bar) — a top-level horizontal `Gtk.Paned` (sidebar | header-bar+workbench), no longer a workbench dock. Top is a themed `Adw.HeaderBar` whose only content is a flat **logo button** (square placeholder for now; styled like the git branch button) that toggles collapse (icons-only / icons+text). The first row is the **user** (default-selected pseudo-agent), the rest are agents; never empty; each row is one header-bar tall. Each entry is associated with a workbench. Files/Source-Control moved to the **right** dock (fixed 220px); the left dock is empty/hidden at startup

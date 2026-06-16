@@ -344,6 +344,21 @@ mid-text replacements falling back to the leave-insert replay.
   `functionRangeAt`/`classRangeAt` (the generic `enclosingNodeRange` in `indent.ts`,
   outer = whole def, inner = body), surfaced via `EditorModel.getFunctionRange`/
   `getClassRange` to the vim `Function`/`Class` text objects.
+- [x] **Folds query** — folding is driven by a grammar's `folds.scm` (`@fold`
+  captures, incl. multi-line comments; `GrammarDef.foldsPath`, compiled to
+  `Grammar.foldsQuery`) when present, else the `foldTypes` set. Plus **run folds**:
+  consecutive import statements / line comments collapse to their first line. Pure
+  `computeFoldRanges` (`syntax/folds.ts`, unit-tested); `foldTypes` is retained for
+  the indent source. TS ships `queries/{typescript,tsx}/folds.scm`.
+- [x] **JSX/HTML tags** — *auto-close*: typing `>` to finish an opening tag inserts
+  `</name>` and sits between them (`tagClose.ts`, pure + unit-tested). Text-based
+  (the tree is debounced) with a JSX-vs-generics heuristic (the `<` must not follow
+  an identifier) and a tag-language gate (`tsx`/`html`/… — so plain `.ts` generics
+  never close). Fragments → `</>`. *Co-rename*: the `tag:rename` command renames
+  both halves of the pair (or a self-closing tag) in one undo step, via
+  `SyntaxController.tagNamesAt` (tree, `syntax/tags.ts`, unit-tested) + a prefilled
+  prompt. (Live linked-editing — mirror as you type — is a possible follow-up; it
+  needs mark-tracking across the tree's mismatch gap.)
 
 ### 4. Diff display — *investigated; sequence with Git*
 

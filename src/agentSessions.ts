@@ -194,3 +194,15 @@ function firstUserMessage(file: string): string | null {
 function singleLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
+
+/** A compact "time ago" for a past timestamp (epoch ms): 12s / 5m / 3h / 2d / 4w. */
+export function relativeTime(epochMs: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - epochMs) / 1000));
+  const units: [number, string][] = [
+    [604800, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm'], [1, 's'],
+  ];
+  for (const [size, suffix] of units) {
+    if (seconds >= size) return `${Math.floor(seconds / size)}${suffix} ago`;
+  }
+  return 'just now';
+}

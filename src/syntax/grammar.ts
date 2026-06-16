@@ -42,6 +42,8 @@ export interface Grammar {
   language: any;
   query: any;
   foldTypes: Set<string>;
+  /** Compiled folds query (`@fold` captures); null when the grammar ships none. */
+  foldsQuery: any | null;
   /** Language injections declared by the grammar (empty when none). */
   injections: CompiledInjection[];
 }
@@ -84,6 +86,7 @@ export async function loadGrammar(langId: string): Promise<Grammar | null> {
     language,
     query: language.query(Fs.readFileSync(spec.highlightsPath, 'utf8')),
     foldTypes: new Set(spec.foldTypes),
+    foldsQuery: spec.foldsPath ? language.query(Fs.readFileSync(spec.foldsPath, 'utf8')) : null,
     injections: (spec.injections ?? []).map((inj) => ({
       query: language.query(inj.query),
       language: inj.language,

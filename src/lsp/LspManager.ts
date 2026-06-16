@@ -23,6 +23,7 @@ import { CompletionTriggerKind, MessageType } from 'vscode-languageserver-protoc
 import type {
   Definition, LocationLink, Location, Position, Hover, CompletionItem,
   CodeAction, Command, Range as LspRange, WorkspaceEdit, TextEdit, FormattingOptions, SignatureHelp,
+  SymbolInformation, WorkspaceSymbol, DocumentSymbol,
 } from 'vscode-languageserver-protocol';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { Point } from '../text/Point.ts';
@@ -72,6 +73,32 @@ export interface ReferenceLocation {
 
 /** A resolved go-to target — a `ReferenceLocation` is one (the preview is unused). */
 export type DefinitionTarget = ReferenceLocation;
+
+/** A workspace-symbol search hit, resolved to a jumpable target. */
+export interface WorkspaceSymbolResult {
+  /** Symbol name (e.g. `LspManager`). */
+  name: string;
+  /** LSP `SymbolKind` (drives the icon). */
+  kind: number;
+  /** Enclosing symbol (e.g. the class for a method), when the server supplies it. */
+  containerName?: string;
+  path: string;
+  point: Point;
+}
+
+/** A symbol in the current document's outline, flattened from the LSP response. */
+export interface DocumentSymbolResult {
+  /** Symbol name (e.g. `documentSymbols`). */
+  name: string;
+  /** LSP `SymbolKind` (drives the icon). */
+  kind: number;
+  /** Enclosing symbol (e.g. the class for a method), when known. */
+  containerName?: string;
+  /** Nesting depth in the outline (0 = top level), for indentation. */
+  depth: number;
+  /** Position of the symbol's name (where the cursor lands on jump). */
+  point: Point;
+}
 
 /** A user-facing trace of a major LSP event, routed to the notification log. */
 export interface LspNotice {
@@ -439,6 +466,108 @@ export class LspManager {
       return (await server.rangeFormatting(path, lspRange, options)) ?? [];
     }
     return server.hasFormatting ? (await server.formatting(path, options)) ?? [] : [];
+  }
+
+  /** Whether `doc`'s primary server can search workspace symbols (for command gating). */
+  canWorkspaceSymbols(doc: LspDocument): boolean {
+    const path = doc.getPath();
+    return !!path && !!this.primaryServerForPath(path)?.hasWorkspaceSymbols;
+  }
+
+  /**
+   * Search project-wide symbols matching `query` against `doc`'s primary server,
+   * resolved to jumpable targets. The query is matched server-side (so the picker
+   * shows the server's ranking); an empty query yields no results on most servers.
+   */
+  async workspaceSymbols(doc: LspDocument, query: string): Promise<WorkspaceSymbolResult[]> {
+    if (!this.enabled) return [];
+    const path = doc.getPath();
+    if (!path) return [];
+    const server = this.primaryServerForPath(path);
+    if (!server || !server.hasWorkspaceSymbols) return [];
+    const result = await server.workspaceSymbol(query);
+    if (!result) return [];
+    const enc = server.positionEncoding;
+    // Hits cluster in a few files; cache each file's lines so converting many
+    // positions (encoding-aware) reads every target file at most once.
+    const lineCache = new Map<string, string[]>();
+    const linesFor = (p: string): string[] => {
+      let lines = lineCache.get(p);
+      if (!lines) {
+        try { lines = Fs.readFileSync(p, 'utf8').split('\n'); } catch { lines = []; }
+        lineCache.set(p, lines);
+      }
+      return lines;
+    };
+    return (result as (SymbolInformation | WorkspaceSymbol)[]).map((sym) => {
+      const targetPath = uriToPath(sym.location.uri);
+      // SymbolInformation carries a full range; a lazy WorkspaceSymbol may have only
+      // a uri (needs workspaceSymbol/resolve) — fall back to the file's top.
+      const start = 'range' in sym.location ? sym.location.range.start : { line: 0, character: 0 };
+      const lineText = linesFor(targetPath)[start.line] ?? '';
+      return {
+        name: sym.name,
+        kind: sym.kind,
+        containerName: sym.containerName || undefined,
+        path: targetPath,
+        point: positionToPoint(start, lineText, enc),
+      };
+    });
+  }
+
+  /** Whether `doc`'s primary server can produce a document outline (for command gating). */
+  canDocumentSymbols(doc: LspDocument): boolean {
+    const path = doc.getPath();
+    return !!path && !!this.primaryServerForPath(path)?.hasDocumentSymbols;
+  }
+
+  /**
+   * The symbol outline for `doc`, flattened to a depth-tagged list in document
+   * order. Handles both response shapes: a hierarchical `DocumentSymbol` tree
+   * (positions resolved against the live document) or a flat `SymbolInformation`
+   * list (positions resolved against the file on disk).
+   */
+  async documentSymbols(doc: LspDocument): Promise<DocumentSymbolResult[]> {
+    if (!this.enabled) return [];
+    const path = doc.getPath();
+    if (!path) return [];
+    const server = this.primaryServerForPath(path);
+    if (!server || !server.hasDocumentSymbols) return [];
+    const result = await server.documentSymbol(path);
+    if (!result || result.length === 0) return [];
+    const enc = server.positionEncoding;
+
+    // Hierarchical shape: positions index into the live document.
+    if ('selectionRange' in result[0] || 'children' in result[0]) {
+      const out: DocumentSymbolResult[] = [];
+      const walk = (nodes: DocumentSymbol[], depth: number, container?: string) => {
+        for (const node of nodes) {
+          const start = node.selectionRange.start;
+          out.push({
+            name: node.name,
+            kind: node.kind,
+            containerName: container,
+            depth,
+            point: positionToPoint(start, doc.lineTextForRow(start.line), enc),
+          });
+          if (node.children?.length) walk(node.children, depth + 1, node.name);
+        }
+      };
+      walk(result as DocumentSymbol[], 0);
+      return out;
+    }
+
+    // Flat shape: `SymbolInformation` — positions index the same (live) document.
+    return (result as SymbolInformation[]).map((sym) => {
+      const start = sym.location.range.start;
+      return {
+        name: sym.name,
+        kind: sym.kind,
+        containerName: sym.containerName || undefined,
+        depth: 0,
+        point: positionToPoint(start, doc.lineTextForRow(start.line), enc),
+      };
+    });
   }
 
   // --- server management -----------------------------------------------------

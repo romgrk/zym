@@ -28,12 +28,14 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space space': 'command-palette:toggle',
   'space w': 'file:save',
   'space o': 'file:find', // fuzzy file picker
+  'space /': 'project:search', // full-text search (ripgrep)
   'space q': 'app:quit',
   'space t': 'terminal:new',
-  'space a a': 'agent:switch', // open the agent picker
+  'space a a': 'agent:picker', // open the agent picker (agents, conversations, new)
   'space a l': 'workbench-list:focus', // focus the workbench sidebar
   'space a n': 'agent:new', // launch a new agent
-  'space a r': 'agent:resume', // resume a past conversation (picker)
+  'space a r': 'agent:resume', // resume the current stopped agent in place
+  'space a R': 'agent:resume-conversation', // resume a past conversation (picker)
   'space a c': 'agent:continue', // continue the latest conversation in this folder
   // Send editor context to an agent: the second key picks selection (s) or file
   // (f); the third picks the current agent (repeat), one from the picker (a), or
@@ -77,6 +79,8 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space l t': 'lsp:go-to-type-definition', // "t"ype definition
   'space l i': 'lsp:go-to-implementation', // "i"mplementation
   'space l r': 'lsp:find-references', // "r"eferences
+  'space l s': 'lsp:workspace-symbols', // "s"ymbols (project-wide, via LSP)
+  'space l o': 'lsp:document-symbols', // "o"utline (symbols in the current file)
   'space l k': 'lsp:hover', // hover (type / docs)
   'space l a': 'lsp:code-action', // "a"ction (quick fix / refactor)
   'space l R': 'lsp:rename', // "R"ename symbol
@@ -125,6 +129,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'ctrl-w l': 'pane:focus-right',
     'ctrl-w w': 'pane:focus-next',
     'ctrl-w ctrl-w': 'pane:focus-next',
+    'ctrl-w d d': 'agent:close', // close the active agent (terminate if running, then remove it)
 
     // Cycle the active workbench (the user / each agent) — previous / next.
     'super-,': 'workbench:previous',
@@ -189,6 +194,15 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // a literal Escape to the child (the usual ctrl-[ ≡ Escape, kept reachable).
   '.quilx-terminal.terminal-normal': {
     i: 'terminal:insert-mode',
+  },
+
+  // AgentTerminal: a double `ctrl-d` closes the agent (terminate if running,
+  // then remove). A single `ctrl-d` is held briefly (the keymap manager's
+  // partial-match timeout) to see if a second follows; if not, it falls through
+  // to the agent CLI as a normal EOF. Bound on the agent terminal only — a plain
+  // shell terminal keeps `ctrl-d` as its immediate EOF.
+  '#AgentTerminal': {
+    'ctrl-d ctrl-d': 'agent:close',
   },
   '.quilx-terminal.terminal-insert': {
     escape: 'terminal:normal-mode',

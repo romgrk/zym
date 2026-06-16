@@ -22,8 +22,12 @@ import { theme, type SyntaxStyle } from '../theme/theme.ts';
 import { computeStyleRuns, type StyleSpan } from './highlightRuns.ts';
 import { findBracketPair } from './bracketMatch.ts';
 import { indentLevelAt, enclosingTypeMatches, enclosingNodeRange } from './indent.ts';
+import { computeFoldRanges } from './folds.ts';
+import { tagNamesAt, type TagName } from './tags.ts';
 
 const STRING_COMMENT_RE = /string|comment|char|regex/;
+// Node types folded as a *run* of consecutive siblings (import block, comment block).
+const RUN_FOLD_RE = /comment|import/;
 
 const HIGHLIGHT_DEBOUNCE_MS = 60;
 // Repaint after scrolling settles — snappy, and cheap (no reparse, just a
@@ -707,16 +711,14 @@ export class SyntaxController {
     }
   }
 
-  private walkFolds(node: any): void {
-    if (this.grammar!.foldTypes.has(node.type)) {
-      const startLine = node.startPosition.row;
-      const endLine = node.endPosition.row;
-      if (endLine - startLine >= 2 && !this.foldsByHeaderLine.has(startLine)) {
-        const folded = asIter((this.buffer as any).getIterAtLine(startLine + 1)).hasTag(this.invisibleTag);
-        this.foldsByHeaderLine.set(startLine, { startLine, endLine, folded });
-      }
+  private walkFolds(root: any): void {
+    const grammar = this.grammar!;
+    const buffer = this.buffer as any;
+    for (const { startRow, endRow } of computeFoldRanges(root, grammar.foldsQuery, grammar.foldTypes, RUN_FOLD_RE)) {
+      // Folded state is derived from the live invisible tag so it tracks edits.
+      const folded = asIter(buffer.getIterAtLine(startRow + 1)).hasTag(this.invisibleTag);
+      this.foldsByHeaderLine.set(startRow, { startLine: startRow, endLine: endRow, folded });
     }
-    for (const child of node.namedChildren) if (child) this.walkFolds(child);
   }
 
   private clearHighlight(): void {
@@ -843,6 +845,12 @@ export class SyntaxController {
   /** The class/interface/enum enclosing `(row, column)`, for the `ic`/`ac` text object. */
   classRangeAt(row: number, column: number): NodeRange | null {
     return this.nodeRangeAt(row, column, isClassNodeType);
+  }
+
+  /** The JSX/HTML tag-name ranges (opening + closing, or one self-closing) of the
+   *  element at `(row, column)`, for `tag:rename`. Null when off a tag / no tree. */
+  tagNamesAt(row: number, column: number): TagName[] | null {
+    return this.tree ? tagNamesAt(this.tree.rootNode, row, column) : null;
   }
 
   /** Outer (whole node) + inner (its `body` field's statements) line spans for the

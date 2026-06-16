@@ -9,7 +9,7 @@
  * the candidate strings and an `onSelect` callback. Items may arrive
  * asynchronously via the returned handle's `setItems`.
  */
-import { Gtk, Pango } from '../gi.ts';
+import { GLib, Gtk, Pango } from '../gi.ts';
 import { quilx } from '../quilx.ts';
 import { addStyles } from '../styles.ts';
 import { fonts } from '../fonts.ts';
@@ -27,6 +27,12 @@ fonts.ui('#PickerEntry.prose-entry, #PickerEntry.prose-entry > text');
 const PICKER_WIDTH = 640;
 const PICKER_MAX_HEIGHT = 360;
 const MAX_RESULTS = 200;
+// Side-preview layout (opt-in via `options.preview`): the card splits into a
+// fixed-width result list on the left and a preview pane on the right. The list
+// is kept at least as wide as the preview (≥ 50% of the card).
+const PREVIEW_LIST_WIDTH = 520; // result-list column width when a preview is shown
+const PREVIEW_PANE_WIDTH = 480; // default preview-pane width
+const PREVIEW_DELAY_MS = 60; // debounce before refreshing the preview as the selection moves
 // Auto search-debounce: a dataset larger than this re-ranks on a delay (coalesce
 // keystrokes when fuzzy-ranking is costly); anything smaller filters instantly.
 const LARGE_DATASET = 2000;
@@ -230,6 +236,13 @@ export interface PickerOptions {
    */
   loading?: boolean;
   /**
+   * Open straight into an error state, showing this message in place of the
+   * matches. Lets a caller surface a precondition failure inside the picker
+   * itself (e.g. "Not a git repository") instead of bailing with a separate
+   * notification. Cleared by `setItems`/a fresh `fetch`, or `setError(null)`.
+   */
+  error?: string;
+  /**
    * Debounce (ms) before a typed query triggers the costly step — re-filtering a
    * local list, or re-running a `fetch` source. Defaults automatically: a
    * `fetch` picker debounces by `FETCH_DELAY_MS`; otherwise it's chosen from the
@@ -263,6 +276,25 @@ export interface PickerOptions {
    * `frecency`'s ordering bonus when both are set. Keep it modest (~0–1.5).
    */
   weight?: (item: PickerItem) => number;
+  /**
+   * Opt-in side preview: when set, the card widens into a horizontal split with
+   * the result list on the left and `preview.widget` on the right. The picker
+   * stays content-agnostic — it just hosts the widget and calls `preview.update`
+   * (debounced) with the selected item, or `null` when nothing's selected,
+   * whenever the selection changes. `LocationPicker` uses this to show the
+   * selected location's source.
+   */
+  preview?: PickerPreview;
+}
+
+/** A side-preview pane plus the hook that refreshes it as the selection moves. */
+export interface PickerPreview {
+  /** Widget shown in the right-hand pane (built and owned by the caller). */
+  widget: InstanceType<typeof Gtk.Widget>;
+  /** Refresh the pane for the selected item (or clear it when `null`). */
+  update: (item: PickerItem | null) => void;
+  /** Preview-pane width in px (default `PREVIEW_PANE_WIDTH`). */
+  width?: number;
 }
 
 /** Markup for a row's main label plus an optional right-aligned detail. */
@@ -281,6 +313,15 @@ export interface FormattedRow {
    * decides what choosing it does.
    */
   dim?: boolean;
+  /**
+   * Make the detail the column that crops, not the main. By default the main label
+   * shrinks/ellipsizes and the detail keeps its natural width — right for a short
+   * detail (a timestamp, an author). Set this when the detail is a long file path
+   * that should yield to the main content (a match line / symbol name): the detail
+   * is then width-capped and ellipsized from the *start* (keeping the filename:line
+   * tail visible), while the main keeps priority on the row's width.
+   */
+  cropDetail?: boolean;
 }
 
 export interface PickerHandle {
@@ -387,10 +428,11 @@ export function openPicker(options: PickerOptions): PickerHandle {
   };
   setLoading(Boolean(options.loading));
 
-  // An error from an async source (failed fetch / explicit setError). When set it
-  // replaces the matches with a tinted message row; cleared whenever a fresh
-  // fetch or `setItems` brings in new content.
-  let error: string | null = null;
+  // An error from an async source (failed fetch / explicit setError), or seeded
+  // via `options.error` to open straight into a failure state (e.g. "Not a git
+  // repository"). When set it replaces the matches with a tinted message row;
+  // cleared whenever a fresh fetch or `setItems` brings in new content.
+  let error: string | null = options.error ?? null;
   const setError = (message: string | null) => {
     error = message;
     if (message !== null) setLoading(false); // an error supersedes loading
@@ -414,9 +456,25 @@ export function openPicker(options: PickerOptions): PickerHandle {
   panel.setHalign(Gtk.Align.CENTER);
   panel.setValign(Gtk.Align.START);
   panel.setMarginTop(48);
-  panel.setSizeRequest(PICKER_WIDTH, -1);
   panel.append(entryHost);
-  panel.append(scrolled);
+  if (options.preview) {
+    // Horizontal split: the result list keeps a fixed width, the preview pane
+    // takes the rest. Both are bounded to the list's max height so the card has a
+    // stable size regardless of how many results (or how long the preview) are.
+    const previewWidth = options.preview.width ?? PREVIEW_PANE_WIDTH;
+    // Keep the result list at least as wide as the preview (≥ 50% of the card).
+    const listWidth = Math.max(PREVIEW_LIST_WIDTH, previewWidth);
+    panel.setSizeRequest(listWidth + previewWidth, -1);
+    scrolled.setSizeRequest(listWidth, -1);
+    options.preview.widget.setSizeRequest(previewWidth, PICKER_MAX_HEIGHT);
+    const body = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 });
+    body.append(scrolled);
+    body.append(options.preview.widget);
+    panel.append(body);
+  } else {
+    panel.setSizeRequest(PICKER_WIDTH, -1);
+    panel.append(scrolled);
+  }
   panel.overflow = Gtk.Overflow.HIDDEN;
 
   let items = (options.items ?? []).map(normalizeItem);
@@ -438,13 +496,22 @@ export function openPicker(options: PickerOptions): PickerHandle {
   // The currently displayed matches, parallel to the leading rows in the list
   // box, so a row can be mapped back to its item by index.
   let results: PickerItem[] = [];
+  // Pool of match-row containers, always the leading rows of the list box (so
+  // `row.getIndex()` maps straight into `results`). Rebuilds reuse these — only
+  // each row's *child* widget is swapped — so narrowing the query doesn't churn
+  // the whole list; surplus rows beyond the new match count are removed.
+  const matchRows: Array<InstanceType<typeof Gtk.ListBoxRow>> = [];
   // The trailing action row, when an action is configured and the entry is
   // non-empty; checked in `choose` to run the action instead of selecting.
   let actionRow: InstanceType<typeof Gtk.ListBoxRow> | null = null;
+  // The trailing non-interactive message row (loading / empty / error), if shown.
+  let messageRow: InstanceType<typeof Gtk.ListBoxRow> | null = null;
   let closed = false;
   // The picker's `core:*` command bundle, registered on the panel below and torn
   // down here so a dismissed picker leaves no dangling commands.
   let commandsSub: { dispose(): void } | null = null;
+  // Pending side-preview refresh (debounced as the selection moves); cleared on close.
+  let previewTimer = 0;
 
   // Remember whatever held focus before the picker grabbed it, so that
   // dismissing without a selection returns focus there (e.g. back to the editor)
@@ -456,31 +523,104 @@ export function openPicker(options: PickerOptions): PickerHandle {
     closed = true;
     commandsSub?.dispose();
     promptSpinner?.stop();
+    if (previewTimer) GLib.sourceRemove(previewTimer);
     host.removeOverlay(panel);
     if (restoreFocus) previousFocus?.grabFocus();
   };
 
+  // Refresh the side preview for the currently selected match (debounced, so
+  // holding Down doesn't rebuild the preview for every row flown past). Action and
+  // message rows have no item, so the preview clears for them.
+  const refreshPreview = () => {
+    if (!options.preview) return;
+    if (previewTimer) GLib.sourceRemove(previewTimer);
+    previewTimer = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT_IDLE, PREVIEW_DELAY_MS, () => {
+      previewTimer = 0;
+      const row = listBox.getSelectedRow();
+      const index = row ? row.getIndex() : -1;
+      const item = index >= 0 && index < results.length ? results[index] : null;
+      options.preview!.update(item);
+      return GLib.SOURCE_REMOVE;
+    });
+  };
+
+  // Scroll the list so the selected row is fully visible. The card never takes
+  // focus (the entry keeps it), so GtkListBox won't auto-scroll on selection —
+  // we nudge the adjustment ourselves. Mirrors CompletionPopup's approach.
+  const scrollSelectedIntoView = () => {
+    const row = listBox.getSelectedRow();
+    const adjustment = scrolled.getVadjustment();
+    if (!row || !adjustment) return;
+    let rect: any;
+    try {
+      const result: any = (row as any).computeBounds(listBox);
+      rect = Array.isArray(result) ? result[1] : result;
+    } catch {
+      return;
+    }
+    if (!rect) return;
+    const top = rect.getY();
+    const bottom = top + rect.getHeight();
+    const viewTop = adjustment.getValue();
+    const viewBottom = viewTop + adjustment.getPageSize();
+    if (top < viewTop) adjustment.setValue(top);
+    else if (bottom > viewBottom) adjustment.setValue(bottom - adjustment.getPageSize());
+  };
+
+  // Reconcile the pooled match rows to `ranked`: reuse existing rows (swap only
+  // their child widget), append new ones as the list grows, and remove the
+  // surplus when it shrinks. Hovering a row selects it (so mouse and keyboard
+  // selection agree); the hover handler is wired once when a row is created.
+  const syncMatchRows = (ranked: RankedItem[]) => {
+    for (let i = 0; i < ranked.length; i++) {
+      const child = renderRow(ranked[i].item, ranked[i].positions, options.formatMain);
+      if (i < matchRows.length) {
+        matchRows[i].setChild(child);
+      } else {
+        const row = new Gtk.ListBoxRow();
+        row.setChild(child);
+        const hover = new Gtk.EventControllerMotion();
+        hover.on('enter', () => listBox.selectRow(row));
+        row.addController(hover);
+        listBox.append(row);
+        matchRows.push(row);
+      }
+    }
+    while (matchRows.length > ranked.length) {
+      const row = matchRows.pop();
+      if (row) listBox.remove(row);
+    }
+  };
+
+  // Append a non-interactive trailing message row (loading / empty / error).
+  const showMessage = (text: string, name: string) => {
+    const label = new Gtk.Label({ xalign: 0 });
+    label.setText(text);
+    label.setName(name);
+    messageRow = new Gtk.ListBoxRow();
+    messageRow.setChild(label);
+    messageRow.setActivatable(false);
+    messageRow.setSelectable(false);
+    listBox.append(messageRow);
+  };
+
   const rebuild = () => {
-    let child = listBox.getFirstChild();
-    while (child) {
-      const next = child.getNextSibling();
-      listBox.remove(child);
-      child = next;
+    // Drop the transient trailing rows; the match rows are reused in place.
+    if (actionRow) {
+      listBox.remove(actionRow);
+      actionRow = null;
+    }
+    if (messageRow) {
+      listBox.remove(messageRow);
+      messageRow = null;
     }
 
     // An async error replaces the whole list with a single non-interactive
     // message row; reset the navigable state so move/choose have nothing to act on.
     if (error !== null) {
       results = [];
-      actionRow = null;
-      const label = new Gtk.Label({ xalign: 0 });
-      label.setText(error);
-      label.setName('PickerError');
-      const row = new Gtk.ListBoxRow();
-      row.setChild(label);
-      row.setActivatable(false);
-      row.setSelectable(false);
-      listBox.append(row);
+      syncMatchRows([]);
+      showMessage(error, 'PickerError');
       return;
     }
 
@@ -493,16 +633,11 @@ export function openPicker(options: PickerOptions): PickerHandle {
         : rank(query, items, weight)
     ).slice(0, MAX_RESULTS);
     results = ranked.map((match) => match.item);
-    for (const match of ranked) {
-      const row = new Gtk.ListBoxRow();
-      row.setChild(renderRow(match.item, match.positions, options.formatMain));
-      listBox.append(row);
-    }
+    syncMatchRows(ranked);
 
     // The prompt-driven action sits after the matches; it appears only when the
     // user has typed something for it to act on — and, when `actionWhenEmpty`,
     // only if nothing matched (so it reads as a "nothing found, do this instead").
-    actionRow = null;
     if (options.action && query.length > 0 && (!options.actionWhenEmpty || results.length === 0)) {
       const label = new Gtk.Label({ xalign: 0 });
       label.setText(options.action.label(query));
@@ -510,24 +645,22 @@ export function openPicker(options: PickerOptions): PickerHandle {
       actionRow = new Gtk.ListBoxRow();
       actionRow.setChild(label);
       actionRow.addCssClass('action-row');
+      const hover = new Gtk.EventControllerMotion();
+      const row = actionRow;
+      hover.on('enter', () => listBox.selectRow(row));
+      actionRow.addController(hover);
       listBox.append(actionRow);
     }
 
     if (results.length === 0 && !actionRow) {
       // No rows to select — show a non-interactive message row instead so the
       // card doesn't collapse to just the entry.
-      const label = new Gtk.Label({ xalign: 0 });
-      label.setText(isLoading ? 'Loading…' : items.length === 0 ? 'No entries' : 'No matches');
-      label.setName('PickerEmpty');
-      const row = new Gtk.ListBoxRow();
-      row.setChild(label);
-      row.setActivatable(false);
-      row.setSelectable(false);
-      listBox.append(row);
+      showMessage(isLoading ? 'Loading…' : items.length === 0 ? 'No entries' : 'No matches', 'PickerEmpty');
       return;
     }
     const first = listBox.getRowAtIndex(0);
     if (first) listBox.selectRow(first);
+    scrollSelectedIntoView();
   };
 
   const choose = (row: InstanceType<typeof Gtk.ListBoxRow> | null) => {
@@ -588,7 +721,10 @@ export function openPicker(options: PickerOptions): PickerHandle {
     const current = selected ? selected.getIndex() : -1;
     const next = (current + delta + count) % count;
     const row = listBox.getRowAtIndex(next);
-    if (row) listBox.selectRow(row);
+    if (row) {
+      listBox.selectRow(row);
+      scrollSelectedIntoView();
+    }
   };
 
   if (options.fetch) {
@@ -603,6 +739,9 @@ export function openPicker(options: PickerOptions): PickerHandle {
   }
   entry.on('activate', () => choose(null));
   listBox.on('row-activated', (row) => choose(row));
+  // Drive the side preview off selection changes (keyboard move + hover both go
+  // through `selectRow`, so this single hook covers them).
+  if (options.preview) listBox.on('row-selected', refreshPreview);
 
   // Drive list navigation through the command/keymap system: register the
   // picker's `core:*` commands on the panel (named `#Picker`, so the keymap from
@@ -616,14 +755,30 @@ export function openPicker(options: PickerOptions): PickerHandle {
     'core:cancel': () => close(),
   });
 
-  // Dismiss when focus leaves the card (click elsewhere, tab away, window blur):
-  // close and hand focus back to wherever it came from. `leave` fires only when
-  // focus exits the panel *and* its descendants, so moving between the entry and
-  // the list rows doesn't trigger it; the entry is focused below, so the first
+  // Dismiss when focus moves to another widget in the app (click elsewhere, tab
+  // away): close and hand focus back to wherever it came from. `leave` fires only
+  // when focus exits the panel *and* its descendants, so moving between the entry
+  // and the list rows doesn't trigger it; the entry is focused below, so the first
   // event is an `enter`, never a spurious `leave`. `close()` restores
   // `previousFocus` by default and is idempotent (the focus restore can re-enter).
+  //
+  // A `leave` also fires when the whole window is deactivated (alt-tabbing to
+  // another app), but that must NOT close the picker — it should still be there on
+  // return. So defer a tick (let the focus/active state settle) and close only if
+  // the window is still active: i.e. focus genuinely moved to another in-app widget
+  // rather than the app losing focus entirely (where the focus stays on the entry).
   const focus = new Gtk.EventControllerFocus();
-  focus.on('leave', () => close());
+  focus.on('leave', () => {
+    GLib.idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      if (closed) return GLib.SOURCE_REMOVE;
+      const root = panel.getRoot() as any;
+      const windowActive = root?.isActive?.() ?? true;
+      const focused = root?.getFocus?.() ?? null;
+      const focusWithin = !!focused && (focused === panel || focused.isAncestor(panel));
+      if (windowActive && !focusWithin) close();
+      return GLib.SOURCE_REMOVE;
+    });
+  });
   panel.addController(focus);
 
   host.addOverlay(panel);
@@ -652,12 +807,12 @@ export function openPicker(options: PickerOptions): PickerHandle {
   };
 }
 
-interface RankedItem {
+export interface RankedItem {
   item: PickerItem;
   positions: number[];
 }
 
-function rank(
+export function rank(
   query: string,
   items: PickerItem[],
   weight?: (item: PickerItem) => number,
@@ -716,6 +871,8 @@ function renderRow(
     // ellipsizes so a long label crops to the picker width rather than pushing
     // the detail (e.g. a "5m ago" timestamp) off the edge; the detail keeps its
     // natural width so it always shows in full.
+    const cropDetail = typeof formatted === 'object' && formatted.cropDetail === true;
+
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 });
     box.setName('PickerRow');
     const main = new Gtk.Label({ xalign: 0, useMarkup: true });
@@ -725,6 +882,13 @@ function renderRow(
     box.append(main);
     const detail = new Gtk.Label({ xalign: 1, useMarkup: true });
     detail.setMarkup(detailMarkup);
+    if (cropDetail) {
+      // Let the detail shrink so it — not the main — yields when the row is tight:
+      // ellipsizing from the start keeps the path's `filename:line` tail visible.
+      // (Without an ellipsize the detail can't shrink, so the deficit fell entirely
+      // on the main, cropping the match line — exactly backwards.)
+      detail.setEllipsize(Pango.EllipsizeMode.START);
+    }
     // Dimmed by default; an un-muted detail keeps the spacing but not the opacity
     // (the caller's markup sets its own emphasis).
     if (typeof formatted === 'object' && formatted.detailMuted === false) detail.setMarginStart(16);
@@ -759,7 +923,7 @@ function renderRow(
 }
 
 /** Highlight the `[start, end)` slice of `text`, with positions in `text` coords. */
-function highlightSegment(text: string, start: number, end: number, positions: number[]): string {
+export function highlightSegment(text: string, start: number, end: number, positions: number[]): string {
   const local = positions.filter((p) => p >= start && p < end).map((p) => p - start);
   return highlightMarkup(text.slice(start, end), local);
 }
@@ -784,9 +948,13 @@ export function highlightMarkup(text: string, positions: number[]): string {
   return out;
 }
 
-export function escapeMarkup(ch: string): string {
-  if (ch === '&') return '&amp;';
-  if (ch === '<') return '&lt;';
-  if (ch === '>') return '&gt;';
-  return ch;
+/**
+ * Escape the Pango-markup metacharacters in `text`. Handles whole strings (callers
+ * pass row labels / path segments), not just single characters — `highlightMarkup`
+ * relies on the per-char case while the location pickers pass multi-char slices
+ * that may contain `<`/`>` (e.g. a matched `<div>`), which must be escaped or Pango
+ * rejects the markup and the row renders blank.
+ */
+export function escapeMarkup(text: string): string {
+  return text.replace(/[&<>]/g, (ch) => (ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : '&gt;'));
 }

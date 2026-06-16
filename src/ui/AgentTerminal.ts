@@ -10,55 +10,30 @@
  *   - its initial title is the agent's name (until the CLI reports its own);
  *   - when the agent process exits the widget is NOT torn down: a "process
  *     exited" notice is printed into the terminal and the agent stays listed,
- *     flipped to an `exited` status;
- *   - for a `claude` agent it observes the session's live status (idle / working
- *     / waiting-for-permission) via Claude Code hooks: it spawns claude with a
- *     per-session `--settings` block whose hooks write a status word to a file
- *     this terminal watches (a Gio file monitor). See assets/hooks/agent-status.sh.
- *   - for a `claude` agent it also tracks the session's name: Claude's built-in
- *     `/rename` (and auto-generated summaries) writes the session's `.name` to
- *     `~/.claude/sessions/<pid>.json` — it is NOT emitted over the PTY as a
- *     terminal title — so we watch that file (keyed by the spawned child's pid)
- *     and reflect `.name` as the terminal's title.
+ *     flipped to an `exited` status.
+ *
+ * This class is the tool-agnostic host: it owns the agent's status, edited-files
+ * list, display name (`rename`) and serialization. All Claude-Code-specific
+ * integration — argv/`--settings` injection, the hook IPC files, and the status /
+ * edited-files / session-name watchers — lives behind `ClaudeSession`
+ * (see claudeAgent.ts); a non-claude command simply runs with no session.
  *
  * Status changes are surfaced via `status` / `onDidChangeStatus`.
  *
  * The agent's argv comes from the `agent.command` config (default `['claude']`)
  * unless an explicit `command` is passed.
  */
-import * as Fs from 'node:fs';
-import * as Os from 'node:os';
 import * as Path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
-import { Gdk, Gio } from '../gi.ts';
+import { Gdk } from '../gi.ts';
 import { Terminal, type TerminalOptions } from './Terminal.ts';
+import { ClaudeSession, type AgentMode, type AgentResume, type AgentStatus, type ClaudeHost } from './claudeAgent.ts';
+import { worktreeInfo, type WorktreeInfo } from '../git/cli.ts';
 import { theme } from '../theme/theme.ts';
 import { quilx } from '../quilx.ts';
 import type { TabState } from '../SessionManager.ts';
 
-/** Live status of an agent session. */
-export type AgentStatus = 'idle' | 'working' | 'waiting' | 'exited';
-
-// node-gtk quirk: Gio.File instance methods are undefined on the concrete
-// wrapper, so we reach them through the interface prototype (see git.ts/FileTree).
-const FileProto = (Gio.File as any).prototype;
-
-// The bundled hook reporter (assets/hooks/agent-status.sh), invoked by claude's
-// hooks to write the session status to QUILX_STATUS_FILE.
-const HOOK_SCRIPT = Path.join(
-  Path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets', 'hooks', 'agent-status.sh',
-);
-
-/** Resume a past `claude` conversation rather than starting fresh. */
-export interface AgentResume {
-  /** Resume a specific session id (`claude --resume <id>`). */
-  sessionId?: string;
-  /** Continue the most recent conversation in the cwd (`claude --continue`). */
-  continue?: boolean;
-  /** Branch a copy instead of appending to the original (`--fork-session`). */
-  fork?: boolean;
-}
+export type { AgentMode, AgentResume, AgentStatus } from './claudeAgent.ts';
+export type { WorktreeInfo } from '../git/cli.ts';
 
 export interface AgentTerminalOptions extends TerminalOptions {
   /** An initial prompt to launch the agent with (appended to its argv). */
@@ -70,38 +45,38 @@ export interface AgentTerminalOptions extends TerminalOptions {
 export class AgentTerminal extends Terminal {
   private _status: AgentStatus = 'idle';
   private readonly statusHandlers: Array<() => void> = [];
-  private readonly statusFile: string | null;
-  private statusMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
-  // Files the agent has edited, captured from a PostToolUse hook (via
-  // `<statusFile>.files`); a watched, deduped, launch-order list.
-  private filesMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
+  // Claude's permission mode (`shift-tab` cycles it); `default` until a hook reports.
+  private _permissionMode: AgentMode = 'default';
+  private readonly permissionModeHandlers: Array<() => void> = [];
   private _changedFiles: string[] = [];
   private readonly fileHandlers: Array<() => void> = [];
+  // The git worktree the agent launched in, computed lazily from its cwd and cached
+  // (the worktree root is fixed for the session). `null` = not inside a repo.
+  private _worktree: WorktreeInfo | null | undefined;
   // A user-pinned display name (`agent:rename`); when set it overrides both the
-  // claude-reported session title and the CLI's reported (OSC) title.
+  // claude-reported session name and the CLI's reported (OSC) title.
   private _displayName: string | null = null;
-  // The session name Claude persists to `~/.claude/sessions/<pid>.json` (`.name`,
-  // set by its `/rename` command and auto-summaries), watched via a file monitor.
+  // The session name Claude reports via its session file (its `/rename` command
+  // and auto-summaries), surfaced by the ClaudeSession.
   private _sessionName: string | null = null;
-  private nameMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
+  // The Claude integration (argv/`--settings` + status/files/name watchers), or
+  // null for a non-claude command (which then runs plain, alive/exited only).
+  // Replaced on `resume()` (each run gets fresh IPC files).
+  private session: ClaudeSession | null;
   // The agent's argv as the user requested it (before `--settings` injection) and
   // its launch prompt — retained so a session can relaunch the agent verbatim.
   private readonly baseCommand: string[];
   private readonly launchPrompt?: string;
-  // The claude session id, captured from the hooks (via `<statusFile>.session`),
-  // for resuming / persisting the conversation. Read lazily and cached.
-  private _sessionId: string | null = null;
 
   constructor(options: AgentTerminalOptions = {}) {
     const baseCommand = options.command ?? resolveAgentCommand();
-    const integration = buildStatusIntegration(baseCommand, resumeFlags(options.resume));
+    const session = ClaudeSession.create(baseCommand, options.resume);
     // A launch prompt rides along as a trailing argv element (e.g. `claude
     // "<prompt>"`), so the agent starts already working on it.
-    const command = options.prompt
-      ? [...integration.command, options.prompt]
-      : integration.command;
+    const launchArgv = session ? session.command : baseCommand;
+    const command = options.prompt ? [...launchArgv, options.prompt] : launchArgv;
     super({ ...options, command, title: options.title ?? agentName(baseCommand) });
-    this.statusFile = integration.statusFile;
+    this.session = session;
     this.baseCommand = baseCommand;
     this.launchPrompt = options.prompt;
     this.root.setName('AgentTerminal'); // distinct identity from a plain Terminal
@@ -113,15 +88,32 @@ export class AgentTerminal extends Terminal {
     // super() call.
     quilx.agents.add(this);
     this.terminal.on('child-exited', () => this.onChildExited());
-    if (this.statusFile) {
-      this.watchStatus(this.statusFile);
-      this.watchChangedFiles(`${this.statusFile}.files`);
-    }
+    this.session?.watch(this.claudeHost());
   }
 
   /** The agent session's current status. */
   get status(): AgentStatus {
     return this._status;
+  }
+
+  /** Claude's current permission mode (`default` until a hook reports otherwise). */
+  get permissionMode(): AgentMode {
+    return this._permissionMode;
+  }
+
+  /** Subscribe to permission-mode changes (plan/acceptEdits/auto/…). Returns unsub. */
+  onDidChangePermissionMode(callback: () => void): () => void {
+    this.permissionModeHandlers.push(callback);
+    return () => {
+      const index = this.permissionModeHandlers.indexOf(callback);
+      if (index !== -1) this.permissionModeHandlers.splice(index, 1);
+    };
+  }
+
+  /** The git worktree the agent runs in, or null when its cwd isn't in a repo. */
+  get worktree(): WorktreeInfo | null {
+    if (this._worktree === undefined) this._worktree = worktreeInfo(this.cwd);
+    return this._worktree;
   }
 
   // A pinned name (`agent:rename`) wins, then Claude's own session name (its
@@ -146,18 +138,32 @@ export class AgentTerminal extends Terminal {
     return this._status === 'exited';
   }
 
+  /**
+   * Resume a stopped agent in place: respawn the agent process in this same
+   * terminal (reusing the pane and its scrollback), resuming its Claude
+   * conversation via `--resume <sessionId>`. A fresh ClaudeSession is built (the
+   * previous run's IPC files were torn down on exit). No-op while still running.
+   */
+  resume(): void {
+    if (!this.exited) return;
+    const sessionId = this.sessionId; // cached from the prior run before its files went
+    this.session = ClaudeSession.create(this.baseCommand, sessionId ? { sessionId } : undefined);
+    // New run → fresh edited-files log; revive the status out of `exited` (a
+    // direct write: setStatus refuses to leave the terminal `exited` state).
+    this._changedFiles = [];
+    for (const handler of this.fileHandlers) handler();
+    this._status = 'idle';
+    for (const handler of this.statusHandlers) handler();
+    this.terminal.feed(encode('\r\n\x1b[2m── resuming ──\x1b[0m\r\n'));
+    this.respawn(this.session ? this.session.command : this.baseCommand);
+    this.session?.watch(this.claudeHost());
+  }
+
   // --- Session integration ----------------------------------------------------
 
   /** The claude session id once a hook has reported it (null until then). */
   get sessionId(): string | null {
-    if (this._sessionId) return this._sessionId;
-    if (!this.statusFile) return null;
-    try {
-      this._sessionId = Fs.readFileSync(`${this.statusFile}.session`, 'utf8').trim() || null;
-    } catch {
-      /* not written yet */
-    }
-    return this._sessionId;
+    return this.session?.sessionId ?? null;
   }
 
   /** Session state: base argv + cwd + prompt, plus the session id so a restore can
@@ -205,120 +211,48 @@ export class AgentTerminal extends Terminal {
     };
   }
 
-  // --- Hook-driven status -----------------------------------------------------
+  // --- ClaudeSession host ------------------------------------------------------
 
-  // Watch the per-session status file the hooks write (atomically, via rename —
-  // hence WATCH_MOVES) and reflect each new value as a status change.
-  private watchStatus(statusFile: string): void {
-    const file = Gio.File.newForPath(statusFile);
-    this.statusMonitor = FileProto.monitorFile.call(file, Gio.FileMonitorFlags.WATCH_MOVES, null);
-    this.statusMonitor!.on('changed', () => this.readStatus(statusFile));
-  }
-
-  private readStatus(statusFile: string): void {
-    if (this._status === 'exited') return; // exit is terminal; ignore late writes
-    // By the first status write the child has spawned (so its pid is known) —
-    // start watching Claude's per-session file for the `/rename` name.
-    this.ensureNameWatch();
-    let raw: string;
-    try {
-      raw = Fs.readFileSync(statusFile, 'utf8').trim();
-    } catch {
-      return; // mid-rename / removed
-    }
-    if (raw === 'working' || raw === 'waiting' || raw === 'idle') this.setStatus(raw);
+  // The callbacks the ClaudeSession drives as Claude's IPC files change.
+  private claudeHost(): ClaudeHost {
+    return {
+      getPid: () => this.pid,
+      onStatus: (status) => this.setStatus(status),
+      onMode: (mode) => this.setPermissionMode(mode),
+      onChangedFiles: (files) => {
+        this._changedFiles = files;
+        for (const handler of this.fileHandlers) handler();
+      },
+      onSessionName: (name) => {
+        this._sessionName = name;
+        this.emitTitleChange();
+      },
+    };
   }
 
   private setStatus(status: AgentStatus): void {
+    if (this._status === 'exited') return; // exit is terminal; ignore later writes
     if (status === this._status) return;
     this._status = status;
     for (const handler of this.statusHandlers) handler();
   }
 
-  // Watch the append-only edited-files log the PostToolUse hook writes, reflecting
-  // each new path as a change.
-  private watchChangedFiles(file: string): void {
-    const gfile = Gio.File.newForPath(file);
-    this.filesMonitor = FileProto.monitorFile.call(gfile, Gio.FileMonitorFlags.NONE, null);
-    this.filesMonitor!.on('changed', () => this.readChangedFiles(file));
-  }
-
-  private readChangedFiles(file: string): void {
-    let raw: string;
-    try {
-      raw = Fs.readFileSync(file, 'utf8');
-    } catch {
-      return; // not written yet / removed on exit
-    }
-    // Dedupe, preserving first-seen order; the hook appends one path per edit.
-    const seen = new Set<string>();
-    const files: string[] = [];
-    for (const line of raw.split('\n')) {
-      const path = line.trim();
-      if (path && !seen.has(path)) {
-        seen.add(path);
-        files.push(path);
-      }
-    }
-    if (files.length === this._changedFiles.length) return; // nothing new
-    this._changedFiles = files;
-    for (const handler of this.fileHandlers) handler();
-  }
-
-  // --- Session name (Claude's `/rename`) --------------------------------------
-
-  // Watch `~/.claude/sessions/<pid>.json`, whose `.name` Claude (re)writes on
-  // `/rename` and auto-summaries — the rename never reaches the PTY as a title,
-  // so this file is the only signal. No-op until the child's pid is known (after
-  // spawn) and idempotent thereafter.
-  private ensureNameWatch(): void {
-    if (this.nameMonitor) return; // already watching
-    const pid = this.pid;
-    if (pid === null) return; // not spawned yet — retried on the next status write
-    const file = claudeSessionFile(pid);
-    this.readSessionName(file); // pick up an existing name now
-    const gfile = Gio.File.newForPath(file);
-    this.nameMonitor = FileProto.monitorFile.call(gfile, Gio.FileMonitorFlags.WATCH_MOVES, null);
-    this.nameMonitor!.on('changed', () => this.readSessionName(file));
-  }
-
-  private readSessionName(file: string): void {
-    let name: unknown;
-    try {
-      name = JSON.parse(Fs.readFileSync(file, 'utf8')).name;
-    } catch {
-      return; // not written yet / mid-write / malformed
-    }
-    const value = (typeof name === 'string' ? name.trim() : '') || null;
-    if (value === this._sessionName) return;
-    this._sessionName = value;
-    this.emitTitleChange();
+  private setPermissionMode(mode: AgentMode): void {
+    if (mode === this._permissionMode) return;
+    this._permissionMode = mode;
+    for (const handler of this.permissionModeHandlers) handler();
   }
 
   private onChildExited(): void {
     if (this._status === 'exited') return;
     this.setStatus('exited');
-    void this.sessionId; // cache the id before its file is removed (restart resumes it)
     // Print a notice into the (now child-less) terminal so the pane shows why it
     // went quiet, rather than closing or freezing on the last frame. The agent and
     // its workbench linger — the user restarts (`r`) or closes (`X`) it from the
     // workbench list when they're done reading the output.
     this.terminal.feed(encode('\r\n\x1b[2m── process exited ──\x1b[0m\r\n'));
-    this.statusMonitor?.cancel();
-    this.statusMonitor = null;
-    this.filesMonitor?.cancel();
-    this.filesMonitor = null;
-    // The session file lives under ~/.claude (Claude owns it), so we only drop
-    // our watch — we don't delete it like our own IPC files.
-    this.nameMonitor?.cancel();
-    this.nameMonitor = null;
-    if (this.statusFile) {
-      try { Fs.rmSync(this.statusFile, { force: true }); } catch { /* best effort */ }
-      try { Fs.rmSync(`${this.statusFile}.session`, { force: true }); } catch { /* best effort */ }
-      try { Fs.rmSync(`${this.statusFile}.files`, { force: true }); } catch { /* best effort */ }
-    }
+    this.session?.dispose();
   }
-
 
   // Vte inherits the Adwaita view colors by default (see Terminal); override the
   // background (and foreground) with the theme's editor colors. Themes without
@@ -335,82 +269,11 @@ function agentName(command: string[]): string {
   return command.length > 0 ? Path.basename(command[0]) : 'agent';
 }
 
-/** Path to Claude's per-session state file (carries `.name` from `/rename`). */
-function claudeSessionFile(pid: number): string {
-  const base = process.env.CLAUDE_CONFIG_DIR || Path.join(Os.homedir(), '.claude');
-  return Path.join(base, 'sessions', `${pid}.json`);
-}
-
 /** The configured agent argv (`agent.command`), falling back to `['claude']`. */
 function resolveAgentCommand(): string[] {
   const value = quilx.config.get('agent.command');
   if (Array.isArray(value) && value.length > 0) return value.map(String);
   return ['claude'];
-}
-
-/**
- * For a `claude` agent, inject a per-session `--settings` block whose hooks
- * report status to a freshly-created status file; returns the augmented argv and
- * that file's path. For any other command, status integration is skipped.
- */
-function buildStatusIntegration(
-  command: string[],
-  resume: string[] = [],
-): { command: string[]; statusFile: string | null } {
-  if (command.length === 0 || Path.basename(command[0]) !== 'claude') {
-    return { command, statusFile: null }; // resume + status hooks are claude-only
-  }
-  const id = randomUUID();
-  const dir = Path.join(process.env.XDG_RUNTIME_DIR || Os.tmpdir(), 'quilx', 'agents');
-  const statusFile = Path.join(dir, id);
-  try {
-    Fs.mkdirSync(dir, { recursive: true });
-    Fs.writeFileSync(statusFile, 'idle'); // exists up front so the monitor tracks it
-    Fs.writeFileSync(`${statusFile}.files`, ''); // edited-files log (one path per line)
-  } catch {
-    return { command, statusFile: null }; // can't set up IPC — run plain
-  }
-
-  const run = (state: string) => `sh ${shellQuote(HOOK_SCRIPT)} ${state}`;
-  const settings = {
-    env: { QUILX_AGENT_ID: id, QUILX_STATUS_FILE: statusFile },
-    hooks: {
-      SessionStart: [{ hooks: [{ type: 'command', command: run('idle') }] }],
-      UserPromptSubmit: [{ hooks: [{ type: 'command', command: run('working') }] }],
-      PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: run('working') }] }],
-      // Record which files the agent edits, for change-awareness in the UI.
-      PostToolUse: [{
-        matcher: 'Edit|Write|MultiEdit|NotebookEdit',
-        hooks: [{ type: 'command', command: run('files') }],
-      }],
-      Stop: [{ hooks: [{ type: 'command', command: run('idle') }] }],
-      Notification: [{ hooks: [{ type: 'command', command: run('notification') }] }],
-    },
-  };
-  // `--settings` is a single argv element (VTE spawns via execv, no shell), so the
-  // JSON needs no shell-escaping; only the hook command strings (run by claude's
-  // shell) are quoted.
-  return {
-    command: [command[0], ...resume, '--settings', JSON.stringify(settings), ...command.slice(1)],
-    statusFile,
-  };
-}
-
-/** The claude resume flags for a resume request (empty when starting fresh). */
-function resumeFlags(resume?: AgentResume): string[] {
-  if (!resume) return [];
-  const base = resume.continue
-    ? ['--continue']
-    : resume.sessionId
-      ? ['--resume', resume.sessionId]
-      : [];
-  if (base.length && resume.fork) base.push('--fork-session');
-  return base;
-}
-
-/** Single-quote a string for embedding in a POSIX shell command. */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Encode a string to the byte array Vte.feed expects. */

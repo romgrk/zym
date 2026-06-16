@@ -14,6 +14,10 @@ import * as Path from 'node:path';
 import { SyntaxController } from '../../syntax/syntax-controller.ts';
 import { detectIndentation } from './detectIndentation.ts';
 import { handleAutoPairInsert, handleAutoPairBackspace } from './autoPair.ts';
+import { handleTagAutoClose } from './tagClose.ts';
+import { Range } from '../../text/Range.ts';
+import { Point } from '../../text/Point.ts';
+import type { TagName } from '../../syntax/tags.ts';
 import { theme } from '../../theme/theme.ts';
 import { createSourceScheme } from '../../theme/createSourceScheme.ts';
 import { addStyles } from '../../styles.ts';
@@ -39,6 +43,7 @@ import { createBufferWordsSource } from './createBufferWordsSource.ts';
 import { createLspCompletionSource } from './createLspCompletionSource.ts';
 import type { LspDocument } from '../../lsp/LspManager.ts';
 import { lspToRange } from '../../lsp/position.ts';
+import { replaceOverwrite, replaceBackspace } from './replaceMode.ts';
 import type { PositionEncoding } from '../../lsp/position.ts';
 import type { TextEdit, SignatureHelp, ParameterInformation } from 'vscode-languageserver-protocol';
 import { escapeMarkup } from '../Picker.ts';
@@ -126,6 +131,7 @@ interface SearchInputRequest {
 }
 type VimSearchBridge = { setSearchInput?(provider: (req: SearchInputRequest) => void): void };
 type VimLeapBridge = { setLeapInput?(provider: (req: LeapRequest) => void): void };
+type VimGlobalStateBridge = { globalState?: { set(key: string, value: unknown): void } };
 
 // Search keybindings are registered once globally (per-view command handlers are
 // added per editor in installSearch). Normal mode only: `/`/`?` open the bar,
@@ -141,6 +147,7 @@ function registerSearchKeymapsOnce(): void {
       n: 'editor:search-next',
       N: 'editor:search-previous',
       '*': 'editor:search-word-forward',
+      'g /': 'editor:search-word-forward', // same as `*`
       '#': 'editor:search-word-backward',
       'g *': 'editor:search-word-forward-loose',
       'g #': 'editor:search-word-backward-loose',
@@ -407,6 +414,11 @@ export class TextEditor {
     this.buffer.placeCursor(this.buffer.getStartIter());
   }
 
+  /** Switch tree-sitter highlighting to match `path`'s file type (buffer/preview mode). */
+  setLanguageForPath(path: string): void {
+    this.syntax.setLanguageForPath(path);
+  }
+
   private installBufferMode(mode: BufferEditorOptions): void {
     if (mode.initialText) this.setText(mode.initialText);
     this.placeholderLabel?.setVisible(this.buffer.getCharCount() === 0);
@@ -467,6 +479,12 @@ export class TextEditor {
     (this.vimState as unknown as VimSearchBridge).setSearchInput?.(({ reverse, onConfirm, onCancel }) => {
       this.searchBar.openMotion(Boolean(reverse), { onConfirm, onCancel });
     });
+
+    // Publish the active search pattern to the vim layer so the `gn`/`gN`
+    // (SearchMatch) text objects — e.g. `cgn`, `dgn` — operate on it.
+    this.search.setPatternListener((regex) =>
+      (this.vimState as unknown as VimGlobalStateBridge).globalState?.set('lastSearchPattern', regex),
+    );
 
     // `:noh`-style clear: reset-normal-mode (Esc) drops the search highlights when
     // `clearHighlightSearchOnResetNormalMode` is on. The query is kept, so `n`/`N`
@@ -741,6 +759,34 @@ export class TextEditor {
     return buffer;
   }
 
+  /** Whether the current file's language uses JSX/HTML tags (gates tag auto-close
+   *  — so plain `.ts` generics like `Array<T>` never auto-close). */
+  private isTagLanguage(): boolean {
+    const lang = this._currentFile ? langIdForPath(this._currentFile) : null;
+    return lang !== null && /^(tsx|html|xml|vue|svelte)$/.test(lang);
+  }
+
+  /** The JSX/HTML tag-name ranges (opening + closing, or one self-closing) at the
+   *  cursor — for `tag:rename`. Null when not on a tag. */
+  tagNamesAtCursor(): TagName[] | null {
+    const pos = this.editorModel.getCursorBufferPosition();
+    return this.syntax.tagNamesAt(pos.row, pos.column);
+  }
+
+  /** Replace every given tag-name range with `newName`, as a single undo step
+   *  (last → first so earlier ranges keep their positions). */
+  applyTagRename(names: TagName[], newName: string): void {
+    const ordered = [...names].sort((a, b) => b.startRow - a.startRow || b.startColumn - a.startColumn);
+    this.editorModel.transact(() => {
+      for (const n of ordered) {
+        this.editorModel.setTextInBufferRange(
+          new Range(new Point(n.startRow, n.startColumn), new Point(n.endRow, n.endColumn)),
+          newName,
+        );
+      }
+    });
+  }
+
   private createView(buffer: SourceBuffer): SourceView {
     const view = new GtkSource.View({ buffer });
     view.addCssClass('quilx-editor');
@@ -779,6 +825,32 @@ export class TextEditor {
     const scrolled = new Gtk.ScrolledWindow();
     scrolled.setChild(this.view);
     scrolled.setHexpand(true);
+
+    // Scroll-past-end (`editor.scrollPastEnd`): GtkSourceView has no native option,
+    // so we emulate it with a dynamic bottom margin sized to ~one viewport minus a
+    // line — enough that the last line can scroll up to the top. The vadjustment
+    // fires `changed` whenever the viewport (page-size) or content height shifts,
+    // which covers resizes, font changes, and edits. Buffer-mode keeps its small
+    // fixed margin (set in createView) and opts out.
+    if (!this.bufferMode) {
+      const vadj = scrolled.getVadjustment();
+      let pastEndEnabled = quilx.config.get('editor.scrollPastEnd') !== false;
+      let lastMargin = -1;
+      const applyPastEnd = () => {
+        const margin = pastEndEnabled
+          ? Math.max(0, Math.round(vadj.getPageSize() - this.editorModel.getLineHeightInPixels()))
+          : 0;
+        if (margin === lastMargin) return;
+        lastMargin = margin;
+        this.view.setBottomMargin(margin);
+      };
+      vadj.on('changed', applyPastEnd);
+      const pastEndSub = quilx.config.observe('editor.scrollPastEnd', (v) => {
+        pastEndEnabled = v !== false;
+        applyPastEnd();
+      });
+      this.view.on('destroy', () => pastEndSub.dispose());
+    }
 
     // Overlay the scrolled view with the editor-local widgets: the diagnostic
     // squiggle layer (under the caret/showcmd), the showcmd preview
@@ -1075,13 +1147,47 @@ export class TextEditor {
     keys.on('key-pressed', (keyval: number, _keycode: number, state: number) => {
       if (this.vimState.mode !== 'insert') return false;
       if ((state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK)) !== 0) return false;
+      // Replace (R) submode: overwrite the character under the cursor on type, and
+      // restore the overwritten one on backspace (handled before auto-pairing).
+      if (this.vimState.submode === 'replace') {
+        if (keyval === Gdk.KEY_BackSpace) return this.replaceModeBackspace();
+        if (keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter) return false; // newline falls through
+        const ch = Gdk.keyvalToUnicode(keyval);
+        if (!ch || ch < 0x20) return false;
+        return this.replaceModeOverwrite(String.fromCharCode(ch));
+      }
       if (quilx.config.get('editor.autoCloseBrackets') === false) return false;
       if (keyval === Gdk.KEY_BackSpace) return handleAutoPairBackspace(this.editorModel);
       const code = Gdk.keyvalToUnicode(keyval);
       if (!code) return false;
-      return handleAutoPairInsert(this.editorModel, String.fromCharCode(code));
+      const ch = String.fromCharCode(code);
+      // JSX/HTML tag auto-close (`>` → `</name>`) before plain bracket pairing.
+      if (handleTagAutoClose(this.editorModel, ch, this.isTagLanguage())) return true;
+      return handleAutoPairInsert(this.editorModel, ch);
     });
     this.view.addController(keys);
+
+    // Reset the replace-mode undo stack each time `R` (re)enters replace mode.
+    this.vimState.onDidActivateMode(({ mode, submode }: { mode: string; submode: string | null }) => {
+      if (mode === 'insert' && submode === 'replace') this.replaceStack = [];
+    });
+  }
+
+  // --- Replace (R) mode ------------------------------------------------------
+  // Overwrites the character under the cursor as you type; backspace walks back,
+  // restoring the originally-overwritten characters (vim's `R`). The stack holds
+  // one entry per typed character: the replaced char, or '' if it was appended
+  // past end-of-line (nothing to restore).
+  private replaceStack: string[] = [];
+
+  private replaceModeOverwrite(ch: string): boolean {
+    replaceOverwrite(this.editorModel, this.replaceStack, ch);
+    return true;
+  }
+
+  private replaceModeBackspace(): boolean {
+    replaceBackspace(this.editorModel, this.replaceStack);
+    return true;
   }
 
   // --- Style scheme: follow the system light/dark preference -----------------

@@ -56,6 +56,34 @@ export function repoRoot(cwd: string): string | null {
   }
 }
 
+/** Where a directory sits in git: its worktree root, branch, and whether it's a
+ *  linked worktree (a `git worktree add` checkout) rather than the main one. */
+export interface WorktreeInfo {
+  /** The worktree's top-level directory. */
+  root: string;
+  /** The display name — the worktree root's basename. */
+  name: string;
+  /** The checked-out branch, or null when detached. */
+  branch: string | null;
+  /** True for a linked worktree (`.git/worktrees/<name>`), false for the main checkout. */
+  linked: boolean;
+}
+
+/** The git worktree `cwd` lives in, or null when `cwd` isn't inside a repo. */
+export function worktreeInfo(cwd: string): WorktreeInfo | null {
+  const root = repoRoot(cwd);
+  if (!root) return null;
+  let linked = false;
+  try {
+    // A linked worktree's git dir is `<common>/worktrees/<name>`; the main
+    // checkout's is the plain `<root>/.git`.
+    linked = gitSync(cwd, ['rev-parse', '--git-dir']).includes('/worktrees/');
+  } catch {
+    /* leave linked=false on any git error */
+  }
+  return { root, name: Path.basename(root), branch: currentBranch(root), linked };
+}
+
 /** Absolute path of `.git/COMMIT_EDITMSG` (handles worktrees/submodules). */
 export function commitMsgPath(root: string): string {
   const p = gitSync(root, ['rev-parse', '--git-path', 'COMMIT_EDITMSG']).trim();

@@ -23,22 +23,15 @@ import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import { createAgentStatusIcon, createAgentModeBadge, agentWorktreeMarkup } from './agentStatusIcon.ts';
 import type { AgentTerminal } from './AgentTerminal.ts';
 
 const USER_GLYPH = String.fromCodePoint(0xf007); // nf-fa-user (the default/user entry)
 // Header logo placeholder (also the collapse toggle): a solid square glyph (so
 // width == height) until there's a real logo. `LOGO_SIZE` makes the widget square.
 const LOGO_GLYPH = '■'; // U+25A0 black square — placeholder
-// Per-row status indicator: a round dot for idle/waiting/exited, nf-md-cog-sync
-// while working.
-const STATUS_DOT = '●';
-const WORKING_GLYPH = String.fromCodePoint(0xf1978);
 const CHANGED_GLYPH = String.fromCodePoint(0xf040); // nf-fa-pencil (changed-files badge)
 
-// The per-row status indicator is colored by the agent's state: working (grey
-// cog), waiting on the user (warning/amber), idle/ready (success/green), exited
-// (muted).
-const DOT_CLASSES = ['quilx-agent-working', 'quilx-agent-waiting', 'quilx-agent-idle', 'quilx-agent-exited'];
 addStyles(`
   /* Each row is as tall as the header bar (an Adw.HeaderBar is 47px), so the list
      reads as a column of header-height entries. A transparent left border keeps
@@ -75,10 +68,6 @@ addStyles(`
     font-size: 0.85em;
   }
   #WorkbenchRow .workbenchrow-files:hover label { color: ${theme.ui.fg}; }
-  .quilx-agent-working { color: ${theme.ui.textMuted}; }
-  .quilx-agent-waiting { color: ${theme.ui.warning}; }
-  .quilx-agent-idle    { color: ${theme.ui.success}; }
-  .quilx-agent-exited  { color: ${theme.ui.textMuted}; }
 `);
 
 export interface WorkbenchListOptions {
@@ -232,17 +221,27 @@ export class WorkbenchList {
   }
 
   private buildAgentRow(agent: AgentTerminal): InstanceType<typeof Gtk.ListBoxRow> {
-    // Status indicator: a colored dot, or the cog glyph while working. Shown in
-    // both modes; kept in sync.
-    const dot = new Gtk.Label({ label: STATUS_DOT });
-    this.applyStatus(dot, agent);
-    this.rowUnsubs.push(agent.onDidChangeStatus(() => this.applyStatus(dot, agent)));
+    // Status indicator (shared with the agent picker): a colored dot, or the cog
+    // glyph while working. Shown in both modes; kept in sync.
+    const status = createAgentStatusIcon(agent);
+    this.rowUnsubs.push(status.dispose);
+    const dot = status.widget;
 
     if (this.collapsed) return this.rowBox(dot); // icon only
+
+    // Permission-mode badge (plan/acceptEdits/auto/…), hidden in `default` mode.
+    const mode = createAgentModeBadge(agent);
+    this.rowUnsubs.push(mode.dispose);
 
     const label = new Gtk.Label({ xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.setText(agent.title);
     this.rowUnsubs.push(agent.onTitleChange(() => label.setText(agent.title)));
+
+    // Linked-worktree badge (git glyph + branch), only when the agent runs in one.
+    const worktreeMarkup = agentWorktreeMarkup(agent.worktree);
+    const worktree = worktreeMarkup
+      ? new Gtk.Label({ useMarkup: true, label: worktreeMarkup })
+      : null;
 
     // Changed-files badge (pencil + count) — a flat button that opens the edited
     // files; hidden until the agent edits one.
@@ -257,7 +256,8 @@ export class WorkbenchList {
     updateFiles();
     this.rowUnsubs.push(agent.onDidChangeFiles(updateFiles));
 
-    return this.rowBox(dot, label, files);
+    const trailing = [mode.widget, label, ...(worktree ? [worktree] : []), files];
+    return this.rowBox(dot, ...trailing);
   }
 
   // Activate an entry: reveal the agent's terminal, or run the user action.
@@ -354,19 +354,6 @@ export class WorkbenchList {
     label.setMarkup(`<span font_family="${ICON_FONT_FAMILY}">${CHANGED_GLYPH}</span> ${changed.length}`);
     const names = changed.map((path) => path.split('/').pop() ?? path);
     button.setTooltipText(`Edited ${changed.length} file${changed.length === 1 ? '' : 's'} — click to open:\n${names.join('\n')}`);
-  }
-
-  private applyStatus(dot: InstanceType<typeof Gtk.Label>, agent: AgentTerminal): void {
-    for (const cls of DOT_CLASSES) dot.removeCssClass(cls);
-    dot.addCssClass(`quilx-agent-${agent.status}`); // idle | working | waiting | exited
-    // Working shows the cog glyph (icon font); the rest show the plain dot.
-    if (agent.status === 'working') {
-      dot.setText(WORKING_GLYPH);
-      dot.setAttributes(this.iconAttrs);
-    } else {
-      dot.setText(STATUS_DOT);
-      dot.setAttributes(null);
-    }
   }
 
   dispose(): void {

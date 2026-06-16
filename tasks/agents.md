@@ -78,7 +78,7 @@ What already exists and is reused, not rebuilt:
   *Start agent: `<query>`* action that launches a new agent with the typed prompt.
 - **`AppWindow`** — `openAgent(prompt?)` / `showAgent` (reattaches a persisted
   widget, gated on `getRoot()` so a desynced tab map can't strand or rip it),
-  `agentChildren` (agent → center tab), `agent:new` / `agent:switch` commands,
+  `agentChildren` (agent → center tab), `agent:new` / `agent:picker` commands,
   focus→`selectAgent`, and retiring an agent from the registry when its **exited**
   tab is closed.
 

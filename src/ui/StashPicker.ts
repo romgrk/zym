@@ -7,6 +7,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker } from './Picker.ts';
+import { Icons } from './icons.ts';
 import { quilx } from '../quilx.ts';
 import {
   repoRoot,
@@ -30,7 +31,13 @@ const PAST: Record<StashAction, string> = { pop: 'popped', apply: 'applied', dro
 export function openStashPicker(host: Overlay, cwd: string, action: StashAction): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({
+      host,
+      placeholder: `Stash to ${action}…`,
+      promptIcon: Icons.stash,
+      onSelect: () => {},
+      error: 'Not a git repository',
+    });
     return;
   }
   const stashes = listStashes(root);
@@ -48,6 +55,7 @@ export function openStashPicker(host: Overlay, cwd: string, action: StashAction)
   openPicker({
     host,
     placeholder: `Stash to ${action}…`,
+    promptIcon: action === 'drop' ? Icons.trash : Icons.stash,
     items,
     onSelect: (label) => {
       const ref = refByLabel.get(label);

@@ -225,3 +225,44 @@ No fork or custom widget: a small `InlineBlockController` (per-line gap tag +
 buffer-coordinate overlay child) on top of GtkSourceView covers fold placeholders,
 see-definition peeks, code lens, and inline expanded content — with a zero
 buffer-footprint, natively-scrolling overlay. POC the geometry + focus first.
+
+## Future consumers (ideas to split into work)
+
+The two primitives are built and proven; these are candidate features on top.
+Each notes the primitive it uses and the existing infra it reuses.
+
+**Block (`InlineBlockController` — non-interactive / click, text-window overlay):**
+
+- **Error lens** — the diagnostic message inline below the offending line (the
+  readable, no-hover form). Reuses the existing diagnostics (`DiagnosticsView`,
+  squiggles). *High value, low–medium.*
+- **Code lens** — `N references` · `run | debug` · `implementations` above a symbol,
+  clickable. LSP `textDocument/codeLens`; reuses go-to / references. The gap goes
+  *above* the symbol (`placement: 'above'`). *High value, medium.*
+- **Inline AI ghost text** — multi-line agent completion preview below the cursor,
+  accept/dismiss. Reuses the agent infra. *High value, higher effort.*
+- **Color swatch / image / math preview** — a block under a CSS color, a markdown
+  `![img]`, or `$$…$$`. Tree-sitter finds the spans. *Nice, low–medium (markdown/CSS).*
+- **Test / coverage results** — pass/fail + message by a test. *Needs a test-runner.*
+
+**Peek (`InlinePeek` — focusable, sibling overlay):**
+
+- **Peek references / implementations / type-definition** — a results list + preview
+  inline (the sibling of see-definition). Reuses `find-references`. *High value,
+  medium — most natural next.*
+- **Inline AI edit (Cmd-K style)** — a focusable prompt under the line ("rewrite
+  this") → apply as a diff. Reuses agents. *High value, higher effort; distinctive.*
+- **Peek commit / blame diff** — inline a `DiffViewer` below a line ("what changed
+  here" / the blamed commit). Reuses the diff viewer + git. *Great fit, medium.*
+- **Inline rename** — a tiny inline editor for LSP rename with live preview. Reuses
+  `lsp:rename`. *Medium.*
+- **Inline merge-conflict resolution** — both sides inline with accept buttons. *Niche.*
+
+**Separate mechanism — EOL trailing text (`GtkSourceAnnotations`, not built):**
+end-of-line only; complements blocks/peeks. Fits **inlay hints** (param names /
+inferred types), **git blame** (trailing author/date), and a trailing **error-lens**
+variant. Survey in [virtual-lines.md](virtual-lines.md); needs its own POC (very new
+API; confirm node-gtk provider vfunc binding).
+
+**Suggested priority** (value ÷ effort, all reuse existing infra): error lens →
+peek references → code lens; most *distinctive*: inline AI edit + peek commit diff.

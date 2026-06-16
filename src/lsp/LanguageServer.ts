@@ -41,6 +41,8 @@ import {
   PrepareRenameRequest,
   DocumentFormattingRequest,
   DocumentRangeFormattingRequest,
+  WorkspaceSymbolRequest,
+  DocumentSymbolRequest,
   TextDocumentSyncKind,
   MessageType,
   type ClientCapabilities,
@@ -62,6 +64,9 @@ import {
   type WorkspaceEdit,
   type TextEdit,
   type FormattingOptions,
+  type SymbolInformation,
+  type WorkspaceSymbol,
+  type DocumentSymbol,
 } from 'vscode-languageserver-protocol';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { LspClient } from './LspClient.ts';
@@ -503,6 +508,35 @@ export class LanguageServer {
     });
   }
 
+  /** Whether the server advertised support for project-wide symbol search. */
+  get hasWorkspaceSymbols(): boolean {
+    return !!this.capabilities.workspaceSymbolProvider;
+  }
+
+  /** Search project-wide symbols matching `query` (a `SymbolInformation`/`WorkspaceSymbol` list), or null. */
+  async workspaceSymbol(query: string): Promise<SymbolInformation[] | WorkspaceSymbol[] | null> {
+    if (!this.hasWorkspaceSymbols) return null;
+    await this.start();
+    return this.client.sendRequest(WorkspaceSymbolRequest.type, { query });
+  }
+
+  /** Whether the server advertised support for the document symbol outline. */
+  get hasDocumentSymbols(): boolean {
+    return !!this.capabilities.documentSymbolProvider;
+  }
+
+  /**
+   * The symbol outline for `path` — either a hierarchical `DocumentSymbol` tree or
+   * a flat `SymbolInformation` list (servers may return either), or null.
+   */
+  async documentSymbol(path: string): Promise<DocumentSymbol[] | SymbolInformation[] | null> {
+    if (!this.hasDocumentSymbols) return null;
+    await this.start();
+    return this.client.sendRequest(DocumentSymbolRequest.type, {
+      textDocument: { uri: pathToUri(path) },
+    });
+  }
+
   // --- events ----------------------------------------------------------------
 
   onDiagnostics(handler: (event: DiagnosticsEvent) => void): Disposable {
@@ -604,6 +638,8 @@ const CLIENT_CAPABILITIES: ClientCapabilities = {
   },
   workspace: {
     workspaceFolders: true,
+    // Project-wide symbol search (workspace/symbol), for the symbol picker.
+    symbol: { dynamicRegistration: false },
     // We answer workspace/configuration and accept didChangeConfiguration, so
     // config-driven servers (eslint, …) can read their settings.
     configuration: true,

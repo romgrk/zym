@@ -1,19 +1,27 @@
 # Git
 
-Architecture plan for the Git section. Three deliverables, in priority order:
+Three deliverables, in priority order — **all three now have a working first
+cut** (status viewer, commit, forge links), plus branch/stash management and a
+GitHub PR/CI surface that grew out of the forge work:
 
-1. **Status viewer** — a Source Control panel in the left dock (changed files,
-   staging, diffs).
-2. **Commit interface** — inline in that panel, using a `TextEditor` widget for
-   the message.
-3. **Forge links** — GitHub PR/issue links when applicable, then GitLab etc.
+1. **Status viewer** — a Source Control panel (`GitPanel`), a sibling tab of the
+   file tree in the left dock. **Done** (file-level staging; no diffs/hunks).
+2. **Commit interface** — message edited in a normal editor tab, commit on
+   save/close. **Done** (no amend/sign-off yet).
+3. **Forge links** — GitHub repo/actions/issues/PR open-on-web, PR + CI status
+   in the header, PR/issue/CI pickers, create/checkout PR. **Done for GitHub**
+   (via `gh`); GitLab + `#123`-in-text detection not yet.
 
-This page covers the architecture; per-feature implementation pages can be split
-out later (`status-viewer.md`, `commit.md`, `forge-links.md`) if they grow.
+Plus: **branch** switch/create/delete/merge/rename (pickers), **stash**
+push/pop/apply/drop, and a per-line **diff gutter** in the editor.
+
+This page is the architecture record; the per-feature sections below are kept
+updated as the implementation lands. See the Phasing checklist at the bottom for
+exact status.
 
 ## Current state
 
-What already exists and is reused, not rebuilt:
+The pre-existing primitives that were reused, not rebuilt:
 
 - **`src/git.ts` — `GitRepo`** (libgit2 via Ggit). Synchronous reads
   (`getBranch`, `getStatus` ±lines, `getAheadBehind`, `getFileStatuses`,
@@ -50,27 +58,31 @@ Constraints carried from the codebase:
 - **One main component per file** under `src/ui`, camel-cased after the
   component.
 
-## Backend: a small git CLI helper
+## Backend: the git CLI helper — `src/git/cli.ts` (done)
 
-Keep it simple: the new git operations use **`node:child_process` + the `git`
-CLI** rather than extending the libgit2 `GitRepo`. The CLI gives us exactly what
-`git status`/`git diff` print (no re-deriving with three libgit2 diffs), and
-respects the user's hooks and config (name/email, GPG, pre-commit/commit-msg)
-for free. The existing libgit2 reads (GitBranchButton, FileTree) stay as-is for now;
-consolidate later if it's worth it.
+The git operations use **`node:child_process` + the `git` CLI** rather than
+extending the libgit2 `GitRepo`. The CLI gives us exactly what `git status`/`git
+diff` print (no re-deriving with three libgit2 diffs), and respects the user's
+hooks and config (name/email, GPG, pre-commit/commit-msg) for free. The existing
+libgit2 reads (GitBranchButton, FileTree) stay as-is; consolidate later if worth
+it.
 
-A thin module — `src/git/cli.ts` (working name) — wrapping the CLI:
+`src/git/cli.ts` wraps the CLI (note: `cwd` is the first arg of every call):
 
 ```ts
-gitSync(args: string[]): string;                              // execFileSync, fast local reads
-git(args: string[], onDone: (ok: boolean, stdout: string) => void): void;  // execFile callback
+gitSync(cwd, args): string;                       // execFileSync, fast local reads (64 MiB cap)
+git(cwd, args, onDone): void;                      // execFile callback, onDone(ok, stdout, stderr)
+repoRoot(cwd): string | null;                      // rev-parse --show-toplevel
+commitMsgPath(root): string;                       // .git/COMMIT_EDITMSG
 ```
 
 (No promise wrappers — microtasks are starved under the loop; see Current state.)
 
-### Status model
+### Status model (done)
 
-Parse `git status --porcelain=v2 -z` into a flat list the panel groups itself:
+`getChanges(root)` parses `git status --porcelain=v2 -z` into a flat list the
+panel groups itself; a file edited both in index and worktree is pushed as **two**
+rows (staged + unstaged):
 
 ```ts
 type GitFileState = 'new' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
@@ -82,18 +94,24 @@ interface GitChange {
 }
 ```
 
-Porcelain v2 already reports staged (XY index) and unstaged (XY worktree) state
-per file in one call, so no separate diffs. Line counts (±) for a row, when
-wanted, come from `git diff --numstat`/the diff itself — defer if not needed for
-the first cut.
+Porcelain v2 reports staged (X) and unstaged (Y) state per file in one call.
+Line counts (±) per row are not surfaced in the panel yet (FileTree still shows
+its own ± from libgit2).
 
-### Mutations
+### Mutations (done)
 
-- stage: `git add -- <path>`
-- unstage: `git restore --staged -- <path>`
-- discard: `git restore -- <path>` (destructive — confirm first)
-- commit: `git commit -F <msgfile>` (+ `--amend`, `--signoff`)
-- diff text: `git diff [--staged] -- <path>`
+`cli.ts` exposes each as an `execFile`-callback function:
+
+- stage / unstage: `stage` (`git add`), `unstage` (`git restore --staged`)
+- stage-all / unstage-all: `stageAll`, `unstageAll`
+- discard: `discard` (`git restore`, tracked) / `clean` (`git clean`, untracked) — destructive, confirmed first
+- commit: `commit(root, messageFile, …)` → `git commit -F <msgfile>` (no `--amend`/`--signoff` yet)
+- branch: `currentBranch`, `listBranches`, `switchBranch`, `createBranch`, `deleteBranch`, `mergeBranch`, `renameBranch`
+- stash: `listStashes` (→ `Stash[]`), `stashPush`, `stashPop`, `stashApply`, `stashDrop`
+
+Per-path diff **text** (`git diff [--staged] -- <path>`) is not wired into the
+panel; the editor-tab diff (`git:diff-current`, working-tree vs HEAD) is the
+diff surface today.
 
 ### Refresh
 
@@ -103,98 +121,99 @@ promptly). To also catch changes made from a terminal, reuse the existing
 totals and does **not** move on staging alone, so external `git add` won't auto-
 refresh until `signature()` learns about the index — a known gap, fine to defer.
 
-## UI: left-dock layout
+## UI: left-dock layout (done — landed as a sibling tab)
 
-Today the left dock is a vertical `Gtk.Paned`: FileTree (top) / AgentList
-(bottom). Add Source Control **above** the file tree → a three-section vertical
-stack (nested Paneds), top to bottom:
+**Where it actually went:** Source Control is a **sibling tab of the file tree**
+in the left-dock top panel, not a separate section above it. `buildWorkbench`
+(`AppWindow`) adds two tabs to one `Panel` — `  Files` (`fileIconGlyph`) and
+` Git` (`Icons.git`, embedded in the Adw tab title) — defaulting to Files. The
+panel collapses out of the workbench when its last tab closes and the
+reveal/focus path re-attaches it (per-workbench, so each agent workbench has its
+own). `#GitPanel` is the CSS/selector identity.
 
-```
-left dock
-├── SourceControl   (new — top)
-├── FileTree
-└── AgentList
-```
+## Feature: status viewer — `src/ui/GitPanel.ts` (done)
 
-`AppWindow` builds this; the Source Control section gets a `setName` for
-command/keymap/CSS identity, like the other docks. Placement is provisional
-("might be moved later"), so SourceControl stays a self-contained component with
-a single `root`, droppable into any slot.
-
-## Feature: status viewer
-
-New component **`src/ui/SourceControl.ts`** (`#SourceControl`), exposing `root`
-(a scrollable column). Driven by `quilx`'s injected `GitRepo`; rebuilds on
+Component **`GitPanel`** (`#GitPanel`), exposing `root` (a scrollable column).
+Constructed with `{ cwd, git, onOpenFile, onCommit }`; rebuilds on
 `git.onChange`.
 
-Layout, top to bottom:
+Layout:
 
-- **Commit area** (see next section).
-- **Staged** group — files with a per-row unstage action.
-- **Changes** group — unstaged tracked edits, with stage / discard actions.
-- **Untracked** group — with stage / discard.
+- **Staged** group — `RowKind: 'staged'`, per-row unstage; staged status drawn in `theme.ui.success`.
+- **Changes / Untracked** — `RowKind: 'unstaged'`, stage + discard; drawn in `theme.ui.error`.
 
 Each group is a small header (label + count) over a `Gtk.ListBox` of file rows
-(icon via `fileIcons`, path, ±badge reusing FileTree's status markup). A group
-header carries a bulk action (stage-all / unstage-all). Rows expose actions as
-hover buttons and via the command system so they are keybindable (vim-style
-`s`/`u`/`x` while the panel is focused, mirroring FileTree's bare-key bindings).
+(file icon + path + a single-letter state badge, `STATE_LETTER`). Rows are
+cursor-navigable (header rows are non-selectable/non-activatable). Actions go
+through the command system so they're keybindable while the panel is focused
+(`s` stage, `u` unstage, `A` stage-all/unstage-all toggle, `X` discard,
+`c c` commit) — mirroring FileTree's bare-key bindings. Clicking/`o` opens the
+file.
 
-**Diffs.** Not in this pass — rows show status and support staging only. Diff
-display (`git diff …` rendered in a tab or panel) is deferred; revisit once the
-basics land and the diff-display / grammar tasks are picked up.
+**Diffs.** Still not in the panel — rows show status and support staging only.
+The diff surface today is the editor tab (`git:diff-current` = working tree vs
+HEAD) plus the per-line gutter (below). Hunk/line staging and an in-panel diff
+are future work.
 
-## Feature: commit interface
+## Feature: commit interface (done — edit-in-tab, not inline)
 
-Inline at the top of the Source Control panel, **using a `TextEditor` widget**
-for the message (so vim editing + the editor's chrome come for free):
+**Where it actually went:** not an embedded mini-editor in the panel. `c c`
+(`git:commit`) calls `onCommit` → `AppWindow.startCommit()`, which opens
+`.git/COMMIT_EDITMSG` in a **normal editor tab**; **saving + closing the tab
+commits** (`git commit -F .git/COMMIT_EDITMSG`). This reuses the full editor
+(vim, chrome) with zero `TextEditor` changes and keeps the message git-native.
+Result/failures surface through `quilx.notifications`; on success the lists
+refresh.
 
-- Embed a `TextEditor` instance (`editor.root`) sized to a few lines, with a
-  Commit button (and an overflow for `--amend` / `--signoff`).
-- Commit writes the buffer to a temp file and runs
-  `git(['commit', '-F', file], …)`; result + failures surface through
-  `quilx.notifications`. On success, clear the buffer and refresh the lists.
+Not done: amend, sign-off, amend-prefill from `git log -1 --format=%B`,
+commit-message ruler/length hint, branch-name placeholder.
 
-**Buffer backing — a commit-message file (decided).** `TextEditor` is
-file-oriented today (`loadFile`, `currentFile`, `save`), so the message buffer is
-backed by a real file (`.git/COMMIT_EDITMSG`): load it into the embedded editor,
-and commit with `git commit -F .git/COMMIT_EDITMSG`. Git-native and fits the
-existing model with no editor changes. (Non-file / scratch buffers come later as
-a general `TextEditor` capability; the inline editor switches to that then.)
+## Feature: forge links — `src/git/github.ts` + `src/ui/Github*.ts` (GitHub done)
 
-Niceties (later): commit-message ruler/length hint, amend prefill from
-`git log -1 --format=%B`, branch name in the placeholder.
+Implemented as a concrete **GitHub** integration driven by the `gh` CLI (not the
+abstract `Forge` interface that was sketched — `GitLabForge` etc. can be factored
+out if/when a second provider lands).
 
-## Feature: forge links (GitHub / GitLab / …)
+- **Remote resolution** — `resolveGithubRepo(root, remoteNames)` lists remotes,
+  then resolves the first present in order, parsing SSH/HTTPS via
+  `parseGithubRemote` → `{ host, owner, repo }`. Order is **`upstream` then
+  `origin`**, both from config (`git.remotes.upstream` / `git.remotes.origin`,
+  registered in `src/quilx.ts`, defaulting to `upstream`/`origin`).
+- **`src/git/github.ts`** — `gh`-backed reads: `fetchPullRequest` (number, url,
+  title, state, CI rollup, linked issue), `fetchChecks` / `fetchFailedChecks`
+  (CI status buckets), `searchPullRequests`, `fetchIssues`, `fetchDefaultBranch`,
+  `createPullRequestWeb`, `checkoutPullRequest`. `repoWebUrl` builds the base URL.
+- **`GithubButtons`** (header) — repo/actions/issues/pulls open-on-web; the PR
+  segment shows the current branch's PR (glyph + `#1234`, colored by state) and
+  opens it, or becomes a **"create PR"** affordance on a non-default branch; a CI
+  glyph reflects the PR's check rollup and opens the checks picker. Hidden when no
+  GitHub remote resolves.
+- **Pickers** — `GithubPrPicker` (checkout, `space g h p`/`c`), `GithubIssuePicker`
+  (`space g h i`), `GithubCIChecksPicker` (`github:ci-checks`),
+  `GithubFailedCIPicker` (`space g h f`).
+- **Commands / keymaps** — `space g h`: `r` repo, `a` actions, `i` issues, `p`/`c`
+  PR checkout, `n` new PR, `f` failed CI.
 
-Turn git refs into web URLs and open them in the browser.
+Not done: `#123`-in-text / branch-name / selection detection (offer *Open #123*);
+*open file/line on web* (`blameUrl`/`compareUrl`); GitLab and other providers.
 
-- **Remote model (configurable workflow)**: a fork-friendly setup has two
-  remotes — `upstream` (the canonical repo, where PRs/issues live) and `origin`
-  (your fork). PR/issue detection resolves **`upstream` first, then `origin`**,
-  so it points at the canonical repo when there is one. Both remote names are
-  config (see below) and default to `upstream` / `origin`; when `upstream` is
-  unset or absent, `origin` is used alone.
-- **Remote parsing**: `gitSync(['remote', 'get-url', <name>])` → normalize
-  SSH/HTTPS to `{ host, owner, repo }`. Detect provider by host
-  (github.com / gitlab.com / self-hosted patterns).
-- **`Forge` abstraction**: an interface mapping entities to URLs
-  (`issueUrl(n)`, `prUrl(n)`, `commitUrl(sha)`, `branchUrl`, `compareUrl`,
-  `blameUrl(file, line)`), with `GitHubForge` first, then `GitLabForge`.
-  Self-hosted instances differ only by base URL + path templates.
-- **"When applicable"**: detect `#123` references in commit messages, the
-  current branch name, and selected text; offer *Open #123* against the resolved
-  forge. Plus always-available commands: *Open repo on web*, *Open current
-  branch*, *Open file/line on web*.
-- Surfaced as commands (palette + keybindings) and as actions on relevant rows.
+## Beyond the original plan (also built)
 
-MVP: resolve `upstream`→`origin`, GitHub remote parsing, *open
-repo/branch/file-line*, and `#123` resolution. GitLab and richer PR/issue
-metadata (titles, state — needs an authenticated API) come later.
+- **Branch management** — `src/ui/BranchPicker.ts`: switch/create
+  (`openBranchPicker`, `space g b b`), delete (`space g b d`), merge into current
+  (`space g b m`), rename (`space g b r`). `GitBranchButton` now opens the branch
+  picker on click (it was specced as a plain indicator).
+- **Stash management** — `src/ui/StashPicker.ts`: push (`space g s s`), and
+  pop/apply/drop via a picker over `listStashes` (`space g s p`/`a`/`d`).
+- **Diff gutter** — `src/ui/TextEditor/GitGutter.ts`: a `GtkSource`
+  gutter renderer marking added/modified/deleted lines per file, diffing the live
+  buffer against the HEAD blob (debounced, generation-guarded against stale async
+  results).
 
-## Config: default git workflow
+## Config: default git workflow (done)
 
-New config keys (registered in the app schema, same mechanism as `editor.*`):
+Config keys registered in `src/quilx.ts` (same mechanism as `editor.*`), read via
+`quilx.config.get` in `GithubButtons.remoteNames()`:
 
 | Key                     | Type   | Default      | Description                                              |
 | ----------------------- | ------ | ------------ | -------------------------------------------------------- |
@@ -223,19 +242,30 @@ push remote, auto-fetch interval, …) can be added as we iterate.
 
 ## Phasing
 
-- [ ] Backend: `src/git/cli.ts` helper (`gitSync` / `git`) + `git status --porcelain=v2` parsing
-- [ ] Left-dock: add the SourceControl section above the file tree
-- [ ] Status viewer: staged/changes/untracked lists with stage/unstage/discard
-- [ ] Commit: inline TextEditor over `.git/COMMIT_EDITMSG` + `git commit -F`
-- [ ] Commit extras: amend, sign-off, amend prefill
-- [ ] Config: `git.remotes.upstream` / `git.remotes.origin`
-- [ ] Forge: remote parsing (upstream→origin) + `Forge` interface + GitHub open-on-web
-- [ ] Forge: `#123` reference detection → open issue/PR
-- [ ] Forge: GitLab provider
+- [x] Backend: `src/git/cli.ts` helper (`gitSync` / `git`) + `git status --porcelain=v2` parsing
+- [x] Left-dock: SourceControl in the dock (landed as a sibling tab of FileTree, not a section above it)
+- [x] Status viewer: staged/changes/untracked lists with stage/unstage/discard
+- [x] Commit: `.git/COMMIT_EDITMSG` + `git commit -F` (edit in a normal tab, commit on save+close — not an inline editor)
+- [ ] Commit extras: amend, sign-off, amend prefill, length ruler
+- [x] Config: `git.remotes.upstream` / `git.remotes.origin`
+- [x] Forge: remote parsing (upstream→origin) + GitHub open-on-web (`GithubButtons`)
+- [x] Forge: GitHub PR + CI status, PR/issue/CI pickers, create/checkout PR (via `gh`)
+- [ ] Forge: `#123` reference detection → open issue/PR; open file/line on web
+- [ ] Forge: GitLab provider (factor out the `Forge` interface when it lands)
+- [x] Branch management: switch/create/delete/merge/rename pickers
+- [x] Stash management: push/pop/apply/drop
+- [x] Diff gutter in the editor (added/modified/deleted per line)
+- [ ] In-panel diffs / hunk-level staging
+- [ ] More git diff sources (staged / commit / PR) — see code-editing/diff.md
 
-## Decisions (first pass)
+## Decisions (as built)
 
-- **Diffs**: none yet — status + staging only; diff display deferred.
-- **Commit buffer**: backed by `.git/COMMIT_EDITMSG` (non-file buffers later).
+- **Diffs**: status + staging only in the panel; the diff *surface* is the editor
+  tab (`git:diff-current`) + the per-line gutter. Hunk/line staging deferred.
+- **Commit buffer**: `.git/COMMIT_EDITMSG` edited in a full editor tab (save+close
+  commits) — chosen over an embedded mini-editor; no `TextEditor` changes needed.
 - **Staging**: file-level only (hunk/line staging later).
-- **GitBranchButton**: no popover yet — stays a plain indicator.
+- **Forge**: concrete GitHub-over-`gh` implementation, not the abstract `Forge`
+  interface (extract it when a second provider lands).
+- **GitBranchButton**: clicking opens the branch picker (no popover; the picker
+  is the switcher).

@@ -58,8 +58,12 @@ export interface GrammarDef {
   /** Absolute path to the highlights query file (`…/highlights.scm`). Plugins
    *  vendor this alongside their code (`ctx.resolve('queries/…/highlights.scm')`). */
   highlightsPath: string;
-  /** Node types that fold when they span >1 line. */
+  /** Node types treated as one indent level (the indent source counts enclosing
+   *  ones). Also the folding fallback when no `foldsPath` is given. */
   foldTypes: string[];
+  /** Absolute path to a tree-sitter folds query (`…/folds.scm`, capturing `@fold`
+   *  nodes — incl. comments). Drives folding when present; else `foldTypes` does. */
+  foldsPath?: string;
   /** Language injections (e.g. Markdown's code fences + inline spans). Optional. */
   injections?: InjectionDef[];
 }

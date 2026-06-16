@@ -1,16 +1,23 @@
 /*
- * Agent picker — a quick-switcher over the running agents (`quilx.agents`).
- * Opens the fuzzy picker over the live agents' titles (with an "exited" marker
- * for finished ones) and invokes `onActivate` with the chosen agent, so the host
- * can reveal and focus its terminal.
+ * Agent picker — a quick-switcher over agents and conversations, in one fuzzy list:
+ *   - the currently-open agents (`quilx.agents`), each with a status indicator
+ *     (shared with the WorkbenchList sidebar) — selecting one reveals its terminal;
+ *   - the project's resumable past conversations (newest first, excluding any
+ *     already open) — selecting one resumes it as a fresh agent;
+ *   - an action row that starts a NEW agent with the typed prompt.
  *
- * The agents are snapshotted when the picker opens. Titles aren't unique (two
- * `claude` agents read the same), so each display label is disambiguated and
- * mapped back to its specific agent rather than matched by title.
+ * Past conversations are listed only when `onResume` is supplied; the "send to
+ * agent" caller omits it (text can't be delivered to a dead conversation), so it
+ * sees just the live agents.
+ *
+ * Items are keyed by a synthetic value and mapped back to their agent/session, so
+ * colliding titles (two `claude` agents read alike) need no disambiguation.
  */
 import { Gtk } from '../gi.ts';
-import { openPicker } from './Picker.ts';
-import { proseMarkup } from './proseMarkup.ts';
+import { openPicker, type PickerItem } from './Picker.ts';
+import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
+import { agentStatusMarkup, agentModeMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
+import { listAgentSessions, relativeTime, type AgentSession } from '../agentSessions.ts';
 import { quilx } from '../quilx.ts';
 import type { AgentTerminal } from './AgentTerminal.ts';
 
@@ -21,51 +28,79 @@ export interface AgentPickerOptions {
   onActivate: (agent: AgentTerminal) => void;
   /** Launch a new agent with the typed prompt. */
   onStart: (prompt: string) => void;
-  /** Entry placeholder (e.g. "Send to agent…"). Defaults to "Switch to agent…". */
+  /** Resume a past conversation as a fresh agent. When supplied, the project's
+   *  resumable conversations are listed alongside the open agents. */
+  onResume?: (session: AgentSession) => void;
+  /** Entry placeholder (e.g. "Send to agent…"). Defaults to "Open agent or conversation…". */
   placeholder?: string;
 }
 
-export function openAgentPicker(host: Overlay, options: AgentPickerOptions): void {
-  const byLabel = new Map<string, AgentTerminal>();
-  const items: string[] = [];
+type Entry =
+  | { kind: 'agent'; agent: AgentTerminal }
+  | { kind: 'session'; session: AgentSession };
 
-  for (const agent of quilx.agents.getAgents()) {
-    const label = uniqueLabel(byLabel, agentLabel(agent));
-    byLabel.set(label, agent);
-    items.push(label);
+export function openAgentPicker(host: Overlay, options: AgentPickerOptions): void {
+  const byValue = new Map<string, Entry>();
+  const items: PickerItem[] = [];
+
+  // Open agents first, in launch order. Track their session ids so a resumable
+  // conversation that's already open isn't also listed below.
+  const liveSessions = new Set<string>();
+  quilx.agents.getAgents().forEach((agent, i) => {
+    const value = `agent:${i}`;
+    byValue.set(value, { kind: 'agent', agent });
+    items.push({ value, text: agent.title });
+    if (agent.sessionId) liveSessions.add(agent.sessionId);
+  });
+
+  // Then the resumable past conversations (newest first), if the caller handles them.
+  if (options.onResume) {
+    for (const session of listAgentSessions(process.cwd())) {
+      if (liveSessions.has(session.id)) continue;
+      const value = `session:${session.id}`;
+      byValue.set(value, { kind: 'session', session });
+      items.push({ value, text: session.label });
+    }
   }
 
   openPicker({
     host,
-    placeholder: options.placeholder ?? 'Switch to agent…',
+    placeholder: options.placeholder ?? 'Open agent or conversation…',
+    proseEntry: true, // titles/labels are prose, not paths/identifiers
     items,
-    // Agent titles can carry `backtick` spans (claude reports them); render those
-    // monospace, the rest as sans prose, with the fuzzy match highlighted.
-    formatMain: (item, positions) => proseMarkup(item.text, positions),
-    onSelect: (label) => {
-      const agent = byLabel.get(label);
-      if (agent) options.onActivate(agent);
+    formatMain: (item, positions) => {
+      const entry = byValue.get(item.value);
+      if (entry?.kind === 'agent') {
+        // The shared status indicator before the title (and a permission-mode
+        // badge when not in `default`); the title can carry `backtick` spans
+        // (claude reports them), rendered as prose. A linked-worktree badge, when
+        // present, is shown right-aligned as the detail.
+        const mode = agentModeMarkup(entry.agent.permissionMode);
+        const worktree = agentWorktreeMarkup(entry.agent.worktree);
+        const lead = mode ? `${agentStatusMarkup(entry.agent.status)} ${mode}` : agentStatusMarkup(entry.agent.status);
+        return {
+          main: `${lead} ${proseMarkup(item.text, positions)}`,
+          ...(worktree ? { detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${worktree}</span>` } : {}),
+        };
+      }
+      // A past conversation: prose label (untitled ones dimmed) + a muted, right-
+      // aligned "time ago".
+      const session = entry?.session;
+      return {
+        main: proseMarkup(item.text, positions, !session?.titled),
+        detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
+      };
     },
+    onSelect: (value) => {
+      const entry = byValue.get(value);
+      if (!entry) return;
+      if (entry.kind === 'agent') options.onActivate(entry.agent);
+      else options.onResume?.(entry.session);
+    },
+    // Typing a prompt that isn't an existing agent/conversation starts a new agent.
     action: {
       label: (query) => `Start agent: ${query}`,
       run: (query) => options.onStart(query),
     },
   });
-}
-
-/** An agent's display label: its title, with a marker for notable states. */
-function agentLabel(agent: AgentTerminal): string {
-  const marker =
-    agent.status === 'exited' ? ' (exited)' :
-    agent.status === 'waiting' ? ' (waiting)' :
-    agent.status === 'working' ? ' (working)' : '';
-  return `${agent.title}${marker}`;
-}
-
-/** Make `label` unique against already-used labels by appending " (2)", " (3)", … */
-function uniqueLabel(used: Map<string, unknown>, label: string): string {
-  if (!used.has(label)) return label;
-  let n = 2;
-  while (used.has(`${label} (${n})`)) n++;
-  return `${label} (${n})`;
 }

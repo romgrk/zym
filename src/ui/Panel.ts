@@ -90,6 +90,17 @@ export class Panel {
   // the active panel unchanged, since no panel's focus-enter fires there.
   private static activePanel: Panel | null = null;
 
+  // Maps each hosted child (tab content) back to the panel holding it, so a host
+  // can resolve "which panel contains this focused widget" (e.g. to open new files
+  // beside the last active editor, even when it sits in a side dock). Maintained in
+  // add() / page-detached; a WeakMap so closed tabs drop out on their own.
+  private static childPanels = new WeakMap<Widget, Panel>();
+
+  /** The panel hosting `child` as one of its tabs, or null if it isn't in one. */
+  static containing(child: Widget): Panel | null {
+    return Panel.childPanels.get(child) ?? null;
+  }
+
   readonly root: InstanceType<typeof Gtk.Box>;
 
   private readonly options: PanelOptions;
@@ -160,6 +171,7 @@ export class Panel {
       this.updateFocusOutline(); // the focused child changed with the tab
     });
     this.view.on('page-detached', (page: any) => {
+      Panel.childPanels.delete(page.getChild());
       this.forcedBarChildren.delete(page.getChild());
       this.options.onClosed?.(page.getChild());
       this.updateEmptyState();
@@ -265,6 +277,12 @@ export class Panel {
     return Panel.activePanel === this;
   }
 
+  /** The single active panel — the one containing keyboard focus — or null. Lets a
+   *  host resolve "the focused tab" across every panel (center splits + docks). */
+  static get active(): Panel | null {
+    return Panel.activePanel;
+  }
+
   // Reflect whether this is the active panel: the empty-state face and caption sit
   // in the foreground color when active, muted otherwise (the glyph and text stay
   // constant). Private — activation goes through `activate` so only one panel is
@@ -334,6 +352,7 @@ export class Panel {
     const page = this.view.append(child);
     // A direct child of a Panel — a styling hook for whatever lives in a tab.
     child.addCssClass('is-panel-child');
+    Panel.childPanels.set(child, this); // back-reference for Panel.containing
     if (options.title) page.setTitle(options.title);
     if (options.requireTabBar) this.forcedBarChildren.add(child);
     this.view.setSelectedPage(page);

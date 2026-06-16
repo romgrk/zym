@@ -18,7 +18,7 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 export function openGithubFailedCIPicker(host: Overlay, cwd: string): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({ host, placeholder: 'Open failed CI run…', onSelect: () => {}, error: 'Not a git repository' });
     return;
   }
   fetchFailedChecks(root, (checks) => {

@@ -61,3 +61,9 @@ test('isMode reflects mode and the editor↔vimState registry tracks it', () => 
   assert.equal(VimState.get(editor), vimState);
   assert.ok(VimState.has(editor));
 });
+
+test('R activates insert mode with the replace submode', () => {
+  const { vimState } = makeVimState('hello\n');
+  vimState.operationStack.run('ActivateReplaceMode');
+  assert.ok(vimState.isMode('insert', 'replace'));
+});

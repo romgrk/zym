@@ -21,6 +21,7 @@ import { fonts } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 import { quilx } from '../quilx.ts';
+import type { Key } from '../keymap/Key.ts';
 import type { TabState } from '../SessionManager.ts';
 
 const SCROLLBACK_LINES = 10_000;
@@ -139,7 +140,18 @@ export class Terminal {
     // A custom command (e.g. an agent CLI) runs verbatim; otherwise a login
     // shell, so the user's profile (PATH, prompt, aliases) is sourced.
     const shell = options.shell ?? process.env.SHELL ?? DEFAULT_SHELL;
-    const argv = options.command ?? [shell, '-l'];
+    this.spawn(options.command ?? [shell, '-l']);
+  }
+
+  /** (Re)spawn a child in this terminal's pty. The pty (and so the scrollback)
+   *  is reused, so it's safe to call again after the previous child exited — e.g.
+   *  to resume a stopped agent in place. */
+  protected respawn(command: string[]): void {
+    this.spawn(command);
+  }
+
+  private spawn(argv: string[]) {
+    this._pid = null; // cleared until the (re)spawn reports a new child
     const envv = Object.entries(process.env).map(([key, value]) => `${key}=${value}`);
 
     this.terminal.spawnAsync(
@@ -235,9 +247,7 @@ export class Terminal {
   }
 
   // Wire the modal behaviour: register the mode commands, apply the initial mode,
-  // and switch to insert when the Vte is clicked (a click focuses the Vte, so the
-  // mode must follow — keeping "focus target == mode" invariant; this is also why
-  // no key-swallowing guard is needed: in normal mode the Vte simply isn't focused).
+  // and keep the mode in lockstep with where focus actually sits.
   private setupModalInput(): void {
     quilx.commands.add(this.root, {
       'terminal:insert-mode': () => this.setMode('insert'),
@@ -246,9 +256,26 @@ export class Terminal {
     });
     this.applyMode();
 
-    const click = new Gtk.GestureClick();
-    click.on('pressed', () => this.setMode('insert'));
-    this.terminal.addController(click);
+    // When a chord prefix on this terminal times out unfinished (e.g. a single
+    // `ctrl-d` of the `ctrl-d ctrl-d` close binding), the keymap held the key
+    // back instead of sending it. Deliver it to the child now — but only while
+    // we're the focused terminal in insert mode, so normal-mode keys stay with
+    // the app and a background terminal never steals the keystroke.
+    const fallthrough = quilx.keymaps.onFallthrough((keys) => this.handleFallthrough(keys));
+    this.terminal.on('destroy', () => fallthrough.dispose());
+
+    // Whenever the Vte actually holds the keyboard, we are in insert mode — keeping
+    // the "focus target == mode" invariant the modal design relies on. This covers
+    // every path that focuses the Vte: a click, Tab navigation, and crucially a
+    // *programmatic* focus such as a tab restoring its last-focused widget. Without
+    // it the Vte could hold focus while the app still treats keys as normal-mode
+    // (so the `space` leader fires), and typing into a visibly-focused terminal
+    // would mysteriously trigger app commands. Entering normal mode focuses the
+    // container instead, which moves focus *off* the Vte (a `leave`, not an
+    // `enter`), so this never spuriously flips back to insert.
+    const focus = new Gtk.EventControllerFocus();
+    focus.on('enter', () => this.setMode('insert'));
+    this.terminal.addController(focus);
   }
 
   // Reflect the mode onto the widget's CSS classes: `.has-text-input` (which
@@ -294,6 +321,23 @@ export class Terminal {
     this.terminal.feedChild(Array.from(new TextEncoder().encode(text)));
   }
 
+  // Deliver a timed-out chord prefix (from the keymap manager) to the child as
+  // raw input. Only acts when this terminal is the focused one in insert mode;
+  // otherwise it declines so the keystroke is dropped (normal mode) or offered
+  // to another terminal. Returns whether it consumed the keys.
+  private handleFallthrough(keys: Key[]): boolean {
+    if (this._mode !== 'insert' || !this.containsFocus()) return false;
+    let bytes = '';
+    for (const key of keys) {
+      const encoded = encodeKeyForChild(key);
+      if (encoded === null) return false; // unencodable key — leave the chord dropped
+      bytes += encoded;
+    }
+    if (bytes === '') return false;
+    this.feedChild(bytes);
+    return true;
+  }
+
   /** Subscribe to title changes; returns an unsubscribe function. */
   onTitleChange(callback: () => void): () => void {
     this.titleHandlers.push(callback);
@@ -308,4 +352,20 @@ export class Terminal {
   protected emitTitleChange() {
     for (const callback of this.titleHandlers) callback();
   }
+}
+
+// Translate a keystroke the keymap declined into the bytes a terminal sends for
+// it. Covers what can realistically start a chord here: a `ctrl`+letter maps to
+// its C0 control byte (`ctrl-a` ⇒ 0x01 … `ctrl-z` ⇒ 0x1a, `ctrl-d` ⇒ 0x04), and
+// a plain printable key passes through as its character. Returns null for keys
+// without a simple byte encoding (the chord is then dropped rather than guessed).
+function encodeKeyForChild(key: Key): string | null {
+  const name = key.name ?? '';
+  if (key.ctrl && !key.alt && !key.super && /^[a-z]$/i.test(name)) {
+    return String.fromCharCode(name.toUpperCase().charCodeAt(0) & 0x1f);
+  }
+  if (!key.ctrl && !key.alt && !key.super && name.length === 1 && key.string) {
+    return key.string;
+  }
+  return null;
 }

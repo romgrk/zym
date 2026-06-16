@@ -29,7 +29,7 @@ import { TextEditor } from './TextEditor/index.ts';
 import { buildDefinitionPeek } from './TextEditor/buildDefinitionPeek.ts';
 import { Terminal } from './Terminal.ts';
 import { AgentTerminal, type AgentStatus, type AgentResume } from './AgentTerminal.ts';
-import { listAgentSessions } from '../agentSessions.ts';
+import { listAgentSessions, relativeTime } from '../agentSessions.ts';
 import { WorkbenchList } from './WorkbenchList.ts';
 import { GitPanel } from './GitPanel.ts';
 import { fileIconGlyph } from './fileIcons.ts';
@@ -42,6 +42,9 @@ import { computeDiff } from '../util/DiffModel.ts';
 import { DiffViewer } from './TextEditor/DiffViewer.ts';
 import { Workbench, type BottomDock } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
+import { openWorkspaceSymbolPicker } from './WorkspaceSymbolPicker.ts';
+import { openDocumentSymbolPicker } from './DocumentSymbolPicker.ts';
+import { openSearchPicker } from './SearchPicker.ts';
 import { openCommandPicker } from './CommandPicker.ts';
 import { WhichKey } from './WhichKey.ts';
 import { openAgentPicker } from './AgentPicker.ts';
@@ -119,6 +122,12 @@ export class AppWindow {
   // tab's content widget (the `.is-panel-child`); a WeakMap so closed tabs drop.
   private readonly focusMemory = new WeakMap<Widget, Widget>();
 
+  // The panel that last held a *focused* text editor — where the next file-open
+  // lands when focus has since moved to a non-editor zone (file tree, a picker).
+  // Lets a new file follow the last active editor into the right-dock review pane
+  // instead of always opening in the center. Updated in rememberFocus.
+  private lastEditorPanel: Panel | null = null;
+
   // Editor tabs in the active workbench's center, mapped from their root widget so the
   // active child can be resolved back to its editor regardless of which split it's in.
   private readonly editors = new Map<Widget, TextEditor>();
@@ -151,6 +160,11 @@ export class AppWindow {
   // Header-bar unsaved marker: visible whenever any open editor is modified.
   private modifiedDot!: InstanceType<typeof Gtk.Label>;
   private readonly toastOverlay: ToastOverlay;
+  // Content-area overlay: hosts the active workbench (swapped on agent switch) and
+  // the notification toasts — floats below the header bar, right of the sidebar.
+  private readonly contentOverlay: InstanceType<typeof Gtk.Overlay>;
+  // Window-level overlay wrapping everything (sidebar + header + content): the host
+  // for floating pickers, so they cover the whole window rather than just the content.
   private readonly overlay: InstanceType<typeof Gtk.Overlay>;
   private readonly window: ApplicationWindow;
 
@@ -242,15 +256,15 @@ export class AppWindow {
 
     const toolbarView = new Adw.ToolbarView();
     toolbarView.addTopBar(this.buildHeaderBar());
-    // Overlay host for transient widgets (e.g. the fuzzy file picker). It wraps
-    // only the content, so the picker floats over the workbench below the header
-    // bar rather than over the whole window.
-    this.overlay = new Gtk.Overlay();
-    this.overlay.setChild(this.workbench.root);
+    // Content-area overlay: wraps the active workbench (below the header bar, right
+    // of the sidebar) and hosts the toasts. Pickers use the window-level overlay
+    // built below instead, so they aren't clipped to the content.
+    this.contentOverlay = new Gtk.Overlay();
+    this.contentOverlay.setChild(this.workbench.root);
     // Notification toasts float in the bottom-right of the content area.
     this.notificationToasts = new NotificationToasts({ timeout: TOAST_TIMEOUT });
-    this.overlay.addOverlay(this.notificationToasts.root);
-    toolbarView.setContent(this.overlay);
+    this.contentOverlay.addOverlay(this.notificationToasts.root);
+    toolbarView.setContent(this.contentOverlay);
     this.toastOverlay.setChild(toolbarView);
 
     // Workbench sidebar: a full-height column at the very left of the window, *outside*
@@ -270,6 +284,12 @@ export class AppWindow {
     this.sidebarSplit.setResizeStartChild(false); // window resize grows the content, not the sidebar
     this.sidebarSplit.setShrinkStartChild(false);
 
+    // Window-level overlay over the whole layout (sidebar + header + content), so
+    // floating pickers cover the entire window rather than being clipped to the
+    // content area (where they slid under the sidebar).
+    this.overlay = new Gtk.Overlay();
+    this.overlay.setChild(this.sidebarSplit);
+
     // Bridge the notification manager to the toast stack. Only actionable
     // User-facing severities (info/success/warning/error/fatal) pop a transient
     // toast; only `trace` (the debug level) is log-only, so traces never interrupt.
@@ -286,7 +306,7 @@ export class AppWindow {
     this.window = new Adw.ApplicationWindow({ application: app });
     this.window.setName('AppWindow'); // selector identity for command/keymap rules
     this.window.setDefaultSize(DEFAULT_WIDTH, DEFAULT_HEIGHT);
-    this.window.setContent(this.sidebarSplit);
+    this.window.setContent(this.overlay);
     // Track the focused widget per panel tab so each panel can restore focus to
     // exactly where it was when it is re-activated (see focusMemory).
     this.window.on('notify::focus-widget', () => this.rememberFocus());
@@ -301,7 +321,7 @@ export class AppWindow {
     });
     quilx.keymaps.initialize();
     // which-key hint: shows the continuations after a queued prefix (e.g. Space).
-    this.whichKey = new WhichKey(this.overlay);
+    this.whichKey = new WhichKey(this.contentOverlay);
     // Components register their commands; the keymap (bindings) is loaded
     // centrally from src/keymaps (default table + optional user override).
     this.registerPaneCommands();
@@ -397,6 +417,11 @@ export class AppWindow {
     this.workbench.notificationLog.dispose();
     this.workbench.keymapPanel.dispose();
     this.onQuit();
+    // node-gtk keeps Node's event loop interleaved with GLib's, so quitting the
+    // GLib loop + app doesn't unwind `app.run()` and lingering handles (LSP
+    // child processes, fetch/autofetch timers) keep the process alive. Exit
+    // explicitly once teardown has run so closing the window ends the process.
+    process.exit(0);
   }
 
   // Ask before discarding unsaved work. "Save all" flushes every participant that
@@ -430,10 +455,15 @@ export class AppWindow {
 
   // --- Editor lifecycle ------------------------------------------------------
 
-  /** The TextEditor backing the active split's active tab, if any. */
+  /** The TextEditor backing the focused tab, if any. Prefers whichever panel holds
+   *  keyboard focus (so a right-dock review editor receives editor commands), else
+   *  falls back to the center's active split. */
   private get activeEditor(): TextEditor | null {
-    const widget = this.workbench.center.activePanel.activeChild;
-    return widget ? this.editors.get(widget) ?? null : null;
+    const focused = Panel.active?.activeChild;
+    const focusedEditor = focused ? this.editors.get(focused) : undefined;
+    if (focusedEditor) return focusedEditor;
+    const centerChild = this.workbench.center.activePanel.activeChild;
+    return centerChild ? this.editors.get(centerChild) ?? null : null;
   }
 
   /**
@@ -443,20 +473,49 @@ export class AppWindow {
    * everywhere; it's also exposed app-wide as `quilx.workspace.openFile`.
    */
   private openFile(path: string): TextEditor {
+    return this.openFileIn(path, this.targetPanelForNewFile());
+  }
+
+  // Where a newly-opened file should land: the panel that last held a focused
+  // editor when that's the right-dock review pane (still docked in the visible
+  // workbench and showing an editor) — so files opened while focus sits in the
+  // file tree or a picker follow the file being reviewed into the side dock. Every
+  // other case uses the center's active split, which already covers a freshly
+  // split empty pane (it becomes the active panel).
+  private targetPanelForNewFile(): Panel {
+    const panel = this.lastEditorPanel;
+    if (
+      panel === this.workbench.rightEditors &&
+      panel.root.getRoot() !== null && // the right pane is actually docked, not detached
+      panel.activeChild !== null &&
+      this.editors.has(panel.activeChild) // and still shows an editor, not emptied
+    ) {
+      return panel;
+    }
+    return this.workbench.center.activePanel;
+  }
+
+  // Open `path` as a tab in `panel` (the center's active leaf, or the right-dock
+  // editor group), revealing an already-open editor anywhere instead of opening a
+  // duplicate — a file is only ever backed by one editor. `focus` (default true)
+  // moves keyboard focus to it; callers opening several files at once suppress it
+  // and focus the one they want at the end.
+  private openFileIn(path: string, panel: Panel, options: { focus?: boolean } = {}): TextEditor {
+    const focus = options.focus ?? true;
     const existing = [...this.editors.values()].find((editor) => editor.currentFile === path);
     if (existing) {
       this.editorChildren.get(existing.root)?.select();
-      existing.focus();
+      if (focus) existing.focus();
       return existing;
     }
     const built = this.createEditorTab(path);
-    const child = this.workbench.center.add(built.widget, {
+    const child = panel.add(built.widget, {
       title: built.title,
       requireTabBar: built.requireTabBar,
     });
     built.onAttached?.(child);
     const editor = this.editors.get(built.widget)!;
-    editor.focus();
+    if (focus) editor.focus();
     return editor;
   }
 
@@ -564,8 +623,19 @@ export class AppWindow {
       previousStatus = agent.status;
     });
     // When the agent edits files, re-check git now instead of waiting for the poll,
-    // so its changes surface in Source Control / the branch indicator promptly.
-    agent.onDidChangeFiles(() => this.git.refresh());
+    // so its changes surface in Source Control / the branch indicator promptly, and
+    // (when enabled) auto-open each newly-edited file in the agent's own workbench.
+    // Seed from the current list so resuming an agent doesn't flood-open its history.
+    const seenFiles = new Set<string>(agent.changedFiles);
+    agent.onDidChangeFiles(() => {
+      this.git.refresh();
+      const autoOpen = quilx.config.get('agent.autoOpenChangedFiles') === true;
+      for (const path of agent.changedFiles) {
+        if (seenFiles.has(path)) continue;
+        seenFiles.add(path);
+        if (autoOpen) this.autoOpenChangedFile(agent, path);
+      }
+    });
     // Track the last-focused agent (the default target for send-to-agent).
     const focus = new Gtk.EventControllerFocus();
     focus.on('enter', () => { this.lastAgent = agent; });
@@ -722,6 +792,16 @@ export class AppWindow {
     if (agent) this.restartAgent(agent);
   }
 
+  // Resume a stopped agent in its existing pane (vs restart, which retires the
+  // old widget and opens a fresh one). Reveals the agent so its revived terminal
+  // is in view.
+  private resumeCurrentAgent(): void {
+    const agent = this.currentAgent();
+    if (!agent || !agent.exited) return;
+    agent.resume();
+    this.showAgent(agent);
+  }
+
   private closeCurrentAgent(): void {
     const agent = this.currentAgent();
     if (agent) this.closeAgent(agent);
@@ -737,31 +817,48 @@ export class AppWindow {
     if (agent) this.openAgentChanges(agent);
   }
 
-  // Open the files an agent has edited this session: one opens directly, several
-  // go through a picker (newest edits first, so its latest work is at the top).
+  // Review the files an agent has edited this session: switch to its workbench and
+  // open every edited file as a tab in the right dock, opened to half the editor
+  // width so the files sit beside the agent's terminal.
   private openAgentChanges(agent: AgentTerminal): void {
     const files = agent.changedFiles;
     if (files.length === 0) {
       quilx.notifications.addInfo(`${agent.title} hasn't edited any files yet`);
       return;
     }
-    if (files.length === 1) {
-      this.openFile(files[0]);
-      return;
+    this.showAgent(agent); // this.workbench is now the agent's
+    const panel = this.workbench.rightEditors;
+    // Dock (or re-size) the right pane at 1/3, then fill it. Re-applying the
+    // fraction on every click re-opens it third-width even if it was dragged narrow.
+    this.workbench.setRightPane({ root: panel.root }, 1 / 3);
+    // Open without focusing each in turn, then reveal the first one that landed in
+    // the pane. A file already open elsewhere is revealed in place (one editor per
+    // file), so it may not join the pane — skip it when choosing what to focus.
+    let firstInPane: TextEditor | null = null;
+    for (const path of files) {
+      const editor = this.openFileIn(path, panel, { focus: false });
+      if (!firstInPane && panel.getChildren().includes(editor.root)) firstInPane = editor;
     }
-    const cwd = process.cwd();
-    openPicker({
-      host: this.overlay,
-      placeholder: 'Open edited file…',
-      items: files
-        .slice()
-        .reverse()
-        .map((path) => {
-          const text = Path.relative(cwd, path) || path;
-          return { value: path, text, boostFrom: text.lastIndexOf('/') + 1 };
-        }),
-      onSelect: (path) => this.openFile(path),
-    });
+    if (firstInPane) {
+      this.editorChildren.get(firstInPane.root)?.select();
+      firstInPane.focus();
+    }
+  }
+
+  // Auto-open a file the agent just edited in *its own* workbench's right dock,
+  // without switching to that workbench. Mirrors openAgentChanges but targets a
+  // (possibly inactive) workbench and never steals focus. A file already open
+  // anywhere keeps its single editor (and we don't dock an empty pane for it).
+  private autoOpenChangedFile(agent: AgentTerminal, path: string): void {
+    const workbench = this.workbenches.get(agent);
+    if (!workbench) return;
+    if ([...this.editors.values()].some((editor) => editor.currentFile === path)) return;
+    const panel = workbench.rightEditors;
+    // Dock the right pane (at 1/3) only when it's empty — re-applying the fraction
+    // on later files would undo a width the user dragged. Docking must precede the
+    // add: a tab added to a detached, unrooted TabView yields a blank page.
+    if (panel.getChildren().length === 0) workbench.setRightPane({ root: panel.root }, 1 / 3);
+    this.openFileIn(path, panel, { focus: false });
   }
 
   // Restart an agent: retire the old one and relaunch with the same cwd, resuming
@@ -830,23 +927,28 @@ export class AppWindow {
         }
         return true;
       },
-      onClosed: (widget) => {
-        // Agent tabs are vetoed above, so only editors / plain terminals reach here.
-        this.participants.get(widget)?.dispose();
-        this.participants.delete(widget);
-        this.editors.delete(widget);
-        this.editorChildren.delete(widget);
-        this.terminals.delete(widget);
-        this.agentChildren.delete(widget);
-        this.updateModifiedMarker(); // a closed editor no longer counts as unsaved
-        // A closed commit-message tab finalizes the commit (if a message was saved).
-        const commitInfo = this.commitEditors.get(widget);
-        if (commitInfo) {
-          this.commitEditors.delete(widget);
-          this.finishCommit(commitInfo.repo, commitInfo.msgPath);
-        }
-      },
+      // Agent tabs are vetoed above, so only editors / plain terminals reach here.
+      onClosed: (widget) => this.disposeChild(widget),
     });
+  }
+
+  // Drop a closed tab's bookkeeping (editor/terminal/agent maps + session
+  // registration) and run its close side effects. Shared by the center and the
+  // right-dock editor group, which host the same kinds of tab.
+  private disposeChild(widget: Widget): void {
+    this.participants.get(widget)?.dispose();
+    this.participants.delete(widget);
+    this.editors.delete(widget);
+    this.editorChildren.delete(widget);
+    this.terminals.delete(widget);
+    this.agentChildren.delete(widget);
+    this.updateModifiedMarker(); // a closed editor no longer counts as unsaved
+    // A closed commit-message tab finalizes the commit (if a message was saved).
+    const commitInfo = this.commitEditors.get(widget);
+    if (commitInfo) {
+      this.commitEditors.delete(widget);
+      this.finishCommit(commitInfo.repo, commitInfo.msgPath);
+    }
   }
 
   /**
@@ -900,12 +1002,21 @@ export class AppWindow {
     const keymapDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('keymap') });
     keymapDock.add(keymapPanel.root, { title: 'Keybindings' });
 
+    // The right-dock editor group: holds the edited-file tabs opened by the
+    // "edited files" button. Shares the editor lifecycle (active-tab tracking,
+    // close cleanup) with the center; emptying it collapses the dock away.
+    const rightEditors = new Panel({
+      onActiveChanged: () => this.onActiveTabChanged(),
+      onClosed: (widget) => this.disposeChild(widget),
+      onEmpty: () => this.detachRightPane(rightEditors),
+    });
+
     const workbench = new Workbench<'user' | AgentTerminal>(
       owner,
       {
         center, fileTree, gitPanel, leftPanel, filesTab, gitTab,
         notificationLog, notificationPanel, diagnosticsPanel, diagnosticsDock,
-        referencesList, referencesDock, keymapPanel, keymapDock,
+        referencesList, referencesDock, keymapPanel, keymapDock, rightEditors,
       },
       { showSideDock: owner === 'user' },
     );
@@ -938,7 +1049,7 @@ export class AppWindow {
    */
   private activateWorkbench(workbench: Workbench<'user' | AgentTerminal>): void {
     this.workbench = workbench;
-    this.overlay.setChild(workbench.root); // show this workbench
+    this.contentOverlay.setChild(workbench.root); // show this workbench
     this.workbenchList.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
     this.focusActivePane();
   }
@@ -1161,6 +1272,7 @@ export class AppWindow {
       // File / app
       'file:open': 'Open a file (dialog)',
       'file:find': 'Find a file by name',
+      'project:search': 'Search file contents (ripgrep)',
       'file:save': 'Save the current file',
       'file:save-as': 'Save the current file as…',
       'app:quit': 'Quit quilx',
@@ -1200,8 +1312,9 @@ export class AppWindow {
       'terminal:normal-mode': 'Terminal: enter normal mode (app shortcuts)',
       'terminal:send-escape': 'Terminal: send Escape to the child',
       'agent:new': 'Start a new agent',
-      'agent:switch': 'Switch to an agent',
-      'agent:resume': 'Resume a past conversation…',
+      'agent:picker': 'Open the agent picker (agents, conversations, new)',
+      'agent:resume': 'Resume the stopped agent',
+      'agent:resume-conversation': 'Resume a past conversation…',
       'agent:continue': 'Continue the latest conversation',
       'agent:stop': 'Stop the active agent',
       'agent:restart': 'Restart the agent (resume its conversation)',
@@ -1239,9 +1352,12 @@ export class AppWindow {
       'lsp:go-to-type-definition': 'Go to type definition',
       'lsp:go-to-implementation': 'Go to implementation',
       'lsp:find-references': 'Find references',
+      'lsp:workspace-symbols': 'Go to workspace symbol…',
+      'lsp:document-symbols': 'Go to symbol in document…',
       'lsp:hover': 'Show hover (type / docs)',
       'lsp:code-action': 'Code action / quick fix…',
       'lsp:rename': 'Rename symbol…',
+      'tag:rename': 'Rename JSX/HTML tag pair…',
       'lsp:format': 'Format document',
       'lsp:toggle-diagnostics-panel': 'Toggle the Diagnostics panel',
       'lsp:install-server': 'Install a language server…',
@@ -1287,9 +1403,12 @@ export class AppWindow {
       'lsp:go-to-type-definition': () => void this.goto('typeDefinition'),
       'lsp:go-to-implementation': () => void this.goto('implementation'),
       'lsp:find-references': () => void this.findReferences(),
+      'lsp:workspace-symbols': () => this.workspaceSymbolPicker(),
+      'lsp:document-symbols': () => void this.documentSymbolPicker(),
       'lsp:hover': () => void this.activeEditor?.hover(),
       'lsp:code-action': () => void this.codeActionMenu(),
       'lsp:rename': () => this.renamePrompt(),
+      'tag:rename': () => this.renameTagPrompt(),
       'lsp:format': () => void this.formatActive(),
       'lsp:toggle-diagnostics-panel': () => this.toggleDiagnosticsPanel(),
       'lsp:install-server': () => this.installServerPicker(),
@@ -1366,6 +1485,13 @@ export class AppWindow {
   // flash of the empty state).
   private detachDock(panel: Panel) {
     if (panel === this.workbench.leftPanel) this.workbench.setRight(null);
+  }
+
+  // Collapse the right-dock editor group when its last edited-file tab is closed,
+  // so the center reclaims the half-width it held. Mirrors detachDock; onEmpty
+  // fires from the active workbench, the only one whose tabs can be closed.
+  private detachRightPane(panel: Panel) {
+    if (panel === this.workbench.rightEditors) this.workbench.setRightPane(null);
   }
 
   // Reveal a left-dock tab, re-attaching the left panel and re-adding the tab if
@@ -1459,6 +1585,35 @@ export class AppWindow {
     this.workbench.referencesList.focus();
   }
 
+  // Search project-wide symbols (via the active file's language server) in a
+  // picker and jump to the chosen one.
+  private workspaceSymbolPicker() {
+    const editor = this.activeEditor;
+    if (!editor) return;
+    if (!quilx.lsp.canWorkspaceSymbols(editor.lsp)) {
+      quilx.notifications.addInfo('No workspace symbol support for this file');
+      return;
+    }
+    openWorkspaceSymbolPicker(this.overlay, editor.lsp, (path, cursor) =>
+      this.openOrFocusFile(path, cursor),
+    );
+  }
+
+  // List the current file's symbol outline (via its language server) in a picker
+  // and jump to the chosen one within the active editor.
+  private async documentSymbolPicker() {
+    const editor = this.activeEditor;
+    if (!editor) return;
+    if (!quilx.lsp.canDocumentSymbols(editor.lsp)) {
+      quilx.notifications.addInfo('No document symbol support for this file');
+      return;
+    }
+    await openDocumentSymbolPicker(this.overlay, editor.lsp, (cursor) => {
+      editor.restoreCursor(cursor);
+      editor.focus();
+    });
+  }
+
   // Offer code actions / quick-fixes at the cursor in a picker; apply the chosen one.
   private async codeActionMenu() {
     const editor = this.activeEditor;
@@ -1512,6 +1667,29 @@ export class AppWindow {
       actionWhenEmpty: true,
       onSelect: () => {}, // no items — the action row drives the rename
       action: { label: (q) => `Rename to "${q}"`, run: (q) => void this.runRename(editor, q.trim()) },
+    });
+  }
+
+  // Rename the JSX/HTML tag at the cursor — both halves of the pair together.
+  private renameTagPrompt() {
+    const editor = this.activeEditor;
+    if (!editor) return;
+    const names = editor.tagNamesAtCursor();
+    if (!names) {
+      quilx.notifications.addInfo('Not on a JSX/HTML tag');
+      return;
+    }
+    openPicker({
+      host: this.overlay,
+      placeholder: 'New tag name',
+      query: names[0].text,
+      items: [],
+      actionWhenEmpty: true,
+      onSelect: () => {},
+      action: {
+        label: (q) => `Rename tag to "${q}"`,
+        run: (q) => { const n = q.trim(); if (n) editor.applyTagRename(names, n); },
+      },
     });
   }
 
@@ -1593,6 +1771,8 @@ export class AppWindow {
     quilx.commands.add('#AppWindow', {
       'file:open': () => this.openDialog(),
       'file:find': () => openFilePicker(this.overlay, (path) => this.openFile(path)),
+      'project:search': () =>
+        openSearchPicker(this.overlay, (path, cursor) => this.openFile(path).restoreCursor(cursor)),
       // Save commands only apply with an editor open.
       'file:save': { didDispatch: () => this.saveActive(), when: () => this.activeEditor !== null },
       'file:save-as': { didDispatch: () => this.saveAsDialog(), when: () => this.activeEditor !== null },
@@ -1637,16 +1817,19 @@ export class AppWindow {
     quilx.commands.add('#AppWindow', {
       'terminal:new': () => this.openTerminal(),
       'agent:new': () => this.openAgent(),
-      'agent:switch': () => openAgentPicker(this.overlay, {
+      'agent:picker': () => openAgentPicker(this.overlay, {
         onActivate: (agent) => this.showAgent(agent),
+        onResume: (session) => this.openAgent({ resume: { sessionId: session.id }, title: truncate(session.label, 40) }),
         onStart: (prompt) => this.openAgent({ prompt }),
       }),
-      // Resume a past conversation: pick one (agent:resume) or pick up the latest
-      // in this folder (agent:continue).
-      'agent:resume': () => this.resumeAgentPicker(),
+      // Resume a stopped agent in place (current agent, if exited). Resuming a
+      // past *conversation* as a fresh agent is agent:resume-conversation (a
+      // picker); agent:continue picks up the latest conversation in this folder.
+      'agent:resume': { didDispatch: () => this.resumeCurrentAgent(), when: () => this.currentAgent()?.exited === true },
+      'agent:resume-conversation': () => this.resumeAgentPicker(),
       'agent:continue': () => this.openAgent({ resume: { continue: true } }),
       // Lifecycle / navigation for the active agent. Stop SIGTERMs the child (the widget
-      // lingers as exited, restartable); next/prev cycle through the running agents.
+      // lingers as exited, resumable); next/prev cycle through the running agents.
       // Closing an agent's tab never retires it — it just backgrounds it (the agent stays
       // listed whether running or stopped); retiring it from the list is a separate command.
       'agent:stop': { didDispatch: () => this.activeAgent?.kill(), when: () => this.activeAgent !== null },
@@ -1897,8 +2080,8 @@ export class AppWindow {
   // pane (vim-style) when there is one; otherwise leave it empty and focused.
   private splitPane(direction: Direction) {
     const path = this.activeEditor?.currentFile ?? null;
-    this.workbench.center.split(direction); // the new empty pane becomes active
-    if (path) this.openFile(path); // opens into (and focuses) the new pane
+    const pane = this.workbench.center.split(direction); // the new empty pane becomes active
+    if (path) this.openFileIn(path, pane); // opens into (and focuses) the new pane
     else this.focusActivePane();
   }
 
@@ -2098,7 +2281,17 @@ export class AppWindow {
     const focus = this.window.getFocus();
     if (!focus) return;
     const child = this.panelChildAncestor(focus);
-    if (child && child !== focus) this.focusMemory.set(child, focus);
+    if (!child) return;
+    // Focus on the tab's own root (a terminal in normal mode, an empty pane) has no
+    // distinct inner target — drop any stale entry rather than leave one behind, so
+    // a later restore re-derives focus from the tab itself. Otherwise a terminal
+    // left in normal mode would resurrect the Vte it held in a previous insert
+    // session, focusing the child while the mode says normal (see Terminal).
+    if (child === focus) this.focusMemory.delete(child);
+    else this.focusMemory.set(child, focus);
+    // Remember which panel hosts the focused editor, so a later file-open can
+    // follow it into a side dock (see targetPanelForNewFile).
+    if (this.editors.has(child)) this.lastEditorPanel = Panel.containing(child);
   }
 
   // The panel-tab content widget (`.is-panel-child`, set by Panel.add) that
@@ -2205,18 +2398,6 @@ const AGENT_STATUS_DOT = '●';
 function agentTabTitle(agent: AgentTerminal): string {
   const glyph = agent.status === 'working' ? AGENT_WORKING_GLYPH : AGENT_STATUS_DOT;
   return `${glyph} ${agent.title}`;
-}
-
-// A compact "time ago" for a past timestamp (epoch ms): 12s / 5m / 3h / 2d / 4w.
-function relativeTime(epochMs: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - epochMs) / 1000));
-  const units: [number, string][] = [
-    [604800, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm'], [1, 's'],
-  ];
-  for (const [size, suffix] of units) {
-    if (seconds >= size) return `${Math.floor(seconds / size)}${suffix} ago`;
-  }
-  return 'just now';
 }
 
 function truncate(text: string, max: number): string {

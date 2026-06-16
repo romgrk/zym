@@ -10,6 +10,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, highlightMarkup } from './Picker.ts';
+import { Icons } from './icons.ts';
 import { quilx } from '../quilx.ts';
 import {
   repoRoot,
@@ -28,7 +29,13 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 export function openBranchPicker(host: Overlay, cwd: string): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({
+      host,
+      placeholder: 'Switch branch…',
+      promptIcon: Icons.git,
+      onSelect: () => {},
+      error: 'Not a git repository',
+    });
     return;
   }
   const current = currentBranch(root);
@@ -37,6 +44,7 @@ export function openBranchPicker(host: Overlay, cwd: string): void {
   openPicker({
     host,
     placeholder: 'Switch branch…',
+    promptIcon: Icons.git,
     items: branches,
     // Highlight the fuzzy match; tag the current branch with a muted "current".
     // Branch names are identifiers — render them in the picker's (app) monospace
@@ -49,8 +57,8 @@ export function openBranchPicker(host: Overlay, cwd: string): void {
       if (branch === current) return; // already here — nothing to do
       switchBranch(root, branch, report(`Switched to ${branch}`));
     },
-    // Only when no existing branch matches the query: create it off HEAD.
-    actionWhenEmpty: true,
+    // Always offer to create the typed name off HEAD — shown after any matches
+    // (whenever the query is non-empty), so it's available even when branches match.
     action: {
       label: (query) => `Create branch: ${query.trim()}`,
       run: (query) => {
@@ -63,14 +71,14 @@ export function openBranchPicker(host: Overlay, cwd: string): void {
 
 /** Pick another branch (not the current one) to delete. */
 export function openDeleteBranchPicker(host: Overlay, cwd: string): void {
-  pickOtherBranch(host, cwd, 'Delete branch…', (root, branch) =>
+  pickOtherBranch(host, cwd, 'Delete branch…', Icons.trash, (root, branch) =>
     deleteBranch(root, branch, report(`Deleted branch ${branch}`)),
   );
 }
 
 /** Pick another branch to merge into the current one. */
 export function openMergeBranchPicker(host: Overlay, cwd: string): void {
-  pickOtherBranch(host, cwd, 'Merge branch into current…', (root, branch) =>
+  pickOtherBranch(host, cwd, 'Merge branch into current…', Icons.gitMerge, (root, branch) =>
     mergeBranch(root, branch, report(`Merged ${branch}`)),
   );
 }
@@ -79,13 +87,20 @@ export function openMergeBranchPicker(host: Overlay, cwd: string): void {
 export function openRenameBranchPicker(host: Overlay, cwd: string): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({
+      host,
+      placeholder: 'Rename current branch to…',
+      promptIcon: Icons.pencil,
+      onSelect: () => {},
+      error: 'Not a git repository',
+    });
     return;
   }
   const current = currentBranch(root);
   openPicker({
     host,
     placeholder: 'Rename current branch to…',
+    promptIcon: Icons.pencil,
     items: [], // no list — just the entry + action
     query: current ?? '',
     onSelect: () => {}, // never called (no items); the action does the rename
@@ -104,11 +119,12 @@ function pickOtherBranch(
   host: Overlay,
   cwd: string,
   placeholder: string,
+  promptIcon: string,
   onPick: (root: string, branch: string) => void,
 ): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({ host, placeholder, promptIcon, onSelect: () => {}, error: 'Not a git repository' });
     return;
   }
   const current = currentBranch(root);
@@ -120,6 +136,7 @@ function pickOtherBranch(
   openPicker({
     host,
     placeholder,
+    promptIcon,
     items: branches,
     onSelect: (branch) => onPick(root, branch),
   });

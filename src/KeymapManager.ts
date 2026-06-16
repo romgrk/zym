@@ -16,7 +16,7 @@ import { Key } from './keymap/Key.ts';
 import { unreachable } from './util/assert.ts';
 import { parseSelector, matchesRule, elementMatchKeys, type Rule } from './util/selectors.ts';
 import { getActiveElements } from './util/getActiveElements.ts';
-import { Gtk } from './gi.ts';
+import { GLib, Gtk } from './gi.ts';
 import { quilx } from './quilx.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -28,6 +28,15 @@ const EVENT_STOP_PROPAGATION = true;
 // falls through to the focused widget). Used to release a binding in contexts
 // that need the raw key — e.g. `space` in a text entry, terminal, or insert mode.
 const UNSET = 'unset!';
+
+// How long an incomplete chord prefix is held before it's abandoned. While a
+// prefix is queued every key is swallowed (so e.g. `ctrl-d` never reaches a
+// terminal as long as `ctrl-d ctrl-d` might still complete); after this idle gap
+// with no further key the pending state is resolved as a dead-end — any shorter
+// full match runs, otherwise the keys fall through to the focused widget. Long
+// enough not to fight a deliberate two-key chord, short enough that a single
+// `ctrl-d` reaches the child without a noticeable lag.
+const PARTIAL_MATCH_TIMEOUT_MS = 500;
 
 const MATCH = {
   PARTIAL: 'PARTIAL',
@@ -60,6 +69,12 @@ export interface KeymapConflict {
 }
 
 type PendingListener = (pending: PendingBinding[] | null) => void;
+
+// A handler given the keystrokes of a chord prefix that timed out without
+// completing, so a widget can deliver them to its child as if the keymap had
+// never intercepted them (e.g. a terminal sends a lone `ctrl-d` as EOF). The
+// first handler to claim the keys (return true) wins.
+type FallthroughHandler = (keys: Key[]) => boolean;
 
 /** The command name an effect targets (undefined for an inline function effect). */
 function effectCommand(effect: Effect): string | undefined {
@@ -109,6 +124,13 @@ export class KeymapManager {
   // use the longer match; if it breaks the chain we fall back to this. See
   // `processKeystroke`.
   deferredFullMatches: KeybindingMatch[] | null = null;
+
+  // A GLib timeout id while a chord prefix is queued (null otherwise); fires
+  // PARTIAL_MATCH_TIMEOUT_MS after the last key to abandon an unfinished chord.
+  private partialMatchTimer: number | null = null;
+
+  // Fall-through handlers (terminal EOF, etc.) for timed-out chord prefixes.
+  private fallthroughHandlers: FallthroughHandler[] = [];
 
   // Macro recording (vim `q`): while non-null, every real non-modifier keystroke
   // is appended here (before dispatch) so `@{reg}` can replay it. `replaying`
@@ -317,6 +339,10 @@ export class KeymapManager {
 
   // Set the queued prefix and notify which-key subscribers.
   private setQueue(keystrokes: Key[]): void {
+    // Reset the idle timer on every queue change: arm a fresh one while a prefix
+    // is pending, drop it once the queue clears. This is the single choke point
+    // for the queue, so the timer can never outlive its prefix.
+    this.clearPartialMatchTimer();
     // Ordinary typing dead-ends every key with `setQueue([])` (see
     // `processKeystroke`). Skip notifying when the queue was already empty and
     // stays empty — there's no prefix change to react to, and a pending listener
@@ -324,11 +350,56 @@ export class KeymapManager {
     // keystroke, blocking the main loop and stalling the UI during key repeat.
     const wasEmpty = this.queuedKeystrokes.length === 0;
     this.queuedKeystrokes = keystrokes;
+    if (keystrokes.length > 0) this.schedulePartialMatchTimeout();
     if (this.pendingListeners.length === 0) return;
     if (wasEmpty && keystrokes.length === 0) return;
     const pending =
       keystrokes.length > 0 ? this.getPendingBindings(getActiveElements(), keystrokes) : null;
     for (const listener of this.pendingListeners) listener(pending);
+  }
+
+  // --- Partial-match timeout (abandon an unfinished chord) -------------------
+
+  /** Register a fall-through handler for chord prefixes that time out. The first
+   *  to claim the keys (return true) wins. Returns an unsubscribe Disposable. */
+  onFallthrough(handler: FallthroughHandler): Disposable {
+    this.fallthroughHandlers.push(handler);
+    return new Disposable(() => {
+      this.fallthroughHandlers = this.fallthroughHandlers.filter((h) => h !== handler);
+    });
+  }
+
+  private schedulePartialMatchTimeout(): void {
+    this.partialMatchTimer = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, PARTIAL_MATCH_TIMEOUT_MS, () => {
+      this.partialMatchTimer = null; // the source self-removes on the `false` return
+      this.onPartialMatchTimeout();
+      return false; // one-shot
+    });
+  }
+
+  private clearPartialMatchTimer(): void {
+    if (this.partialMatchTimer === null) return;
+    GLib.sourceRemove(this.partialMatchTimer);
+    this.partialMatchTimer = null;
+  }
+
+  // The queued chord went idle. Resolve it exactly as a dead-end keystroke would,
+  // minus the new key: run a shorter prefix's deferred full match if there is
+  // one, otherwise let the queued keys fall through to the focused widget (so a
+  // lone `ctrl-d` reaches the terminal child as EOF).
+  private onPartialMatchTimeout(): void {
+    const queued = this.queuedKeystrokes;
+    if (queued.length === 0) return;
+    const deferred = this.deferredFullMatches;
+    this.deferredFullMatches = null;
+    this.setQueue([]);
+    if (deferred) {
+      this.dispatchFullMatches(deferred, getActiveElements());
+      return;
+    }
+    for (const handler of this.fallthroughHandlers) {
+      if (handler(queued)) return;
+    }
   }
 
   removeListener(listener: Listener): void {

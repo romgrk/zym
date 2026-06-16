@@ -18,7 +18,7 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 export function openGithubIssuePicker(host: Overlay, cwd: string): void {
   const root = repoRoot(cwd);
   if (!root) {
-    quilx.notifications.addInfo('Not a git repository');
+    openPicker({ host, placeholder: 'Open issue…', onSelect: () => {}, error: 'Not a git repository' });
     return;
   }
   fetchIssues(root, (issues) => {

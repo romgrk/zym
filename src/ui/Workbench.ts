@@ -20,7 +20,7 @@
  * Nesting (outermost → in):
  *   hLeft[ left | hCenterRight[ vTop[ top | vBottom[ center | bottom ] ] | right ] ]
  */
-import { Gtk } from '../gi.ts';
+import { GLib, Gtk } from '../gi.ts';
 import type { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
 import type { FileTree } from './FileTree.ts';
 import type { GitPanel } from './GitPanel.ts';
@@ -59,6 +59,7 @@ export interface WorkbenchContents {
   referencesDock: Panel;
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
+  rightEditors: Panel;
 }
 
 export class Workbench<TOwner = unknown> {
@@ -85,6 +86,10 @@ export class Workbench<TOwner = unknown> {
   referencesDock: Panel;
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
+  // A resizable editor group docked on the right for reviewing an agent's edited
+  // files (vs the fixed-width side dock). Built once, docked on demand via
+  // `setRightPane`; lives detached otherwise.
+  rightEditors: Panel;
   bottomDock: BottomDock = null;
 
   private readonly hLeft: InstanceType<typeof Gtk.Paned>;
@@ -108,6 +113,7 @@ export class Workbench<TOwner = unknown> {
     this.referencesDock = contents.referencesDock;
     this.keymapPanel = contents.keymapPanel;
     this.keymapDock = contents.keymapDock;
+    this.rightEditors = contents.rightEditors;
 
     this.hLeft = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
     this.hCenterRight = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
@@ -156,6 +162,42 @@ export class Workbench<TOwner = unknown> {
     // can still drag the handle wider. Min-width, so a narrow file tree won't
     // collapse it.
     if (panel) panel.root.setSizeRequest(SIDEBAR_WIDTH, -1);
+  }
+
+  // Dock `panel` in the right slot as a *resizable* editor area taking `fraction`
+  // of the center-right width — unlike `setRight`, which seats a fixed-width side
+  // dock. Used to review an agent's edited files beside its terminal. Passing null
+  // detaches it and restores the slot's fixed-dock behaviour.
+  setRightPane(panel: Dockable | null, fraction = 0.5) {
+    const next = panel?.root ?? null;
+    // Re-docking the same widget would needlessly unparent/reparent it; only swap
+    // when the occupant actually changes (re-clicking re-sizes without a reparent).
+    if (this.hCenterRight.getEndChild() !== next) {
+      this.hCenterRight.setEndChild(next);
+      if (next) next.setSizeRequest(-1, -1); // drop any width request left by setRight
+    }
+    // An editor pane resizes with the window (a normal split); the fixed side dock
+    // does not. Toggle the slot's behaviour to match what now occupies it.
+    this.hCenterRight.setResizeEndChild(!!panel);
+    this.hCenterRight.setShrinkEndChild(!!panel);
+    if (panel) this.sizeRightPane(fraction);
+  }
+
+  // Seat the center/right divider so the right pane gets `fraction` of the
+  // center-right width. Deferred to idle when the paned isn't laid out yet (e.g.
+  // the workbench was just activated), since its width reads 0 until allocated.
+  private sizeRightPane(fraction: number) {
+    const place = () => {
+      const width = this.hCenterRight.getWidth();
+      if (width <= 0) return false;
+      this.hCenterRight.setPosition(Math.round(width * (1 - fraction)));
+      return true;
+    };
+    if (place()) return;
+    GLib.idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      place();
+      return GLib.SOURCE_REMOVE;
+    });
   }
 
   setTop(panel: Dockable | null) {

@@ -39,6 +39,9 @@ const MODE_BINDINGS: Record<string, string> = {
   I: 'InsertAtFirstCharacterOfLine',
   A: 'InsertAfterEndOfLine',
   'g I': 'InsertAtBeginningOfLine',
+  // R: replace (overwrite) mode — insert mode with the `replace` submode; the
+  // host overwrites on type and restores on backspace.
+  R: 'ActivateReplaceMode',
 };
 
 // Visual-mode activation, available in normal and visual modes (so V switches a
@@ -245,6 +248,11 @@ const TEXT_OBJECT_BINDINGS: Record<string, string> = {
   'a a': 'AArguments',
   'i i': 'InnerIndentation',
   'a i': 'AIndentation',
+  // gn/gN: the next/previous search match (operate on it: `cgn`, `dgn`; or extend
+  // a visual selection). Needs an active search — see SearchController's pattern
+  // bridge to globalState.lastSearchPattern.
+  'g n': 'SearchMatchForward',
+  'g N': 'SearchMatchBackward',
   // LHS/RHS of an assignment (equal.operator): `h` = left side, `l` = right side.
   // inner trims to the value; `a` keeps the `=`/`:`/`->` separator.
   'i h': 'InnerLhs',

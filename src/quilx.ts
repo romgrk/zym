@@ -77,10 +77,21 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     default: true,
     description: 'Draw faint vertical guides marking each indentation level.',
   },
+  'editor.scrollPastEnd': {
+    type: 'boolean',
+    default: true,
+    description: 'Allow scrolling past the end of the buffer so the last line can reach the top of the viewport.',
+  },
   'agent.command': {
     type: 'array',
     default: ['claude'],
     description: 'Argv of the terminal agent launched by AgentTerminal (agent:new).',
+  },
+  'agent.autoOpenChangedFiles': {
+    type: 'boolean',
+    default: true,
+    description:
+      "Automatically open a file in the agent's own workbench right dock when the agent first edits it (without switching to that workbench).",
   },
   'git.remotes.upstream': {
     type: 'string',
