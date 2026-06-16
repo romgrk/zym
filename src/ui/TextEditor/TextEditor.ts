@@ -23,6 +23,7 @@ import { createSourceScheme } from '../../theme/createSourceScheme.ts';
 import { addStyles } from '../../styles.ts';
 import { EditorModel } from './EditorModel.ts';
 import { Document, type DocumentHost } from './Document.ts';
+import { InlayHintController } from './InlayHintController.ts';
 import { attachVim } from './vim/index.ts';
 import { quilx } from '../../quilx.ts';
 import { DiagnosticsView } from '../../lsp/diagnostics/DiagnosticsView.ts';
@@ -300,6 +301,7 @@ export class TextEditor implements DocumentHost {
   // renderer. Wired in `installLsp` once the model and root exist.
   private lspDocument!: LspDocument;
   private diagnostics!: DiagnosticsView;
+  private inlayHints!: InlayHintController;
   // Git change bar in the gutter; only present in file mode when a repo is given.
   private gitGutter: GitGutter | null = null;
   // The LSP hover card: a non-interactive overlay floated in `caretLayer` at the
@@ -549,9 +551,15 @@ export class TextEditor implements DocumentHost {
     // didClose are driven there off the model). This view contributes the diagnostics
     // renderer and signature help.
     this.diagnostics = new DiagnosticsView(this.view, this.underlineOverlay, this.editorModel, () => this._currentFile);
+    // Inlay hints (parameter names / inferred types) trailing each line, per view.
+    this.inlayHints = new InlayHintController(this.view, () => this.lspDocument ?? null);
+    quilx.config.observe('editor.inlayHints', () => void this.inlayHints.refresh());
     // Signature help is a per-view concern (the active view shows the card while
     // typing); the document drives didChange, so this only triggers signature help.
-    this.editorModel.onDidChangeText((event) => this.maybeSignatureHelp(event));
+    this.editorModel.onDidChangeText((event) => {
+      this.maybeSignatureHelp(event);
+      this.inlayHints.scheduleRefresh(); // hints shift as the text changes
+    });
     // The hover popover is anchored to a fixed cursor position; dismiss it once
     // the cursor moves or the view scrolls (both no-ops when nothing is showing).
     this.buffer.on('notify::cursor-position', () => {
@@ -580,6 +588,7 @@ export class TextEditor implements DocumentHost {
     if (this.releaseDocument) this.releaseDocument();
     else this.document.dispose();
     this.diagnostics?.dispose(); // undefined for a buffer-only editor (installLsp skipped)
+    this.inlayHints?.dispose();
   }
 
   // Request signature help when typing inside a call. Triggered when a trigger
@@ -1315,6 +1324,7 @@ export class TextEditor implements DocumentHost {
     if (!reload) this.view.grabFocus(); // a background reload mustn't steal focus
     this.applyViewSyntaxForPath(path);
     this.diagnostics.render();
+    this.inlayHints.scheduleRefresh();
     this.gitGutter?.refresh();
   }
 
@@ -1329,6 +1339,7 @@ export class TextEditor implements DocumentHost {
     this.editorModel.setCursorBufferPosition({ row: 0, column: 0 });
     this.applyDetectedIndentation(this.getText());
     this.diagnostics?.render();
+    this.inlayHints?.scheduleRefresh();
     this.gitGutter?.refresh();
     this.view.grabFocus();
   }

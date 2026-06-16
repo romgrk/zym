@@ -93,6 +93,23 @@ squiggle layer):
 1. **Use `GtkSourceAnnotations` for line-trailing text** — error lens, git blame,
    end-of-line inlay hints. Purpose-built, hover for free. Cheapest path; POC it
    first to confirm rendering + the provider binding.
+   - ✅ **Built** (`src/ui/TextEditor/AnnotationController.ts`, POC
+     `src/poc/annotations.ts`). Per-view (one of the things the A2 document-model
+     unblocked — a shared buffer would render annotations in every view). Consumers:
+     **error lens** (`DiagnosticsView`) and **end-of-line inlay hints**
+     (`InlayHintController`). Concrete API: `GtkSource.Annotation.new(description, icon,
+     line, style)` + a `GtkSource.AnnotationProvider` (concrete, no subclass) +
+     `view.getAnnotations().addProvider()`.
+   - **Findings:** (a) **render** only happens for a *populated* provider added to the
+     view — mutating an already-registered provider (late `addAnnotation`) doesn't
+     repaint, so the controller re-adds the provider each update. (b) **Color** comes
+     from the *style scheme's* diff styles — `ERROR`→`diff:removed-line` fg,
+     `WARNING`→`diff:changed-line`, `ACCENT`→`diff:added-line`, `NONE`→drawn-spaces
+     color; our generated scheme now defines them (`createSourceScheme.ts`). (c)
+     **Line-anchored, no column/alignment control** — and with **soft-wrap on the
+     annotations right-align** to the wrap width rather than trailing immediately after
+     the text (a GtkSourceView rendering behaviour, no API to change it). Mid-line /
+     trail-immediately placement wants the §2 overlay recipe instead.
 2. **Build a small `VirtualLineController` primitive** on the *gap-tag + overlay*
    recipe (§2): given a buffer row and a widget (or drawn content), reserve the
    gap via a `pixels-above/below` tag and position an overlay child in it,

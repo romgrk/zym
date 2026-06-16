@@ -39,6 +39,16 @@ const TSSERVER: ServerDef = {
     preferences: {
       includeCompletionsForModuleExports: true,
       includeCompletionsForImportStatements: true,
+      // Inlay hints (rendered end-of-line by InlayHintController) — tsserver only emits
+      // them when these preferences are on.
+      includeInlayParameterNameHints: 'all',
+      includeInlayParameterNameHintsWhenArgumentMatchesName: false,
+      includeInlayFunctionParameterTypeHints: true,
+      includeInlayVariableTypeHints: true,
+      includeInlayVariableTypeHintsWhenTypeMatchesName: false,
+      includeInlayPropertyDeclarationTypeHints: true,
+      includeInlayFunctionLikeReturnTypeHints: true,
+      includeInlayEnumMemberValueHints: true,
     },
   },
 };

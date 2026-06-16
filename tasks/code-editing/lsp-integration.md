@@ -71,7 +71,17 @@ log — trace level for routine events, warning/error for exits/failures.
   stays proportional. 3s request timeout; dismissed on cursor-move/scroll.
   Command-triggered (P1); mouse-hover is a later phase.
 - [ ] Code actions.
-- [ ] Later: hover-on-mouse, rename, completion, signature help, inlay hints, incremental sync.
+- [x] **Inlay hints** — `textDocument/inlayHint` (`LanguageServer.inlayHint` +
+  `inlayHint` client capability; `LspManager.inlayHints` requests the whole doc,
+  normalized to `{line, label}`). Rendered as native **end-of-line annotations** per
+  view (`InlayHintController` → `AnnotationController`, debounced on edits), since the
+  annotation API is line-anchored (mid-line column placement would need the overlay
+  recipe — see [virtual-lines.md](virtual-lines.md)). tsserver inlay prefs enabled in
+  the TS plugin. Toggle `editor.inlayHints`.
+- [x] **Error lens** — each line's worst diagnostic message trailing the line
+  (`DiagnosticsView` → `AnnotationController`, colored by severity). Toggle
+  `editor.errorLens`.
+- [ ] Later: hover-on-mouse, rename, completion, signature help, incremental sync.
 
 ## Notes / gotchas
 
