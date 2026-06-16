@@ -25,7 +25,6 @@ import type { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
 import type { FileTree } from './FileTree.ts';
 import type { GitPanel } from './GitPanel.ts';
 import type { KeymapPanel } from './KeymapPanel.ts';
-import type { LocationList } from './LocationList.ts';
 import type { NotificationLog } from './NotificationLog.ts';
 import type { Panel, PanelChild } from './Panel.ts';
 import type { PanelGroup } from './PanelGroup.ts';
@@ -39,7 +38,7 @@ const DOCK_FRACTION = 0.25;
 type Dockable = { root: InstanceType<typeof Gtk.Widget> };
 
 // What currently occupies the (otherwise empty) bottom dock.
-export type BottomDock = 'notifications' | 'diagnostics' | 'references' | 'keymap' | null;
+export type BottomDock = 'notifications' | 'diagnostics' | 'keymap' | null;
 
 // The widgets that fill a workbench's slots, built by AppWindow.buildWorkbench and
 // handed to the constructor (which docks the center + Source-Control). `bottomDock`
@@ -55,8 +54,6 @@ export interface WorkbenchContents {
   notificationPanel: Panel;
   diagnosticsPanel: DiagnosticsPanel;
   diagnosticsDock: Panel;
-  referencesList: LocationList;
-  referencesDock: Panel;
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
 }
@@ -81,8 +78,6 @@ export class Workbench<TOwner = unknown> {
   notificationPanel: Panel;
   diagnosticsPanel: DiagnosticsPanel;
   diagnosticsDock: Panel;
-  referencesList: LocationList;
-  referencesDock: Panel;
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
   bottomDock: BottomDock = null;
@@ -104,8 +99,6 @@ export class Workbench<TOwner = unknown> {
     this.notificationPanel = contents.notificationPanel;
     this.diagnosticsPanel = contents.diagnosticsPanel;
     this.diagnosticsDock = contents.diagnosticsDock;
-    this.referencesList = contents.referencesList;
-    this.referencesDock = contents.referencesDock;
     this.keymapPanel = contents.keymapPanel;
     this.keymapDock = contents.keymapDock;
 

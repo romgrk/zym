@@ -60,8 +60,10 @@ log — trace level for routine events, warning/error for exits/failures.
 - [x] Diagnostics: inline squiggles, Nerd Font gutter glyphs, "Diagnostics" panel.
 - [x] Trace logging of major LSP events to the notification log.
 - [x] Navigation: definition / declaration / type-definition / implementation
-  (`space l d`/`D`/`t`/`i`), and find-references (`space l r`) listed in a `LocationList`
-  in the bottom dock.
+  (`space l d`/`D`/`t`/`i`), and find-references (`space l r`) presented in a
+  `LocationPicker` (`ui/ReferencesPicker.ts`) — a fuzzy-filterable list with a
+  source-preview pane, reusing the same picker the workspace-symbol / search
+  features use.
 - [x] Hover (`space l k` / vim `K`): `textDocument/hover` → markdown rendered to Pango
   (`ui/markdownMarkup.ts`, subset renderer) in a floating overlay card, bottom-aligned
   just above the cursor (an `Gtk.Overlay` child with `valign=END` + margins — no
