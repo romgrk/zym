@@ -4,7 +4,9 @@
 </h1>
 
 <p align="center">
-  <b>neovim meets agent workflow. Native GTK 4 — no Electron. Node.js under the hood — the full npm ecosystem.</b>
+  <b>neovim meets agent workflow<br/>
+  Native GTK 4 — no Electron.<br/>
+  Node.js under the hood — the full npm ecosystem.</b>
 </p>
 
 A keyboard-driven, Vim-style code editor for the Linux desktop, with `claude`
