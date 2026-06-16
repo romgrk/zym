@@ -836,6 +836,7 @@ export class TextEditor {
       const vadj = scrolled.getVadjustment();
       let pastEndEnabled = quilx.config.get('editor.scrollPastEnd') !== false;
       let lastMargin = -1;
+      let pendingId = 0;
       const applyPastEnd = () => {
         const margin = pastEndEnabled
           ? Math.max(0, Math.round(vadj.getPageSize() - this.editorModel.getLineHeightInPixels()))
@@ -844,7 +845,24 @@ export class TextEditor {
         lastMargin = margin;
         this.view.setBottomMargin(margin);
       };
-      vadj.on('changed', applyPastEnd);
+      // The vadjustment `changed` signal is emitted *during* GtkTextView's
+      // size-allocate (while it validates onscreen). Calling setBottomMargin from
+      // inside that emission re-enters allocation and trips
+      // `gtk_text_view_validate_onscreen: assertion failed (onscreen_validated)`,
+      // aborting the process. Defer the mutation to an idle so it runs after the
+      // allocation cycle settles. One pending pass at a time.
+      const scheduleApply = () => {
+        if (pendingId) return;
+        pendingId = GLib.idleAdd(GLib.PRIORITY_DEFAULT_IDLE, () => {
+          pendingId = 0;
+          applyPastEnd();
+          return false; // G_SOURCE_REMOVE
+        });
+      };
+      vadj.on('changed', scheduleApply);
+      this.view.on('destroy', () => {
+        if (pendingId) GLib.sourceRemove(pendingId);
+      });
       const pastEndSub = quilx.config.observe('editor.scrollPastEnd', (v) => {
         pastEndEnabled = v !== false;
         applyPastEnd();

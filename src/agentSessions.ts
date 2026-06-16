@@ -3,7 +3,8 @@
  *
  * Claude Code stores each session as a JSONL transcript at
  * `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, where the directory name
- * is the cwd with `/` and `_` replaced by `-`. We read that directory to list
+ * is the cwd with every non-alphanumeric character replaced by `-` (one dash per
+ * char — so `/`, `.` and `_` all map to `-`). We read that directory to list
  * sessions; the editor resumes one with `claude --resume <id>` (see AgentTerminal).
  *
  * The transcript format is Claude Code's internal one (subject to change), so all
@@ -43,9 +44,12 @@ const HEAD_BYTES = 64 * 1024;
 // terminal-title skill's title, distinct from the in-transcript `/rename` title.
 const TITLES_DIR = Path.join(Os.homedir(), '.claude', 'terminal_titles');
 
-/** Claude Code's transcript directory for `cwd` (encoding: `/` and `_` → `-`). */
+/** Claude Code's transcript directory for `cwd`. Claude encodes the cwd into the
+ *  dir name by replacing every non-alphanumeric character with `-`, one dash per
+ *  char — so a worktree at `…/quilx/.claude/worktrees/x` becomes
+ *  `-…-quilx--claude-worktrees-x` (note the `/.` → `--`). */
 export function transcriptDir(cwd: string): string {
-  const encoded = cwd.replace(/[/_]/g, '-');
+  const encoded = cwd.replace(/[^a-zA-Z0-9]/g, '-');
   return Path.join(Os.homedir(), '.claude', 'projects', encoded);
 }
 

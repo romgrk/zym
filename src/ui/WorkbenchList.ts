@@ -17,7 +17,7 @@
  * The assembled widget (header bar + scrollable list) is exposed via `root`.
  */
 import * as Os from 'node:os';
-import { Adw, Gtk, Pango } from '../gi.ts';
+import { Adw, GLib, Gtk, Pango } from '../gi.ts';
 import { quilx } from '../quilx.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
@@ -31,16 +31,24 @@ const USER_GLYPH = String.fromCodePoint(0xf007); // nf-fa-user (the default/user
 // width == height) until there's a real logo. `LOGO_SIZE` makes the widget square.
 const LOGO_GLYPH = '■'; // U+25A0 black square — placeholder
 const CHANGED_GLYPH = String.fromCodePoint(0xf040); // nf-fa-pencil (changed-files badge)
+// Add/remove animation duration: each row rides in/out inside a Gtk.Revealer that
+// slides its height open (on launch) or shut (on close).
+const ROW_TRANSITION_MS = 200;
 
 addStyles(`
-  /* Each row is as tall as the header bar (an Adw.HeaderBar is 47px), so the list
-     reads as a column of header-height entries. A transparent left border keeps
-     the row content from shifting when the active row gains its accent indicator;
-     a subtle bottom border separates the rows. */
+  /* A transparent left border keeps the row content from shifting when the active
+     row gains its accent indicator; a subtle bottom border separates the rows.
+     The row height itself lives on the content box (#WorkbenchRow) rather than the
+     row, so the add/remove revealer can animate the row from 0 → full height
+     without min-height pinning it open. */
   #WorkbenchList list row {
-    min-height: 47px;
     border-left: 3px solid transparent;
     border-bottom: 1px solid ${theme.ui.border};
+  }
+  /* Each row is as tall as the header bar (an Adw.HeaderBar is 47px), so the list
+     reads as a column of header-height entries. */
+  #WorkbenchRow {
+    min-height: 47px;
   }
   /* The active row is marked by an accent left-border indicator rather than a
      filled background. */
@@ -94,6 +102,18 @@ export interface WorkbenchListOptions {
 // A list entry: the always-present user row, or one of the running agents.
 type Entry = { kind: 'user' } | { kind: 'agent'; agent: AgentTerminal };
 
+// A built row: its entry, the ListBoxRow, the Revealer that animates it in/out, and
+// the per-row unsubscribes (title + status + files). `removing` marks a row that is
+// playing its collapse transition — it stays in the list box until the animation
+// ends, but is excluded from navigation/selection in the meantime.
+interface RowHandle {
+  entry: Entry;
+  row: InstanceType<typeof Gtk.ListBoxRow>;
+  revealer: InstanceType<typeof Gtk.Revealer>;
+  unsubs: Array<() => void>;
+  removing: boolean;
+}
+
 export class WorkbenchList {
   readonly root: InstanceType<typeof Gtk.Box>;
 
@@ -103,16 +123,18 @@ export class WorkbenchList {
   private readonly userName: string;
   // Renders nerd-font glyphs (header robot, user, working cog) in the icon font.
   private readonly iconAttrs: InstanceType<typeof Pango.AttrList>;
-  // Entries parallel to the list rows (user first, then agents in launch order).
-  private rows: Entry[] = [];
+  // The built rows, in list-box order (user first, then agents in launch order).
+  // Includes rows mid-removal (`removing`) until their collapse transition finishes.
+  private handles: RowHandle[] = [];
+  // Outstanding GLib source ids for in-flight row transitions, cancelled on dispose
+  // (and on a full rebuild) so a deferred callback never touches a freed widget.
+  private timers = new Set<number>();
   // The agent whose row is selected (kept stable across rebuilds); null selects the
   // user row by default. Reflects the last-focused agent; see AppWindow.
   private selected: AgentTerminal | null = null;
   // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
   // header-bar logo button.
   private collapsed = false;
-  // Per-row unsubscribes (title + status + files), cleared on every rebuild.
-  private rowUnsubs: Array<() => void> = [];
   private readonly subs = new CompositeDisposable();
 
   constructor(options: WorkbenchListOptions = {}) {
@@ -124,7 +146,10 @@ export class WorkbenchList {
 
     this.listBox = new Gtk.ListBox();
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
-    this.listBox.on('row-activated', (row: any) => this.activate(this.rows[row.getIndex()]));
+    this.listBox.on('row-activated', (row: any) => {
+      const handle = this.handleForRow(row);
+      if (handle && !handle.removing) this.activate(handle.entry);
+    });
 
     this.scrolled = new Gtk.ScrolledWindow();
     this.scrolled.setChild(this.listBox);
@@ -136,9 +161,10 @@ export class WorkbenchList {
     this.root.append(this.buildHeader());
     this.root.append(this.scrolled);
 
-    // Rebuild the list whenever the global agent set changes.
-    this.subs.add(quilx.agents.onDidAddAgent(() => this.rebuild()));
-    this.subs.add(quilx.agents.onDidRemoveAgent(() => this.rebuild()));
+    // Reconcile the list whenever the global agent set changes — added/removed
+    // agents animate their rows in/out rather than snapping the whole list.
+    this.subs.add(quilx.agents.onDidAddAgent(() => this.syncAgents()));
+    this.subs.add(quilx.agents.onDidRemoveAgent(() => this.syncAgents()));
     this.rebuild();
   }
 
@@ -180,9 +206,14 @@ export class WorkbenchList {
     this.options.onToggleCollapsed?.(this.collapsed);
   }
 
+  // Full, un-animated (re)build of every row — used for the initial render and the
+  // collapse toggle (which re-renders all rows with different content). Add/remove of
+  // individual agents goes through `syncAgents` instead, so it can animate.
   private rebuild(): void {
-    for (const unsub of this.rowUnsubs) unsub();
-    this.rowUnsubs = [];
+    for (const id of this.timers) GLib.sourceRemove(id);
+    this.timers.clear();
+    for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
+    this.handles = [];
 
     let child = this.listBox.getFirstChild();
     while (child) {
@@ -191,51 +222,145 @@ export class WorkbenchList {
       child = next;
     }
 
-    // The user entry is always first; agents follow in launch order.
-    this.rows = [{ kind: 'user' }, ...quilx.agents.getAgents().map((agent): Entry => ({ kind: 'agent', agent }))];
-    for (const entry of this.rows) {
-      this.listBox.append(entry.kind === 'user' ? this.buildUserRow() : this.buildAgentRow(entry.agent));
+    // The user entry is always first; agents follow in launch order. Rows are built
+    // already-revealed so the initial render snaps in without a transition.
+    const entries: Entry[] = [{ kind: 'user' }, ...quilx.agents.getAgents().map((agent): Entry => ({ kind: 'agent', agent }))];
+    for (const entry of entries) {
+      const handle = this.createHandle(entry, true);
+      this.handles.push(handle);
+      this.listBox.append(handle.row);
     }
 
     this.applySelection();
   }
 
-  // A row box carrying the #WorkbenchRow identity. When collapsed it holds only the
-  // leading icon; expanded, the icon plus the supplied trailing widgets.
-  private rowBox(icon: InstanceType<typeof Gtk.Widget>, ...trailing: InstanceType<typeof Gtk.Widget>[]): InstanceType<typeof Gtk.ListBoxRow> {
+  // Reconcile the agent rows against `quilx.agents`: animate out rows whose agent has
+  // gone, animate in rows for newly-launched agents (appended in launch order). The
+  // always-present user row is left untouched.
+  private syncAgents(): void {
+    const agents = quilx.agents.getAgents();
+    const present = new Set(agents);
+
+    // Animate out rows whose agent is no longer live.
+    for (const handle of this.handles) {
+      if (handle.removing || handle.entry.kind !== 'agent') continue;
+      if (!present.has(handle.entry.agent)) this.animateOut(handle);
+    }
+
+    // Animate in rows for agents that don't have one yet (excludes rows mid-removal).
+    const shown = new Set<AgentTerminal>();
+    for (const handle of this.handles) {
+      if (!handle.removing && handle.entry.kind === 'agent') shown.add(handle.entry.agent);
+    }
+    for (const agent of agents) {
+      if (shown.has(agent)) continue;
+      const handle = this.createHandle({ kind: 'agent', agent }, false);
+      this.handles.push(handle);
+      this.listBox.append(handle.row);
+      this.animateIn(handle);
+    }
+
+    this.applySelection();
+  }
+
+  // Build a row for `entry`, wrapping its content in a Revealer that slides the row's
+  // height open/shut. `reveal` is the revealer's initial state: true snaps the row in
+  // (rebuild), false leaves it collapsed for `animateIn` to play.
+  private createHandle(entry: Entry, reveal: boolean): RowHandle {
+    const unsubs: Array<() => void> = [];
+    const content = entry.kind === 'user' ? this.buildUserContent() : this.buildAgentContent(entry.agent, unsubs);
+
+    const revealer = new Gtk.Revealer({
+      // Fade + height-slide (rather than a hard SLIDE_DOWN): the opacity ramp masks
+      // the content reflow and the accent/separator borders on the half-height row.
+      transitionType: Gtk.RevealerTransitionType.FADE_SLIDE_DOWN,
+      transitionDuration: ROW_TRANSITION_MS,
+      revealChild: reveal,
+    });
+    revealer.setChild(content);
+
+    const row = new Gtk.ListBoxRow();
+    row.setChild(revealer);
+    return { entry, row, revealer, unsubs, removing: false };
+  }
+
+  // Play the slide-open transition. The flip to revealed is deferred one loop turn so
+  // the revealer animates from collapsed rather than snapping straight to shown.
+  private animateIn(handle: RowHandle): void {
+    this.defer(0, () => {
+      if (!handle.removing) handle.revealer.setRevealChild(true);
+    });
+  }
+
+  // Play the slide-shut transition, then drop the row from the list. The row is marked
+  // `removing` (so it leaves navigation/selection at once) and its subscriptions are
+  // cut immediately — only the visual collapse waits for the timer.
+  private animateOut(handle: RowHandle): void {
+    if (handle.removing) return;
+    handle.removing = true;
+    handle.row.setSelectable(false);
+    handle.row.setActivatable(false);
+    for (const unsub of handle.unsubs) unsub();
+    handle.unsubs = [];
+    handle.revealer.setRevealChild(false);
+    this.defer(ROW_TRANSITION_MS, () => {
+      this.listBox.remove(handle.row);
+      this.handles = this.handles.filter((h) => h !== handle);
+    });
+  }
+
+  // Run `fn` after `ms` (0 → next idle) on the GLib loop, tracking the source so a
+  // dispose/rebuild can cancel it before it touches a freed widget.
+  private defer(ms: number, fn: () => void): void {
+    let id = 0;
+    const callback = () => {
+      this.timers.delete(id);
+      fn();
+      return GLib.SOURCE_REMOVE;
+    };
+    id = ms <= 0
+      ? GLib.idleAdd(GLib.PRIORITY_DEFAULT, callback)
+      : GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, ms, callback);
+    this.timers.add(id);
+  }
+
+  // The content box carrying the #WorkbenchRow identity (the Revealer's child). When
+  // collapsed it holds only the leading icon; expanded, the icon plus the trailing
+  // widgets.
+  private rowContent(icon: InstanceType<typeof Gtk.Widget>, ...trailing: InstanceType<typeof Gtk.Widget>[]): InstanceType<typeof Gtk.Box> {
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 });
     box.setName('WorkbenchRow');
     box.append(icon);
     if (!this.collapsed) for (const w of trailing) box.append(w);
-    const row = new Gtk.ListBoxRow();
-    row.setChild(box);
-    return row;
+    return box;
   }
 
-  // The default row: the user, rendered like an agent — a person glyph + name.
-  private buildUserRow(): InstanceType<typeof Gtk.ListBoxRow> {
+  // The default row's content: the user, rendered like an agent — a person glyph + name.
+  private buildUserContent(): InstanceType<typeof Gtk.Box> {
     const icon = new Gtk.Label({ label: USER_GLYPH });
     icon.setAttributes(this.iconAttrs);
     const label = new Gtk.Label({ label: this.userName, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
-    return this.rowBox(icon, label);
+    return this.rowContent(icon, label);
   }
 
-  private buildAgentRow(agent: AgentTerminal): InstanceType<typeof Gtk.ListBoxRow> {
+  // An agent row's content. Subscriptions (status/mode/title/files) are pushed onto
+  // `unsubs`, which the row's handle owns and tears down when the row goes away.
+  private buildAgentContent(agent: AgentTerminal, unsubs: Array<() => void>): InstanceType<typeof Gtk.Box> {
     // Status indicator (shared with the agent picker): a colored dot, or the cog
     // glyph while working. Shown in both modes; kept in sync.
     const status = createAgentStatusIcon(agent);
-    this.rowUnsubs.push(status.dispose);
+    unsubs.push(status.dispose);
     const dot = status.widget;
 
-    if (this.collapsed) return this.rowBox(dot); // icon only
+    if (this.collapsed) return this.rowContent(dot); // icon only
 
     // Permission-mode badge (plan/acceptEdits/auto/…), hidden in `default` mode.
     const mode = createAgentModeBadge(agent);
-    this.rowUnsubs.push(mode.dispose);
+    unsubs.push(mode.dispose);
 
     const label = new Gtk.Label({ xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.setText(agent.title);
-    this.rowUnsubs.push(agent.onTitleChange(() => label.setText(agent.title)));
+    unsubs.push(agent.onTitleChange(() => label.setText(agent.title)));
 
     // Linked-worktree badge (git glyph + branch), only when the agent runs in one.
     const worktreeMarkup = agentWorktreeMarkup(agent.worktree);
@@ -254,10 +379,20 @@ export class WorkbenchList {
     files.on('clicked', () => this.options.onOpenChanges?.(agent));
     const updateFiles = () => this.applyFiles(files, filesLabel, agent);
     updateFiles();
-    this.rowUnsubs.push(agent.onDidChangeFiles(updateFiles));
+    unsubs.push(agent.onDidChangeFiles(updateFiles));
 
     const trailing = [mode.widget, label, ...(worktree ? [worktree] : []), files];
-    return this.rowBox(dot, ...trailing);
+    return this.rowContent(dot, ...trailing);
+  }
+
+  // The live rows (everything not mid-removal) — the source of truth for navigation
+  // and selection, which must ignore rows that are animating out.
+  private liveHandles(): RowHandle[] {
+    return this.handles.filter((h) => !h.removing);
+  }
+
+  private handleForRow(row: InstanceType<typeof Gtk.ListBoxRow>): RowHandle | undefined {
+    return this.handles.find((h) => h.row === row);
   }
 
   // Activate an entry: reveal the agent's terminal, or run the user action.
@@ -273,8 +408,8 @@ export class WorkbenchList {
     quilx.commands.add(this.root, {
       'core:down': () => this.moveSelection(1),
       'core:up': () => this.moveSelection(-1),
-      'core:top': () => this.selectIndex(0), // `g g`
-      'core:bottom': () => this.selectIndex(this.rows.length - 1), // `G`
+      'core:top': () => this.selectLiveIndex(0), // `g g`
+      'core:bottom': () => this.selectLiveIndex(this.liveHandles().length - 1), // `G`
       'core:right': () => this.activate(this.selectedEntry()), // reveal the selection
       // Lifecycle on the selected row (a no-op on the user row).
       'agent:restart': () => this.withSelectedAgent((a) => this.options.onRestart?.(a)),
@@ -287,7 +422,7 @@ export class WorkbenchList {
 
   private selectedEntry(): Entry | undefined {
     const row = this.listBox.getSelectedRow();
-    return row ? this.rows[row.getIndex()] : undefined;
+    return row ? this.handleForRow(row)?.entry : undefined;
   }
 
   // Run `fn` with the agent of the currently selected row, if it's an agent row.
@@ -297,26 +432,27 @@ export class WorkbenchList {
   }
 
   private moveSelection(delta: number): void {
+    const live = this.liveHandles();
     const selectedRow = this.listBox.getSelectedRow();
-    const current = selectedRow ? selectedRow.getIndex() : -1;
-    this.selectIndex(current + delta);
+    const current = selectedRow ? live.findIndex((h) => h.row === selectedRow) : -1;
+    this.selectLiveIndex(current + delta);
   }
 
-  // Select (and scroll/focus) the row at `index`, clamped into range.
-  private selectIndex(index: number): void {
-    if (this.rows.length === 0) return;
-    const clamped = Math.max(0, Math.min(index, this.rows.length - 1));
-    const row = this.listBox.getRowAtIndex(clamped);
-    if (row) {
-      this.listBox.selectRow(row);
-      row.grabFocus();
-    }
+  // Select (and scroll/focus) the live row at `index`, clamped into range. Indexing is
+  // over the live rows, so rows animating out don't count as positions.
+  private selectLiveIndex(index: number): void {
+    const live = this.liveHandles();
+    if (live.length === 0) return;
+    const clamped = Math.max(0, Math.min(index, live.length - 1));
+    const handle = live[clamped];
+    this.listBox.selectRow(handle.row);
+    handle.row.grabFocus();
   }
 
   /** Move keyboard focus into the list (so its scoped bindings apply and the
    *  pane-navigation commands see focus as being within the workbench list). */
   focus(): void {
-    const row = this.listBox.getSelectedRow() ?? this.listBox.getRowAtIndex(0);
+    const row = this.listBox.getSelectedRow() ?? this.liveHandles()[0]?.row;
     if (row) row.grabFocus();
     else this.listBox.grabFocus();
   }
@@ -331,11 +467,11 @@ export class WorkbenchList {
   // Reflect `this.selected` onto the list box (the user row when nothing is
   // selected, so a default entry is always highlighted).
   private applySelection(): void {
-    const index = this.selected
-      ? this.rows.findIndex((e) => e.kind === 'agent' && e.agent === this.selected)
-      : 0; // the user row
-    const row = this.listBox.getRowAtIndex(index >= 0 ? index : 0);
-    if (row) this.listBox.selectRow(row);
+    const live = this.liveHandles();
+    const handle = this.selected
+      ? live.find((h) => h.entry.kind === 'agent' && h.entry.agent === this.selected)
+      : live[0]; // the user row
+    if (handle) this.listBox.selectRow(handle.row);
   }
 
   // The changed-files badge: a pencil glyph + count, or hidden when none. The
@@ -357,8 +493,10 @@ export class WorkbenchList {
   }
 
   dispose(): void {
-    for (const unsub of this.rowUnsubs) unsub();
-    this.rowUnsubs = [];
+    for (const id of this.timers) GLib.sourceRemove(id);
+    this.timers.clear();
+    for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
+    this.handles = [];
     this.subs.dispose();
   }
 }

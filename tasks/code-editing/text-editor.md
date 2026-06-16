@@ -161,6 +161,74 @@ Sub-shapes, if Option C is ever taken:
    perf spike** (render ~50 visible lines, measure frame time + invalidation
    cadence) before committing. **Never C3.**
 
+## Revisiting (2026-06-16): "are we fighting GtkSourceView?"
+
+Building **inline single-line folding** (`function x() { [...] }`) surfaced the
+recurring question: should we stop emulating and own the widget? The honest read
+on the friction, and the decision framework — kept here so we don't re-litigate
+from scratch each time it bites.
+
+**The friction is one root cause, and it recurs by design.** Every feature that
+has cost a workaround — folding, virtual/inline text, inline widgets (the overlay
+timing dances), per-view cursors, decorations leaking across views — traces to
+the *same* property of **GtkTextView**: its model is "a buffer of text with tags,
+one cursor, one view," and presentation is not separable from the buffer. There
+is also no way to reserve horizontal space mid-line without a real buffer char
+(the wall that pushed single-line folding to an overlay that renders the closing
+delimiter). The roadmap is presentation-heavy (inline AI, peek, code lens, color
+swatches, fold variants, multi-cursor, split views), so the workaround tax
+compounds. This is a legitimate inflection point, not premature optimization. The
+industry signal agrees: serious custom editors (VS Code, Zed, Monaco, CodeMirror,
+Lapce) all own their text rendering.
+
+**The fork (Option B) is definitively out — sharper reason than before.** The
+things we fight don't live in GtkSourceView; they live in **GtkTextView**, which
+is **GTK core**. GtkSourceView is gutters/highlighting/search layered on top of
+GtkTextView's buffer+layout. To change the model (buffer/presentation split,
+mid-line layout, the insert-mark-is-the-cursor coupling) you'd have to fork GTK
+itself, build it, and ship it through node-gtk forever — all the cost of owning a
+text stack with none of the design benefit. Rule it out for good.
+
+**Don't big-bang rewrite; make it data-driven.** A from-scratch `GtkWidget` (the
+existing **Option C / C2**) makes the exact things we fight *free* — we'd own the
+layout pass, so folding, virtual lines, inline widgets, N cursors, and per-view
+cursors are all just "where do I draw." It's the plausible endgame. But the
+decision must hinge on three **node-gtk-specific unknowns**, all answerable by one
+focused, timeboxed spike (this is the gate the recommendation already names,
+concretized):
+
+1. **Render perf (make-or-break)** — a `Gtk.Widget` subclass that snapshots ~50
+   visible lines via cached `PangoLayout`s and implements `GtkScrollable`: does it
+   scroll smoothly and type lag-free, driving `snapshot()` from JS? Mitigated by
+   GTK's invalidation model (paint on edit/scroll/blink, not 60fps) + per-line node
+   caching, but the per-frame JS↔native FFI cost is unmeasured.
+2. **IME** — wire `GtkIMContext` directly into the custom widget; confirm
+   commit/preedit. This is the sharp edge that leaked in the overlay-peek POC, and
+   the subsystem GtkSourceView gives for free.
+3. **GtkScrollable + adjustments** — viewport/scrollbar integration.
+
+If those pass, the custom widget is viable and the rest is (large but derisked)
+work — and it reuses what we already own (tree-sitter model, vim layer, the
+`EditorModel`/`MarkerLayer` seam). If per-frame JS drawing is janky, the answer is
+definitive: stay on GtkSourceView. Either way we replace a guess with a number.
+
+**Ship presentation features as view-layer concerns now — it's non-committal.**
+Folding's single-line marker is being built as a **zero-buffer-footprint overlay**
+(the marker widget renders the closing delimiter + tail, Pango-styled from the
+real text), *not* a `GtkTextChildAnchor` (which would push `U+FFFC` into the buffer
+→ offset shift → corrupt LSP/save while folded, re-coupling model and view exactly
+where the document-registry refactor is paying that coupling down). Treating
+folding (and inline widgets generally) as a pure *view* concern is correct
+regardless of the widget question, and the same logic ports to a custom widget
+unchanged. So feature work does not deepen the GtkSourceView lock-in and does not
+block on the spike.
+
+**Decision rule:** stay on GtkSourceView; build presentation features in the view
+layer (zero buffer footprint); run the render spike to unlock-or-confirm the
+Option C gate before committing to any rewrite. Related friction evidence:
+[inline-widgets.md](inline-widgets.md), [document-registry.md](document-registry.md),
+[virtual-lines.md](virtual-lines.md).
+
 ## Constraints carried from the research (cited; mark-uncertain noted)
 
 - **Single mark pair.** `GtkTextBuffer` has exactly `insert` + `selection_bound`
