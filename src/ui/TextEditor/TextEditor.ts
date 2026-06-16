@@ -574,6 +574,7 @@ export class TextEditor implements DocumentHost {
   private dispose(): void {
     this.dismissHover();
     this.dismissSignature();
+    this.syntax.dispose(); // detach buffer/view signal handlers + free the tree-sitter tree
     this.document.removeHost(this);
     this.document.removeView(this.buffer);
     if (this.releaseDocument) this.releaseDocument();

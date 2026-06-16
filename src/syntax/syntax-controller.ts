@@ -204,6 +204,14 @@ export class SyntaxController {
   private debounceId = 0;
   private viewportDebounceId = 0;
   private scrollConnected = false;
+  // True once dispose() has run: stops deferred work (debounced refreshes, the
+  // cursor-position bracket match) from touching a buffer/view that GTK is
+  // finalizing or a tree-sitter tree that's been freed — a stale handler reading
+  // a freed tree is a wasm "memory access out of bounds" crash.
+  private disposed = false;
+  // The signal connections we own, so dispose() can detach them. node-gtk's
+  // `off(event, cb)` needs the exact callback reference, so we keep them.
+  private readonly connections: Array<{ target: any; event: string; cb: (...args: any[]) => any }> = [];
   // Cached buffer text from the last parse, reused by viewport repaints on scroll
   // (no edit → no reparse, just a re-query + re-paint over the new visible range).
   private cachedText = '';
@@ -293,9 +301,9 @@ export class SyntaxController {
     // delete-range run before the buffer is modified (the default handlers are
     // RUN_LAST), so the iters still reflect the pre-edit state. 'changed' (which
     // schedules the reparse) fires after, so the edit is recorded first.
-    (buffer as any).on('insert-text', (location: any, text: string) => this.onInsert(location, text));
-    (buffer as any).on('delete-range', (start: any, end: any) => this.onDelete(start, end));
-    (buffer as any).on('changed', () => {
+    this.connect(buffer, 'insert-text', (location: any, text: string) => this.onInsert(location, text));
+    this.connect(buffer, 'delete-range', (start: any, end: any) => this.onDelete(start, end));
+    this.connect(buffer, 'changed', () => {
       this.primeLineNumbers(); // keep the gutter wide enough as the line count grows
       this.scheduleRefresh();
     });
@@ -307,15 +315,40 @@ export class SyntaxController {
       const vadj = (view as any).getVadjustment?.();
       if (vadj && !this.scrollConnected) {
         this.scrollConnected = true;
-        (vadj as any).on('value-changed', () => this.scheduleViewportRepaint());
+        this.connect(vadj, 'value-changed', () => this.scheduleViewportRepaint());
       }
     };
-    (view as any).on('notify::vadjustment', connectScroll);
+    this.connect(view, 'notify::vadjustment', connectScroll);
     connectScroll();
 
     // Re-highlight the matching bracket whenever the cursor moves (text-based, so
     // it works regardless of grammar).
-    (buffer as any).on('notify::cursor-position', () => this.updateBracketMatch());
+    this.connect(buffer, 'notify::cursor-position', () => this.updateBracketMatch());
+  }
+
+  /** Connect a signal handler and remember it so dispose() can detach it. */
+  private connect(target: any, event: string, cb: (...args: any[]) => any): void {
+    target.on(event, cb);
+    this.connections.push({ target, event, cb });
+  }
+
+  /**
+   * Tear down: stop all deferred work and free tree-sitter resources. Called when
+   * the owning editor view is destroyed. Without this, the buffer/view signal
+   * handlers stay connected and the debounce timers stay scheduled after the view
+   * is gone; a stale cursor-position handler then reads a freed tree (a wasm
+   * "memory access out of bounds" crash). Idempotent.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.debounceId) { GLib.sourceRemove(this.debounceId); this.debounceId = 0; }
+    if (this.viewportDebounceId) { GLib.sourceRemove(this.viewportDebounceId); this.viewportDebounceId = 0; }
+    for (const { target, event, cb } of this.connections) {
+      try { target.off(event, cb); } catch { /* target already finalized — nothing to detach */ }
+    }
+    this.connections.length = 0;
+    this.resetTree(); // delete the parse tree + injection parsers (frees their wasm allocations)
   }
 
   /**
@@ -330,6 +363,7 @@ export class SyntaxController {
 
   /** Highlight the bracket under (or just before) the cursor and its match. */
   private updateBracketMatch(): void {
+    if (this.disposed) return;
     const buffer = this.buffer as any;
     buffer.removeTag(this.bracketMatchTag, buffer.getStartIter(), buffer.getEndIter());
     const cursor = asIter(buffer.getIterAtMark(buffer.getInsert())).getOffset();
@@ -457,7 +491,7 @@ export class SyntaxController {
   // --- highlighting + fold discovery -----------------------------------------
 
   private scheduleRefresh(): void {
-    if (!this.grammar) return;
+    if (this.disposed || !this.grammar) return;
     if (this.debounceId) GLib.sourceRemove(this.debounceId);
     this.debounceId = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, HIGHLIGHT_DEBOUNCE_MS, () => {
       this.debounceId = 0;
@@ -468,7 +502,7 @@ export class SyntaxController {
 
   /** On edit: reparse incrementally, then re-highlight the viewport + recompute folds. */
   private refresh(): void {
-    if (!this.grammar || !this.parser) return;
+    if (this.disposed || !this.grammar || !this.parser) return;
     const buffer = this.buffer as any;
     // include_hidden_chars = true so folded (invisible) text still reaches the
     // parser. Pass the prior (edited) tree for an incremental reparse, then
@@ -514,7 +548,7 @@ export class SyntaxController {
 
   /** Schedule a viewport-only repaint after scrolling settles (no reparse). */
   private scheduleViewportRepaint(): void {
-    if (!this.grammar) return;
+    if (this.disposed || !this.grammar) return;
     if (this.viewportDebounceId) GLib.sourceRemove(this.viewportDebounceId);
     this.viewportDebounceId = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, VIEWPORT_DEBOUNCE_MS, () => {
       this.viewportDebounceId = 0;

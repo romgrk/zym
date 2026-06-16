@@ -18,10 +18,12 @@ so you always know which agent is working, waiting, or done.
 ## Highlights
 
 - ⌨️ **Vim beyond its best**: the `vim-mode-plus` plugin ported from Atom — so good it's better than the original. Multi-cursor, occurences, text objects, operators, and more (target.vim, leap.nvim, etc).
-- 🤖 **Embedded coding agents** (well at least `claude` for now) — a workbench conceived so you work alongside your minions.
+- 🤖 **Agents** (well at least `claude`) — you work alongside your minions. Jump to their workbench to see what they edited. Jump to your workbench to work on your own.
 - 🪟 **Built for simplicity** — a `space`-leader scheme (thanks Spacemacs) and fuzzy finders for everything.
 - 🎨 **Native GNOME look** — Adwaita with simple theming support.
 - ✨ **Editor essentials** — LSP, tree-sitter syntax highlighting, file tree, git integration, and more.
+
+*Coming up*: **🌳 `git worktree` integration**: spawn your minions in their own worktrees and switch to their view whenever you want.
 
 Jump to the details: [Keybindings](#keybindings) ·
 [Notifications](#notifications) · [Agents](#agents) ·
