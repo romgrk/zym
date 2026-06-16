@@ -109,6 +109,8 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   `build-grammars.sh`, `css.test.ts`, `grammar.test.ts`).
 - `src/plugins/json/` — the JSON plugin (`index.ts`, `queries/`, `json.test.ts`,
   `grammar.test.ts`).
+- `src/plugins/cpp/` — the C / C++ plugin (`index.ts`, `queries/c/`, `queries/cpp/`,
+  `cpp.test.ts`, `grammar.test.ts`).
 - `src/plugins/color-preview/` — the color-preview plugin (`index.ts` editor wiring +
   `colors.ts` pure parser/contrast, `colors.test.ts`); the `observeTextEditors`
   reference consumer.
@@ -142,6 +144,12 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   `vscode-langservers-extracted` package as the eslint/css servers). One grammar
   backs both dialects — it parses `//`/block comments as `(comment)` nodes — and a
   single ServerDef serves the `json` / `jsonc` languageIds.
+- **cpp** — C/C++ detection and the bundled `tree-sitter-c` / `tree-sitter-cpp`
+  grammars (highlighting + folding), with **clangd** as the language server. Two
+  grammars (C++ is a superset, so it carries its own queries), `.h` headers map to
+  C by convention while `.hpp`/`.hh`/… map to C++, and a single `clangd` ServerDef
+  serves the `c` / `cpp` languageIds (single-file; prefers a `compile_commands.json`
+  root; skipped gracefully if clangd isn't on PATH, like marksman).
 - **color-preview** — the first **`observeTextEditors`** consumer (no language layer at
   all). Background-tints color literals — hex (`#rgb`…`#rrggbbaa`), `rgb()/rgba()`,
   `hsl()/hsla()` — with the color they represent, contrast-picking black/white

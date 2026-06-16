@@ -17,6 +17,8 @@ import { markdownPlugin } from '../plugins/markdown/index.ts';
 import { htmlPlugin } from '../plugins/html/index.ts';
 import { cssPlugin } from '../plugins/css/index.ts';
 import { jsonPlugin } from '../plugins/json/index.ts';
+import { rustPlugin } from '../plugins/rust/index.ts';
+import { cppPlugin } from '../plugins/cpp/index.ts';
 import { colorPreviewPlugin } from '../plugins/color-preview/index.ts';
 
 export { PluginRegistry } from './PluginRegistry.ts';
@@ -36,5 +38,7 @@ export function registerBuiltinPlugins(): void {
   plugins.register(htmlPlugin, Path.join(BUILTINS_DIR, 'html'));
   plugins.register(cssPlugin, Path.join(BUILTINS_DIR, 'css'));
   plugins.register(jsonPlugin, Path.join(BUILTINS_DIR, 'json'));
+  plugins.register(rustPlugin, Path.join(BUILTINS_DIR, 'rust'));
+  plugins.register(cppPlugin, Path.join(BUILTINS_DIR, 'cpp'));
   plugins.register(colorPreviewPlugin, Path.join(BUILTINS_DIR, 'color-preview'));
 }
