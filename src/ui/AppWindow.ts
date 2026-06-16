@@ -45,6 +45,7 @@ import { openFilePicker } from './FilePicker.ts';
 import { openWorkspaceSymbolPicker } from './WorkspaceSymbolPicker.ts';
 import { openDocumentSymbolPicker } from './DocumentSymbolPicker.ts';
 import { openSearchPicker } from './SearchPicker.ts';
+import { openReferencesPicker } from './ReferencesPicker.ts';
 import { openCommandPicker } from './CommandPicker.ts';
 import { WhichKey } from './WhichKey.ts';
 import { openAgentPicker } from './AgentPicker.ts';
@@ -68,7 +69,6 @@ import { SessionController } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
 import { NotificationLog } from './NotificationLog.ts';
 import { KeymapPanel } from './KeymapPanel.ts';
-import { LocationList } from './LocationList.ts';
 import { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
 import { type NavigationKind, type LspConfig, type LspDocument } from '../lsp/LspManager.ts';
 import { normalizeWorkspaceEdit, applyTextEdits } from '../lsp/workspaceEdit.ts';
@@ -1004,12 +1004,6 @@ export class AppWindow {
     );
     const diagnosticsDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('diagnostics') });
     diagnosticsDock.add(diagnosticsPanel.root, { title: 'Diagnostics' });
-    const referencesList = new LocationList({
-      emptyText: 'No references',
-      onActivate: (item) => this.openOrFocusFile(item.path, [item.line, item.character]),
-    });
-    const referencesDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('references') });
-    referencesDock.add(referencesList.root, { title: 'References' });
     const keymapPanel = new KeymapPanel();
     const keymapDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('keymap') });
     keymapDock.add(keymapPanel.root, { title: 'Keybindings' });
@@ -1019,7 +1013,7 @@ export class AppWindow {
       {
         center, fileTree, gitPanel, leftPanel, filesTab, gitTab,
         notificationLog, notificationPanel, diagnosticsPanel, diagnosticsDock,
-        referencesList, referencesDock, keymapPanel, keymapDock,
+        keymapPanel, keymapDock,
       },
       { showSideDock: owner === 'user' },
     );
@@ -1062,7 +1056,6 @@ export class AppWindow {
     switch (this.workbench.bottomDock) {
       case 'notifications': return this.workbench.notificationPanel;
       case 'diagnostics': return this.workbench.diagnosticsDock;
-      case 'references': return this.workbench.referencesDock;
       case 'keymap': return this.workbench.keymapDock;
       default: return null;
     }
@@ -1565,7 +1558,8 @@ export class AppWindow {
     editor.showPeek({ widget, height });
   }
 
-  // Find references to the symbol at the cursor and list them in the bottom dock.
+  // Find references to the symbol at the cursor and present them in a picker (with
+  // a source preview) to jump to one.
   private async findReferences() {
     const editor = this.activeEditor;
     if (!editor) return;
@@ -1574,17 +1568,7 @@ export class AppWindow {
       quilx.notifications.addInfo('No references found');
       return;
     }
-    this.workbench.referencesList.setItems(
-      refs.map((r) => ({
-        path: r.path,
-        line: r.point.row,
-        character: r.point.column,
-        location: `${Path.basename(r.path)}:${r.point.row + 1}`,
-        text: r.lineText.trim(),
-      })),
-    );
-    this.setBottomDock('references');
-    this.workbench.referencesList.focus();
+    openReferencesPicker(this.overlay, refs, (path, cursor) => this.openOrFocusFile(path, cursor));
   }
 
   // Search project-wide symbols (via the active file's language server) in a
@@ -2117,7 +2101,6 @@ export class AppWindow {
     const docks: Panel[] = [this.workbench.leftPanel];
     if (this.workbench.bottomDock === 'notifications') docks.push(this.workbench.notificationPanel);
     else if (this.workbench.bottomDock === 'diagnostics') docks.push(this.workbench.diagnosticsDock);
-    else if (this.workbench.bottomDock === 'references') docks.push(this.workbench.referencesDock);
     else if (this.workbench.bottomDock === 'keymap') docks.push(this.workbench.keymapDock);
     return docks.find((p) => this.isFocusWithin(p.root)) ?? null;
   }
@@ -2145,11 +2128,6 @@ export class AppWindow {
       zones.push({
         root: this.workbench.diagnosticsDock.root,
         focus: () => this.focusDock(this.workbench.diagnosticsDock, () => this.workbench.diagnosticsPanel.focus()),
-      });
-    else if (this.workbench.bottomDock === 'references')
-      zones.push({
-        root: this.workbench.referencesDock.root,
-        focus: () => this.focusDock(this.workbench.referencesDock, () => this.workbench.referencesList.focus()),
       });
     else if (this.workbench.bottomDock === 'keymap')
       zones.push({
