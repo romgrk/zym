@@ -88,6 +88,7 @@ export const typescriptPlugin: Plugin = {
       wasm: 'tree-sitter-wasms/out/tree-sitter-typescript.wasm',
       highlightsPath: ctx.resolve('queries/typescript/highlights.scm'),
       foldTypes: JS_FOLD_TYPES,
+      foldsPath: ctx.resolve('queries/typescript/folds.scm'),
     });
     languages.registerServer('typescript', TSSERVER);
     languages.registerServer('typescript', DENO);
@@ -110,6 +111,7 @@ export const typescriptPlugin: Plugin = {
       wasm: 'tree-sitter-wasms/out/tree-sitter-tsx.wasm',
       highlightsPath: ctx.resolve('queries/tsx/highlights.scm'),
       foldTypes: JS_FOLD_TYPES,
+      foldsPath: ctx.resolve('queries/tsx/folds.scm'),
     });
     languages.registerServer('tsx', FLOW);
     languages.registerServer('tsx', TSSERVER);
