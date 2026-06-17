@@ -649,6 +649,43 @@ class MoveToPreviousDiffHunk extends MoveToNextDiffHunk {
   direction = 'previous'
 }
 
+// `]h` / `[h` — jump to the next/previous git hunk in a live-edited file (the
+// GitGutter change bars), as opposed to MoveTo{Next,Previous}DiffHunk above
+// which scan a synthesized +/- diff buffer. Hunk start rows come from the host
+// via the EditorModel hunk provider; no provider (buffer-only / no repo) → no-op.
+class MotionByHunk extends Motion {
+  static command = false
+  jump = true
+  direction = null
+
+  getRows () {
+    const rows = this.editor.getHunkStartRows()
+    return this.direction === 'previous' ? rows.slice().reverse() : rows
+  }
+
+  findRow (cursor) {
+    const cursorRow = cursor.getBufferRow()
+    return this.getRows().find(row =>
+      this.direction === 'previous' ? row < cursorRow : row > cursorRow
+    )
+  }
+
+  moveCursor (cursor) {
+    this.moveCursorCountTimes(cursor, () => {
+      const row = this.findRow(cursor)
+      if (row != null) this.utils.moveCursorToFirstCharacterAtRow(cursor, row)
+    })
+  }
+}
+
+class MoveToNextHunk extends MotionByHunk {
+  direction = 'next'
+}
+
+class MoveToPreviousHunk extends MotionByHunk {
+  direction = 'previous'
+}
+
 // -------------------------
 // keymap: 0
 class MoveToBeginningOfLine extends Motion {
@@ -1468,6 +1505,8 @@ const __operations = {
   MoveToPreviousParagraph,
   MoveToNextDiffHunk,
   MoveToPreviousDiffHunk,
+  MoveToNextHunk,
+  MoveToPreviousHunk,
   MoveToBeginningOfLine,
   MoveToColumn,
   MoveToLastCharacterOfLine,

@@ -102,7 +102,7 @@ export class UnderlineOverlay {
       startCell.y + startCell.height,
     );
     const [x1] = (this.view as any).bufferToWindowCoords(Gtk.TextWindowType.WIDGET, endCell.x, endCell.y);
-    return { x0, x1, y: y - AMPLITUDE - 0.5 };
+    return { x0, x1, y: y - AMPLITUDE + 0.5 };
   }
 
   /** Stroke a sine wave from `x0` to `x1` along baseline `y`. */

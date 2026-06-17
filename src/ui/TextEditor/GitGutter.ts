@@ -126,6 +126,19 @@ export class GitGutter {
     });
   }
 
+  /** Sorted buffer rows where each git hunk begins — a hunk is a maximal run of
+   *  consecutive changed (added/modified/removed) lines. Drives vim `]h`/`[h`. */
+  hunkStartRows(): number[] {
+    const rows = [...this.kindByLine.keys()].sort((a, b) => a - b);
+    const starts: number[] = [];
+    let prev = -2;
+    for (const row of rows) {
+      if (row !== prev + 1) starts.push(row);
+      prev = row;
+    }
+    return starts;
+  }
+
   dispose(): void {
     if (this.updateTimer) GLib.sourceRemove(this.updateTimer);
     (this.view as any).getGutter(Gtk.TextWindowType.LEFT).remove(this.renderer);

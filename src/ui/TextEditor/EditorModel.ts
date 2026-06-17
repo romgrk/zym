@@ -341,6 +341,20 @@ export class EditorModel {
     return this.pointAtIter(this.buffer.getEndIter());
   }
 
+  // Git-hunk navigation (vim `]h`/`[h`). The host (TextEditor) registers a
+  // provider backed by the GitGutter's line→change map; absent (buffer-only
+  // editors, no repo) it yields no hunks and the motions no-op.
+  private hunkProvider?: () => number[];
+
+  setHunkProvider(provider: () => number[]): void {
+    this.hunkProvider = provider;
+  }
+
+  /** Sorted buffer rows where each git hunk begins (empty when unavailable). */
+  getHunkStartRows(): number[] {
+    return this.hunkProvider?.() ?? [];
+  }
+
   /** `point` clamped to a real position within the buffer. */
   clipBufferPosition(point: PointLike): Point {
     return this.pointAtIter(this.iterAtPoint(point));

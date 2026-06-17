@@ -109,6 +109,9 @@ const SEQUENCE_BINDINGS: Record<string, string> = {
   'z k': 'MoveToPreviousFoldEnd',
   '[ z': 'MoveToPreviousFoldStart',
   '] z': 'MoveToNextFoldEnd',
+  // [h/]h — jump to the previous/next git hunk (GitGutter change bars).
+  '[ h': 'MoveToPreviousHunk',
+  '] h': 'MoveToNextHunk',
 };
 
 // By default `j`/`k` move by display line too (like `:set nowrap`-free editors),

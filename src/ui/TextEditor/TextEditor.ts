@@ -683,6 +683,8 @@ export class TextEditor implements DocumentHost {
       () => this.editorModel.getText(),
       this.gitRepo,
     );
+    // Let the vim layer reach the gutter's hunk ranges (for `]h`/`[h`).
+    this.editorModel.setHunkProvider(() => this.gitGutter?.hunkStartRows() ?? []);
     // Live updates: re-diff the buffer (debounced) on every edit.
     this.editorModel.onDidChangeText(() => this.gitGutter?.scheduleUpdate());
     this.root.on('destroy', () => this.gitGutter?.dispose());
