@@ -166,6 +166,9 @@ interface ResolvedServer {
 export interface ServerStatus {
   name: string;
   state: 'starting' | 'ready' | 'failed';
+  /** The project root this server serves — lets the header scope to the active
+   *  workbench's worktree. */
+  rootDir: string;
 }
 
 export class LspManager {
@@ -244,8 +247,8 @@ export class LspManager {
     return this.emitter.on('servers-changed', handler as (v?: unknown) => void);
   }
 
-  private setServerStatus(key: string, name: string, state: ServerStatus['state']): void {
-    this.serverStatuses.set(key, { name, state });
+  private setServerStatus(key: string, name: string, rootDir: string, state: ServerStatus['state']): void {
+    this.serverStatuses.set(key, { name, state, rootDir });
     this.emitter.emit('servers-changed');
   }
 
@@ -695,15 +698,15 @@ export class LspManager {
         // Spawn-level failure (e.g. EACCES) carries no exit code — surface its reason.
         const detail = code != null ? `exit code ${code}` : server!.failureReason ?? 'process closed';
         this.notice('warning', `${spec.name} exited`, detail);
-        this.recoverFromCrash(key, spec, langId);
+        this.recoverFromCrash(key, spec, langId, rootDir);
       });
-      this.setServerStatus(key, spec.name, 'starting');
+      this.setServerStatus(key, spec.name, rootDir, 'starting');
       const invocation = [spec.command, ...(spec.args ?? [])].join(' ');
       this.notice('trace', `starting ${spec.name}`, `${invocation} (cwd ${rootDir})`);
       void server
         .start()
         .then(() => {
-          this.setServerStatus(key, spec.name, 'ready');
+          this.setServerStatus(key, spec.name, rootDir, 'ready');
           this.notice('trace', `${spec.name} ready`);
           // Forgive earlier crashes once the server has stayed up a while.
           const st = this.restartStateFor(key);
@@ -712,7 +715,7 @@ export class LspManager {
         })
         .catch((err) => {
           this.servers.delete(key);
-          this.setServerStatus(key, spec.name, 'failed');
+          this.setServerStatus(key, spec.name, rootDir, 'failed');
           // Report why: the spawn-level reason if we have one, else the rejection.
           const reason = server!.failureReason ?? (err as Error).message;
           this.notice('error', `failed to start ${spec.name}`, `${reason} — ${invocation}`);
@@ -726,7 +729,7 @@ export class LspManager {
   // A server crashed: clear its now-stale diagnostics, then schedule a restart
   // with exponential backoff (unless disabled, nothing is open, or it's crashing
   // in a tight loop — then give up with an error).
-  private recoverFromCrash(key: string, spec: ServerDef, langId: string): void {
+  private recoverFromCrash(key: string, spec: ServerDef, langId: string, rootDir: string): void {
     const docs = this.docsForKey(key);
     // Clear only this server's now-stale diagnostics; siblings (e.g. eslint) keep theirs.
     for (const { path } of docs) this.diagnostics.clearServer(spec.name, path);
@@ -738,7 +741,7 @@ export class LspManager {
 
     const st = this.restartStateFor(key);
     if (st.attempts >= MAX_RESTARTS) {
-      this.setServerStatus(key, spec.name, 'failed');
+      this.setServerStatus(key, spec.name, rootDir, 'failed');
       this.notice(
         'error',
         `${spec.name} keeps crashing`,

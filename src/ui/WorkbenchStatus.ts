@@ -66,6 +66,12 @@ export interface WorkbenchStatusOptions {
   onOpenDiagnostics: () => void;
   /** Open the notification log, where LSP notices land (LSP indicator click). */
   onOpenLog: () => void;
+  /** Whether a diagnostic path belongs to the *active* workbench (its root) — so
+   *  the pill counts only that workbench's files. Read live; call `refresh` on
+   *  a workbench switch / re-root. Defaults to everything. */
+  ownsPath?: (path: string) => boolean;
+  /** Whether a language server (by its project root) serves the active workbench. */
+  ownsServer?: (rootDir: string) => boolean;
 }
 
 export class WorkbenchStatus {
@@ -87,9 +93,11 @@ export class WorkbenchStatus {
   private readonly lspIcon: InstanceType<typeof Gtk.Label>;
   private readonly lspSpinner: InstanceType<typeof Gtk.Spinner>;
 
+  private readonly options: WorkbenchStatusOptions;
   private readonly subs = new CompositeDisposable();
 
   constructor(options: WorkbenchStatusOptions) {
+    this.options = options;
     // Diagnostics pill: a single markup label (icon-font glyph spans + count
     // spans share a baseline), wrapped in a revealer so each content change
     // fades+slides (opacity + width), inside a flat button.
@@ -138,6 +146,13 @@ export class WorkbenchStatus {
     this.refreshLsp();
   }
 
+  /** Re-evaluate against the (possibly new) active-workbench scope — call on a
+   *  workbench switch or re-root, since neither fires an LSP/diagnostics event. */
+  refresh(): void {
+    this.syncDiagnostics();
+    this.refreshLsp();
+  }
+
   // Live diagnostics updates are debounced: reset the timer on each change so the
   // pill settles to the latest counts ~DIAG_DEBOUNCE_MS after editing stops.
   private scheduleDiagnostics(): void {
@@ -151,7 +166,7 @@ export class WorkbenchStatus {
   // The target pill content for the current diagnostics, or null when clean. Only
   // the configured severities (with a non-zero count) appear, in severity order.
   private diagnosticsTarget(): { markup: string; tooltip: string } | null {
-    const counts = quilx.lsp.diagnostics.countsBySeverity();
+    const counts = quilx.lsp.diagnostics.countsBySeverity(this.options.ownsPath);
     const shown = DIAG_SEVERITIES.filter((s) => this.enabledSeverities.has(s.key) && (counts[s.severity] ?? 0) > 0);
     if (shown.length === 0) return null;
     const markup = shown.map((s) => countMarkup(counts[s.severity]!, severityStyle(s.severity))).join(DIAG_SEPARATOR);
@@ -213,7 +228,9 @@ export class WorkbenchStatus {
   // Aggregate the per-server states into one indicator: spinner (starting/
   // installing) > error (a server failed) > ready glyph > hidden (nothing up).
   private refreshLsp(): void {
-    const states = quilx.lsp.serverStates();
+    const all = quilx.lsp.serverStates();
+    // Scope to the active workbench's servers (its worktree's project roots).
+    const states = this.options.ownsServer ? all.filter((s) => this.options.ownsServer!(s.rootDir)) : all;
     const starting = quilx.lsp.isInstalling || states.some((s) => s.state === 'starting');
     const failed = states.filter((s) => s.state === 'failed').map((s) => s.name);
     const ready = states.filter((s) => s.state === 'ready').map((s) => s.name);

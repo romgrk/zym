@@ -28,8 +28,12 @@ export class DiagnosticsPanel {
 
   private readonly list: LocationList;
   private readonly subs = new CompositeDisposable();
+  // Which diagnostics this panel shows — its workbench's files (by root). Read live
+  // so a workbench re-root re-scopes it; defaults to everything.
+  private readonly accept: (path: string) => boolean;
 
-  constructor(onOpenLocation: (target: DiagnosticLocation) => void) {
+  constructor(onOpenLocation: (target: DiagnosticLocation) => void, accept: (path: string) => boolean = () => true) {
+    this.accept = accept;
     this.list = new LocationList({
       emptyText: 'No diagnostics',
       onActivate: (item) => onOpenLocation({ path: item.path, line: item.line, character: item.character }),
@@ -45,12 +49,18 @@ export class DiagnosticsPanel {
     this.list.focus();
   }
 
+  /** Re-scope + re-render — called by the host when its workbench re-roots (the
+   *  set of owned paths changed without a diagnostics update firing). */
+  refresh(): void {
+    this.rebuild();
+  }
+
   // Rebuild the whole list from the store. Diagnostic volumes are modest, so a
   // full rebuild on each update is simpler than diffing and plenty fast.
   private rebuild(): void {
     const store = quilx.lsp.diagnostics;
     const items = [];
-    for (const path of store.paths().sort()) {
+    for (const path of store.paths(this.accept).sort()) {
       for (const { diagnostic } of store.get(path)) {
         const sev = severityStyle(diagnostic.severity ?? DiagnosticSeverity.Error);
         const message =

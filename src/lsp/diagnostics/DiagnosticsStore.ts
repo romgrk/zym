@@ -81,9 +81,11 @@ export class DiagnosticsStore {
     return out;
   }
 
-  /** Every path that currently has diagnostics from at least one server. */
-  paths(): string[] {
-    return [...this.byPath.keys()];
+  /** Every path that currently has diagnostics from at least one server, optionally
+   *  filtered by `accept` (e.g. to a workbench's root). */
+  paths(accept?: (path: string) => boolean): string[] {
+    const all = [...this.byPath.keys()];
+    return accept ? all.filter(accept) : all;
   }
 
   /** Total diagnostic count across all files and servers. */
@@ -97,11 +99,13 @@ export class DiagnosticsStore {
 
   /**
    * Diagnostic counts grouped by severity (1=Error … 4=Hint), across all files
-   * and servers. Severities the LSP omits default to Error, matching the panel.
+   * and servers, optionally filtered by `accept` (e.g. to a workbench's root).
+   * Severities the LSP omits default to Error, matching the panel.
    */
-  countsBySeverity(): Record<number, number> {
+  countsBySeverity(accept?: (path: string) => boolean): Record<number, number> {
     const counts: Record<number, number> = {};
-    for (const perServer of this.byPath.values()) {
+    for (const [path, perServer] of this.byPath) {
+      if (accept && !accept(path)) continue;
       for (const { diagnostics } of perServer.values()) {
         for (const d of diagnostics) {
           const sev = d.severity ?? 1; // DiagnosticSeverity.Error

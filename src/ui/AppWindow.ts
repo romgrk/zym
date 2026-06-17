@@ -247,6 +247,9 @@ export class AppWindow {
     this.workbenchStatus = new WorkbenchStatus({
       onOpenDiagnostics: () => this.toggleDiagnosticsPanel(),
       onOpenLog: () => this.toggleNotificationLog(),
+      // Pill + LSP indicator scope to the active workbench's worktree.
+      ownsPath: (path) => this.ownerWorkbenchCwd(path) === this.workbench.cwd,
+      ownsServer: (rootDir) => this.ownerWorkbenchCwd(rootDir) === this.workbench.cwd,
     });
 
     // The workbench list lives in its own full-height sidebar at the very left of the
@@ -1127,8 +1130,11 @@ export class AppWindow {
     const notificationLog = new NotificationLog();
     const notificationPanel = new Panel({ onTabCloseRequest: () => this.hideBottomDock('notifications') });
     notificationPanel.add(notificationLog.root, { title: 'Notifications' });
-    const diagnosticsPanel = new DiagnosticsPanel((target) =>
-      this.openOrFocusFile(target.path, [target.line, target.character]),
+    // Scope this workbench's diagnostics to the files under its root (read live via
+    // `owner`, so a re-root re-scopes it).
+    const diagnosticsPanel = new DiagnosticsPanel(
+      (target) => this.openOrFocusFile(target.path, [target.line, target.character]),
+      (path) => this.ownerWorkbenchCwd(path) === this.workbenches.get(owner)?.cwd,
     );
     const diagnosticsDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('diagnostics') });
     diagnosticsDock.add(diagnosticsPanel.root, { title: 'Diagnostics' });
@@ -1177,8 +1183,21 @@ export class AppWindow {
     this.contentOverlay.setChild(workbench.root); // show this workbench
     this.workbenchList.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
     this.rebindGitChrome(); // header branch/GitHub now reflect this workbench's root
+    this.workbenchStatus.refresh(); // diagnostics pill + LSP indicator → this workbench
     this.updateViewedAgent();
     this.focusActivePane();
+  }
+
+  // The open workbench whose root (cwd) most specifically contains `path` — the
+  // longest matching prefix, so a file (or server root) inside a nested worktree is
+  // owned by that worktree, not its parent. Paths under no open root fall to the
+  // user workbench. Used to scope per-workbench diagnostics + the header LSP status.
+  private ownerWorkbenchCwd(path: string): string {
+    let best = process.cwd(); // user workbench root / fallback for orphan paths
+    for (const wb of this.workbenches.values()) {
+      if (isUnderRoot(path, wb.cwd) && wb.cwd.length > best.length) best = wb.cwd;
+    }
+    return best;
   }
 
   // Re-point the header git chrome (branch button, GitHub model + buttons) and the
@@ -1214,6 +1233,10 @@ export class AppWindow {
     // row can't observe the swap itself without racing the re-root).
     if (workbench.owner !== 'user') this.workbenchList.refreshAgent(workbench.owner);
     if (this.workbench === workbench) this.rebindGitChrome();
+    // Diagnostics ownership shifts on a re-root (paths under the old/new root change
+    // hands), so re-scope every workbench's panel and the active header status.
+    for (const wb of this.workbenches.values()) wb.diagnosticsPanel.refresh();
+    this.workbenchStatus.refresh();
   }
 
   // The cooperative-detection safety net: if an agent created a worktree (spotted
@@ -2591,5 +2614,11 @@ function agentTabTitle(agent: AgentTerminal): string {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+// Whether `path` is `root` itself or lives beneath it (a `root + sep` prefix, so
+// `/a/bc` doesn't count as under `/a/b`).
+function isUnderRoot(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith(Path.sep) ? root : root + Path.sep);
 }
 

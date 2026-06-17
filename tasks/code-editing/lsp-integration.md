@@ -58,6 +58,15 @@ log — trace level for routine events, warning/error for exits/failures.
 
 - [x] LSP client implementation + server-config abstraction (Helix-sourced).
 - [x] Diagnostics: inline squiggles, Nerd Font gutter glyphs, "Diagnostics" panel.
+- [x] **Workbench-aware diagnostics + header status** — the manager is already
+  multi-root (servers resolved/keyed per project root); the UI surfaces scope to the
+  owning workbench. `DiagnosticsStore.paths/countsBySeverity` take an `accept(path)`
+  predicate; `ServerStatus` carries `rootDir`. Each workbench's `DiagnosticsPanel`
+  shows only its root's files, and the header `WorkbenchStatus` (pill + LSP
+  indicator) follows the *active* workbench. Ownership = the open workbench whose
+  cwd is the longest prefix of the path/server-root (`AppWindow.ownerWorkbenchCwd`,
+  so a nested worktree owns its files, not the parent; orphans → user workbench);
+  re-scoped on workbench switch and on a worktree re-root.
 - [x] Trace logging of major LSP events to the notification log.
 - [x] Navigation: definition / declaration / type-definition / implementation
   (`space l d`/`D`/`t`/`i`), and find-references (`space l r`) presented in a
