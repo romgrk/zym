@@ -31,6 +31,16 @@ export interface AgentSession {
   /** Whether `label` is a real title (any of the three) rather than the
    *  first-message fallback — lets the picker de-emphasise untitled sessions. */
   titled: boolean;
+  /** The cwd Claude ran in for this session (read from the transcript) — where
+   *  `--resume` must be spawned and where a resumed agent's workbench should be
+   *  rooted, so its branch/worktree is restored. Null when the transcript records
+   *  none (then the caller falls back to the project cwd). */
+  cwd: string | null;
+  /** A worktree the agent moved into *dynamically* mid-session (announced via the
+   *  set_worktree bridge tool), recorded by quilx as a sidecar — distinct from
+   *  `cwd` (Claude's launch dir, where `--resume` must run). When it differs from
+   *  `cwd`, resume nudges the agent to `cd` back here. Null when it never moved. */
+  effectiveCwd: string | null;
   /** Last-activity time (the transcript's mtime), epoch ms. */
   modified: number;
 }
@@ -76,10 +86,94 @@ export function listAgentSessions(cwd: string): AgentSession[] {
     }
     if (!stat.isFile() || stat.size === 0) continue;
     const id = name.slice(0, -'.jsonl'.length);
-    sessions.push({ id, ...resolveLabel(file, id, project, stat.size), modified: stat.mtimeMs });
+    sessions.push({
+      id,
+      ...resolveLabel(file, id, project, stat.size),
+      cwd: readSessionCwd(file),
+      effectiveCwd: readWorktreeSidecar(dir, id),
+      modified: stat.mtimeMs,
+    });
   }
   sessions.sort((a, b) => b.modified - a.modified);
   return sessions;
+}
+
+/** Resumable sessions across several project roots (e.g. the repo's worktrees),
+ *  most-recently-active first, deduped by id. Each transcript lives under the cwd
+ *  Claude was launched in, so a worktree-launched conversation only appears when
+ *  its worktree is among `roots` — hence the picker passes every worktree. */
+export function listResumableSessions(roots: string[]): AgentSession[] {
+  const byId = new Map<string, AgentSession>();
+  for (const root of roots) {
+    for (const session of listAgentSessions(root)) {
+      const existing = byId.get(session.id);
+      if (!existing || session.modified > existing.modified) byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()].sort((a, b) => b.modified - a.modified);
+}
+
+// Sidecar (next to the transcript) recording a worktree the agent moved into
+// dynamically — Claude's own cwd doesn't change on a Bash-tool `cd`, so the
+// transcript can't tell us; quilx writes it on the set_worktree announce.
+function worktreeSidecar(dir: string, id: string): string {
+  return Path.join(dir, `${id}.quilx-worktree`);
+}
+
+/** Record (or clear) the worktree an agent dynamically moved into, as a sidecar
+ *  next to its transcript under `launchCwd`'s project dir, so a later resume can
+ *  send it back. Pass `effectiveCwd === launchCwd` to clear (it's back home). */
+export function recordSessionWorktree(launchCwd: string, sessionId: string, effectiveCwd: string): void {
+  const file = worktreeSidecar(transcriptDir(launchCwd), sessionId);
+  try {
+    if (effectiveCwd === launchCwd) {
+      Fs.rmSync(file, { force: true });
+      return;
+    }
+    Fs.mkdirSync(transcriptDir(launchCwd), { recursive: true });
+    Fs.writeFileSync(file, effectiveCwd);
+  } catch {
+    /* best effort — resume just won't restore the dynamic worktree */
+  }
+}
+
+/** The worktree sidecar for a session (the dynamically-entered worktree), or null. */
+function readWorktreeSidecar(dir: string, id: string): string | null {
+  try {
+    return Fs.readFileSync(worktreeSidecar(dir, id), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The cwd Claude recorded for a session: the first transcript entry that carries
+ *  a `cwd` (the launch dir). This is where `--resume` resolves the session and
+ *  where the resumed agent's workbench should root. Null if none is found. */
+function readSessionCwd(file: string): string | null {
+  let fd: number;
+  try {
+    fd = Fs.openSync(file, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const buffer = Buffer.alloc(HEAD_BYTES);
+    const read = Fs.readSync(fd, buffer, 0, HEAD_BYTES, 0);
+    const text = buffer.toString('utf8', 0, read);
+    for (const line of text.split('\n')) {
+      if (!line.includes('"cwd"')) continue; // cheap pre-filter before JSON.parse
+      let entry: any;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue; // a final partial line, or noise
+      }
+      if (typeof entry?.cwd === 'string' && entry.cwd) return entry.cwd;
+    }
+  } finally {
+    Fs.closeSync(fd);
+  }
+  return null;
 }
 
 /** Pick the best label for a session (see the priority in the file header), and

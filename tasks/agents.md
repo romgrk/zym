@@ -318,82 +318,25 @@ re-root independently. Pieces and how they connect:
   read-before-swap race).
 - **Launch-time** — `cli.listWorktrees()` + `WorktreePicker` / `agent:new-in-worktree`
   start an agent rooted in an existing worktree (`openAgent({cwd})`).
+- **Resume** — restores a conversation's branch/worktree/cwd (`resumeOptions`).
+  `AgentSession.cwd` is read from the transcript (Claude records its cwd per entry);
+  `agent:picker` / `agent:resume-conversation` list sessions across every worktree
+  (`agentSessionRoots()` → `listResumableSessions`) and resume in that cwd
+  (`openAgent({cwd, resume})`) — both where `claude --resume` resolves the session
+  *and* where the workbench roots. **Launch-time** worktrees restore directly (the
+  transcript cwd *is* the worktree). **Dynamic** moves (the agent `cd`'d into a
+  worktree mid-session via set_worktree; Claude's own cwd never changed, so the
+  transcript still says the launch dir) are handled by a sidecar: on each announce
+  `recordSessionWorktree` writes `effectiveCwd` next to the transcript
+  (`<id>.quilx-worktree`); on resume we still spawn in the launch cwd (so `--resume`
+  resolves) but inject a one-line *"cd back into `<W>`"* prompt — the agent re-enters
+  the worktree and re-announces, and the workbench re-roots (Tier 1: cooperative,
+  self-healing via the announce loop; no touching Claude's transcript storage).
 
 Key files: `git.ts` (pool), `git/cli.ts` (`listWorktrees`), `Workbench.ts`,
 `AppWindow.ts` (build/activate/re-root), `claudeAgent.ts` + `assets/mcp/quilxBridge.mjs`
 + `assets/hooks/agent-status.sh` (bridge/validator), `AgentTerminal.ts`,
 `FileTree.ts`/`GitPanel.ts`/`GitGutter.ts` (`setRoot`/`setGit`), `WorkbenchList.ts`.
-
-### Phase 1 — cwd + git become per-workbench (foundation)
-
-The editor is single-rooted today: `process.cwd()` feeds every `FileTree`,
-`GitPanel`, the one window `GitRepo`, all pickers, and `PROJECT_NAME`. But
-`Workbench` is already first-class and per-person (user + one per agent) and owns
-its `fileTree`/`gitPanel`/`center`. Make root ownership follow it:
-
-- **`Workbench` gains `cwd: string` and `git: GitRepo`** (in `WorkbenchContents` +
-  fields). The workbench is the **first-class holder** — callers read
-  `appWindow.workbench.git` / `.cwd` directly. **No `AppWindow.git` getter shim**;
-  remove the `private readonly git` field and rewrite the ~30 `this.git.*` /
-  `process.cwd()` call sites to go through `this.workbench`.
-- **GitRepo registry keyed by repo root** — replace bare `openGitRepo(root)` with a
-  ref-counted `acquireGitRepo(root)` / `releaseGitRepo(root)` (in `git.ts`) so two
-  workbenches in the **same** root share one polling `CliGitRepo` (N agents : 1
-  worktree ⇒ no duplicate 1.5 s pollers). Dispose when the last holder releases.
-- **`buildWorkbench(owner, cwd)`** takes a cwd (default `process.cwd()` for the
-  user; the agent's effective cwd for agents) and builds `FileTree({rootPath: cwd})`,
-  `GitPanel({cwd})`, and `acquireGitRepo(repoRoot(cwd))` onto the `Workbench`.
-
-### Phase 2 — window chrome & pickers follow the active workbench
-
-- **Rebind reactive chrome on `activateWorkbench`**: `GitBranchButton`,
-  `GithubService`, `GithubButtons` bind their target once in the constructor today —
-  give them `setRepo(git, cwd)` (or rebuild) and re-point + re-subscribe `onChange`
-  on switch. Update title / `PROJECT_NAME` tooltip to the active root.
-- **Pickers read `this.workbench.cwd` / `.git`** instead of `process.cwd()`: File,
-  Search, Symbol, References, branch/stash/merge/rename, GitHub issue/CI/PR.
-- **Editor gutter**: `createEditorTab` passes `this.workbench.git` (the active
-  workbench's). Caveat: an editor stays bound to the git it was created with — a
-  later live re-root won't retro-fix already-open editors (v1 limitation).
-
-### Phase 3 — launch-time worktree selection (explicit half of "both")
-
-- **`GitRepo.listWorktrees()`** (read-only) — parse `git worktree list --porcelain`
-  → `{ path, branch, head }[]`. (No `add`/`remove`; the agent creates worktrees.)
-- **`openAgent({cwd?})`** accepts an explicit cwd; an optional worktree chooser on
-  launch offers the main root or an existing linked worktree. The chosen path
-  becomes the agent's spawn `cwd` and its workbench root.
-
-### Phase 4 — dynamic detection: cooperative MCP bridge + hook validator
-
-When an agent does `git worktree add ../x && cd ../x`, the `cd` changes the
-**persistent Bash-tool subshell**, not Claude's own process cwd — so neither the
-hook payload `cwd` nor `/proc/<pid>/cwd` sees it. The agent must **announce** it.
-
-- **Bundled stdio MCP server** `assets/mcp/quilxBridge.mjs`, one tool now (room for
-  more — `open_file`, `set_status`, …): `set_worktree({ path })` writes the absolute
-  path atomically to `$QUILX_STATUS_FILE.cwd` — same IPC-file pattern as the hooks.
-  Reads `QUILX_STATUS_FILE` from its env.
-- **`ClaudeSession.create`** adds, alongside the existing `--settings`:
-  - `--mcp-config '<json>'` (inline JSON string is accepted) registering the
-    `quilx` server with `env: { QUILX_STATUS_FILE }`.
-  - `permissions.allow: ['mcp__quilx__set_worktree']` in `--settings` so it never
-    prompts.
-  - `--append-system-prompt` (append, not replace): *"You run inside the quilx
-    editor. Whenever you create or switch into a git worktree, immediately call
-    `set_worktree` with its absolute path so the editor re-roots to match."*
-- **Validator hook (cooperative-model safety net)** — a `PostToolUse(Bash)` hook
-  greps the command for `git worktree add` / `cd ` into a new dir; if a worktree
-  change is detected and the agent did **not** call `set_worktree` (no fresh
-  `.cwd` write), write a flag the editor watches and **show a warning
-  notification** ("agent changed worktree without notifying the editor").
-- **Editor side**: `ClaudeSession.watch` adds a `.cwd` monitor + `onCwd(path)` host
-  callback (mirrors the `.mode` watcher). `AgentTerminal` updates its effective cwd,
-  recomputes `worktreeInfo`, fires `onDidChangeWorktree`. `AppWindow` re-roots that
-  agent's workbench: rebuild `FileTree`/`GitPanel` for the new root and swap the
-  workbench's `git` (release old root, acquire new); if active, run the Phase-2
-  chrome rebind. The editor doesn't care whether the `.cwd` signal came from the
-  tool or a hook.
 
 ### Lifecycle (deferred)
 
@@ -480,19 +423,9 @@ container that steals focus from the Vte; see index.md).
 - [ ] Review work: per-agent baselines (PreToolUse snapshot → `.baseline/`); "Agent
       Changes" diff panel (baseline → current); live (FileMonitor) + post-exit
 - [ ] Overlap warning when two live agents edit the same file (compare `changedFiles`)
-- [x] **Worktree P1** — cwd + git per-workbench: `Workbench.{cwd,git}`; ref-counted
-      `acquireGitRepo`/`releaseGitRepo` (root-keyed) in `git.ts`; `buildWorkbench(owner, cwd)`;
-      dropped `AppWindow.git` (no getter shim — call sites read `this.workbench.git`/`.cwd`);
-      `closeAgent`/teardown release the pooled repo
-- [x] **Worktree P2** — chrome + pickers follow active workbench: `GitBranchButton.setRepo`,
-      `GithubService.rebind`, `GithubButtons.setRepo`, upstream re-subscribe — all via
-      `rebindGitChrome()` on `activateWorkbench`; git/github pickers read `this.workbench.cwd`/`.git`
-- [x] **Worktree P3** — `cli.listWorktrees()` (`git worktree list --porcelain -z`, main first);
-      `WorktreePicker` + `agent:new-in-worktree` command launching `openAgent({cwd})` in the chosen worktree
-- [x] **Worktree P4** — `assets/mcp/quilxBridge.mjs` MCP `set_worktree` + `--mcp-config`/`--append-system-prompt`/
-      `permissions.allow`; `.cwd` watcher → `AgentTerminal.onDidChangeWorktree` → `reRootWorkbench` (in-place
-      `FileTree.setRoot`/`GitPanel.setRoot` + pooled-git swap + chrome rebind); PostToolUse(Bash) validator
-      (`.wtcreate`) → warning toast on settle when a worktree change went unannounced
+- [x] **Git worktree integration** — per-workbench cwd+git, launch-time + dynamic
+      (MCP bridge) worktrees, re-root, resume restore. See *Feature: git worktree
+      integration → Architecture (as built)* above.
 - [ ] **Worktree lifecycle** (deferred) — keep/merge/discard when last agent leaves;
       per-worktree vs per-agent (baseline) review granularity
 

@@ -29,7 +29,7 @@ import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { buildDefinitionPeek, wrapPeekBody, LIVE_PEEK_HEIGHT } from './TextEditor/buildDefinitionPeek.ts';
 import { Terminal } from './Terminal.ts';
 import { AgentTerminal, type AgentStatus, type AgentResume } from './AgentTerminal.ts';
-import { listAgentSessions, relativeTime } from '../agentSessions.ts';
+import { listResumableSessions, recordSessionWorktree, relativeTime, type AgentSession } from '../agentSessions.ts';
 import { WorkbenchList, PROJECT_NAME } from './WorkbenchList.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
 import { GitPanel } from './GitPanel.ts';
@@ -38,7 +38,7 @@ import { Icons, iconLabel } from './icons.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
 import { GithubButtons } from './GithubButtons.ts';
 import { acquireGitRepo, releaseGitRepo, type GitRepo } from '../git.ts';
-import { git, repoRoot, commitMsgPath } from '../git.ts';
+import { git, repoRoot, commitMsgPath, listWorktrees } from '../git.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { computeDiff } from '../util/DiffModel.ts';
 import { DiffViewer } from './TextEditor/DiffViewer.ts';
@@ -678,7 +678,12 @@ export class AppWindow {
     });
     // The agent announced (via the set_worktree bridge tool) that it moved into a
     // different worktree — re-root its workbench to match.
-    agent.onDidChangeWorktree(() => this.reRootWorkbench(workbench, agent.effectiveCwd));
+    agent.onDidChangeWorktree(() => {
+      this.reRootWorkbench(workbench, agent.effectiveCwd);
+      // Persist the dynamically-entered worktree (keyed under the launch cwd's
+      // transcript dir) so a later resume can send the agent back to it.
+      if (agent.sessionId) recordSessionWorktree(cwd, agent.sessionId, agent.effectiveCwd);
+    });
     // When the agent edits files, re-check git now instead of waiting for the poll,
     // so its changes surface in Source Control / the branch indicator promptly, and
     // (when enabled) auto-open each newly-edited file in the agent's own workbench.
@@ -763,11 +768,38 @@ export class AppWindow {
     });
   }
 
+  // The project roots to look for resumable conversations in: the window cwd plus
+  // every git worktree of its repo, so a conversation launched in a worktree (its
+  // transcript lives under that worktree's project dir) is found too. Deduped.
+  private agentSessionRoots(): string[] {
+    const roots = new Set<string>([process.cwd()]);
+    for (const wt of listWorktrees(process.cwd())) roots.add(wt.path);
+    return [...roots];
+  }
+
+  // `openAgent` options to resume `session`, restoring its branch/worktree/cwd:
+  // spawn in the cwd Claude recorded (where `--resume` resolves the session and the
+  // workbench roots). If the agent had moved into a worktree *dynamically* (a sidecar
+  // `effectiveCwd` differing from the transcript cwd), nudge it to `cd` back — it
+  // re-announces via set_worktree and the workbench re-roots there.
+  private resumeOptions(session: AgentSession): { cwd?: string; resume: AgentResume; prompt?: string; title: string } {
+    const moved =
+      session.effectiveCwd && session.effectiveCwd !== session.cwd ? session.effectiveCwd : null;
+    return {
+      cwd: session.cwd ?? undefined,
+      resume: { sessionId: session.id },
+      prompt: moved
+        ? `Resume in the git worktree at ${moved} — run \`cd ${moved}\` before continuing your task there.`
+        : undefined,
+      title: truncate(session.label, 40),
+    };
+  }
+
   // Resume a past conversation: pick one of the project's saved sessions (newest
   // first, excluding any currently live) and reopen it as `claude --resume <id>`.
   private resumeAgentPicker(): void {
     const live = new Set(quilx.agents.getAgents().map((a) => a.sessionId).filter(Boolean));
-    const sessions = listAgentSessions(process.cwd()).filter((s) => !live.has(s.id));
+    const sessions = listResumableSessions(this.agentSessionRoots()).filter((s) => !live.has(s.id));
     if (sessions.length === 0) {
       quilx.notifications.addInfo('No past conversations to resume');
       return;
@@ -784,14 +816,17 @@ export class AppWindow {
       items: sessions.map((s) => ({ value: s.id, text: s.label })),
       formatMain: (item, positions) => {
         const session = byId.get(item.value);
+        const ranElsewhere = session?.cwd && session.cwd !== process.cwd();
+        const where = ranElsewhere ? `${escapeMarkup(Path.basename(session!.cwd!))} · ` : '';
         return {
           main: proseMarkup(item.text, positions, !session?.titled),
-          detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
+          detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${where}${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
         };
       },
       onSelect: (id) => {
         const session = byId.get(id);
-        this.openAgent({ resume: { sessionId: id }, title: session ? truncate(session.label, 40) : undefined });
+        if (session) this.openAgent(this.resumeOptions(session));
+        else this.openAgent({ resume: { sessionId: id } });
       },
       // When the query matches no past conversation, offer to start a fresh agent
       // with the typed text as its prompt instead.
@@ -1962,7 +1997,9 @@ export class AppWindow {
         openWorktreePicker(this.overlay, this.workbench.cwd, (cwd) => this.openAgent({ cwd })),
       'agent:picker': () => openAgentPicker(this.overlay, {
         onActivate: (agent) => this.showAgent(agent),
-        onResume: (session) => this.openAgent({ resume: { sessionId: session.id }, title: truncate(session.label, 40) }),
+        sessionRoots: this.agentSessionRoots(),
+        // Resume restoring the conversation's branch/worktree/cwd (see resumeOptions).
+        onResume: (session) => this.openAgent(this.resumeOptions(session)),
         onStart: (prompt) => this.openAgent({ prompt }),
       }),
       // Resume a stopped agent in place (current agent, if exited). Resuming a

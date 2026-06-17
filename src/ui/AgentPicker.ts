@@ -16,8 +16,9 @@
 import { Gtk } from '../gi.ts';
 import { openPicker, type PickerItem } from './Picker.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
+import * as Path from 'node:path';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
-import { listAgentSessions, relativeTime, type AgentSession } from '../agentSessions.ts';
+import { listResumableSessions, relativeTime, type AgentSession } from '../agentSessions.ts';
 import { quilx } from '../quilx.ts';
 import type { AgentTerminal } from './AgentTerminal.ts';
 
@@ -31,6 +32,9 @@ export interface AgentPickerOptions {
   /** Resume a past conversation as a fresh agent. When supplied, the project's
    *  resumable conversations are listed alongside the open agents. */
   onResume?: (session: AgentSession) => void;
+  /** Project roots to list resumable conversations from — the repo's worktrees, so
+   *  a worktree-launched conversation appears too. Defaults to `[process.cwd()]`. */
+  sessionRoots?: string[];
   /** Entry placeholder (e.g. "Send to agent…"). Defaults to "Open agent or conversation…". */
   placeholder?: string;
 }
@@ -55,7 +59,7 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
 
   // Then the resumable past conversations (newest first), if the caller handles them.
   if (options.onResume) {
-    for (const session of listAgentSessions(process.cwd())) {
+    for (const session of listResumableSessions(options.sessionRoots ?? [process.cwd()])) {
       if (liveSessions.has(session.id)) continue;
       const value = `session:${session.id}`;
       byValue.set(value, { kind: 'session', session });
@@ -82,11 +86,14 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
         };
       }
       // A past conversation: prose label (untitled ones dimmed) + a muted, right-
-      // aligned "time ago".
+      // aligned "time ago", prefixed with the worktree name when the conversation
+      // ran outside the main project cwd (so it resumes there — branch/worktree).
       const session = entry?.session;
+      const ranElsewhere = session?.cwd && session.cwd !== process.cwd();
+      const where = ranElsewhere ? `${escapeMarkup(Path.basename(session!.cwd!))} · ` : '';
       return {
         main: proseMarkup(item.text, positions, !session?.titled),
-        detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
+        detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${where}${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
       };
     },
     onSelect: (value) => {
