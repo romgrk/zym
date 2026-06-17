@@ -25,8 +25,17 @@ Confirmed by running the POC interactively:
 - ✅ **Clean add/remove** once the view is realized. Two gotchas: build the
   overlay only *after* the view is **mapped** (pre-realize `get_iter_location`
   returns ~0 → the child lands at the top and can't be parented/removed), and
-  **force-`unparent()`** as a fallback if `gtk_text_view_remove` leaves it
-  parented (else a stuck duplicate on re-add).
+  **never remove the overlay child from the view**. In this node-gtk/GTK 4.22
+  build `gtk_text_view_remove` is a **no-op** — it warns `"<widget> is not a child
+  of GtkTextView"` and leaves the child parented to the private `GtkTextViewChild`
+  (the overlay's real parent). Forcing `unparent()` then detaches the widget while
+  the `GtkTextViewChild`'s internal overlay list still references it → a
+  `gtk_widget_snapshot_child: assertion '_gtk_widget_get_parent (child) == widget'
+  failed` CRITICAL on the next paint. **Fix (`InlineBlockController`):** the overlay
+  child is a controller-owned **slot `Gtk.Box`** wrapping the consumer's widget;
+  removal detaches the consumer widget (`Gtk.Box.remove`, which works) and **hides +
+  pools the slot** for the view's lifetime, and `add()` reuses a pooled slot. Repro +
+  regression check: `src/poc/overlay-churn.ts` (must print nothing on stderr).
 - ❌ **A focusable nested GtkSourceView leaks text input.** Key *events*
   (backspace/enter/arrows) reach the focused nested view, but **letter input
   (IM-commit) goes to the OUTER view** — because the overlay child is a

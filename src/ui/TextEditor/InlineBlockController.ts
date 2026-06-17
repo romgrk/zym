@@ -12,6 +12,15 @@
  *   3. A `GtkTextMark` tracks the anchor line across edits; `get_iter_location`
  *      gives its pixel rect (buffer coords) to position the overlay.
  *
+ * Removal note: the overlay child is a controller-owned "slot" `Gtk.Box` that wraps
+ * the consumer's widget. We never remove the slot from the view, because in this
+ * node-gtk build `gtk_text_view_remove` is a no-op (it warns "not a child" and leaves
+ * the child parented to the private `GtkTextViewChild`), and forcing `unparent()`
+ * instead corrupts that child's internal overlay list → a `gtk_widget_snapshot_child`
+ * assertion on the next paint. So removal detaches the consumer widget from the slot
+ * (`Gtk.Box.remove`, which works) and hides+pools the slot for the view's lifetime;
+ * `add()` reuses a pooled slot rather than creating a new overlay child.
+ *
  * Scope: this is the **non-interactive / click-only** path (`add_overlay` children
  * are descendants of the text view, so a focusable nested *editor* leaks IM input
  * — see inline-widgets.md). Clickable widgets (the fold placeholder, code-lens
@@ -43,10 +52,11 @@ export interface InlineBlockHandle {
 interface Block {
   mark: any; // GtkTextMark at the anchor line start
   tag: any; // per-block gap tag
-  widget: any;
+  slot: any; // controller-owned Gtk.Box that IS the overlay child (holds `widget`)
+  widget: any; // the consumer's widget, parented inside `slot`
   placement: InlineBlockPlacement;
   height: number;
-  placed: boolean; // overlay added to the view yet (deferred until mapped)
+  placed: boolean; // overlay (the slot) added to the view yet (deferred until mapped)
   lastY: number; // last buffer-Y the overlay was moved to (skip no-op moves)
 }
 
@@ -61,6 +71,9 @@ export class InlineBlockController {
   private readonly view: SourceView;
   private readonly buffer: any;
   private readonly blocks = new Set<Block>();
+  // Slots (overlay-child Boxes) detached from a removed block, hidden and parented,
+  // kept for reuse — see the removal note in the file header.
+  private readonly freeSlots: any[] = [];
   private nextTagId = 0;
   private flushPending = false;
   private repositionTickId = 0;
@@ -95,13 +108,20 @@ export class InlineBlockController {
   add(options: InlineBlockOptions): InlineBlockHandle {
     const placement = options.placement ?? 'below';
     const lineIter = unwrap(this.buffer.getIterAtLine(options.line));
+    // Reuse a pooled slot (already an overlay child of the view) if available, else
+    // make a fresh Box that `place()` will add as a new overlay child.
+    const reused = this.freeSlots.pop();
+    const slot = reused ?? new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    slot.append(options.widget);
+    slot.setVisible(true);
     const block: Block = {
       mark: this.buffer.createMark(null, lineIter, true /* left gravity: stay at line start */),
       tag: new Gtk.TextTag({ name: `inline-block:${this.nextTagId++}` } as any),
+      slot,
       widget: options.widget,
       placement,
       height: 0,
-      placed: false,
+      placed: false, // set once place() runs; place() skips re-adding an already-parented slot
       lastY: NaN,
     };
     (this.buffer.getTagTable() as any).add(block.tag);
@@ -190,13 +210,14 @@ export class InlineBlockController {
       return;
     }
 
-    // Add the overlay first so the widget is parented and can measure correctly.
-    if (!block.placed) {
-      (this.view as any).addOverlay(block.widget, 0, this.lineRect(line).y);
-      block.placed = true;
+    // Add the slot as an overlay first so it's parented and can measure correctly.
+    // A reused (pooled) slot is already an overlay child — keep it, just (re)position.
+    if (!block.slot.getParent?.()) {
+      (this.view as any).addOverlay(block.slot, 0, this.lineRect(line).y);
     }
+    block.placed = true;
 
-    block.height = Math.max(1, (block.widget.measure(Gtk.Orientation.VERTICAL, -1) as any)[1]);
+    block.height = Math.max(1, (block.slot.measure(Gtk.Orientation.VERTICAL, -1) as any)[1]);
 
     // Reserve the band on the anchor line (re-applied each place in case it moved).
     const prop = block.placement === 'below' ? 'pixelsBelowLines' : 'pixelsAboveLines';
@@ -222,7 +243,7 @@ export class InlineBlockController {
     const y = block.placement === 'below' ? rect.y + rect.height : rect.y - block.height;
     if (y === block.lastY) return; // no-op move (avoids churn during the settle window)
     block.lastY = y;
-    (this.view as any).moveOverlay(block.widget, 0, y);
+    (this.view as any).moveOverlay(block.slot, 0, y);
   }
 
   private removeBlock(block: Block): void {
@@ -230,11 +251,15 @@ export class InlineBlockController {
     this.buffer.removeTag(block.tag, this.buffer.getStartIter(), this.buffer.getEndIter());
     (this.buffer.getTagTable() as any).remove(block.tag);
     this.buffer.deleteMark(block.mark);
-    if (block.placed) {
-      // gtk_text_view_remove should unparent the overlay child; force it if it didn't
-      // (some node-gtk paths leave it parented → a stuck duplicate on re-add).
-      try { (this.view as any).remove(block.widget); } catch { /* not a child */ }
-      if (block.widget.getParent?.()) block.widget.unparent();
-    }
+
+    // Detach the consumer's widget from the slot (Gtk.Box.remove works), so it can be
+    // freed. Do NOT remove/unparent the slot itself from the view: gtk_text_view_remove
+    // is a no-op here and unparenting corrupts the GtkTextViewChild overlay list (see the
+    // file header). Hide it and pool it for reuse instead.
+    if (block.widget.getParent?.() === block.slot) block.slot.remove(block.widget);
+    block.slot.setVisible(false);
+    // Re-pool any slot that's an overlay child of the view (parented), regardless of
+    // whether it finished placing; a never-parented fresh slot is just dropped (GC).
+    if (block.slot.getParent?.()) this.freeSlots.push(block.slot);
   }
 }
