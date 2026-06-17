@@ -566,9 +566,9 @@ export class AppWindow {
     owner: Workbench<'user' | AgentTerminal> = this.workbench,
   ): RestoredChild {
     let child: PanelChild | null = null;
-    // A ref-counted shared Document from the registry: the first view loads it; a
-    // second view (split / restore) attaches to the already-loaded shared model.
-    const { document, isNew } = this.documents.acquire(path);
+    // A ref-counted shared Document from the registry: the first view to be *shown* loads
+    // it; a second view (split / restore) attaches to the already-loaded shared model.
+    const { document } = this.documents.acquire(path);
     const editor = new TextEditor({
       onToast: (message) => this.toast(message),
       onClose: () => child?.close(),
@@ -579,12 +579,16 @@ export class AppWindow {
     this.editors.set(editor.root, editor);
     this.editorOwners.set(editor.root, owner);
     this.participants.set(editor.root, quilx.session.registerParticipant(editor));
-    if (isNew) editor.loadFile(path);
-    else editor.attachToLoadedDocument();
-    if (cursor) editor.restoreCursor(cursor);
-    // Announce to the workspace so editor-observing plugins (color preview, …) can
-    // attach; registered after load so their first pass sees the file's content.
-    this.editorRegistrations.set(editor.root, quilx.workspace.addTextEditor(editor));
+    // Lazy open: assign the file now (title/dedup/serialize go live) but defer the read,
+    // parse, highlight, and LSP until this tab is first shown — a background or
+    // session-restored tab does no work until it's selected. The editor's activate()
+    // decides load-vs-attach off the shared document's loaded state.
+    editor.prepareFile(path, {
+      cursor,
+      // Announce to the workspace so editor-observing plugins (color preview, …) can
+      // attach; registered after load so their first pass sees the file's content.
+      onActivate: () => this.editorRegistrations.set(editor.root, quilx.workspace.addTextEditor(editor)),
+    });
     return {
       widget: editor.root,
       title: this.editorTabTitle(editor),

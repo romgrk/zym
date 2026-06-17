@@ -375,6 +375,15 @@ export class TextEditor implements DocumentHost {
   // Caret captured before a silent reload (so the post-load host hook restores it).
   private pendingReloadCaret: [number, number] | null = null;
 
+  // Lazy open (file mode): the file is assigned up front but its content/parse/highlight/
+  // LSP are deferred until this view is first shown (mapped). `activated` guards the
+  // one-shot, `pendingCursor` is the cursor to restore once loaded, `onActivate` lets the
+  // owner (AppWindow) do its post-load wiring, and `mapHandler` is detached after firing.
+  private activated = false;
+  private pendingCursor: [number, number] | null = null;
+  private onActivate: (() => void) | null = null;
+  private mapHandler: (() => void) | null = null;
+
   constructor(options: TextEditorOptions = {}) {
     this.onToast = options.onToast ?? (() => {});
     this.bufferMode = options.buffer ?? null;
@@ -631,6 +640,10 @@ export class TextEditor implements DocumentHost {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.mapHandler) {
+      (this.view as any).off('map', this.mapHandler);
+      this.mapHandler = null;
+    }
     this.dismissHover();
     this.dismissSignature();
     this.syntax.dispose(); // detach buffer/view signal handlers + free the tree-sitter tree
@@ -1452,6 +1465,49 @@ export class TextEditor implements DocumentHost {
     if (this.bufferMode) return; // buffer-only editors have no file
     this.document.loadFile(path, opts);
   }
+
+  /**
+   * Lazy open: assign `path` now (so the tab title, `currentFile` dedup, and `serialize`
+   * are immediately live) but defer the file read, tree-sitter parse/highlight, and LSP
+   * until this view is first shown. Adw.TabView leaves background pages unmapped, so the
+   * one-shot `map` handler fires when the tab is first selected — the foreground tab maps
+   * right away, a background/session-restored one only when visited.
+   *
+   * `opts.cursor` is restored after load; `opts.onActivate` runs once, post-load, for the
+   * owner's wiring (e.g. registering the editor with the workspace once it has content).
+   */
+  prepareFile(path: string, opts: { cursor?: [number, number]; onActivate?: () => void } = {}): void {
+    if (this.bufferMode) return;
+    this.document.assignPath(path);
+    this.pendingCursor = opts.cursor ?? null;
+    this.onActivate = opts.onActivate ?? null;
+    const onMap = () => this.activate();
+    this.mapHandler = onMap;
+    (this.view as any).on('map', onMap);
+  }
+
+  /** First-show hook (one-shot): load the file's content if no sibling view has yet, else
+   *  attach to the already-loaded shared document; then restore the cursor and run the
+   *  owner's post-load wiring. Detaches the map handler so re-showing the tab is free. */
+  private activate(): void {
+    if (this.activated || this.disposed) return;
+    this.activated = true;
+    if (this.mapHandler) {
+      (this.view as any).off('map', this.mapHandler);
+      this.mapHandler = null;
+    }
+    // A shared document already loaded by another view → just wire this view onto it;
+    // otherwise we are the first view, so read + parse + open the LSP now (didLoad does
+    // the per-view setup). ensureLoaded is idempotent either way.
+    if (this.document.isLoaded) this.attachToLoadedDocument();
+    else this.document.ensureLoaded();
+    if (this.pendingCursor) {
+      this.restoreCursor(this.pendingCursor);
+      this.pendingCursor = null;
+    }
+    this.onActivate?.();
+    this.onActivate = null;
+  }
   save() {
     this.document.save();
   }
@@ -1583,12 +1639,27 @@ export class TextEditor implements DocumentHost {
   /** Session state for this tab, or `null` for an unsaved/empty editor. */
   serialize(): TabState | null {
     if (!this._currentFile) return null;
-    const cursor = this.editorModel.getCursorBufferPosition();
-    return { kind: 'file', path: this._currentFile, cursor: [cursor.row, cursor.column] };
+    // A lazily-opened tab that was never shown has an empty model, so fall back to its
+    // pending (saved) cursor rather than reporting 0,0.
+    let cursor: [number, number];
+    if (this.document.isLoaded) {
+      const c = this.editorModel.getCursorBufferPosition();
+      cursor = [c.row, c.column];
+    } else {
+      cursor = this.pendingCursor ?? [0, 0];
+    }
+    return { kind: 'file', path: this._currentFile, cursor };
   }
 
-  /** Restore a saved cursor position (clamped to the buffer) and reveal it. */
+  /** Restore a saved cursor position (clamped to the buffer) and reveal it. For a lazily-
+   *  opened tab not yet shown the model is still empty, so the cursor is stashed and
+   *  `activate()` applies it once the content loads (otherwise it'd land in an empty buffer
+   *  and be reset to 0,0 by the load). */
   restoreCursor(cursor: [number, number]) {
+    if (!this.bufferMode && !this.document.isLoaded) {
+      this.pendingCursor = cursor;
+      return;
+    }
     this.editorModel.setCursorBufferPosition({ row: cursor[0], column: cursor[1] });
     this.view.scrollToMark(this.buffer.getInsert(), 0, true, 0.5, 0.5);
   }

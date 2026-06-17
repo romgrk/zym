@@ -109,6 +109,10 @@ export class Document {
   private readonly titleHandlers: Array<() => void> = [];
 
   private _currentFile: string | null = null;
+  // Whether the file's content has actually been read into the model. A lazily-opened
+  // document has its path assigned (so title/currentFile/dedup are live) but its content,
+  // LSP, and disk watch deferred until the first view is shown — see `assignPath`/`ensureLoaded`.
+  private contentLoaded = false;
   private diskMtimeMs: number | null = null;
   private diskState: 'synced' | 'changed' | 'deleted' = 'synced';
   private fileMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
@@ -548,19 +552,46 @@ export class Document {
     this.fileMonitor = null;
     if (this.deletionCheckTimer) GLib.sourceRemove(this.deletionCheckTimer);
     this.deletionCheckTimer = 0;
-    if (this._currentFile) quilx.lsp.didClose(this.lspDocument);
+    // Only close an LSP doc we actually opened — a lazily-assigned, never-shown document
+    // has a path but never ran didOpen.
+    if (this.contentLoaded) quilx.lsp.didClose(this.lspDocument);
   }
 
   // --- File operations -------------------------------------------------------
 
+  /** Whether the file's content has been read into the model yet (false for a document
+   *  that has only had its path assigned via `assignPath`). */
+  get isLoaded(): boolean {
+    return this.contentLoaded;
+  }
+
+  /** Lazy open: take on `path`'s identity (title / `currentFile` / dedup key go live now)
+   *  WITHOUT reading the file, opening the LSP, or watching disk. The content load is
+   *  deferred to `ensureLoaded()`, called when the first view onto this document is shown.
+   *  No-op once the content is already loaded (a real load supersedes a pending one). */
+  assignPath(path: string): void {
+    if (this.contentLoaded) return;
+    this._currentFile = path;
+    this.emitTitleChange();
+  }
+
+  /** Read the assigned file into the model the first time a view is shown — the deferred
+   *  half of `assignPath`. Idempotent; a no-op once loaded or with no assigned path. */
+  ensureLoaded(): void {
+    if (this.contentLoaded || !this._currentFile) return;
+    this.loadFile(this._currentFile);
+  }
+
   loadFile(path: string, opts: { silent?: boolean } = {}): void {
     try {
-      // Close the old LSP doc before replacing content (a reload re-opens with the
-      // new text; a first load no-ops since there's no path yet).
-      if (this._currentFile) quilx.lsp.didClose(this.lspDocument);
+      // Close the old LSP doc before replacing content (a reload re-opens with the new
+      // text). A first load — even when the path is already assigned (lazy open) — has
+      // nothing open yet, so this is gated on the content having actually been loaded.
+      if (this.contentLoaded) quilx.lsp.didClose(this.lspDocument);
       this.host?.willReplaceContent(!!opts.silent);
       const content = Fs.readFileSync(path, 'utf8');
       this.setText(content); // re-syncs every view + clears modified
+      this.contentLoaded = true;
       this._currentFile = path;
       this.diskMtimeMs = this.statMtimeMs(path);
       this.setDiskState('synced');

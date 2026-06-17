@@ -52,6 +52,11 @@ const VIEWPORT_MARGIN_LINES = 80;
 // cost on huge buffers (a far-away or unmatched bracket simply isn't highlighted).
 const BRACKET_SCAN_WINDOW = 5_000;
 
+// GtkSourceGutter's fixed internal padding around the line-number + fold renderers, in px
+// (their xpad barely affects the allocated width). Used to reserve the gutter's space up
+// front so the deferred gutter install doesn't shift the text. Measured empirically.
+const GUTTER_PADDING_PX = 5;
+
 // How deep language injections nest before we stop (Markdown → inline / fenced
 // code is depth 1; a fenced block whose grammar itself injects would be depth 2).
 // A small bound guards against a pathological self-injecting grammar.
@@ -219,6 +224,11 @@ export class SyntaxController {
   // the line count crosses a digit boundary (see primeLineNumbers).
   private lineNumberRenderer: any = null;
   private lineNumberPrimedDigits = 0;
+  // The gutter is installed lazily after the first paint (see the constructor note);
+  // these track the deferred state.
+  private wantLineNumbers = false;
+  private gutterInstalled = false;
+  private gutterReserved = false;
 
   // Whether the current buffer contains any astral (surrogate-pair) char, so the
   // highlight path only converts tree-sitter's UTF-16 columns to codepoints when
@@ -303,28 +313,14 @@ export class SyntaxController {
       weight: Pango.Weight.BOLD,
     });
 
-    // Gutter renderers (safe to instantiate: SyntaxController is built inside the
-    // application's activate handler, so vfunc subclasses don't crash). Order:
-    // line numbers (leftmost), then the fold chevron next to the text.
-    const gutter = (view as any).getGutter(Gtk.TextWindowType.LEFT);
-    // Custom, fold-aware line numbers. GtkSourceView's built-in line-number gutter
-    // renders a number for every invisible (folded) line at the collapsed y — a
-    // mashup, and slow. Ours draws nothing for hidden lines.
-    if (options.lineNumbers) {
-      const lineNumbers = new LineNumberRenderer();
-      (lineNumbers as any).controller = this;
-      lineNumbers.setXpad(3);
-      gutter.insert(lineNumbers, 0);
-      this.lineNumberRenderer = lineNumbers;
-      this.primeLineNumbers();
-    }
-    if (this.foldingEnabled) {
-      const renderer = new FoldRenderer();
-      (renderer as any).controller = this;
-      renderer.setXpad(4);
-      gutter.insert(renderer, options.lineNumbers ? 1 : 0);
-      this.foldHost = options.folds ?? null;
-    }
+    // Gutter renderers are NOT inserted here: a gutter forces GtkTextView to validate
+    // every line on first allocate (so it can position the gutter cells), and during
+    // that pass each renderer's queryData is called once per buffer line — for a large
+    // file that's thousands of node-gtk vfunc crossings before the first frame (a 1-3s
+    // freeze on open). Instead we install the gutter after the first paint, once the
+    // view's line metrics are validated, so it only ever queries the visible lines.
+    this.wantLineNumbers = !!options.lineNumbers;
+    if (this.foldingEnabled) this.foldHost = options.folds ?? null;
 
     // Feed edits into the current tree for incremental reparsing. insert-text /
     // delete-range run before the buffer is modified (the default handlers are
@@ -475,12 +471,18 @@ export class SyntaxController {
     // New document content: drop any prior tree so the next parse is full, not
     // an incremental reparse against the previous file.
     this.resetTree();
+    // Reserve the gutter width now (content is loaded, line count known) so the deferred
+    // gutter install doesn't shift the text. Both the grammar and no-grammar paths need it.
+    this.reserveGutterSpace();
 
     if (!grammar) {
       this.grammar = null;
       this.parser = null;
       this.clearHighlight();
       this.foldsByHeaderLine.clear();
+      // No parse/paint to ride on, but the gutter (line numbers) must still appear — defer
+      // it the same way so it only queries the visible lines.
+      this.scheduleGutterInstall();
       (this.view as any).queueDraw();
       return false;
     }
@@ -490,6 +492,7 @@ export class SyntaxController {
     (this.buffer as any).setHighlightSyntax(false); // we own highlighting now
     this.restyle();
     this.refresh();
+    this.scheduleGutterInstall();
     return true;
   }
 
@@ -547,6 +550,9 @@ export class SyntaxController {
     if (this.tree && this.tree !== tree) this.tree.delete();
     this.tree = tree;
 
+    // Paint synchronously so the text is highlighted on its first frame (no color
+    // flicker). When the view isn't laid out yet (initial load, height 0), visibleRange
+    // returns null and this covers the whole buffer; once laid out it's viewport-bounded.
     this.repaint();
 
     // Recompute fold regions; derive folded state from the live invisible tag so
@@ -573,6 +579,78 @@ export class SyntaxController {
     this.clearPainted();
     this.paintCaptures(captures);
     this.paintedExtent = extentOf(captures);
+  }
+
+  /** Install the gutter once the view is sized (its line metrics validated). Deferred off
+   *  the first paint so the gutter only queries the visible lines, not every line in the
+   *  buffer (each query is a node-gtk vfunc — thousands of them is the open-file freeze).
+   *  Headless / already-sized: install now. */
+  private scheduleGutterInstall(): void {
+    if (this.gutterInstalled) return;
+    const view = this.view as any;
+    if (!view.getRealized() || view.getHeight() > 0) { this.installGutter(); return; }
+    let frames = 0;
+    const tick = (): boolean => {
+      if (this.disposed || this.gutterInstalled) return false;
+      if (view.getHeight() > 0) { this.installGutter(); return false; }
+      return ++frames < 120;
+    };
+    view.addTickCallback(tick);
+  }
+
+  /**
+   * Set a left margin equal to the eventual gutter width, so the deferred gutter install
+   * replaces the blank margin in place (the line numbers fade in without the text jumping
+   * right). Measured from the view's monospace font: line-number digits + the fold chevron,
+   * plus each renderer's xpad. Runs once, before the first paint; `installGutter` clears it.
+   */
+  private reserveGutterSpace(): void {
+    if (this.gutterReserved || this.gutterInstalled || !this.wantLineNumbers) return;
+    this.gutterReserved = true;
+    const view = this.view as any;
+    const measure = (s: string): number => {
+      const layout = view.createPangoLayout(s);
+      const size = layout.getPixelSize();
+      return Array.isArray(size) ? size[0] : (size?.width ?? 0);
+    };
+    // Gutter width = the line-number text width + the fold chevron width + a small fixed
+    // GtkSourceGutter padding (measured empirically: xpad barely affects the allocated
+    // width). Reserving exactly this keeps the text column fixed when the gutter installs.
+    const m4 = measure('0'.repeat(this.lineNumberWidth()));
+    const mF = this.foldingEnabled ? measure('▾') : 0;
+    this.reservedPx = m4 + mF + GUTTER_PADDING_PX;
+    view.setLeftMargin(this.reservedPx);
+  }
+  private reservedPx = 0;
+
+  /**
+   * Insert the line-number + fold gutter renderers. Deferred until after the first paint
+   * (when the view's line metrics are validated) so the gutter only queries the visible
+   * lines, not every line in the buffer — see the constructor note. Idempotent.
+   */
+  private installGutter(): void {
+    if (this.gutterInstalled || this.disposed) return;
+    this.gutterInstalled = true;
+    // Drop the reserved left margin: the gutter now occupies that space, so swapping them
+    // in the same layout pass keeps the text column fixed (no shift).
+    if (this.gutterReserved) (this.view as any).setLeftMargin(0);
+    const gutter = (this.view as any).getGutter(Gtk.TextWindowType.LEFT);
+    // Custom, fold-aware line numbers (GtkSourceView's built-in gutter renders a number
+    // for every folded line at the collapsed y — a mashup). Leftmost, then the chevron.
+    if (this.wantLineNumbers) {
+      const lineNumbers = new LineNumberRenderer();
+      (lineNumbers as any).controller = this;
+      lineNumbers.setXpad(3);
+      gutter.insert(lineNumbers, 0);
+      this.lineNumberRenderer = lineNumbers;
+      this.primeLineNumbers();
+    }
+    if (this.foldingEnabled) {
+      const renderer = new FoldRenderer();
+      (renderer as any).controller = this;
+      renderer.setXpad(4);
+      gutter.insert(renderer, this.wantLineNumbers ? 1 : 0);
+    }
   }
 
   /** Schedule a viewport-only repaint after scrolling settles (no reparse). */
@@ -1184,14 +1262,13 @@ class LineNumberRenderer extends GtkSource.GutterRendererText {
     const controller = (this as any).controller as SyntaxController | undefined;
     const width = controller ? controller.lineNumberWidth() : 1;
     // Always emit fixed-width content so the gutter column keeps a stable width
-    // (empty text collapses it to zero → no numbers show). Hidden (folded) lines
-    // render as blanks of the same width, so they don't pile up.
+    // (empty text collapses it to zero → no numbers show).
     if (!controller) {
       this.setText(' '.repeat(width), -1);
-      return;
+    } else {
+      const num = String(controller.modelLineFor(line) + 1).padStart(width, ' ');
+      this.setMarkup(`<span foreground="${LINE_NUMBER_COLOR}">${num}</span>`, -1);
     }
-    const num = String(controller.modelLineFor(line) + 1).padStart(width, ' ');
-    this.setMarkup(`<span foreground="${LINE_NUMBER_COLOR}">${num}</span>`, -1);
   }
 }
 registerClass(LineNumberRenderer);
