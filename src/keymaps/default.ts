@@ -73,6 +73,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space g h p': 'github:pull-request-checkout', // pick a PR and switch to it
   'space g h c': 'github:pull-request-checkout',
   'space g h n': 'github:pull-request-create', // "n"ew pull request
+  'space g h o': 'github:pull-request-open', // "o"pen the PR for this branch in the browser
   'space g h f': 'github:failed-ci-picker',
   'space l d': 'lsp:go-to-definition', // "l"sp "d"efinition
   'space l p': 'lsp:peek-definition', // "p"eek definition inline (below the cursor)
@@ -190,12 +191,22 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     q: 'notifications:toggle-log',
   },
 
+  // Modal terminal (Terminal & AgentTerminal), both modes: the usual terminal
+  // clipboard chords. `ctrl-c` / `ctrl-v` are taken by the shell (SIGINT / the
+  // child), so copy/paste use the shifted variants, bound here so they're caught
+  // before insert mode hands the key to the child.
+  '.quilx-terminal': {
+    'ctrl-shift-c': 'terminal:copy',
+    'ctrl-shift-v': 'terminal:paste',
+  },
+
   // Modal terminal (Terminal & AgentTerminal). Normal mode hands the keyboard to
   // the app (leader / window-nav); `i` enters insert mode to type into the child.
   // Insert mode types directly; Escape returns to normal, and `ctrl-[` still sends
   // a literal Escape to the child (the usual ctrl-[ ≡ Escape, kept reachable).
   '.quilx-terminal.terminal-normal': {
     i: 'terminal:insert-mode',
+    a: 'terminal:insert-mode',
   },
 
   // AgentTerminal: a double `ctrl-d` closes the agent (terminate if running,

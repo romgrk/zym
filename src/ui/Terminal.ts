@@ -253,6 +253,8 @@ export class Terminal {
       'terminal:insert-mode': () => this.setMode('insert'),
       'terminal:normal-mode': () => this.setMode('normal'),
       'terminal:send-escape': () => this.feedChild('\x1b'),
+      'terminal:copy': () => this.copySelection(),
+      'terminal:paste': () => this.terminal.pasteClipboard(),
     });
     this.applyMode();
 
@@ -319,6 +321,14 @@ export class Terminal {
    */
   feedChild(text: string): void {
     this.terminal.feedChild(Array.from(new TextEncoder().encode(text)));
+  }
+
+  // Copy the current selection to the clipboard as plain text. No-op when nothing
+  // is selected (so the keybinding doesn't clobber the clipboard with an empty
+  // copy). VTE 0.78+ deprecated `copyClipboard` in favour of the format variant.
+  private copySelection(): void {
+    if (!this.terminal.getHasSelection()) return;
+    this.terminal.copyClipboardFormat(Vte.Format.TEXT);
   }
 
   // Deliver a timed-out chord prefix (from the keymap manager) to the child as
