@@ -103,18 +103,33 @@ it does NOT trust GtkSourceView's view of the text:
 
 ## Boundary rule — rendering model coordinates on the projected view
 
-**Anything that paints LSP/model-space results on the view must translate
-model→view** (and skip/clamp ranges inside folds), because view lines/cols diverge
-from the file once folded. Today:
+**Anything that paints LSP/model-space results on the view must do TWO things**
+(both no-ops without folds, via identity translation):
+
+1. **Translate model→view at render time** (and skip/clamp ranges inside folds),
+   because view lines/cols diverge from the file once folded.
+2. **Re-render when folds toggle** — a fold open/close shifts the view lines *under*
+   already-rendered decorations, so positions go stale until re-placed.
+   `SyntaxController.onFoldsChanged(cb)` fires after every fold open/close (it's the
+   choke point — `toggleFold` covers commands/gutter/`za`/`zc`/search/edit-reveal;
+   `unfoldAll` too). `TextEditor` subscribes and re-renders.
+
+Today:
 - `DiagnosticsView` — encodes columns off `modelLineTextForRow`, then
   `viewRangeFromModel(...)` per diagnostic (a fold-internal one lands on its
-  placeholder line).
-- `InlayHintController` — maps each hint's model line via `viewLineForModelLine`.
+  placeholder line); re-rendered on `onFoldsChanged`.
+- `InlayHintController` — maps each hint's model line via `viewLineForModelLine`;
+  caches the last fetch so a fold toggle re-places via `rerender()` (no LSP round-trip).
+- `GitGutter` — the change bars: diff against the **model** text (not the collapsed
+  view, which yields a garbage diff), translate view→model in `queryData`; the gutter
+  re-queries on the fold toggle's `queueDraw`, so no subscription needed. `]h`/`[h`
+  translate the hunk rows model→view; hunk actions unfold first so view==model.
 - LSP **requests** translate the other way: `lspCursor` is `modelPointFromView(...)`.
 
 When adding a feature that renders model-space ranges (references peek, code lens,
-range code-actions, etc.) apply the same `viewRangeFromModel` / `modelPointFromView`.
-This is the standing cost of view≠model and the easiest thing to forget.
+range code-actions, etc.) apply the same `viewRangeFromModel` / `modelPointFromView`
+**and** re-render on `onFoldsChanged`. This is the standing cost of view≠model and the
+easiest thing to forget.
 
 ## Reusing the projection for other inline markers
 
@@ -135,10 +150,11 @@ boundary. Overlay/peek content that adds its *own* line still belongs to
   inner fold (`Document.foldViewRange` drops it, `SyntaxController.pruneDeadFolds`
   clears the handle, `isFoldAlive` guards the read paths). Covered by tests.
 - Folds are **not persisted** across reload/reopen (`setText` clears them).
-- **Search unfolds all** (simple + correct); a per-match reveal would keep other
-  folds closed.
-- New **model-coord renderers** must translate (see the boundary rule).
+- New **model-coord renderers** must translate *and* re-render on `onFoldsChanged`
+  (see the boundary rule) — the easiest thing to forget.
 - Search reveals folds containing a match **eagerly** (all up front, not lazily as
   you step through); reasonable, but a per-step reveal is possible later.
+- Git **hunk actions** (stage/unstage/revert) unfold all first for correctness; a
+  per-hunk view↔model translation would keep folds intact.
 - Verify `editable:false` fully blocks native IM input inside a placeholder, and the
   split-view fold interactions, on a real display.
