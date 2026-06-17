@@ -45,6 +45,14 @@ export interface AgentTerminalOptions extends TerminalOptions {
 export class AgentTerminal extends Terminal {
   private _status: AgentStatus = 'idle';
   private readonly statusHandlers: Array<() => void> = [];
+  // Attention tracking for the sidebar's blinking status dot. `_viewed` is whether
+  // the user is currently looking at this agent (its tab is the active one);
+  // `_acknowledged` is whether they've viewed it since its current status began.
+  // Together they gate `needsAttention` (see below). A fresh agent starts
+  // acknowledged so an idle one doesn't blink before the user has done anything.
+  private _viewed = false;
+  private _acknowledged = true;
+  private readonly attentionHandlers: Array<() => void> = [];
   // Claude's permission mode (`shift-tab` cycles it); `default` until a hook reports.
   private _permissionMode: AgentMode = 'default';
   private readonly permissionModeHandlers: Array<() => void> = [];
@@ -94,6 +102,41 @@ export class AgentTerminal extends Terminal {
   /** The agent session's current status. */
   get status(): AgentStatus {
     return this._status;
+  }
+
+  /**
+   * Whether the agent should draw the user's eye (drives the sidebar's blinking
+   * dot): it's blocked on the user (`waiting` / needs permission) and they aren't
+   * looking at it, or it just went `idle` and they haven't viewed it since. Other
+   * states (`working`, `exited`) never demand attention.
+   */
+  get needsAttention(): boolean {
+    if (this._status === 'waiting') return !this._viewed;
+    if (this._status === 'idle') return !this._acknowledged;
+    return false;
+  }
+
+  /** Subscribe to needs-attention changes (drives the sidebar blink). Returns unsub. */
+  onDidChangeAttention(callback: () => void): () => void {
+    this.attentionHandlers.push(callback);
+    return () => {
+      const index = this.attentionHandlers.indexOf(callback);
+      if (index !== -1) this.attentionHandlers.splice(index, 1);
+    };
+  }
+
+  /** Mark whether the user is currently viewing this agent (its tab is the active
+   *  one). Viewing acknowledges the current status, so a finished agent stops
+   *  blinking once looked at and a waiting one stops blinking while it's on screen. */
+  setViewed(viewed: boolean): void {
+    const wasAttention = this.needsAttention;
+    this._viewed = viewed;
+    if (viewed) this._acknowledged = true;
+    if (this.needsAttention !== wasAttention) this.emitAttentionChange();
+  }
+
+  private emitAttentionChange(): void {
+    for (const handler of this.attentionHandlers) handler();
   }
 
   /** Claude's current permission mode (`default` until a hook reports otherwise). */
@@ -153,6 +196,7 @@ export class AgentTerminal extends Terminal {
     this._changedFiles = [];
     for (const handler of this.fileHandlers) handler();
     this._status = 'idle';
+    this._acknowledged = true; // user-initiated resume — nothing unseen to flag
     for (const handler of this.statusHandlers) handler();
     this.terminal.feed(encode('\r\n\x1b[2m── resuming ──\x1b[0m\r\n'));
     this.respawn(this.session ? this.session.command : this.baseCommand);
@@ -233,8 +277,14 @@ export class AgentTerminal extends Terminal {
   private setStatus(status: AgentStatus): void {
     if (this._status === 'exited') return; // exit is terminal; ignore later writes
     if (status === this._status) return;
+    const wasAttention = this.needsAttention;
     this._status = status;
+    // A new status opens a fresh attention episode: it counts as acknowledged only
+    // if the user is already looking at this agent — otherwise it should blink
+    // until they do.
+    this._acknowledged = this._viewed;
     for (const handler of this.statusHandlers) handler();
+    if (this.needsAttention !== wasAttention) this.emitAttentionChange();
   }
 
   private setPermissionMode(mode: AgentMode): void {

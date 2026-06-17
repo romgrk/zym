@@ -11,7 +11,7 @@
 
 A keyboard-driven, modern code editor — blending the best from neovim, atom, zed, vscode, and so many others — with coding agents living right alongside you — each tracked live, so you always know which agent is working, waiting, or done.
 
-*Beta state. Might not run on macOS or Windows yet.*
+*Beta state. Tested on Linux; might not run on macOS or Windows yet.*
 
 ![quilx running a coding agent side by side with the editor, file tree, and a fuzzy command palette](img/demo-agent-workflow.png)
 
