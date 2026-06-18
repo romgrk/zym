@@ -16,15 +16,18 @@
  * `foldAll`/`unfoldAll` methods; the editor wires them to `fold:*` commands that
  * the vim keymap's `z`-prefix (za/zo/zc/zR/zM) dispatches.
  */
-import { Gtk, GLib, GtkSource, Pango, registerClass, type SourceBuffer, type SourceView } from '../gi.ts';
-import { type Grammar, createParser, getGrammar, grammarForName, langIdForPath } from './grammar.ts';
-import { theme, type SyntaxStyle } from '../theme/theme.ts';
-import { computeStyleRuns, type StyleSpan } from './highlightRuns.ts';
+import { Gtk, GLib, Pango, type SourceBuffer, type SourceView } from '../gi.ts';
+import { type Grammar, createParser, getGrammar, langIdForPath } from './grammar.ts';
+import { theme } from '../theme/theme.ts';
 import { findBracketPair } from './bracketMatch.ts';
-import { indentLevelAt, enclosingTypeMatches, enclosingNodeRange } from './indent.ts';
+import { indentLevelAt, enclosingTypeMatches, enclosingNodeRange, type NodeRowRange } from './indent.ts';
 import { computeFoldRanges } from './folds.ts';
 import type { DiffFoldInfo } from '../util/DiffModel.ts';
 import { tagNamesAt, type TagName } from './tags.ts';
+import { isFunctionNodeType, isClassNodeType, STRING_COMMENT_RE, RUN_FOLD_RE } from './nodeTypes.ts';
+import { collectCaptures, extentOf, type RawCapture, type VisibleRange } from './injection.ts';
+import { HighlightTags } from './highlightTags.ts';
+import { FoldRenderer, LineNumberRenderer } from './gutterRenderers.ts';
 /** The view↔model projection a SyntaxController folds through (the editor's Document). */
 export interface FoldHost {
   foldViewRange(buffer: SourceBuffer, viewStart: number, viewEnd: number, placeholder: string): any;
@@ -36,10 +39,6 @@ export interface FoldHost {
   /** The model text a fold currently collapses (for matching during search). */
   foldModelText(buffer: SourceBuffer, fold: any): string;
 }
-
-const STRING_COMMENT_RE = /string|comment|char|regex/;
-// Node types folded as a *run* of consecutive siblings (import block, comment block).
-const RUN_FOLD_RE = /comment|import/;
 
 const HIGHLIGHT_DEBOUNCE_MS = 60;
 // Repaint after scrolling settles — snappy, and cheap (no reparse, just a
@@ -57,36 +56,6 @@ const BRACKET_SCAN_WINDOW = 5_000;
 // (their xpad barely affects the allocated width). Used to reserve the gutter's space up
 // front so the deferred gutter install doesn't shift the text. Measured empirically.
 const GUTTER_PADDING_PX = 5;
-
-// How deep language injections nest before we stop (Markdown → inline / fenced
-// code is depth 1; a fenced block whose grammar itself injects would be depth 2).
-// A small bound guards against a pathological self-injecting grammar.
-const MAX_INJECTION_DEPTH = 3;
-
-// One highlight capture flattened to primitives — detached from its tree-sitter
-// node so injected trees can be freed before painting (their nodes would dangle).
-interface RawCapture {
-  name: string;
-  start: number; end: number;
-  sRow: number; sCol: number; eRow: number; eCol: number;
-}
-
-// Outer (whole construct) + inner (body) line spans of a node — for the
-// function/class text objects (`if`/`af`, `ic`/`ac`).
-type NodeRange = { outer: { startRow: number; endRow: number }; inner: { startRow: number; endRow: number } };
-
-// The buffer region to highlight: tree-sitter points (for range-limited queries)
-// plus UTF-16 indices (for the injection off-screen check). Null = whole buffer.
-interface VisibleRange {
-  startPoint: { row: number; column: number };
-  endPoint: { row: number; column: number };
-  startIndex: number;
-  endIndex: number;
-}
-
-// Line-number gutter color (muted), matching how syntax colors are themed.
-const LINE_NUMBER_COLOR = theme.ui.lineNumber;
-
 
 interface FoldRegion {
   startLine: number; // header line (stays visible; gets the inline [...] anchor)
@@ -123,25 +92,6 @@ function asIter(r: any): any {
 // glyphs don't pile up at the collapsed fold position.
 export const FOLD_HIDDEN_TAG_NAME = 'ts:fold-hidden';
 
-// tree-sitter node types that count as a function/method across the grammars we
-// ship. Most contain "function"/"method"; a few (Go/Rust/lambdas) don't.
-const FUNCTION_NODE_TYPES = new Set([
-  'func_literal',
-  'lambda',
-  'lambda_expression',
-  'closure_expression',
-  'arrow_function',
-]);
-function isFunctionNodeType(type: string): boolean {
-  return /function|method|constructor/.test(type) || FUNCTION_NODE_TYPES.has(type);
-}
-
-/** Class-like *definitions* (class/interface/enum/struct), for the `ic`/`ac` text
- *  object — the declaration node, not its `*_body` (whose type also contains "class"). */
-function isClassNodeType(type: string): boolean {
-  return /class|interface|enum|struct|trait|impl/.test(type) && !/_body$/.test(type);
-}
-
 /** Whether buffer `line` is hidden inside a fold (any gutter renderer can call this). */
 export function isLineFolded(buffer: any, line: number): boolean {
   const tag = buffer.getTagTable().lookup(FOLD_HIDDEN_TAG_NAME);
@@ -151,40 +101,6 @@ export function isLineFolded(buffer: any, line: number): boolean {
 /** A UTF-16 low surrogate (the second half of a non-BMP codepoint pair). */
 function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff;
-}
-
-/** The min/max line span covered by a capture list, or null if empty. */
-function extentOf(captures: RawCapture[]): { fromLine: number; toLine: number } | null {
-  if (captures.length === 0) return null;
-  let fromLine = Infinity, toLine = -1;
-  for (const c of captures) {
-    if (c.sRow < fromLine) fromLine = c.sRow;
-    if (c.eRow > toLine) toLine = c.eRow;
-  }
-  return { fromLine, toLine };
-}
-
-/** A capture's color, resolved by the standard longest-prefix fallback (so e.g.
- *  `markup.heading.1` inherits `markup.heading`'s color). */
-function resolveColor(name: string): string | undefined {
-  let key: string | undefined = name;
-  while (key) {
-    if (theme.syntax[key]) return theme.syntax[key];
-    const dot = key.lastIndexOf('.');
-    key = dot === -1 ? undefined : key.slice(0, dot);
-  }
-  return undefined;
-}
-
-/** A capture's font style, resolved by longest-prefix fallback (like resolveColor). */
-function resolveStyleFor(name: string): SyntaxStyle | undefined {
-  let key: string | undefined = name;
-  while (key) {
-    if (theme.syntaxStyle[key]) return theme.syntaxStyle[key];
-    const dot = key.lastIndexOf('.');
-    key = dot === -1 ? undefined : key.slice(0, dot);
-  }
-  return undefined;
 }
 
 export class SyntaxController {
@@ -198,25 +114,9 @@ export class SyntaxController {
   // created lazily and reused across refreshes; their trees are transient.
   private readonly injectionParsers = new Map<Grammar, any>();
 
-  // Foreground-color tags, one per capture name that resolves to a color.
-  private readonly tags = new Map<string, any>();
-  // Decoration tags applied additively on top of color so styles *stack*
-  // (nested bold+italic, a code background under recolored tokens, a heading
-  // scale over inline code). Boolean attrs share one tag each; valued attrs
-  // (scale/background) get one tag per distinct value the theme uses.
-  private attrBold: any = null;
-  private attrItalic: any = null;
-  private attrUnderline: any = null;
-  private attrStrike: any = null;
-  private readonly scaleTags = new Map<number, any>();
-  private readonly bgTags = new Map<string, any>();
-  private readonly lineBgTags = new Map<string, any>();
-  // Every highlight tag (color + decorations), for clearing in one pass.
-  private allTags: any[] = [];
-  // Memoized capture-name → color-tag / style (longest-prefix fallback); capture
-  // names are a small fixed set, so this amortizes the per-capture string work.
-  private readonly tagCache = new Map<string, any>();
-  private readonly styleCache = new Map<string, SyntaxStyle | null>();
+  // The syntax-highlight tag vocabulary (color + decoration tags) built from the
+  // theme; owns capture→tag resolution and the paint sweep (see highlightTags.ts).
+  private readonly highlight: HighlightTags;
   private readonly invisibleTag: any;
   // Styles each collapsed-fold placeholder ([...]) — muted + non-editable.
   private readonly foldPlaceholderTag: any;
@@ -302,35 +202,9 @@ export class SyntaxController {
     const table = (buffer as any).getTagTable();
     const mk = (props: Record<string, unknown>) => { const t = new Gtk.TextTag(props); table.add(t); return t; };
 
-    // Foreground-color tags, one per capture name (over the union of colored and
-    // styled captures, in theme.syntax order) that resolves to a color.
-    const names = new Set([...Object.keys(theme.syntax), ...Object.keys(theme.syntaxStyle)]);
-    for (const name of names) {
-      const color = resolveColor(name);
-      if (color) this.tags.set(name, mk({ name: `ts:${name}`, foreground: color }));
-    }
-    // Decoration tags (applied on top of color, additively): shared boolean attrs
-    // and one tag per distinct scale/background value in the theme.
-    this.attrBold = mk({ name: 'ts*bold', weight: Pango.Weight.BOLD });
-    this.attrItalic = mk({ name: 'ts*italic', style: Pango.Style.ITALIC });
-    this.attrUnderline = mk({ name: 'ts*underline', underline: Pango.Underline.SINGLE });
-    this.attrStrike = mk({ name: 'ts*strikethrough', strikethrough: true });
-    for (const style of Object.values(theme.syntaxStyle)) {
-      if (style.scale != null && !this.scaleTags.has(style.scale)) {
-        this.scaleTags.set(style.scale, mk({ name: `ts*scale:${style.scale}`, scale: style.scale }));
-      }
-      if (style.background != null && !this.bgTags.has(style.background)) {
-        this.bgTags.set(style.background, mk({ name: `ts*bg:${style.background}`, background: style.background }));
-      }
-      if (style.lineBackground != null && !this.lineBgTags.has(style.lineBackground)) {
-        this.lineBgTags.set(style.lineBackground,
-          mk({ name: `ts*linebg:${style.lineBackground}`, paragraphBackground: style.lineBackground }));
-      }
-    }
-    this.allTags = [
-      ...this.tags.values(), this.attrBold, this.attrItalic, this.attrUnderline,
-      this.attrStrike, ...this.scaleTags.values(), ...this.bgTags.values(), ...this.lineBgTags.values(),
-    ];
+    // Build the syntax-highlight tags FIRST: tag priority follows creation order,
+    // so the bracket-match / fold-placeholder tags created below layer on top.
+    this.highlight = new HighlightTags(table);
 
     // The tag that performs the actual hiding when a range is folded.
     this.invisibleTag = new Gtk.TextTag({ name: FOLD_HIDDEN_TAG_NAME, invisible: true });
@@ -555,10 +429,7 @@ export class SyntaxController {
    * kept as a method because the window calls it when the system scheme changes.
    */
   restyle(): void {
-    for (const [name, tag] of this.tags) {
-      const color = resolveColor(name);
-      if (color) tag.foreground = color;
-    }
+    this.highlight.restyle();
   }
 
   // --- highlighting + fold discovery -----------------------------------------
@@ -623,9 +494,9 @@ export class SyntaxController {
     this.lineTextCache.clear();
     const range = this.visibleRange();
     const captures: RawCapture[] = [];
-    this.collectCaptures(this.grammar, this.tree.rootNode, this.cachedText, captures, 0, range);
+    collectCaptures(this.grammar, this.tree.rootNode, this.cachedText, captures, 0, range, (g) => this.injectionParser(g));
     this.clearPainted();
-    this.paintCaptures(captures);
+    this.highlight.paint(this.buffer, captures, (row, col) => this.iterAt(row, col));
     this.paintedExtent = extentOf(captures);
   }
 
@@ -753,7 +624,7 @@ export class SyntaxController {
         ? buffer.getEndIter()
         : asIter(buffer.getIterAtLine(this.paintedExtent.toLine + 1));
     }
-    for (const tag of this.allTags) buffer.removeTag(tag, from, to);
+    this.highlight.clear(buffer, from, to);
   }
 
   /** The syntactic indent level for `row` (enclosing fold-block depth), or null
@@ -772,132 +643,6 @@ export class SyntaxController {
       this.injectionParsers.set(grammar, parser);
     }
     return parser;
-  }
-
-  /**
-   * Gather highlight captures for `grammar` over `root` into `out`, then recurse
-   * into its language injections: for each injection match, resolve the guest
-   * grammar (from a captured `@language` node's text, else the injection's static
-   * `language`), parse just the `@content` range with that grammar (positions
-   * stay absolute via `includedRanges`), and collect its captures too. Captures
-   * are flattened to primitives so each injected tree can be freed immediately —
-   * its nodes would otherwise dangle once deleted. Base captures land first and
-   * injected ones after, so the paint sweep (innermost + later-index wins) lets a
-   * narrower injected token paint over the broad host region that contains it.
-   */
-  private collectCaptures(
-    grammar: Grammar, root: any, text: string, out: RawCapture[], depth: number, range: VisibleRange | null,
-  ): void {
-    const captures = range
-      ? grammar.query.captures(root, range.startPoint, range.endPoint)
-      : grammar.query.captures(root);
-    for (const cap of captures) {
-      const n = cap.node;
-      out.push({
-        name: cap.name,
-        start: n.startIndex, end: n.endIndex,
-        sRow: n.startPosition.row, sCol: n.startPosition.column,
-        eRow: n.endPosition.row, eCol: n.endPosition.column,
-      });
-    }
-    if (depth >= MAX_INJECTION_DEPTH) return;
-
-    for (const inj of grammar.injections) {
-      const matches = range
-        ? inj.query.matches(root, range.startPoint, range.endPoint)
-        : inj.query.matches(root);
-      for (const match of matches) {
-        let langName: string | undefined = inj.language;
-        const contentNodes: any[] = [];
-        for (const cap of match.captures) {
-          if (cap.name === 'content' || cap.name === 'injection.content') contentNodes.push(cap.node);
-          else if (cap.name === 'language' || cap.name === 'injection.language') langName = cap.node.text;
-        }
-        if (!langName || contentNodes.length === 0) continue;
-        const guest = grammarForName(langName);
-        if (!guest) continue; // no grammar for that fence language — leave it plain
-
-        const parser = this.injectionParser(guest);
-        for (const node of contentNodes) {
-          if (node.startIndex >= node.endIndex) continue;
-          // Skip injections entirely off-screen — the big win for Markdown, where
-          // there's an `inline` node per paragraph but only a few are visible.
-          if (range && (node.endIndex <= range.startIndex || node.startIndex >= range.endIndex)) continue;
-          const included = {
-            startIndex: node.startIndex, endIndex: node.endIndex,
-            startPosition: node.startPosition, endPosition: node.endPosition,
-          };
-          let injTree: any = null;
-          try {
-            injTree = parser.parse(text, undefined, { includedRanges: [included] });
-          } catch {
-            injTree = null; // a guest parse failure must never break host highlighting
-          }
-          if (!injTree) continue;
-          this.collectCaptures(guest, injTree.rootNode, text, out, depth + 1, range);
-          injTree.delete();
-        }
-      }
-    }
-  }
-
-  /** A capture's font style, by longest-prefix fallback; memoized. */
-  private resolveStyle(name: string): SyntaxStyle | null {
-    const cached = this.styleCache.get(name);
-    if (cached !== undefined) return cached;
-    const style = resolveStyleFor(name) ?? null;
-    this.styleCache.set(name, style);
-    return style;
-  }
-
-  /**
-   * Paint highlight tags from a gathered capture list. Each capture becomes a
-   * `StyleSpan` carrying its resolved color tag plus decoration values; the pure
-   * `computeStyleRuns` flattens overlaps into runs (foreground = innermost wins
-   * *with suppression*; background/scale = innermost-that-has-it; bold/italic/…
-   * additive — see highlightRuns.ts). We then stack the run's tags over its range,
-   * so e.g. a fenced code background shows under recolored tokens and nested
-   * bold+italic both apply (GtkTextTag priority alone couldn't express this).
-   */
-  private paintCaptures(raws: RawCapture[]): void {
-    const buffer = this.buffer as any;
-    const posAt = new Map<number, { row: number; col: number }>();
-    const spans: StyleSpan<any>[] = [];
-    let idx = 0;
-    for (const raw of raws) {
-      if (raw.start === raw.end) continue; // zero-width capture paints nothing
-      if (!posAt.has(raw.start)) posAt.set(raw.start, { row: raw.sRow, col: raw.sCol });
-      if (!posAt.has(raw.end)) posAt.set(raw.end, { row: raw.eRow, col: raw.eCol });
-      const style = this.resolveStyle(raw.name);
-      spans.push({
-        start: raw.start, end: raw.end, idx: idx++,
-        color: this.resolveTag(raw.name),
-        background: style?.background != null ? this.bgTags.get(style.background) ?? null : null,
-        lineBackground: style?.lineBackground != null ? this.lineBgTags.get(style.lineBackground) ?? null : null,
-        scale: style?.scale ?? null,
-        bold: !!style?.bold, italic: !!style?.italic,
-        underline: !!style?.underline, strikethrough: !!style?.strikethrough,
-      });
-    }
-    if (spans.length === 0) return;
-
-    for (const run of computeStyleRuns(spans)) {
-      const a = posAt.get(run.start)!;
-      const b = posAt.get(run.end)!;
-      const from = this.iterAt(a.row, a.col);
-      const to = this.iterAt(b.row, b.col);
-      if (run.lineBackground) buffer.applyTag(run.lineBackground, from, to);
-      if (run.color) buffer.applyTag(run.color, from, to);
-      if (run.background) buffer.applyTag(run.background, from, to);
-      if (run.scale !== null) {
-        const t = this.scaleTags.get(run.scale);
-        if (t) buffer.applyTag(t, from, to);
-      }
-      if (run.bold) buffer.applyTag(this.attrBold, from, to);
-      if (run.italic) buffer.applyTag(this.attrItalic, from, to);
-      if (run.underline) buffer.applyTag(this.attrUnderline, from, to);
-      if (run.strikethrough) buffer.applyTag(this.attrStrike, from, to);
-    }
   }
 
   private walkFolds(root: any): void {
@@ -929,29 +674,8 @@ export class SyntaxController {
     const buffer = this.buffer as any;
     const start = buffer.getStartIter();
     const end = buffer.getEndIter();
-    for (const tag of this.allTags) buffer.removeTag(tag, start, end);
+    this.highlight.clear(buffer, start, end);
     buffer.removeTag(this.invisibleTag, start, end);
-  }
-
-  /**
-   * Map a tree-sitter capture name to its TextTag, following the standard
-   * highlight-group fallback: an unknown dotted name drops its last segment and
-   * retries (e.g. `function.method` → `function`, `type.builtin` → `type`).
-   * Returns null — and caches it — when no prefix has a configured color, so
-   * captures like `@variable`/`@operator` simply stay the default foreground.
-   */
-  private resolveTag(name: string): any {
-    const cached = this.tagCache.get(name);
-    if (cached !== undefined) return cached;
-    let key: string | undefined = name;
-    while (key) {
-      const tag = this.tags.get(key);
-      if (tag) { this.tagCache.set(name, tag); return tag; }
-      const dot = key.lastIndexOf('.');
-      key = dot === -1 ? undefined : key.slice(0, dot);
-    }
-    this.tagCache.set(name, null);
-    return null;
   }
 
   private iterAt(line: number, col: number): any {
@@ -1208,14 +932,12 @@ export class SyntaxController {
    * so it works for both brace and indentation languages). Null when off a
    * function or with no parse tree.
    */
-  /** The function enclosing `(row, column)` — outer (whole def) + inner (body) line
-   *  spans — for the `if`/`af` text object. */
-  functionRangeAt(row: number, column: number): NodeRange | null {
+  functionRangeAt(row: number, column: number): NodeRowRange | null {
     return this.nodeRangeAt(row, column, isFunctionNodeType);
   }
 
   /** The class/interface/enum enclosing `(row, column)`, for the `ic`/`ac` text object. */
-  classRangeAt(row: number, column: number): NodeRange | null {
+  classRangeAt(row: number, column: number): NodeRowRange | null {
     return this.nodeRangeAt(row, column, isClassNodeType);
   }
 
@@ -1227,7 +949,7 @@ export class SyntaxController {
 
   /** Outer (whole node) + inner (its `body` field's statements) line spans for the
    *  nearest enclosing node whose type satisfies `matches`. */
-  private nodeRangeAt(row: number, column: number, matches: (type: string) => boolean): NodeRange | null {
+  private nodeRangeAt(row: number, column: number, matches: (type: string) => boolean): NodeRowRange | null {
     return this.tree ? enclosingNodeRange(this.tree.rootNode, row, column, matches) : null;
   }
 
@@ -1374,55 +1096,3 @@ export class SyntaxController {
     return this.foldHost ? this.foldHost.modelLineForViewLine(this.buffer, viewLine) : viewLine;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Fold-chevron gutter renderer. Reads its owning SyntaxController off the
-// instance (`this.controller`, set right after construction) — verified that
-// node-gtk preserves instance props as `this` inside vfunc callbacks.
-// ---------------------------------------------------------------------------
-
-class FoldRenderer extends GtkSource.GutterRendererText {
-  // Set the glyph for this line: ▸ folded, ▾ foldable-open, else blank. A nested
-  // header hidden inside an outer fold draws blank (so it doesn't pile up).
-  queryData(_lines: any, line: number) {
-    const controller = (this as any).controller as SyntaxController | undefined;
-    const region = controller?.foldsByHeaderLine.get(line);
-    const glyph = region ? (region.folded ? '▸' : '▾') : ' ';
-    this.setMarkup(glyph, -1);
-  }
-
-  // Only fold-header lines respond to clicks.
-  queryActivatable(iter: any, _area: any) {
-    return Boolean((this as any).controller?.foldsByHeaderLine.has(iter.getLine()));
-  }
-
-  // Click: toggle the fold on this line.
-  // @ts-expect-error - overriding the activate vfunc; the base class also
-  // exposes a no-arg activate() action method, so the signatures don't unify.
-  activate(iter: any, _area: any, _button: number, _state: any, _nPresses: number) {
-    (this as any).controller?.toggleHeaderLine(iter.getLine());
-  }
-}
-registerClass(FoldRenderer);
-
-// ---------------------------------------------------------------------------
-// Fold-aware line-number gutter renderer. Draws the 1-based line number for
-// visible lines and NOTHING for lines hidden inside a fold — so folded line
-// numbers don't pile up at the collapsed position (the built-in gutter's bug).
-// ---------------------------------------------------------------------------
-
-class LineNumberRenderer extends GtkSource.GutterRendererText {
-  queryData(_lines: any, line: number) {
-    const controller = (this as any).controller as SyntaxController | undefined;
-    const width = controller ? controller.lineNumberWidth() : 1;
-    // Always emit fixed-width content so the gutter column keeps a stable width
-    // (empty text collapses it to zero → no numbers show).
-    if (!controller) {
-      this.setText(' '.repeat(width), -1);
-    } else {
-      const num = String(controller.modelLineFor(line) + 1).padStart(width, ' ');
-      this.setMarkup(`<span foreground="${LINE_NUMBER_COLOR}">${num}</span>`, -1);
-    }
-  }
-}
-registerClass(LineNumberRenderer);

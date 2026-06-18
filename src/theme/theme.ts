@@ -272,7 +272,7 @@ function applyMarkupDefaults(syntax: SyntaxColors, syntaxStyle: SyntaxStyles, ui
     // the line's height, which is safe for vim display-line motion (j/k, gj/gk):
     // `displayLineMove` moves by display row via the view's layout, so a normal
     // glyph (the unscaled `##` markers) on a taller heading line still steps off it.
-    // Colors inherit `markup.heading` via prefix fallback (resolveColor).
+    // Colors inherit `markup.heading` via prefix fallback (resolveSyntaxColor).
     'markup.heading': { bold: true, scale: 1.2 }, // setext / generic fallback
     'markup.heading.1': { bold: true, scale: 1.5 },
     'markup.heading.2': { bold: true, scale: 1.2 },
@@ -298,3 +298,34 @@ function applyMarkupDefaults(syntax: SyntaxColors, syntaxStyle: SyntaxStyles, ui
 
 /** The active theme. */
 export const theme = loadTheme('quilx');
+
+/**
+ * Resolve a tree-sitter capture name against `lookup` by longest-prefix fallback:
+ * try the full dotted name, then progressively drop the trailing `.segment` (so
+ * `markup.heading.1` falls back to `markup.heading`, then `markup`). Returns the
+ * first defined hit, else undefined. The shared primitive behind the capture →
+ * color / style / tag resolutions (resolveSyntaxColor, resolveSyntaxStyle, and
+ * the highlighter's per-capture tag lookup).
+ */
+export function resolveByCaptureName<T>(name: string, lookup: (key: string) => T | undefined): T | undefined {
+  let key: string | undefined = name;
+  while (key) {
+    const hit = lookup(key);
+    if (hit !== undefined) return hit;
+    const dot = key.lastIndexOf('.');
+    key = dot === -1 ? undefined : key.slice(0, dot);
+  }
+  return undefined;
+}
+
+/** A capture's foreground color in the active theme, by longest-prefix fallback
+ *  (e.g. `markup.heading.1` inherits `markup.heading`'s color). */
+export function resolveSyntaxColor(name: string): string | undefined {
+  return resolveByCaptureName(name, (key) => theme.syntax[key]);
+}
+
+/** A capture's font style in the active theme, by longest-prefix fallback (like
+ *  resolveSyntaxColor). */
+export function resolveSyntaxStyle(name: string): SyntaxStyle | undefined {
+  return resolveByCaptureName(name, (key) => theme.syntaxStyle[key]);
+}
