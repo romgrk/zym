@@ -15,7 +15,7 @@
 import * as Fs from 'node:fs';
 import { GLib } from './gi.ts';
 import { quilx } from './quilx.ts';
-import { SESSION_VERSION, type SessionState, type TabState } from './SessionManager.ts';
+import { SESSION_VERSION, type SessionState, type TabState, type WorkspaceState } from './SessionManager.ts';
 import type { PanelGroup, RestoredChild } from './ui/PanelGroup.ts';
 import type { FileTree } from './ui/FileTree.ts';
 
@@ -39,6 +39,11 @@ export interface SessionControllerOptions {
   getDocks: () => SessionDocks;
   /** Apply restored window-level dock state. */
   applyDocks: (docks: SessionDocks) => void;
+  /** One `WorkspaceState` per open agent workbench (root + layout + `agent`
+   *  identity), appended after the user workspace. Empty when no agents. */
+  serializeAgentWorkspaces?: () => WorkspaceState[];
+  /** Relaunch an agent workbench (resumed) from its saved workspace. */
+  restoreAgent?: (workspace: WorkspaceState) => void;
 }
 
 export class SessionController {
@@ -56,16 +61,16 @@ export class SessionController {
 
   /** Snapshot the live workbench as a session for this root. */
   serialize(): SessionState {
+    const user: WorkspaceState = {
+      root: this.opts.root,
+      layout: this.opts.center.serializeLayout(this.opts.serializeChild),
+      fileTree: { expanded: this.opts.fileTree.serializeExpanded() },
+    };
+    // The user workspace is primary (index 0); each open agent workbench follows.
     return {
       version: SESSION_VERSION,
       savedAt: '', // stamped by SessionManager.save
-      workspaces: [
-        {
-          root: this.opts.root,
-          layout: this.opts.center.serializeLayout(this.opts.serializeChild),
-          fileTree: { expanded: this.opts.fileTree.serializeExpanded() },
-        },
-      ],
+      workspaces: [user, ...(this.opts.serializeAgentWorkspaces?.() ?? [])],
       activeWorkspace: 0,
       docks: this.opts.getDocks(),
     };
@@ -113,13 +118,21 @@ export class SessionController {
   restore(): boolean {
     const state = quilx.session.load(this.opts.root);
     if (!state) return false;
-    const workspace = state.workspaces[state.activeWorkspace] ?? state.workspaces[0];
-    if (!workspace) return false;
+    // workspaces[0] is the primary (user) root; the rest are agent workbenches.
+    const user = state.workspaces[0];
+    if (!user) return false;
 
     this.missing = [];
-    this.opts.center.restoreLayout(workspace.layout, (tab) => this.deserialize(tab));
-    if (workspace.fileTree) this.opts.fileTree.restoreExpanded(workspace.fileTree.expanded);
+    this.opts.center.restoreLayout(user.layout, (tab) => this.deserialize(tab));
+    if (user.fileTree) this.opts.fileTree.restoreExpanded(user.fileTree.expanded);
     if (state.docks) this.opts.applyDocks(state.docks);
+
+    // Relaunch the agent workbenches (resumed to their conversation/worktree). This
+    // only runs on an explicit restore / opt-in launch, so re-running them is the
+    // user's intent, not a surprise.
+    for (const ws of state.workspaces.slice(1)) {
+      if (ws.agent) this.opts.restoreAgent?.(ws);
+    }
 
     if (this.missing.length > 0) {
       const n = this.missing.length;

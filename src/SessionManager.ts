@@ -57,7 +57,13 @@ export interface WorkspaceState {
   root: string;
   layout: PanelNode;
   fileTree?: { expanded: string[] };
+  /** Present → this workspace is an agent's workbench (relaunch the agent on
+   *  restore, resumed to its conversation/worktree). Absent → the user workbench. */
+  agent?: AgentTabState;
 }
+
+/** The `agent` variant of TabState — an agent workbench's relaunch identity. */
+export type AgentTabState = Extract<TabState, { kind: 'agent' }>;
 
 export interface SessionState {
   version: number;

@@ -37,11 +37,11 @@ What already exists and is reused, not rebuilt:
   false for agents, so Files/Source-Control isn't docked on open; the panel is still built
   (so `this.workbench.fileTree`/`gitPanel` stay valid and `file-tree:focus`/git commands
   can reveal it). The terminal auto-opens on creation (`openAgent` → `buildWorkbench(agent)`);
-  `closeAgent` drops it from `workbenches`. **Worktree-ready:** each agent already has its
-  own Files/Git — a per-worktree build just needs a per-workbench root + `GitRepo` in
-  `buildWorkbench`. **Deferred:** per-worktree roots; session restore of agent workbenches
-  (only the user workbench is serialized); per-workbench `NotificationLog`/`KeymapPanel`
-  subscribe to global signals and aren't disposed on close (minor leak; agents are few).
+  `closeAgent` drops it from `workbenches` and disposes its editors / file tree /
+  git panel / bottom-dock panels (no leak). **Done since:** per-workbench roots +
+  pooled `GitRepo` (see *git worktree integration* below); session restore of agent
+  workbenches (each serialized as a `WorkspaceState`, relaunched resumed — work-area
+  file-tab layout still deferred).
 - **`src/ui/AgentTerminal.ts`** — a `Terminal` subclass that spawns the agent CLI
   (`agent.command` config, default `['claude']`). Notable behaviour:
   - initial title = the agent's program basename until the CLI reports its own

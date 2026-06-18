@@ -218,10 +218,17 @@ Handlers on `#AppWindow`; bindings added centrally in `src/keymaps/default.ts`.
 - **Unsaved buffer *contents*** are *not* persisted in the MVP — only path +
   cursor. The exit prompt is the data-loss guard. Persisting actual unsaved text
   (a buffer cache keyed off the session) is a noted future enhancement.
-- **Agents** can only be relaunched, not restored. The MVP records agent tabs but
-  does **not** auto-run them on restore (re-running `claude <prompt>` unprompted is
-  surprising); they restore as a relaunch affordance. Full behavior co-designs
-  with **agent profiles** (see [agents.md](agents.md)).
+- **Agents** are recorded as their own workspaces (one `WorkspaceState` per agent
+  workbench, marked by an `agent` field — its relaunch identity from
+  `AgentTerminal.serialize`) after the primary (user) workspace. On **restore** each
+  is relaunched **resumed** (`--resume <id>`, via `resumeOptions`), which also
+  restores its worktree (see agents.md) and does *not* re-run the original launch
+  prompt. Relaunch is fine here because restore is explicit (or the opt-in
+  `restoreOnLaunch`), not a surprise. An agent with no session id is relaunched
+  fresh with its prompt; one already open is skipped (no duplicate). **Deferred:**
+  restoring each agent workbench's work-area file tabs (the layout is recorded for
+  forward-compat but not yet rebuilt — the pinned-agent center makes a generic
+  layout-restore awkward).
 - **Stale/corrupt session file** → warn and ignore (like the config loader); never
   throw, never block startup.
 - **Empty/placeholder tabs** serialize to `null` and are dropped.
@@ -239,7 +246,10 @@ Handlers on `#AppWindow`; bindings added centrally in `src/keymaps/default.ts`.
       `session:save` commands + keymap; launch-arg suppresses restore.
       (`SessionController`, wired from `AppWindow`; `space s s` / `space s r`.)
 - [x] Cursor save/restore (with clamping) and missing-file skip notifications.
-- [ ] Agents in sessions (record + opt-in relaunch) — co-design with agent profiles.
+- [x] Agents in sessions — each agent workbench serialized as a `WorkspaceState`
+      (with an `agent` relaunch identity); relaunched resumed (worktree restored) on
+      explicit `session:restore` / `restoreOnLaunch`, deduped against live agents.
+      Work-area file-tab layout deferred.
 - [ ] Multi-root sessions + `session:open` picker — co-design with agent worktrees.
 
 ## Settled
@@ -252,10 +262,12 @@ The four prior open questions, now decided:
 - **Multi-root** → not in the MVP *runtime*, but the **format is prepared for it
   now** (`workspaces[]` + `activeWorkspace`), so it's a later runtime change, not a
   migration. Co-designed with agents.md's active-root switch.
-- **Agents in sessions** → record agent tabs; on restore they're a relaunch
-  affordance, **not auto-run**. A **running** agent (status not `exited`) **does**
-  block exit and is listed in the prompt — it's live work in progress. Plain
-  terminals do not block; unsaved editors do.
+- **Agents in sessions** → each agent workbench is its own workspace; on restore
+  they're **relaunched resumed** (restore is explicit / opt-in, so this is the
+  user's intent, not a surprise) — the original launch prompt is not re-run. A
+  **running** agent (status not `exited`) **does** block exit and is listed in the
+  prompt — it's live work in progress. Plain terminals do not block; unsaved
+  editors do.
 - **Restore semantics** → `session:restore` **replaces** the current workbench
   ("reopen my session"), consistent with the workspace-swap model.
 - **Unsaved buffer text** → **not persisted** in the MVP; path + cursor + the exit

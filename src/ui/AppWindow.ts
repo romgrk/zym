@@ -67,7 +67,7 @@ import { openPicker } from './Picker.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
 import { quilx } from '../quilx.ts';
-import { type SessionParticipant, type TabState } from '../SessionManager.ts';
+import { type SessionParticipant, type TabState, type WorkspaceState } from '../SessionManager.ts';
 import { SessionController } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
 import { NotificationLog } from './NotificationLog.ts';
@@ -281,6 +281,8 @@ export class AppWindow {
       applyDocks: (docks) => {
         if (docks.notificationLog && this.workbench.bottomDock !== 'notifications') this.toggleNotificationLog();
       },
+      serializeAgentWorkspaces: () => this.serializeAgentWorkspaces(),
+      restoreAgent: (ws) => this.restoreAgent(ws),
     });
 
     const toolbarView = new Adw.ToolbarView();
@@ -427,6 +429,8 @@ export class AppWindow {
       !explicitFile &&
       this.sessionController.shouldRestoreOnLaunch() &&
       this.sessionController.restore();
+    // Relaunching agents activates each in turn; settle back on the user workbench.
+    if (restored) this.activateOwner('user');
     if (!restored && initialFile) this.openFile(initialFile);
   }
 
@@ -802,6 +806,44 @@ export class AppWindow {
         : undefined,
       title: truncate(session.label, 40),
     };
+  }
+
+  // One WorkspaceState per open agent workbench (its root + center layout + the
+  // agent's relaunch identity), for the session. The layout is recorded for
+  // forward-compat; restore currently only relaunches the agent (see restoreAgent).
+  private serializeAgentWorkspaces(): WorkspaceState[] {
+    const out: WorkspaceState[] = [];
+    for (const agent of quilx.agents.getAgents()) {
+      const workbench = this.workbenches.get(agent);
+      const state = agent.serialize();
+      if (!workbench || !state || state.kind !== 'agent') continue;
+      out.push({
+        root: workbench.cwd,
+        layout: workbench.center.serializeLayout((w) => this.serializeChild(w)),
+        fileTree: { expanded: workbench.fileTree.serializeExpanded() },
+        agent: state,
+      });
+    }
+    return out;
+  }
+
+  // Relaunch an agent workbench from its saved workspace, resumed to its
+  // conversation/worktree. Resolving the conversation via resumeOptions also
+  // restores the worktree (and avoids re-running the original launch prompt); a
+  // session that's since vanished falls back to a bare resume, and an agent that
+  // never reported a session id is relaunched fresh with its original prompt.
+  private restoreAgent(ws: WorkspaceState): void {
+    const a = ws.agent;
+    if (!a) return;
+    // Don't duplicate an agent that's already open (explicit restore over a live session).
+    if (a.sessionId && quilx.agents.getAgents().some((ag) => ag.sessionId === a.sessionId)) return;
+    if (a.sessionId) {
+      const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);
+      if (session) this.openAgent(this.resumeOptions(session));
+      else this.openAgent({ cwd: a.cwd, resume: { sessionId: a.sessionId } });
+      return;
+    }
+    this.openAgent({ cwd: a.cwd, prompt: a.prompt });
   }
 
   // Resume a past conversation: pick one of the project's saved sessions (newest
@@ -2291,7 +2333,8 @@ export class AppWindow {
         this.toast('Session saved');
       },
       'session:restore': () => {
-        if (!this.sessionController.restore()) this.toast('No saved session for this folder');
+        if (this.sessionController.restore()) this.activateOwner('user'); // settle on user after agent relaunches
+        else this.toast('No saved session for this folder');
       },
     });
   }
