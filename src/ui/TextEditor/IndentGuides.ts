@@ -19,11 +19,15 @@ import type { EditorModel } from './EditorModel.ts';
 
 const LINE_WIDTH = 1;
 
+// node-gtk returns a bare iter for get_iter_at_line (some builds wrap it). Normalize.
+const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
+
 export class IndentGuides {
   readonly widget: InstanceType<typeof Gtk.DrawingArea>;
 
   private readonly view: SourceView;
   private readonly model: EditorModel;
+  private readonly buffer: any;
   private enabled = true;
   private readonly rgba = new Gdk.RGBA();
   // Monospace char advance, measured lazily from a visible content line and cached
@@ -34,6 +38,7 @@ export class IndentGuides {
   constructor(view: SourceView, model: EditorModel) {
     this.view = view;
     this.model = model;
+    this.buffer = (view as any).getBuffer();
     this.rgba.parse(theme.ui.border);
 
     this.widget = new Gtk.DrawingArea();
@@ -57,7 +62,7 @@ export class IndentGuides {
     };
     bind('getVadjustment', 'notify::vadjustment');
     bind('getHadjustment', 'notify::hadjustment');
-    (view.getBuffer() as any).on('changed', redraw); // indentation may have changed
+    this.buffer.on('changed', redraw); // indentation may have changed
     quilx.config.observe('editor.indentGuides', (v) => {
       this.enabled = v !== false;
       redraw();
@@ -82,26 +87,79 @@ export class IndentGuides {
     const bottom = Math.min(last, lineAtY(rect.y + rect.height));
     if (!this.ensureMetrics(top, bottom)) return;
 
-    const stride = this.model.getTabLength() * this.charWidth; // buffer px per indent level
+    const tabLength = this.model.getTabLength();
+    const stride = tabLength * this.charWidth; // buffer px per indent level
+    // Indent level per visible row, computed from ONE batched text read (not two
+    // FFI-heavy per-row line reads) — the bulk of the old per-frame scroll cost.
+    const levels = this.levelsForRange(top, bottom, last, tabLength);
 
     cr.setLineWidth(LINE_WIDTH);
     cr.setSourceRgba(this.rgba.red, this.rgba.green, this.rgba.blue, this.rgba.alpha);
     for (let row = top; row <= bottom; row++) {
-      const level = this.guideLevel(row, last);
+      const level = levels[row - top];
       if (level <= 0) continue;
-      // Re-measure the row's column-0 cell every draw and convert with the SAME
-      // buffer→widget transform the text glyphs use right now (cell.x + cell.y together,
-      // like UnderlineOverlay). A value cached at first paint drifts sideways once the
-      // deferred gutter installs / the view scrolls — that was the offset.
-      const cell = view.getIterLocation(this.model.iterAtPoint(new Point(row, 0)));
+      // Convert the row's column-0 cell to widget coords ONCE (buffer→widget is a pure
+      // translation in a frame), then step each guide column by `stride` in widget space.
+      // The old code converted per indent level — a bufferToWindowCoords FFI call for
+      // every guide on every scroll frame.
+      const cell = view.getIterLocation(this.lineStartIter(row));
+      const [wx, wy] = view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, cell.x, cell.y);
       for (let k = 0; k < level; k++) {
-        const [wx, wy] = view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, Math.round(cell.x + k * stride), cell.y);
-        const x = wx + 0.5; // +0.5 → crisp 1px line
+        const x = Math.round(wx + k * stride) + 0.5; // +0.5 → crisp 1px line
         cr.moveTo(x, wy);
         cr.lineTo(x, wy + cell.height);
       }
     }
     cr.stroke();
+  }
+
+  /** A line-start iter for `row` (column 0), without `iterAtPoint`'s clamp machinery. */
+  private lineStartIter(row: number): any {
+    return asIter(this.buffer.getIterAtLine(row));
+  }
+
+  /**
+   * The guide level to show for each row in `[top, bottom]`, read from a SINGLE
+   * `getText` over the visible block (then computed in JS) instead of two FFI-heavy
+   * per-row line reads (`isBufferRowBlank` + `indentationForBufferRow`). A blank line
+   * borrows the level of the nearest non-blank line below (then above), matching
+   * `guideLevel`; only a blank row whose nearest non-blank neighbour lies off-screen
+   * falls back to the model scan (rare — the viewport tail/head being all-blank).
+   */
+  private levelsForRange(top: number, bottom: number, last: number, tabLength: number): number[] {
+    const n = bottom - top + 1;
+    const startIter = this.lineStartIter(top);
+    const endIter = bottom >= last ? this.buffer.getEndIter() : this.lineStartIter(bottom + 1);
+    const lines: string[] = this.buffer.getText(startIter, endIter, true).split('\n');
+
+    const blank: boolean[] = new Array(n);
+    const raw: number[] = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const line = lines[i] ?? '';
+      const lead = /^\s*/.exec(line)![0];
+      blank[i] = lead.length === line.length;
+      let width = 0;
+      for (const ch of lead) width += ch === '\t' ? tabLength : 1;
+      raw[i] = Math.floor(width / tabLength);
+    }
+
+    const out: number[] = new Array(n);
+    for (let i = 0; i < n; i++) {
+      if (!blank[i]) { out[i] = raw[i]; continue; }
+      // Blank: nearest non-blank below (down to EOF) wins, else nearest above (up to BOF).
+      let level = -1;
+      for (let j = i + 1; j < n; j++) if (!blank[j]) { level = raw[j]; break; }
+      if (level < 0) {
+        if (bottom < last) { out[i] = this.guideLevel(top + i, last); continue; } // neighbour below off-screen
+        for (let j = i - 1; j >= 0; j--) if (!blank[j]) { level = raw[j]; break; }
+        if (level < 0) {
+          if (top > 0) { out[i] = this.guideLevel(top + i, last); continue; } // neighbour above off-screen
+          level = 0;
+        }
+      }
+      out[i] = level;
+    }
+    return out;
   }
 
   /** The indent level whose guides this row should show. */

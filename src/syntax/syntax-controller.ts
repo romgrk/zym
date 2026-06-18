@@ -149,6 +149,10 @@ export class SyntaxController {
   // the line count crosses a digit boundary (see primeLineNumbers).
   private lineNumberRenderer: any = null;
   private lineNumberPrimedDigits = 0;
+  // Cached line-number digit width. The gutter renderer reads this once per visible
+  // line per paint, so it must not call getLineCount() (an FFI) each time; it's
+  // refreshed from primeLineNumbers (on every buffer edit) and lazily on first read.
+  private cachedLineDigits = 0;
   // The gutter is installed lazily after the first paint (see the constructor note);
   // these track the deferred state.
   private wantLineNumbers = false;
@@ -408,13 +412,13 @@ export class SyntaxController {
       // No parse/paint to ride on, but the gutter (line numbers) must still appear — defer
       // it the same way so it only queries the visible lines.
       this.scheduleGutterInstall();
-      (this.view as any).queueDraw();
+      this.view.queueDraw();
       return false;
     }
 
     this.grammar = grammar;
     this.parser = createParser(grammar);
-    (this.buffer as any).setHighlightSyntax(false); // we own highlighting now
+    this.buffer.setHighlightSyntax(false); // we own highlighting now
     this.restyle();
     this.refresh();
     this.scheduleGutterInstall();
@@ -588,10 +592,33 @@ export class SyntaxController {
     if (this.viewportDebounceId) GLib.sourceRemove(this.viewportDebounceId);
     this.viewportDebounceId = GLib.timeoutAdd(GLib.PRIORITY_DEFAULT, VIEWPORT_DEBOUNCE_MS, () => {
       this.viewportDebounceId = 0;
-      this.repaint();
-      (this.view as any).queueDraw();
+      // Skip the tree-sitter re-query + re-tag when the visible rows are already inside
+      // the painted band (a small scroll within the ±margin). Repainting an already-
+      // highlighted region is the main scroll-stop hitch; the highlight tags are still
+      // applied over [fromLine, toLine], so the visible text stays highlighted.
+      if (!this.visibleWithinPainted()) {
+        this.repaint();
+        (this.view as any).queueDraw();
+      }
       return false;
     });
+  }
+
+  /** Whether the actual visible rows (no margin) sit within the currently-painted line
+   *  span — then a scroll repaint is redundant. False when unknown (always repaint). */
+  private visibleWithinPainted(): boolean {
+    if (!this.paintedExtent) return false;
+    const view = this.view as any;
+    if (!view.getRealized()) return false;
+    const rect = view.getVisibleRect();
+    if (!rect || !rect.height) return false;
+    const lineAtY = (y: number): number => {
+      const r = view.getLineAtY(y);
+      return asIter(Array.isArray(r) ? r[0] : r).getLine();
+    };
+    const top = lineAtY(rect.y);
+    const bottom = lineAtY(rect.y + rect.height);
+    return top >= this.paintedExtent.fromLine && bottom <= this.paintedExtent.toLine;
   }
 
   /** The visible buffer range (± a margin), or null (whole buffer) when the view
@@ -966,9 +993,11 @@ export class SyntaxController {
     return this.tree ? enclosingNodeRange(this.tree.rootNode, row, column, matches) : null;
   }
 
-  /** Digit width to pad line numbers to, so the gutter doesn't jitter while scrolling. */
+  /** Digit width to pad line numbers to, so the gutter doesn't jitter while scrolling.
+   *  Returns a cached value (the renderer calls this per visible line per frame); the
+   *  cache is refreshed by primeLineNumbers on edits, and lazily on first read. */
   lineNumberWidth(): number {
-    return String((this.buffer as any).getLineCount()).length;
+    return this.cachedLineDigits || (this.cachedLineDigits = String((this.buffer as any).getLineCount()).length);
   }
 
   /**
@@ -979,8 +1008,11 @@ export class SyntaxController {
    * the allocation; re-run only when the digit count changes (cheap no-op otherwise).
    */
   private primeLineNumbers(): void {
+    // Compute the fresh width (one getLineCount per edit) and keep the per-frame cache
+    // current, even before the renderer exists, so the renderer's first read is right.
+    const digits = String((this.buffer as any).getLineCount()).length;
+    this.cachedLineDigits = digits;
     if (!this.lineNumberRenderer) return;
-    const digits = this.lineNumberWidth();
     if (digits === this.lineNumberPrimedDigits) return;
     this.lineNumberPrimedDigits = digits;
     this.lineNumberRenderer.setText('0'.repeat(digits), -1);
