@@ -304,7 +304,7 @@ export class TextEditor implements DocumentHost {
   private readonly editorModel: EditorModel;
   private readonly vimState: VimState;
   private readonly textDecorations: TextDecorations;
-  private readonly inlineBlockController: BlockDecorations;
+  private readonly blockDecorations: BlockDecorations;
   private readonly search: SearchController;
   private leap!: Leap; // built in buildEditorArea (needs the overlay)
   private completion!: CompletionController; // built in buildEditorArea (needs the overlay)
@@ -440,7 +440,7 @@ export class TextEditor implements DocumentHost {
     // reach it via `editor.decorations`.
     this.textDecorations = new TextDecorations(this.editorModel);
     // Inline block surface (virtual content between lines: the diff fold placeholder).
-    this.inlineBlockController = new BlockDecorations(this.view);
+    this.blockDecorations = new BlockDecorations(this.view);
     // Search/replace engine; its `SearchBar` widget is built in buildEditorArea.
     this.search = new SearchController(this.editorModel, this.textDecorations);
 
@@ -891,7 +891,7 @@ export class TextEditor implements DocumentHost {
   /** The inline-block surface (virtual content between lines, e.g. the diff fold
    *  placeholder) — overlay widgets in a reserved gap, zero buffer footprint. */
   get inlineBlocks(): BlockDecorations {
-    return this.inlineBlockController;
+    return this.blockDecorations;
   }
 
   /** Open a focusable inline peek (e.g. see-definition) below `line` — defaults to
