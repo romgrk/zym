@@ -239,7 +239,11 @@ export class SyntaxController {
 
   private debounceId = 0;
   private viewportDebounceId = 0;
-  private scrollConnected = false;
+  // The vadjustment our scroll-repaint handler is bound to. The ScrolledWindow swaps
+  // the view's adjustment when it's parented, so we rebind when it changes (a plain
+  // "already connected" guard would pin us to the throwaway default → scroll never
+  // repaints → folds reveal unpainted regions on scroll).
+  private scrollAdj: any = null;
   // True once dispose() has run: stops deferred work (debounced refreshes, the
   // cursor-position bracket match) from touching a buffer/view that GTK is
   // finalizing or a tree-sitter tree that's been freed — a stale handler reading
@@ -251,6 +255,9 @@ export class SyntaxController {
   // Cached buffer text from the last parse, reused by viewport repaints on scroll
   // (no edit → no reparse, just a re-query + re-paint over the new visible range).
   private cachedText = '';
+  // Set by a fold toggle so the next refresh reparses from scratch (not incrementally
+  // from the fold's large structural edit, which leaves drifted node positions).
+  private fullReparseNext = false;
   // The line span our highlight tags currently cover, cleared before the next
   // paint; null = "unknown, clear the whole buffer".
   private paintedExtent: { fromLine: number; toLine: number } | null = null;
@@ -338,8 +345,8 @@ export class SyntaxController {
     // it appears (notify::vadjustment) as well as now if it's already there.
     const connectScroll = () => {
       const vadj = (view as any).getVadjustment?.();
-      if (vadj && !this.scrollConnected) {
-        this.scrollConnected = true;
+      if (vadj && vadj !== this.scrollAdj) {
+        this.scrollAdj = vadj;
         this.connect(vadj, 'value-changed', () => this.scheduleViewportRepaint());
       }
     };
@@ -545,7 +552,11 @@ export class SyntaxController {
     // They only diverge on astral (surrogate-pair) chars — detect once so the
     // common, BMP-only file pays nothing in iterAt.
     this.hasAstral = /[\ud800-\udbff]/.test(this.cachedText);
-    const tree = this.parser.parse(this.cachedText, this.tree ?? undefined);
+    // After a fold, reparse from scratch — the incremental tree (edited by the fold's
+    // big delete+insert) yields drifted node positions; otherwise reparse incrementally.
+    const prior = this.fullReparseNext ? undefined : (this.tree ?? undefined);
+    this.fullReparseNext = false;
+    const tree = this.parser.parse(this.cachedText, prior);
     if (!tree) return;
     if (this.tree && this.tree !== tree) this.tree.delete();
     this.tree = tree;
@@ -981,8 +992,14 @@ export class SyntaxController {
         if (cursorInside) buffer.placeCursor(asIter(buffer.getIterAtOffset(ps)));
       }
     }
-    // The collapse/expand edited the view buffer → a reparse is scheduled (rebuilds
-    // the fold state); repaint now for responsiveness.
+    // The collapse/expand edited the view buffer by a large structural delete+insert.
+    // An INCREMENTAL reparse from that (which the buffer 'changed' handler just
+    // scheduled, seeded by the fold's tree.edit) is unreliable — node positions below
+    // the fold drift, so highlight captures land on the wrong rows and a later scroll
+    // repaint paints unhighlighted regions until a real edit heals them. Mark the next
+    // reparse FULL; the already-scheduled (debounced) refresh then does one clean parse
+    // — so foldAll's many toggles still cost a single full parse, not one each.
+    this.fullReparseNext = true;
     (this.view as any).queueDraw();
     this.emitFoldsChanged();
     return revealed;
