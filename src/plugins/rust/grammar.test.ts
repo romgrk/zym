@@ -58,4 +58,15 @@ test('bundled Rust grammar: loads, queries compile, highlights core captures', a
   for (const expected of ['function', 'type', 'keyword', 'string', 'number', 'boolean', 'comment', 'punctuation.bracket']) {
     assert.ok(caps.has(expected), `Rust should produce a @${expected} capture`);
   }
+
+  // keep-footer: an `if` with an `else` branch keeps its `} else …` line on its
+  // own line (the consequence is captured @fold.keepFooter); a plain `if` is just
+  // @fold. See folding.md.
+  const ifElse = 'fn f() {\n    if a {\n        x();\n    } else {\n        y();\n    }\n}';
+  const foldCaps = capturesFor(rust, query('rust/folds.scm'), ifElse);
+  assert.ok(foldCaps.has('fold.keepFooter'), 'if/else should produce a @fold.keepFooter capture');
+
+  const plainIf = 'fn f() {\n    if a {\n        x();\n    }\n}';
+  const plainCaps = capturesFor(rust, query('rust/folds.scm'), plainIf);
+  assert.ok(!plainCaps.has('fold.keepFooter'), 'a plain if (no else) should not keep-footer');
 });

@@ -57,6 +57,14 @@ test('bundled C grammar: loads, queries compile, highlights the core captures', 
   ]) {
     assert.ok(caps.has(expected), `C should produce a @${expected} capture`);
   }
+
+  // keep-footer: an `if` with an `else` keeps its `} else …` line on its own line.
+  const ifElse = 'int f(){\n  if (a) {\n    x();\n  } else {\n    y();\n  }\n}';
+  assert.ok(capturesFor(c, query('c/folds.scm'), ifElse).has('fold.keepFooter'),
+    'C if/else should produce a @fold.keepFooter capture');
+  const plainIf = 'int f(){\n  if (a) {\n    x();\n  }\n}';
+  assert.ok(!capturesFor(c, query('c/folds.scm'), plainIf).has('fold.keepFooter'),
+    'a plain C if (no else) should not keep-footer');
 });
 
 test('bundled C++ grammar: loads, queries compile, highlights the core captures', async () => {
@@ -91,4 +99,15 @@ test('bundled C++ grammar: loads, queries compile, highlights the core captures'
   ]) {
     assert.ok(caps.has(expected), `C++ should produce a @${expected} capture`);
   }
+
+  // keep-footer: `} else …` and `} catch (…) {` lines stay on their own line.
+  const ifElse = 'int f(){\n  if (a) {\n    x();\n  } else {\n    y();\n  }\n}';
+  assert.ok(capturesFor(cpp, query('cpp/folds.scm'), ifElse).has('fold.keepFooter'),
+    'C++ if/else should produce a @fold.keepFooter capture');
+  const tryCatch = 'int f(){\n  try {\n    a();\n  } catch (int e) {\n    b();\n  }\n}';
+  assert.ok(capturesFor(cpp, query('cpp/folds.scm'), tryCatch).has('fold.keepFooter'),
+    'C++ try/catch should produce a @fold.keepFooter capture');
+  const plainIf = 'int f(){\n  if (a) {\n    x();\n  }\n}';
+  assert.ok(!capturesFor(cpp, query('cpp/folds.scm'), plainIf).has('fold.keepFooter'),
+    'a plain C++ if (no else) should not keep-footer');
 });

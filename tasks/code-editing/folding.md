@@ -67,9 +67,10 @@ live fold that round-trips through unfold).
     object, class, **standalone `if`**, final `else`/`finally`.
   - **keep-footer** (1-per-line) — a node captured **`@fold.keepFooter`** collapses
     only to the newline ending the last body line, so `}`/`} else {`/`} catch {`
-    stays on its own line. For TS/TSX the query captures the consequence of an
-    `if_statement` that has an `alternative`, and `try`/`catch` blocks a clause
-    follows. `computeFoldRanges` merges captures per start row (keep-footer wins).
+    stays on its own line. The query captures the consequence/body block of a
+    chained construct — an `if` that has an `else`/`alternative`, a `try` a
+    `catch` follows — for every brace language that ships it (TS/TSX, Rust, C/C++).
+    `computeFoldRanges` merges captures per start row (keep-footer wins).
 - `[N]` = lines folded (span for join, hidden body lines for keep-footer).
 - The placeholder carries `foldPlaceholderTag` (muted + `editable:false`).
 - `activeFolds` is the live list of fold handles; `foldsByHeaderLine` (keyed by line)
@@ -142,9 +143,12 @@ boundary. Overlay/peek content that adds its *own* line still belongs to
 
 ## Known limitations / follow-ups
 
-- Keep-footer is grammar-declared via `@fold.keepFooter`; only TS/TSX ship the
-  patterns so far. Other language plugins fold if/else single-line until they add
-  the capture (it's a query-only change — see language-config.md).
+- Keep-footer is grammar-declared via `@fold.keepFooter`; **every brace-delimited
+  language plugin ships the patterns** for its chained constructs (`} else {`,
+  `} catch {`, …) — see [plugin-creation.md](../plugin-creation.md). A plugin that
+  omits the capture folds if/else single-line until it adds it (a query-only change
+  — see language-config.md). Indentation-based languages (Python) have no
+  continuation line, so keep-footer doesn't apply.
 - **Nested folds** compose; folding over an already-folded region **subsumes** the
   inner fold (`Document.foldViewRange` drops it, `SyntaxController.pruneDeadFolds`
   clears the handle, `isFoldAlive` guards the read paths). Covered by tests.

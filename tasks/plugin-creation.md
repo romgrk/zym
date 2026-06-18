@@ -84,12 +84,12 @@ The fold style is grammar-declared in `folds.scm`
 - `@fold.keepFooter` — **keep-footer**: the closing line that *continues* a chain
   (`} else {`, `} else if … {`, `} catch (…) {`) stays on its own line.
 
-For a brace-delimited language with chained constructs, prefer shipping
-`@fold.keepFooter` so those chains read well folded. It's a query-only change —
-`src/syntax/folds.ts` consumes the capture name generically (a node can match both
-`@fold` and `@fold.keepFooter`; keep-footer wins per start row). The pattern: capture
-the **consequence/body block** of the construct that has a continuation. The TypeScript
-plugin is the reference (`src/plugins/typescript/queries/typescript/folds.scm`):
+A brace-delimited language with chained constructs should ship `@fold.keepFooter`
+so those chains read well folded (TS/TSX, Rust, and C/C++ all do). It's a query-only
+change — `src/syntax/folds.ts` consumes the capture name generically (a node can match
+both `@fold` and `@fold.keepFooter`; keep-footer wins per start row). The pattern:
+capture the **consequence/body block** of the construct that has a continuation. The
+TypeScript plugin is the reference (`src/plugins/typescript/queries/typescript/folds.scm`):
 
 ```scm
 (if_statement
@@ -103,8 +103,7 @@ the exact node/field names against the real grammar (parse a snippet and print
 `tree.rootNode.toString()`) — they drift between grammars (Rust: `if_expression` /
 `block`; C/C++: `if_statement` / `compound_statement`; TS: `if_statement` /
 `statement_block`). Indentation-based languages (Python) have no continuation line,
-so keep-footer doesn't apply. Note: of the bundled brace languages only TypeScript
-currently ships keep-footer; Rust/C/C++ fold with plain `@fold` only.
+so keep-footer doesn't apply.
 
 ## 4. Register the plugin
 

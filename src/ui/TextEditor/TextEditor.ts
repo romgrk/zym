@@ -281,6 +281,13 @@ export class TextEditor implements DocumentHost {
   // tearing down twice must be a no-op.
   private disposed = false;
 
+  // Disconnects this editor's handler on the *global* Adw.StyleManager. It must
+  // run from dispose() (the tab-close teardown path), not only the widget
+  // `destroy` signal: on close the root is detached, not destroyed, so `destroy`
+  // never fires — and the global singleton would otherwise pin the whole editor
+  // (buffer, tree-sitter tree, widgets) via the captured closure forever.
+  private detachStyleScheme?: () => void;
+
   // The document this editor is a *view* onto (owns the text model + undo + file I/O +
   // LSP). `this.buffer` is this view's own GtkSource.Buffer, kept in sync by the
   // document — separate from other views' buffers, so cursor/selection/folds/decorations
@@ -634,6 +641,8 @@ export class TextEditor implements DocumentHost {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.detachStyleScheme?.(); // drop the global StyleManager handler (else it pins this editor)
+    this.detachStyleScheme = undefined;
     if (this.mapHandler) {
       (this.view as any).off('map', this.mapHandler);
       this.mapHandler = null;
@@ -1425,9 +1434,12 @@ export class TextEditor implements DocumentHost {
     apply();
     // styleManager is the global Adw.StyleManager singleton; without disconnecting
     // on teardown it would keep this editor (its buffer, tree-sitter tree, widgets)
-    // alive forever, leaking one whole editor per file ever opened.
+    // alive forever, leaking one whole editor per file ever opened. Disconnect from
+    // dispose() (the reliable teardown — the root is detached, not destroyed, on tab
+    // close, so the `destroy` fallback never fires); idempotent, so both are safe.
     styleManager.on('notify::dark', apply);
-    this.root.on('destroy', () => styleManager.off('notify::dark', apply));
+    this.detachStyleScheme = () => styleManager.off('notify::dark', apply);
+    this.root.on('destroy', () => this.detachStyleScheme?.());
   }
 
   // --- File operations -------------------------------------------------------

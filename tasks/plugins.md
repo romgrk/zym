@@ -15,6 +15,9 @@ reference plugin. Several more bundled plugins followed, each exercising a
 different slice of the contribution model (config schema, vendored grammars,
 cross-language injection, per-editor decorations) — see Bundled plugins below.
 
+> **Adding a plugin?** See [plugin-creation.md](plugin-creation.md) for the
+> step-by-step recipe (this page is the architecture).
+
 ## Model
 
 A plugin is a **manifest** (`id`, `name`, `description?`, `version?`) plus
@@ -122,6 +125,8 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   `cpp.test.ts`, `grammar.test.ts`).
 - `src/plugins/rust/` — the Rust plugin (`index.ts`, `queries/rust/`, `rust.test.ts`,
   `grammar.test.ts`).
+- `src/plugins/python/` — the Python plugin (`index.ts`, `queries/python/`,
+  `python.test.ts`, `grammar.test.ts`).
 - `src/plugins/color-preview/` — the color-preview plugin (`index.ts` editor wiring +
   `colors.ts` pure parser/contrast, `colors.test.ts`); the `observeTextEditors`
   reference consumer.
@@ -178,6 +183,16 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   C by convention while `.hpp`/`.hh`/… map to C++, and a single `clangd` ServerDef
   serves the `c` / `cpp` languageIds (single-file; prefers a `compile_commands.json`
   root; skipped gracefully if clangd isn't on PATH, like marksman).
+- **python** — Python detection (`.py`/`.pyi`/`.pyw`) and the bundled
+  `tree-sitter-python` grammar (highlighting + folding), with **pyright** as the
+  type-checking language server (single-file), **pylsp** as a same-group
+  lower-priority alternative, and **ruff** as an additive (ungrouped)
+  linter/formatter server. **All three are installable**: pyright via a plain
+  `{ via: 'npm' }` spec; the pip-only ruff/pylsp via the `{ command }` escape hatch
+  — a self-contained `python3 -m venv` built in the server's managed dir, with the
+  venv's console script symlinked into the `node_modules/.bin` the manager searches
+  (the only discoverable managed path), so nothing touches the user's global env.
+  Needs `python3`; absent servers are skipped gracefully until installed.
 - **color-preview** — the first **`observeTextEditors`** consumer (no language layer at
   all). Background-tints color literals — hex (`#rgb`…`#rrggbbaa`), `rgb()/rgba()`,
   `hsl()/hsla()` — with the color they represent, contrast-picking black/white

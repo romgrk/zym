@@ -19,6 +19,7 @@ import { cssPlugin } from '../plugins/css/index.ts';
 import { jsonPlugin } from '../plugins/json/index.ts';
 import { rustPlugin } from '../plugins/rust/index.ts';
 import { cppPlugin } from '../plugins/cpp/index.ts';
+import { pythonPlugin } from '../plugins/python/index.ts';
 import { colorPreviewPlugin } from '../plugins/color-preview/index.ts';
 
 export { PluginRegistry } from './PluginRegistry.ts';
@@ -40,5 +41,6 @@ export function registerBuiltinPlugins(): void {
   plugins.register(jsonPlugin, Path.join(BUILTINS_DIR, 'json'));
   plugins.register(rustPlugin, Path.join(BUILTINS_DIR, 'rust'));
   plugins.register(cppPlugin, Path.join(BUILTINS_DIR, 'cpp'));
+  plugins.register(pythonPlugin, Path.join(BUILTINS_DIR, 'python'));
   plugins.register(colorPreviewPlugin, Path.join(BUILTINS_DIR, 'color-preview'));
 }
