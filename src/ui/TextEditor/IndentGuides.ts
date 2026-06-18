@@ -19,10 +19,6 @@ import type { EditorModel } from './EditorModel.ts';
 
 const LINE_WIDTH = 1;
 
-function asIter(r: any): any {
-  return Array.isArray(r) ? r[r.length - 1] : r;
-}
-
 export class IndentGuides {
   readonly widget: InstanceType<typeof Gtk.DrawingArea>;
 
@@ -30,10 +26,10 @@ export class IndentGuides {
   private readonly model: EditorModel;
   private enabled = true;
   private readonly rgba = new Gdk.RGBA();
-  // Monospace metrics, measured lazily from a visible content line and cached
-  // (constant for the editor's font; x0 is the column-0 buffer x).
+  // Monospace char advance, measured lazily from a visible content line and cached
+  // (constant for the editor's font). The column-0 origin is NOT cached — it's
+  // re-read each draw, because it shifts after open (deferred gutter install).
   private charWidth = 0;
-  private x0 = 0;
 
   constructor(view: SourceView, model: EditorModel) {
     this.view = view;
@@ -45,8 +41,22 @@ export class IndentGuides {
     this.widget.setDrawFunc((_area: unknown, cr: any) => this.draw(cr));
 
     const redraw = () => this.widget.queueDraw();
-    (view as any).getVadjustment()?.on('value-changed', redraw);
-    (view as any).getHadjustment()?.on('value-changed', redraw);
+    // (Re)bind on notify::v/hadjustment too — the ScrolledWindow swaps in its own
+    // adjustments when the view is parented, so a construction-only binding can catch a
+    // throwaway adjustment whose value-changed never fires (see UnderlineOverlay).
+    const bind = (getter: 'getVadjustment' | 'getHadjustment', notify: string) => {
+      let bound: any = null;
+      const rebind = () => {
+        const adj = (view as any)[getter]?.();
+        if (!adj || adj === bound) return;
+        bound = adj;
+        adj.on('value-changed', redraw);
+      };
+      rebind();
+      (view as any).on(notify, rebind);
+    };
+    bind('getVadjustment', 'notify::vadjustment');
+    bind('getHadjustment', 'notify::hadjustment');
     (view.getBuffer() as any).on('changed', redraw); // indentation may have changed
     quilx.config.observe('editor.indentGuides', (v) => {
       this.enabled = v !== false;
@@ -61,24 +71,32 @@ export class IndentGuides {
     if (!rect || !rect.height) return;
 
     const last = this.model.getLastBufferRow();
-    const lineAtY = (y: number): number => asIter(view.getLineAtY(y)).getLine();
+    // getLineAtY fills (target_iter, line_top) — the iter is the FIRST out-param. The
+    // generic "last element" helper grabbed line_top (an int) and threw in the draw
+    // func, so guides never rendered. Take r[0].
+    const lineAtY = (y: number): number => {
+      const r = view.getLineAtY(y);
+      return (Array.isArray(r) ? r[0] : r).getLine();
+    };
     const top = Math.max(0, lineAtY(rect.y));
     const bottom = Math.min(last, lineAtY(rect.y + rect.height));
     if (!this.ensureMetrics(top, bottom)) return;
 
-    const tabLength = this.model.getTabLength();
-    const stride = tabLength * this.charWidth;
-    const [wx0] = view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, Math.round(this.x0), 0);
+    const stride = this.model.getTabLength() * this.charWidth; // buffer px per indent level
 
     cr.setLineWidth(LINE_WIDTH);
     cr.setSourceRgba(this.rgba.red, this.rgba.green, this.rgba.blue, this.rgba.alpha);
     for (let row = top; row <= bottom; row++) {
       const level = this.guideLevel(row, last);
       if (level <= 0) continue;
+      // Re-measure the row's column-0 cell every draw and convert with the SAME
+      // buffer→widget transform the text glyphs use right now (cell.x + cell.y together,
+      // like UnderlineOverlay). A value cached at first paint drifts sideways once the
+      // deferred gutter installs / the view scrolls — that was the offset.
       const cell = view.getIterLocation(this.model.iterAtPoint(new Point(row, 0)));
-      const [, wy] = view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, 0, cell.y);
       for (let k = 0; k < level; k++) {
-        const x = Math.round(wx0 + k * stride) + 0.5; // +0.5 → crisp 1px line
+        const [wx, wy] = view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, Math.round(cell.x + k * stride), cell.y);
+        const x = wx + 0.5; // +0.5 → crisp 1px line
         cr.moveTo(x, wy);
         cr.lineTo(x, wy + cell.height);
       }
@@ -99,7 +117,7 @@ export class IndentGuides {
     return 0;
   }
 
-  /** Measure the monospace char width + column-0 x from a visible content line. */
+  /** Measure the monospace char advance from a visible content line. */
   private ensureMetrics(top: number, bottom: number): boolean {
     if (this.charWidth > 0) return true;
     const view = this.view as any;
@@ -108,7 +126,6 @@ export class IndentGuides {
       const a = view.getIterLocation(this.model.iterAtPoint(new Point(row, 0)));
       const b = view.getIterLocation(this.model.iterAtPoint(new Point(row, 1)));
       if (b.x > a.x) {
-        this.x0 = a.x;
         this.charWidth = b.x - a.x;
         return true;
       }

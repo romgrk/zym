@@ -30,17 +30,27 @@ import { UnderlineOverlay, type Underline } from './UnderlineOverlay.ts';
 
 export type { Underline };
 
-/** The built-in decoration styles. Producers re-sync layers using these keys. */
-export type DecorationStyle =
+// Built-in decoration styles, split by Atom's two range-tag categories: a `line`
+// style paints the WHOLE line (paragraph background, full width); a `highlight`
+// style paints a character RANGE. `decorate(range, style)` takes either — the
+// category (LINE_STYLES) just picks paragraph- vs char-background.
+
+/** Atom `line` decorations — full-line (paragraph) backgrounds. */
+export type LineStyle =
+  | 'added' // diff: an inserted line
+  | 'removed' // diff: a deleted line
+  | 'filler' // diff (side-by-side): a blank alignment pad on the other side
+  | 'fold'; // diff: a collapsed-unchanged-lines placeholder row
+
+/** Atom `highlight` decorations — character-range backgrounds. */
+export type HighlightStyle =
   | 'highlight' // search: every match
   | 'highlight-strong' // search: the current match
-  | 'added' // diff: an inserted line (full-line background)
-  | 'removed' // diff: a deleted line (full-line background)
-  | 'filler' // diff (side-by-side): a blank alignment pad on the other side
   | 'word-add' // diff: the changed chars within an added line
   | 'word-del' // diff: the changed chars within a removed line
-  | 'fold' // diff: a collapsed-unchanged-lines placeholder row
   | 'flash'; // vim: a brief flash over an operated/yanked range
+
+export type DecorationStyle = LineStyle | HighlightStyle;
 
 // Style → background color (hex, alpha-capable via #rrggbbaa). Backgrounds rather
 // than foregrounds so they compose with syntax colors. All tints come from the
@@ -57,9 +67,10 @@ const STYLE_BACKGROUND: Record<DecorationStyle, string> = {
   flash: theme.ui.flash,
 };
 
-// Diff line styles paint the *whole line* (paragraph background, full width);
-// the rest are character-span backgrounds (word-level diff, search, flash).
-const LINE_STYLES = new Set<DecorationStyle>(['added', 'removed', 'filler', 'fold']);
+// The `line`-category styles (paragraph background); everything else is a char span.
+// Built from `LineStyle` (so the members are checked) but typed wide enough to test a
+// `DecorationStyle`.
+const LINE_STYLES: ReadonlySet<DecorationStyle> = new Set<LineStyle>(['added', 'removed', 'filler', 'fold']);
 
 /** Parse a `#rgb(a)`/`#rrggbb(aa)` string into a Gdk.RGBA. */
 function parseColor(hex: string): InstanceType<typeof Gdk.RGBA> {
@@ -127,11 +138,12 @@ export class DecorationLayer {
     this.apply(range, this.tagForStyle(style));
   }
 
-  /** Paint an arbitrary background (+ optional foreground) over a char range — for
-   *  producers whose colors aren't a fixed `DecorationStyle` (e.g. the color-preview
-   *  plugin tinting a literal with the color it represents). Colors are any string
-   *  `Gdk.RGBA.parse` accepts (`#rrggbb(aa)`, `rgb()/rgba()`, …). */
-  tint(range: RangeLike, colors: { background: string; foreground?: string }): void {
+  /** Paint an arbitrary background (+ optional foreground) over a range — for producers
+   *  (e.g. plugins) whose colors aren't a fixed `DecorationStyle`. By default a char
+   *  RANGE (Atom `highlight`); pass `wholeLine` for a full-line paragraph background
+   *  (Atom `line`) — so a plugin can apply a generic line decoration too. Colors are any
+   *  string `Gdk.RGBA.parse` accepts (`#rrggbb(aa)`, `rgb()/rgba()`, …). */
+  tint(range: RangeLike, colors: { background: string; foreground?: string; wholeLine?: boolean }): void {
     this.apply(range, this.tagForColors(colors));
   }
 
@@ -156,10 +168,12 @@ export class DecorationLayer {
     });
   }
 
-  private tagForColors(colors: { background: string; foreground?: string }): InstanceType<typeof Gtk.TextTag> {
-    const key = `tint:${colors.background}|${colors.foreground ?? ''}`;
+  private tagForColors(colors: { background: string; foreground?: string; wholeLine?: boolean }): InstanceType<typeof Gtk.TextTag> {
+    const key = `tint:${colors.background}|${colors.foreground ?? ''}|${colors.wholeLine ? 'L' : 'C'}`;
     return this.tagFor(key, `deco:${this.name}:${key}`, (tag) => {
-      (tag as any).backgroundRgba = parseColor(colors.background);
+      // wholeLine → paragraph-background (full width, like a `line` style); else a char span.
+      if (colors.wholeLine) (tag as any).paragraphBackgroundRgba = parseColor(colors.background);
+      else (tag as any).backgroundRgba = parseColor(colors.background);
       if (colors.foreground) (tag as any).foregroundRgba = parseColor(colors.foreground);
     });
   }

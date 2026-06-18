@@ -33,6 +33,7 @@ import { highlightToMarkup } from '../../syntax/highlightToMarkup.ts';
 import { langIdForPath } from '../../syntax/grammar.ts';
 import { TextDecorations } from './TextDecorations.ts';
 import { BlockDecorations } from './BlockDecorations.ts';
+import { OverlayDecoration } from './OverlayDecoration.ts';
 import { Peek, type PeekOptions } from './Peek.ts';
 import { GitGutter } from './GitGutter.ts';
 import { IndentGuides } from './IndentGuides.ts';
@@ -328,14 +329,14 @@ export class TextEditor implements DocumentHost {
   // The LSP hover card: a non-interactive overlay floated in `caretLayer` at the
   // cursor (the proven Fixed-overlay pattern, not a GtkPopover). Hidden until shown.
   private readonly hoverLabel = new Gtk.Label({ useMarkup: true, wrap: true, xalign: 0 });
-  // Vertical box so the label fills (and wraps to) the card's fixed width.
-  private readonly hoverCard = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-  private contentOverlay!: InstanceType<typeof Gtk.Overlay>; // hosts the hover card
+  // The floating card holding hoverLabel; built in buildEditorArea (needs the overlay).
+  private hoverOverlay!: OverlayDecoration;
+  private contentOverlay!: InstanceType<typeof Gtk.Overlay>; // hosts the floating cards
   private inlinePeek!: Peek; // focusable inline peek (see-definition); built in buildEditorArea
   // The signature-help card: shown live while typing a call's arguments. Same
   // floating-card pattern as hover; `signatureSeq` drops stale async responses.
   private readonly signatureLabel = new Gtk.Label({ useMarkup: true, wrap: true, xalign: 0 });
-  private readonly signatureCard = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+  private signatureOverlay!: OverlayDecoration;
   private signatureSeq = 0;
   private signatureTimer = 0;
   // Whether the signature card's position is fixed for the current call (set on
@@ -620,7 +621,7 @@ export class TextEditor implements DocumentHost {
     // the cursor moves or the view scrolls (both no-ops when nothing is showing).
     this.buffer.on('notify::cursor-position', () => {
       this.dismissHover();
-      if (this.signatureCard.getVisible()) this.scheduleSignatureRequest();
+      if (this.signatureOverlay.visible) this.scheduleSignatureRequest();
     });
     this.view.getVadjustment()?.on('value-changed', () => {
       this.dismissHover();
@@ -664,7 +665,7 @@ export class TextEditor implements DocumentHost {
     const triggers = quilx.lsp.signatureHelpTriggerCharacters(this.lspDocument);
     const typed = event.changes.map((c) => c.newText).join('');
     const typedTrigger = [...typed].some((ch) => triggers.includes(ch));
-    if (!this.signatureCard.getVisible() && !typedTrigger) return;
+    if (!this.signatureOverlay.visible && !typedTrigger) return;
     this.scheduleSignatureRequest();
   }
 
@@ -702,23 +703,18 @@ export class TextEditor implements DocumentHost {
       `<span face="${fonts.monospaceFamily}">${signatureMarkup(sig.label, sig.parameters, activeParam, lang)}</span>`,
     );
     if (!this.signatureAnchored) {
-      // Anchor at the callee name's start (fall back to the cursor if not found).
+      // Anchor at the callee name's start (fall back to the cursor if not found),
+      // shifting left by the card's content inset so the text lines up with the code
+      // column rather than the card's edge. Stays put as further arguments are typed.
       const cursor = this.editorModel.getCursorBufferPosition();
       const line = [...this.editorModel.lineTextForBufferRow(cursor.row)];
       const nameCol = callNameStartColumn(line, cursor.column);
       const anchor = nameCol !== null ? { row: cursor.row, column: nameCol } : cursor;
-      const rect = this.editorModel.pixelRectForBufferPosition(anchor);
-      if (!rect) return;
-      const ow = this.contentOverlay.getWidth();
-      const oh = this.contentOverlay.getHeight();
-      // Shift left by the card's content inset (border + padding) so the signature
-      // text lines up with the code column rather than the card's edge.
-      const x = rect.x - CARD_CONTENT_INSET_PX;
-      this.signatureCard.setMarginStart(ow > 0 ? Math.max(0, Math.min(x, ow - HOVER_WIDTH_PX)) : Math.max(0, x));
-      this.signatureCard.setMarginBottom(oh > 0 ? Math.max(0, oh - rect.y + HOVER_GAP) : HOVER_GAP);
+      if (!this.signatureOverlay.anchorAbove(anchor, CARD_CONTENT_INSET_PX)) return; // off-screen → retry
       this.signatureAnchored = true;
+    } else {
+      this.signatureOverlay.show();
     }
-    this.signatureCard.setVisible(true);
   }
 
   private dismissSignature() {
@@ -728,7 +724,7 @@ export class TextEditor implements DocumentHost {
     }
     this.signatureSeq++; // invalidate any in-flight request
     this.signatureAnchored = false; // the next call re-anchors at its own site
-    this.signatureCard.setVisible(false);
+    this.signatureOverlay.hide();
   }
 
   // --- Git gutter ------------------------------------------------------------
@@ -860,21 +856,12 @@ export class TextEditor implements DocumentHost {
         highlightCode: (code, lang) => highlightToMarkup(code, lang ?? fallbackLang),
       }),
     );
-    // Position by margins + bottom-left alignment: the overlay places the card's
-    // bottom edge `HOVER_GAP` above the cursor (it grows upward) and its left edge
-    // at the cursor — no need to know the card's height. Coordinates match the
-    // caret's (same overlay, same widget-relative pixels).
-    const ow = this.contentOverlay.getWidth();
-    const oh = this.contentOverlay.getHeight();
-    const left = ow > 0 ? Math.max(0, Math.min(rect.x, ow - HOVER_WIDTH_PX)) : rect.x;
-    const bottom = oh > 0 ? Math.max(0, oh - rect.y + HOVER_GAP) : HOVER_GAP;
-    this.hoverCard.setMarginStart(left);
-    this.hoverCard.setMarginBottom(bottom);
-    this.hoverCard.setVisible(true);
+    // Float the card just above the cursor; it follows scroll via the overlay.
+    this.hoverOverlay.anchorAbove(this.editorModel.getCursorBufferPosition());
   }
 
   private dismissHover() {
-    this.hoverCard.setVisible(false);
+    this.hoverOverlay.hide();
   }
 
   /** The inline decoration surface (search highlights, inline diff). */
@@ -1121,24 +1108,14 @@ export class TextEditor implements DocumentHost {
     // cursor, growing upward) without us needing to read its height. Prose stays
     // in the proportional UI font; only code spans are monospace (<tt>). Fixed
     // width (the label fills + wraps to it).
-    this.hoverCard.addCssClass('quilx-hover');
-    this.hoverCard.setSizeRequest(HOVER_WIDTH_PX, -1);
-    this.hoverCard.setHalign(Gtk.Align.START);
-    this.hoverCard.setValign(Gtk.Align.END);
-    this.hoverCard.setCanTarget(false);
-    this.hoverCard.append(this.hoverLabel);
-    this.hoverCard.setVisible(false);
-    overlay.addOverlay(this.hoverCard);
+    this.hoverOverlay = new OverlayDecoration(this.editorModel, { cssClass: 'quilx-hover', widthPx: HOVER_WIDTH_PX, gapPx: HOVER_GAP });
+    this.hoverOverlay.content.append(this.hoverLabel);
+    this.hoverOverlay.attach(overlay);
 
     // The signature-help card reuses the hover card's look (floated above the cursor).
-    this.signatureCard.addCssClass('quilx-hover');
-    this.signatureCard.setSizeRequest(HOVER_WIDTH_PX, -1);
-    this.signatureCard.setHalign(Gtk.Align.START);
-    this.signatureCard.setValign(Gtk.Align.END);
-    this.signatureCard.setCanTarget(false);
-    this.signatureCard.append(this.signatureLabel);
-    this.signatureCard.setVisible(false);
-    overlay.addOverlay(this.signatureCard);
+    this.signatureOverlay = new OverlayDecoration(this.editorModel, { cssClass: 'quilx-hover', widthPx: HOVER_WIDTH_PX, gapPx: HOVER_GAP });
+    this.signatureOverlay.content.append(this.signatureLabel);
+    this.signatureOverlay.attach(overlay);
 
     // Buffer-only mode: a greyed placeholder over the empty buffer, and no minimap.
     if (this.bufferMode?.placeholder) {

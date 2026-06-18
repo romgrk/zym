@@ -33,13 +33,19 @@ const WAVELENGTH = 6;
 const LINE_WIDTH = 1;
 const STEP = 1; // sampling interval along x
 
+// getIterAtMark returns the iter (node-gtk may wrap a single out-param in an array).
+const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
+
 export class UnderlineOverlay {
   /** The DrawingArea to add as an overlay child over the text. */
   readonly widget: InstanceType<typeof Gtk.DrawingArea>;
 
   private readonly view: SourceView;
   private readonly model: EditorModel;
-  private underlines: Underline[] = [];
+  // Each underline is anchored to a pair of GtkTextMarks (not static coordinates), so
+  // its position moves with edits exactly like a GtkTextTag — the squiggle tracks the
+  // text live instead of lagging until the next diagnostics push.
+  private placed: Array<{ startMark: any; endMark: any; color: string }> = [];
   private readonly colorCache = new Map<string, InstanceType<typeof Gdk.RGBA>>();
 
   constructor(view: SourceView, model: EditorModel) {
@@ -50,40 +56,83 @@ export class UnderlineOverlay {
     this.widget.setCanTarget(false); // never intercept clicks
     this.widget.setDrawFunc((_area: unknown, cr: any) => this.draw(cr));
 
-    // Repaint as the text scrolls so squiggles track their lines. The view's
-    // scroll adjustments exist once it's inside the ScrolledWindow.
+    // Repaint as the text scrolls/changes so squiggles track their lines. The
+    // ScrolledWindow swaps in its own adjustments when the view is parented, so we
+    // (re)bind `value-changed` on `notify::v/hadjustment` as well as now — binding
+    // only at construction catches the throwaway pre-parent adjustment, whose
+    // `value-changed` never fires, so the squiggles would stay fixed while scrolling.
     const redraw = () => this.widget.queueDraw();
-    (this.view as any).getVadjustment()?.on('value-changed', redraw);
-    (this.view as any).getHadjustment()?.on('value-changed', redraw);
+    const bind = (getter: 'getVadjustment' | 'getHadjustment', notify: string) => {
+      let bound: any = null;
+      const rebind = () => {
+        const adj = (this.view as any)[getter]?.();
+        if (!adj || adj === bound) return;
+        bound = adj;
+        adj.on('value-changed', redraw);
+      };
+      rebind();
+      (this.view as any).on(notify, rebind);
+    };
+    bind('getVadjustment', 'notify::vadjustment');
+    bind('getHadjustment', 'notify::hadjustment');
+    // Redraw on edits too: the marks have already moved with the edit, so repaint now
+    // (at their new positions) rather than waiting for the next diagnostics push — this
+    // is what removes the on-edit lag.
+    (this.model.buffer as any).on('changed', redraw);
   }
 
-  /** Replace the underline set and repaint. */
+  /** Replace the underline set and repaint, anchoring each range to a mark pair. */
   setUnderlines(underlines: Underline[]): void {
-    this.underlines = underlines;
+    const buffer = this.model.buffer as any;
+    this.deleteMarks();
+    // start mark right-gravity, end mark left-gravity → the pair brackets the range like
+    // a GtkTextTag (inserts at the edges fall outside; inserts inside grow it).
+    this.placed = underlines.map(({ range, color }) => ({
+      startMark: buffer.createMark(null, this.model.iterAtPoint(range.start), false),
+      endMark: buffer.createMark(null, this.model.iterAtPoint(range.end), true),
+      color,
+    }));
     this.widget.queueDraw();
   }
 
   /** Remove all underlines. */
   clear(): void {
-    if (this.underlines.length === 0) return;
-    this.underlines = [];
+    if (this.placed.length === 0) return;
+    this.deleteMarks();
+    this.placed = [];
     this.widget.queueDraw();
   }
 
-  private draw(cr: any): void {
-    if (this.underlines.length === 0 || !this.view.getRealized()) return;
-    cr.setLineWidth(LINE_WIDTH);
-    for (const underline of this.underlines) this.drawUnderline(cr, underline);
+  private deleteMarks(): void {
+    const buffer = this.model.buffer as any;
+    for (const p of this.placed) {
+      buffer.deleteMark(p.startMark);
+      buffer.deleteMark(p.endMark);
+    }
   }
 
-  private drawUnderline(cr: any, { range, color }: Underline): void {
+  private draw(cr: any): void {
+    if (this.placed.length === 0 || !this.view.getRealized()) return;
+    cr.setLineWidth(LINE_WIDTH);
+    for (const u of this.placed) this.drawUnderline(cr, u);
+  }
+
+  private drawUnderline(cr: any, { startMark, endMark, color }: { startMark: any; endMark: any; color: string }): void {
     const c = this.rgba(color);
     cr.setSourceRgba(c.red, c.green, c.blue, c.alpha);
+    // Resolve the marks to their current positions (they've tracked any edits).
+    const buffer = this.model.buffer as any;
+    const startIter = asIter(buffer.getIterAtMark(startMark));
+    const endIter = asIter(buffer.getIterAtMark(endMark));
+    const startRow = startIter.getLine();
+    const startCol = startIter.getLineOffset();
+    const endRow = endIter.getLine();
+    const endCol = endIter.getLineOffset();
     const lastRow = this.model.getLastBufferRow();
-    for (let row = range.start.row; row <= range.end.row && row <= lastRow; row++) {
-      const startColumn = row === range.start.row ? range.start.column : 0;
+    for (let row = startRow; row <= endRow && row <= lastRow; row++) {
+      const startColumn = row === startRow ? startCol : 0;
       const lineEndColumn = this.model.bufferRangeForBufferRow(row).end.column;
-      const endColumn = row === range.end.row ? range.end.column : lineEndColumn;
+      const endColumn = row === endRow ? endCol : lineEndColumn;
       if (endColumn <= startColumn) continue; // nothing on this row
 
       const span = this.lineSpan(row, startColumn, endColumn);
