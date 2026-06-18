@@ -47,13 +47,33 @@ export function git(cwd: string, args: string[], onDone: GitDone): void {
   });
 }
 
-/** The repository top-level for `cwd`, or null when not inside a repo. */
+// repoRoot(cwd) is invariant for a fixed directory over the life of its checkout,
+// but it's on hot paths — every workbench switch rebinds the git chrome, which
+// forks `git rev-parse --show-toplevel`. fork() cost scales with this process's
+// RSS, so under the long-lived node-gtk process (which accrues native memory)
+// these synchronous spawns grow to tens of ms each and stall the UI. Memoize by
+// cwd; `invalidateRepoRoot` drops entries when a directory's git topology changes.
+const repoRootCache = new Map<string, string | null>();
+
+/** The repository top-level for `cwd`, or null when not inside a repo. Memoized. */
 export function repoRoot(cwd: string): string | null {
+  const cached = repoRootCache.get(cwd);
+  if (cached !== undefined) return cached;
+  let root: string | null;
   try {
-    return gitSync(cwd, ['rev-parse', '--show-toplevel']).trim() || null;
+    root = gitSync(cwd, ['rev-parse', '--show-toplevel']).trim() || null;
   } catch {
-    return null;
+    root = null;
   }
+  repoRootCache.set(cwd, root);
+  return root;
+}
+
+/** Drop memoized repoRoot results after git topology changes (e.g. a worktree is
+ *  created at a path previously probed as non-repo). Clears `cwd` only, or all. */
+export function invalidateRepoRoot(cwd?: string): void {
+  if (cwd === undefined) repoRootCache.clear();
+  else repoRootCache.delete(cwd);
 }
 
 /** Where a directory sits in git: its worktree root, branch, and whether it's a

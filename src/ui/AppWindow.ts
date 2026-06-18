@@ -38,7 +38,7 @@ import { Icons, iconLabel } from './icons.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
 import { GithubButtons } from './GithubButtons.ts';
 import { acquireGitRepo, releaseGitRepo, type GitRepo } from '../git.ts';
-import { git, repoRoot, commitMsgPath, listWorktrees } from '../git.ts';
+import { git, repoRoot, invalidateRepoRoot, commitMsgPath, listWorktrees } from '../git.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { computeDiff } from '../util/DiffModel.ts';
 import { DiffViewer } from './TextEditor/DiffViewer.ts';
@@ -1294,6 +1294,9 @@ export class AppWindow {
   // stay put); if it's the active workbench, re-point the header chrome too.
   private reRootWorkbench(workbench: Workbench<'user' | AgentTerminal>, newCwd: string): void {
     if (newCwd === workbench.cwd) return;
+    // The worktree at newCwd may have been probed (and cached) as a non-repo before
+    // it existed; drop that stale entry so repoRoot resolves the new checkout.
+    invalidateRepoRoot(newCwd);
     const oldGit = workbench.git;
     const git = acquireGitRepo(newCwd); // acquire before release: a shared root keeps its repo
     workbench.cwd = newCwd;
