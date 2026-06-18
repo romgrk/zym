@@ -143,9 +143,12 @@ boundary. Overlay/peek content that adds its *own* line still belongs to
 
 ## Known limitations / follow-ups
 
-- Keep-footer is grammar-declared via `@fold.keepFooter`; only TS/TSX ship the
-  patterns so far. Other language plugins fold if/else single-line until they add
-  the capture (it's a query-only change — see language-config.md).
+- Keep-footer is grammar-declared via `@fold.keepFooter`; **every brace-delimited
+  language plugin ships the patterns** for its chained constructs (`} else {`,
+  `} catch {`, …) — see [plugin-creation.md](../plugin-creation.md). A plugin that
+  omits the capture folds if/else single-line until it adds it (a query-only change
+  — see language-config.md). Indentation-based languages (Python) have no
+  continuation line, so keep-footer doesn't apply.
 - **Nested folds** compose; folding over an already-folded region **subsumes** the
   inner fold (`Document.foldViewRange` drops it, `SyntaxController.pruneDeadFolds`
   clears the handle, `isFoldAlive` guards the read paths). Covered by tests.

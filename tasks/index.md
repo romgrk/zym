@@ -35,7 +35,9 @@ rule, `theme.ui` color tokens, Nerd Font icons, and `.linked` button groups.
 
 ### Plugin system
 
-See [plugins.md](plugins.md) for the architecture (Atom-inspired). A plugin is a
+See [plugins.md](plugins.md) for the architecture (Atom-inspired) and
+[plugin-creation.md](plugin-creation.md) for the step-by-step guide to adding one.
+A plugin is a
 manifest + `activate(ctx)`/`deactivate`; the `PluginContext` exposes
 disposable-tracked contribution points (languages/grammars/LSP servers, keymaps,
 commands, config schema, stylesheets) so deactivation tears everything down. The
