@@ -208,7 +208,9 @@ export function discard(root: string, relPath: string, onDone: GitDone): void {
 
 /** Remove an untracked file (destructive). */
 export function clean(root: string, relPath: string, onDone: GitDone): void {
-  git(root, ['clean', '-f', '--', relPath], onDone);
+  // `-d` so an untracked *directory* is removed too (the explicit `--` pathspec
+  // scopes it to just this entry; ignored files are still left alone without `-x`).
+  git(root, ['clean', '-fd', '--', relPath], onDone);
 }
 
 export function stageAll(root: string, onDone: GitDone): void {

@@ -56,6 +56,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space g l': 'git:pull', // git "l"oad / pull from upstream
   'space g p': 'git:push',
   'space g d': 'git:diff-current', // diff the current file (working tree vs HEAD)
+  'space g o': 'git:open-staging', // "o"pen the staging view (status + diff) in a tab
   // Hunk-level staging on the gutter hunk under the cursor (editor only): "s"tage,
   // "u"nstage (a staged/blue hunk), "r"evert (discard the unstaged change).
   'space h s': 'git:stage-hunk',
@@ -170,6 +171,19 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     A: 'git:stage-all', // stage everything (or unstage all when nothing is unstaged)
     X: 'git:discard', // restore (tracked) / delete (untracked) the file under the cursor
     'c c': 'git:commit', // commit: edit the message in a tab, save+close to commit
+  },
+
+  // Tab-hosted staging view (git:open-staging): list nav + file-level staging. The
+  // commit box is a buffer editor (Ctrl+Enter commits); the right pane is a normal
+  // editor (its own keys, incl. space h s/u hunk staging) once focused.
+  '#GitStagingView': {
+    j: 'core:down',
+    k: 'core:up',
+    o: 'core:right', // open the selected file in the diff pane (and focus it)
+    s: 'git:stage', // stage the file under the cursor
+    u: 'git:unstage', // unstage the file under the cursor
+    X: 'git:discard', // restore (tracked) / delete (untracked, no prompt) the file
+    'c c': 'git:commit', // commit: opens .git/COMMIT_EDITMSG in the editor area
   },
 
   // Workbench list (the left sidebar): shared list navigation (l reveals the selected

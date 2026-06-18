@@ -33,6 +33,7 @@ import { listResumableSessions, recordSessionWorktree, relativeTime, type AgentS
 import { WorkbenchList, PROJECT_NAME } from './WorkbenchList.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
 import { GitPanel } from './GitPanel.ts';
+import { GitStagingView } from './GitStagingView.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { Icons, iconLabel } from './icons.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
@@ -149,6 +150,9 @@ export class AppWindow {
   // Maps an editor's root widget to its center tab handle, so a location jump can
   // reveal an already-open file instead of opening a duplicate tab.
   private readonly editorChildren = new Map<Widget, PanelChild>();
+  // Tab-hosted staging views (git:open-staging), keyed by root widget so the view
+  // is disposed (releasing its embedded editor's document ref) when its tab closes.
+  private readonly stagingViews = new Map<Widget, GitStagingView>();
   // Session modified-status registrations (editors, running agents), keyed by the
   // tab's root widget so the registration is disposed when the tab closes.
   private readonly participants = new Map<Widget, DisposableLike>();
@@ -1083,6 +1087,8 @@ export class AppWindow {
     this.editorRegistrations.delete(widget);
     this.editors.get(widget)?.dispose(); // explicit teardown, not reliant on the GTK destroy signal
     this.editors.delete(widget);
+    this.stagingViews.get(widget)?.dispose(); // release its embedded editor + git subscription
+    this.stagingViews.delete(widget);
     this.editorOwners.delete(widget);
     this.editorChildren.delete(widget);
     this.terminals.delete(widget);
@@ -1982,6 +1988,10 @@ export class AppWindow {
         description: 'Diff the current file (working tree vs HEAD)',
         when: () => this.activeEditor?.currentFile != null,
       },
+      'git:open-staging': {
+        didDispatch: () => this.openStagingView(),
+        description: 'Open the staging view (status + diff) in a tab',
+      },
       'app:quit': () => this.onQuit(),
       'command-palette:toggle': () => openCommandPicker(this.overlay),
     });
@@ -2010,6 +2020,22 @@ export class AppWindow {
       const viewer = new DiffViewer(model, { title: `${name} (working tree ↔ HEAD)`, languagePath: path });
       this.workbench.center.add(viewer.root, { title: `± ${name}`, requireTabBar: true });
     });
+  }
+
+  /** Open the tab-hosted staging view (status list + an editable diff pane). */
+  private openStagingView(): void {
+    const view = new GitStagingView({
+      cwd: this.workbench.cwd,
+      git: this.workbench.git,
+      onCommit: () => this.startCommit(), // opens COMMIT_EDITMSG in the editor area
+    });
+    const child = this.workbench.center.add(view.root, {
+      title: `${Icons.git}  Staging`,
+      requireTabBar: true,
+    });
+    this.stagingViews.set(view.root, view); // disposeChild tears it down on close
+    child.select();
+    view.focus();
   }
 
   // Terminal command: open a shell in a new center-panel tab. Handler only;

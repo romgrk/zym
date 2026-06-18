@@ -436,7 +436,15 @@ bounded by the 64 MiB `maxBuffer`.
 - [x] Branch management: switch/create/delete/merge/rename pickers
 - [x] Stash management: push/pop/apply/drop
 - [x] Diff gutter in the editor (added/modified/deleted per line)
-- [ ] In-panel diffs / hunk-level staging
+- [ ] In-panel diffs / hunk-level staging (left-dock `GitPanel`)
+- [~] **Tab-hosted staging interface** — `GitStagingView` (`src/ui/GitStagingView.ts`),
+  opened in an editor tab via `git:open-staging` (`space g o`). Horizontal split:
+  a `git status`-style file list (staged green / unstaged + untracked red,
+  file-level stage/unstage/discard) + an embedded commit box on the left; an
+  **editable `TextEditor`** of the selected file on the right (gutter change bars +
+  hunk staging via `space h s`/`u`). Coexists with `GitPanel`. The right pane is
+  meant to grow into the full inline/side-by-side diff renderer (editable new-side
+  lines keep vim). See [staging-interface.md](staging-interface.md).
 - [ ] More git diff sources (staged / commit / PR) — see code-editing/diff.md
 - [x] Mutations are coordinated `GitRepo` methods (fetch/pull/push/commit/stash*/branch*/checkoutPullRequest); busy+refresh primitives private to the impl — see "Mutations: coordinated methods" above
 - [x] Two-module boundary: rest of codebase imports only `git.ts`/`github.ts`; `src/git/` internal — see "Module boundary" above
