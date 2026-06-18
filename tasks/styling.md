@@ -55,7 +55,10 @@ mechanisms can't share a literal. Don't introduce new ad-hoc sizes (`0.9em`,
 
 Semantic UI colors come from the active theme via `theme.ui` (`src/theme/theme.ts`):
 `fg`, `textMuted`, `textAccent`, `success`, `warning`, `error`, `info`, `hint`,
-… Interpolate these into CSS/markup rather than hard-coding hex. Severity
+… Interpolate these into CSS/markup rather than hard-coding hex. These resolved
+`theme.ui.*` fields are authored in the theme file under concern-first keys
+(`status.error`, `search.match`, `diff.added`); the loader + format are documented
+in [theming.md](theming.md). Severity
 glyph+color pairs (diagnostics) come from `severityStyle()` in
 `src/lsp/diagnostics/severity.ts`, the single source shared by the gutter and
 squiggle (`DiagnosticsView`), the Diagnostics panel (`DiagnosticsPanel`), and the

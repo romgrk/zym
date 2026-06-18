@@ -26,12 +26,17 @@ focus-driven `.active-empty` outline, `.is-panel-child` invariant, the tab-bar
 rules (`requireTabBar`, non-expanding tabs), and the zombie-safe dock-close rule
 (bottom docks veto-hide; side docks per-tab close + re-root-before-re-add).
 
-### Styling
+### Styling & theming
 
 See [styling.md](styling.md) for how UI styling works: GTK CSS (`addStyles` /
 `styles.set`) vs. inline Pango markup, the shared `window` CSS custom properties
 (`--popover-radius`, `--font-size-small`, …), the one-secondary-text-size font
 rule, `theme.ui` color tokens, Nerd Font icons, and `.linked` button groups.
+
+See [theming.md](theming.md) for the **owned theme format** (no longer Zed's):
+concern-first `ui` keys with longest-prefix fallback, per-capture `syntax`
+tokens, the loader (`src/theme/theme.ts`) + JSON Schema (`theme.schema.json`),
+and diff tints derived from the `status.*` colors.
 
 ### Plugin system
 
@@ -79,10 +84,11 @@ desktop's appearance and fonts, with the rule that **OS font/theme changes are
 followed through at runtime** (no restart).
 
 - [x] Editor scheme follows the OS light/dark preference (`notify::dark`), when the theme defines no background; terminal inherits libadwaita colors.
-- [x] **Color palette centralized** — all colors come from `theme.ui.*` (resolved at load via `DEFAULT_UI`; no inline literals outside `src/theme/`). New tokens: `shadow`/`flash`/`diff*`/`pr*`; regex highlighting folds into `theme.syntax`. Prereq for live theme-swap; lint guardrail still TODO.
+- [x] **Color palette centralized** — all colors come from `theme.ui.*` (resolved at load via concern-first keys + `DEFAULT_UI`; no inline literals outside `src/theme/`). Tokens: `shadow`/`flash`/`diff*` (derived from `status.*`)/`pr*`; regex highlighting folds into `theme.syntax`. Prereq for live theme-swap; lint guardrail still TODO.
+- [x] **Own the theme format** — replaced the Zed theme-family adapter with a native loader + `theme.schema.json` (concern-first `ui` keys, per-capture `syntax` tokens). See [theming.md](theming.md).
 - [ ] Follow OS **monospace** font changes live (editor, terminal, pickers — currently read once at startup).
 - [ ] Follow OS **UI** font changes live (proportional text — currently read once).
-- [ ] Follow OS **light/dark** through the quilx theme palette (swap the theme variant; chrome/syntax/picker colors re-apply), and wire the dead `core.followSystemColorScheme` config.
+- [ ] Follow OS **light/dark** through the quilx theme palette (swap between a light/dark theme file pair selected by `appearance`; chrome/syntax/picker colors re-apply), and wire the dead `core.followSystemColorScheme` config.
 - [ ] Central `Gio.Settings`/`Adw.StyleManager` watcher that emits font/appearance-changed signals instead of per-widget one-shot reads.
 
 ## Git

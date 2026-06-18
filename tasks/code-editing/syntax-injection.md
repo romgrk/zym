@@ -123,9 +123,9 @@ Highlight tags aren't foreground-only any more. A capture can carry font styling
 via `theme.syntaxStyle` (`bold`/`italic`/`underline`/`strikethrough`/`scale`/
 `background`). Headings are **bold + larger, scaled per level** (h1 1.5, h2 1.2,
 h3+ 1.1) via per-level `@markup.heading.1`…`.6` captures; their color inherits
-`markup.heading` by `resolveColor`'s longest-prefix fallback. The theme adapter
-fills these from Zed's `font_weight`/`font_style` plus built-in `markup.*` defaults
-(`theme.ts` `applyMarkupDefaults`), with colors reused from the loaded palette so
+`markup.heading` by `resolveColor`'s longest-prefix fallback. The theme loader
+fills these from each `syntax` token's style fields plus built-in `markup.*`
+defaults (`theme.ts` `applyMarkupDefaults`), with colors reused from the palette so
 they stay theme-consistent. This is what makes Markdown *look* like Markdown — it
 benefits every language, Markdown is just the forcing function.
 

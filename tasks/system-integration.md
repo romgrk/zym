@@ -16,7 +16,8 @@ When the user changes a relevant desktop setting, the corresponding quilx surfac
 updates live:
 
 - **Light ⇄ dark** → editor scheme, syntax colors, chrome (header/status/tree),
-  pickers/popovers, terminal — and, ideally, the active theme variant.
+  pickers/popovers, terminal — and, ideally, the active theme (swap a light/dark
+  theme file pair).
 - **Monospace font / size** (`org.gnome.desktop.interface monospace-font-name`)
   → editor, terminal, pickers, anything monospace.
 - **UI font** (`…interface font-name`) → proportional text (e.g. command-picker
@@ -37,9 +38,10 @@ What exists, and whether it reacts to a live change:
   calls `setColors(null, null, null)` so VTE inherits libadwaita's themed fg/bg,
   which flip with the system scheme. ✅ *reacts passively* (no explicit handler).
 - **Active theme** — `export const theme = loadTheme('quilx')`
-  (`src/theme/theme.ts`) picks a **fixed** Zed variant (`family.themes[0]`, the
-  first in the family) at module load. The whole `theme.ui.*` / `theme.syntax.*`
-  palette is static. ❌ does **not** follow OS light/dark; there is no light↔dark
+  (`src/theme/theme.ts`) loads a **fixed** single theme file (`quilx.json`, our
+  owned format — see [theming.md](theming.md)) at module load. The whole
+  `theme.ui.*` / `theme.syntax.*` palette is static. ❌ does **not** follow OS
+  light/dark; there is no light↔dark
   variant swap.
 - **`core.followSystemColorScheme` config** — declared in `CONFIG_SCHEMA`
   (`src/quilx.ts`, default `true`) but **not read anywhere**. ❌ dead setting;
@@ -59,12 +61,14 @@ What exists, and whether it reacts to a live change:
   ❌ static (follows neither a theme change nor the OS accent).
 - **Color palette is centralized** — ✅ chrome/syntax/picker colors come from
   `theme.ui.*` / `theme.syntax.*`. The loader resolves every `UiColors` field at
-  load (`adaptZedTheme` in `src/theme/theme.ts` coalesces each `pick()` with a
-  `DEFAULT_UI` fallback), so most consumers read bare `theme.ui.X`. `bg` stays
-  optional (its absence is the "follow the system scheme" signal); `fg` defaults
-  to white. Semantic tokens carry what used to be hardcoded: `shadow`, `flash`,
-  `diffAddedBg`/`diffRemovedBg`/`diffAddedWordBg`/`diffRemovedWordBg`/
-  `diffFillerBg`/`diffFoldBg`, and `prOpen`/`prMerged`/`prClosed`. Regex-input
+  load (`adaptTheme` in `src/theme/theme.ts` resolves each concern-first `ui` key
+  by longest-prefix fallback, coalescing with `DEFAULT_UI`), so most consumers
+  read bare `theme.ui.X`. `bg` stays optional (its absence is the "follow the
+  system scheme" signal); `fg` defaults to white. Semantic tokens carry what used
+  to be hardcoded: `shadow`, `flash`, the diff tints
+  `diffAddedBg`/`diffRemovedBg`/`diffAddedWordBg`/`diffRemovedWordBg` (derived
+  from `status.success`/`status.error` per appearance) + `diffFillerBg`/
+  `diffFoldBg`, and `prOpen`/`prMerged`/`prClosed`. Regex-input
   highlighting (`src/ui/TextEditor/regexHighlight.ts`) reuses `theme.syntax`
   captures (keyword/punctuation/type/string.escape/constant) instead of its own
   colors. Static today (baked at module load) — so "restyle on theme change"
@@ -100,13 +104,13 @@ re-appliable.
   `setFont`; have font consumers re-read on `onFontsChanged`. Options: a small
   CSS-variable layer for monospace (so a single re-emit restyles all CSS users),
   plus `terminal.setFont(...)` / editor font re-apply on the signal.
-- [ ] **Theme follows appearance** — load the quilx theme **family** (it already
-  has light + dark variants) and select the variant from `StyleManager.getDark()`;
-  re-pick + re-emit a `theme:changed` on appearance change. Gate on
-  `core.followSystemColorScheme`; when off, keep the user's chosen variant.
-  Requires `theme` to become swappable (today it's a frozen `export const`) —
-  a `theme:changed` event the chrome/pickers/syntax subscribe to (mirrors how
-  `notify::dark` already drives the editor scheme).
+- [ ] **Theme follows appearance** — author a light/dark theme file pair (e.g.
+  `quilx.json` + `quilx-light.json`, each declaring its `appearance`) and pick by
+  `StyleManager.getDark()`; re-load + re-emit a `theme:changed` on appearance
+  change. Gate on `core.followSystemColorScheme`; when off, keep the user's chosen
+  theme. Requires `theme` to become swappable (today it's a frozen `export const`)
+  — a `theme:changed` event the chrome/pickers/syntax subscribe to (mirrors how
+  `notify::dark` already drives the editor scheme). See [theming.md](theming.md).
 - [ ] **Restyle on theme change** — the chrome styles (`AppWindow.applyChromeStyles`,
   already keyed/replaceable), picker highlight color, syntax controller, and
   diagnostics colors re-apply from the new palette. *Unblocked:* colors are now

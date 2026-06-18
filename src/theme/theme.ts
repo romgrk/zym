@@ -1,16 +1,17 @@
 /*
- * Theme — loads themes authored in Zed's theme format and adapts them to the
- * small internal shape the editor consumes (UI chrome colors + a flat syntax
- * capture → color map). Themes live as JSON next to this module (e.g.
- * quilx.json) and are loaded through `loadTheme`; the active theme is exported
- * as `theme`.
+ * Theme — loads a theme authored in *our own* format (a format we own; see
+ * theme.schema.json) and normalizes it into the small internal shape the editor
+ * consumes (UI chrome colors + a flat syntax capture → color map). Themes live as
+ * JSON next to this module (e.g. quilx.json), are loaded through `loadTheme`, and
+ * the active theme is exported as `theme`. See tasks/theming.md.
  *
- * On disk a file is a Zed *theme family*: `{ name, author, themes: [...] }`
- * where each entry is a light/dark variant with a flat `style` object (dotted
- * keys like `editor.foreground`) and a nested `style.syntax` map. We pick a
- * variant and normalize it: `editor.*` → `ui`, and each `style.syntax[cap].color`
- * → `syntax[cap]`. Keeping the consumed shape minimal means the rest of the app
- * is unaffected by Zed's much larger key set (workspace chrome, terminal ANSI …).
+ * On disk a theme is one file: `{ name, appearance, ui, syntax }`. `ui` is a flat
+ * map of CONCERN-first dotted keys (`status.error`, `search.match`,
+ * `diff.added.word`) → color, resolved by longest-prefix fallback (the same
+ * `resolveByCaptureName` the syntax map uses) so a key falls back within its
+ * concern; `syntax` maps a tree-sitter capture name → a color + optional font
+ * style. `loadTheme` resolves each `UiColors` field (filling gaps from
+ * `DEFAULT_UI`), derives the diff tints, and splits the syntax tokens.
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
@@ -41,18 +42,18 @@ export interface UiColors {
   textMuted: string;
   /**
    * Accent foreground for emphasized text — used for the matched-character
-   * highlight in pickers (the role Zed's `text.accent` plays in its fuzzy finders).
+   * highlight in pickers (theme key `text.accent`).
    */
   textAccent: string;
   /**
    * Background tint for editor search matches: every match (`searchMatch`) and
    * the current one (`searchMatchCurrent`). `#rrggbbaa` so it composes over the
-   * syntax-colored text — kept dim on purpose so the text stays readable. From
-   * Zed's `search.match_background` (current adds our `…background.current`).
+   * syntax-colored text — kept dim on purpose so the text stays readable. Theme
+   * keys `search.match` and `search.match.current` (current falls back to match).
    */
   searchMatch: string;
   searchMatchCurrent: string;
-  /** Semantic text colors for status/feedback (Zed's status keys). */
+  /** Semantic text colors for status/feedback (theme `status.*` keys). */
   success: string;
   warning: string;
   error: string;
@@ -77,12 +78,12 @@ export interface UiColors {
 
 /*
  * Syntax colors: capture name → foreground color, keyed by the tree-sitter
- * capture names Zed's queries emit (see syntax/grammar.ts). Dotted captures
- * resolve by longest-prefix fallback in the highlighter (syntax-controller's
- * resolveTag): e.g. @keyword.control reuses `keyword`; @type.builtin reuses
- * `type`. Only list a dotted key to give it a *distinct* color.
+ * capture names the highlight queries emit (see syntax/grammar.ts). Dotted
+ * captures resolve by longest-prefix fallback in the highlighter
+ * (syntax-controller's resolveTag): e.g. @keyword.control reuses `keyword`;
+ * @type.builtin reuses `type`. Only list a dotted key to give it a *distinct* color.
  *
- * KEY ORDER MATTERS: one GtkTextTag is created per entry in `style.syntax`'s
+ * KEY ORDER MATTERS: one GtkTextTag is created per entry in the theme's `syntax`
  * JSON order, and tag priority follows creation order (later = higher). A node
  * can match several patterns at once, and all matching tags apply — priority
  * decides the winner. So more-specific / should-win categories come LAST:
@@ -95,7 +96,7 @@ export type SyntaxColors = Record<string, string>;
  * can carry that make markup look like markup — bold/italic/strikethrough/underline,
  * a relative font `scale` (bigger headings), and a `background` (code). Sparse and
  * keyed by capture name like `syntax`, with the same longest-prefix fallback. Comes
- * from the Zed theme's `font_weight`/`font_style` plus built-in `markup.*` defaults.
+ * from each theme `syntax` token's style fields plus built-in `markup.*` defaults.
  */
 export interface SyntaxStyle {
   bold?: boolean;
@@ -121,32 +122,45 @@ export interface Theme {
   syntaxStyle: SyntaxStyles;
 }
 
-// --- Zed theme format (on disk) --------------------------------------------
+// --- Theme file (on disk) --------------------------------------------------
 
-interface ZedSyntaxStyle {
+/**
+ * One `syntax` entry: a foreground `color` plus optional per-capture font style.
+ * The loader splits these into the internal `SyntaxColors` + `SyntaxStyles` maps.
+ */
+interface ThemeSyntaxToken {
   color?: string;
-  font_style?: string;
-  font_weight?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /** Relative font size (1 = normal); e.g. 1.5 for an h1 heading. */
+  scale?: number;
+  /** Text-only background (inline code). */
+  background?: string;
+  /** Full-line (paragraph) background — block code. */
+  lineBackground?: string;
 }
 
-interface ZedTheme {
+/**
+ * The on-disk theme — a format we own (see theme.schema.json). `ui` is a flat map
+ * of concern-first dotted keys → color, resolved by longest-prefix fallback so an
+ * unset key falls back within its concern (`search.match.current` → `search.match`,
+ * `diff.added.word` → `diff.added`) and finally to `DEFAULT_UI` — never across to a
+ * wrong primitive. `syntax` key order drives tag priority (see SyntaxColors).
+ */
+interface ThemeFile {
   name: string;
   appearance: 'light' | 'dark';
-  /** Flat dotted color keys plus the nested `syntax` map. */
-  style: Record<string, unknown> & { syntax?: Record<string, ZedSyntaxStyle> };
-}
-
-interface ZedThemeFamily {
-  name: string;
-  author?: string;
-  themes: ZedTheme[];
+  ui?: Record<string, string>;
+  syntax?: Record<string, ThemeSyntaxToken>;
 }
 
 /*
  * Resolved fallbacks for every UI color, applied at load time so the rest of the
  * app never needs an inline color literal — the theme module is the single source
- * of color. A theme's own values (from its Zed JSON) always win; these fill only
- * what it omits. `fg` defaults to white. (`bg` has no default: its absence is the
+ * of color. A theme's own values always win; these fill only what it omits. `fg`
+ * defaults to white. (`bg` has no default: its absence is the
  * signal to follow the system light/dark scheme — see UiColors.bg.)
  */
 const DEFAULT_UI = {
@@ -176,20 +190,10 @@ const DEFAULT_UI = {
   prClosed: '#f85149',
 } as const;
 
-/**
- * Load a theme from `<name>.json` (a Zed theme family). `variant` selects a
- * theme by its name; the first variant is used by default.
- */
-export function loadTheme(name: string, variant?: string): Theme {
+/** Load the owned theme `<name>.json` from next to this module. */
+export function loadTheme(name: string): Theme {
   const file = Path.join(import.meta.dirname, `${name}.json`);
-  const family = JSON.parse(Fs.readFileSync(file, 'utf8')) as ZedThemeFamily;
-
-  const zed = variant
-    ? family.themes.find((t) => t.name === variant)
-    : family.themes[0];
-  if (!zed) throw new Error(`theme "${name}" has no variant ${variant ? `"${variant}"` : ''}`);
-
-  return adaptZedTheme(zed);
+  return adaptTheme(JSON.parse(Fs.readFileSync(file, 'utf8')) as ThemeFile);
 }
 
 /**
@@ -216,73 +220,83 @@ function diffTones(
   };
 }
 
-function adaptZedTheme(zed: ZedTheme): Theme {
-  const style = zed.style;
-  const pick = (...keys: string[]): string | undefined => {
-    for (const key of keys) {
-      const value = style[key];
-      if (typeof value === 'string') return value;
-    }
-    return undefined;
-  };
+/**
+ * Normalize an on-disk `ThemeFile` into the internal `Theme` the app consumes:
+ * resolve every `UiColors` field from the concern-first `ui` map (longest-prefix
+ * fallback, then `DEFAULT_UI`), derive the diff tints, and split each `syntax`
+ * token into the color + style maps. Exported for tests.
+ */
+export function adaptTheme(file: ThemeFile): Theme {
+  if (file.appearance !== 'light' && file.appearance !== 'dark') {
+    throw new Error(`theme "${file.name ?? '?'}": appearance must be "light" or "dark"`);
+  }
+
+  // Resolve a concern-first UI key by longest-prefix fallback within its concern
+  // (e.g. `search.match.current` → `search.match` → `search`). Undefined when even
+  // the concern root is unset, so the caller falls back to DEFAULT_UI.
+  const uiMap = file.ui ?? {};
+  const get = (key: string): string | undefined => resolveByCaptureName(key, (k) => uiMap[k]);
 
   // success/error drive the diff tints, so resolve them (with their fallbacks)
-  // before building `ui`; the diff.* theme keys still win where a theme sets them.
-  const success = pick('success') ?? DEFAULT_UI.success;
-  const error = pick('error') ?? DEFAULT_UI.error;
-  const diff = diffTones(success, error, zed.appearance);
+  // before building `ui`; the diff.* keys still win where a theme sets them.
+  const success = get('status.success') ?? DEFAULT_UI.success;
+  const error = get('status.error') ?? DEFAULT_UI.error;
+  const diff = diffTones(success, error, file.appearance);
 
-  // Preserve `style.syntax` key order — it drives tag priority (see SyntaxColors).
+  // Preserve `syntax` key order — it drives tag priority (see SyntaxColors).
   const syntax: SyntaxColors = {};
   const syntaxStyle: SyntaxStyles = {};
-  for (const [capture, token] of Object.entries(style.syntax ?? {})) {
+  for (const [capture, token] of Object.entries(file.syntax ?? {})) {
     if (token && typeof token.color === 'string') syntax[capture] = token.color;
-    // Carry the theme's own per-capture bold/italic (Zed drops nothing now).
     const s: SyntaxStyle = {};
-    if (typeof token?.font_weight === 'number' && token.font_weight >= 700) s.bold = true;
-    if (token?.font_style === 'italic') s.italic = true;
-    if (s.bold || s.italic) syntaxStyle[capture] = s;
+    if (token?.bold) s.bold = true;
+    if (token?.italic) s.italic = true;
+    if (token?.underline) s.underline = true;
+    if (token?.strikethrough) s.strikethrough = true;
+    if (typeof token?.scale === 'number') s.scale = token.scale;
+    if (typeof token?.background === 'string') s.background = token.background;
+    if (typeof token?.lineBackground === 'string') s.lineBackground = token.lineBackground;
+    if (Object.keys(s).length > 0) syntaxStyle[capture] = s;
   }
 
   const ui: UiColors = {
-    fg: pick('editor.foreground', 'foreground') ?? DEFAULT_UI.fg,
-    bg: pick('editor.background', 'background'), // optional: absent ⇒ follow system scheme
-    lineNumber: pick('editor.line_number', 'editor.gutter.foreground') ?? DEFAULT_UI.lineNumber,
-    border: pick('border', 'border.variant') ?? DEFAULT_UI.border,
-    popoverBg: pick('elevated_surface.background', 'surface.background', 'background') ?? DEFAULT_UI.popoverBg,
-    selectedBg: pick('element.selected', 'ghost_element.selected') ?? DEFAULT_UI.selectedBg,
-    textMuted: pick('text.muted') ?? DEFAULT_UI.textMuted,
-    textAccent: pick('text.accent', 'text.accent.emphasis', 'accent') ?? DEFAULT_UI.textAccent,
-    searchMatch: pick('search.match_background') ?? DEFAULT_UI.searchMatch,
-    searchMatchCurrent:
-      pick('search.match_background.current', 'search.match_background') ?? DEFAULT_UI.searchMatchCurrent,
+    fg: get('editor.foreground') ?? DEFAULT_UI.fg,
+    bg: get('editor.background'), // optional: absent ⇒ follow system scheme
+    lineNumber: get('editor.lineNumber') ?? DEFAULT_UI.lineNumber,
+    border: get('border') ?? DEFAULT_UI.border,
+    popoverBg: get('surface.popover') ?? DEFAULT_UI.popoverBg,
+    selectedBg: get('surface.selected') ?? DEFAULT_UI.selectedBg,
+    textMuted: get('text.muted') ?? DEFAULT_UI.textMuted,
+    textAccent: get('text.accent') ?? DEFAULT_UI.textAccent,
+    searchMatch: get('search.match') ?? DEFAULT_UI.searchMatch,
+    searchMatchCurrent: get('search.match.current') ?? DEFAULT_UI.searchMatchCurrent,
     success,
-    warning: pick('warning') ?? DEFAULT_UI.warning,
+    warning: get('status.warning') ?? DEFAULT_UI.warning,
     error,
-    info: pick('info') ?? DEFAULT_UI.info,
-    hint: pick('hint') ?? DEFAULT_UI.hint,
-    shadow: pick('shadow') ?? DEFAULT_UI.shadow,
-    flash: pick('editor.flash') ?? DEFAULT_UI.flash,
-    diffAddedBg: pick('diff.added_background') ?? diff.diffAddedBg,
-    diffRemovedBg: pick('diff.removed_background') ?? diff.diffRemovedBg,
-    diffAddedWordBg: pick('diff.added_word_background') ?? diff.diffAddedWordBg,
-    diffRemovedWordBg: pick('diff.removed_word_background') ?? diff.diffRemovedWordBg,
-    diffFillerBg: pick('diff.filler_background') ?? DEFAULT_UI.diffFillerBg,
-    diffFoldBg: pick('diff.fold_background') ?? DEFAULT_UI.diffFoldBg,
-    prOpen: pick('vcs.pr.open') ?? DEFAULT_UI.prOpen,
-    prMerged: pick('vcs.pr.merged') ?? DEFAULT_UI.prMerged,
-    prClosed: pick('vcs.pr.closed') ?? DEFAULT_UI.prClosed,
+    info: get('status.info') ?? DEFAULT_UI.info,
+    hint: get('status.hint') ?? DEFAULT_UI.hint,
+    shadow: get('shadow') ?? DEFAULT_UI.shadow,
+    flash: get('flash') ?? DEFAULT_UI.flash,
+    diffAddedBg: get('diff.added') ?? diff.diffAddedBg,
+    diffRemovedBg: get('diff.removed') ?? diff.diffRemovedBg,
+    diffAddedWordBg: get('diff.added.word') ?? diff.diffAddedWordBg,
+    diffRemovedWordBg: get('diff.removed.word') ?? diff.diffRemovedWordBg,
+    diffFillerBg: get('diff.filler') ?? DEFAULT_UI.diffFillerBg,
+    diffFoldBg: get('diff.fold') ?? DEFAULT_UI.diffFoldBg,
+    prOpen: get('pr.open') ?? DEFAULT_UI.prOpen,
+    prMerged: get('pr.merged') ?? DEFAULT_UI.prMerged,
+    prClosed: get('pr.closed') ?? DEFAULT_UI.prClosed,
   };
 
   applyMarkupDefaults(syntax, syntaxStyle, ui);
-  return { name: zed.name, appearance: zed.appearance, ui, syntax, syntaxStyle };
+  return { name: file.name, appearance: file.appearance, ui, syntax, syntaxStyle };
 }
 
 /**
  * Fill in defaults for the `markup.*` captures (Markdown headings/emphasis/code/…)
- * that text-mostly themes like Zed's don't define. Colors reuse the loaded palette
- * so they stay theme-consistent; styles give markup its visual hallmarks. Existing
- * theme entries always win (we only set what's missing).
+ * that text-mostly themes don't define. Colors reuse the loaded palette so they
+ * stay theme-consistent; styles give markup its visual hallmarks. Existing theme
+ * entries always win (we only set what's missing).
  */
 function applyMarkupDefaults(syntax: SyntaxColors, syntaxStyle: SyntaxStyles, ui: UiColors): void {
   const colorDefaults: SyntaxColors = {

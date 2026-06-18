@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quilx.dev/schema/theme/v1.json",
+  "title": "quilx theme",
+  "description": "A quilx editor theme. One theme per file; loaded by src/theme/theme.ts. See tasks/theming.md.",
+  "type": "object",
+  "required": ["name", "appearance"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": {
+      "type": "string",
+      "description": "Theme id; the file is loaded by this name (e.g. \"quilx\" ← quilx.json)."
+    },
+    "appearance": {
+      "enum": ["light", "dark"],
+      "description": "Drives the diff tints (dark darkens the status accents, light lightens them) and which system scheme a no-background theme follows."
+    },
+    "ui": {
+      "type": "object",
+      "description": "Concern-first dotted UI color keys. Each unset key falls back by longest-prefix WITHIN its concern (e.g. search.match.current → search.match), then to a built-in default — never across to a wrong primitive. All values are CSS colors (#rgb/#rgba/#rrggbb/#rrggbbaa or rgb()/rgba()).",
+      "propertyNames": { "pattern": "^[a-z][a-zA-Z]*(\\.[a-z][a-zA-Z]*)*$" },
+      "additionalProperties": { "$ref": "#/$defs/color" },
+      "properties": {
+        "editor.foreground": { "$ref": "#/$defs/color", "description": "Default editor text color." },
+        "editor.background": { "$ref": "#/$defs/color", "description": "Editor background. OMIT to follow the system light/dark scheme." },
+        "editor.lineNumber": { "$ref": "#/$defs/color", "description": "Line-number gutter foreground." },
+        "text.muted": { "$ref": "#/$defs/color", "description": "De-emphasized text (subtitles, detail columns)." },
+        "text.accent": { "$ref": "#/$defs/color", "description": "Accent foreground (picker matched-character highlight)." },
+        "border": { "$ref": "#/$defs/color", "description": "Separator/border for chrome." },
+        "shadow": { "$ref": "#/$defs/color", "description": "Drop shadow for floating surfaces." },
+        "surface.popover": { "$ref": "#/$defs/color", "description": "Background of elevated surfaces: pickers, popovers, menus." },
+        "surface.selected": { "$ref": "#/$defs/color", "description": "Background of a selected list/tree row." },
+        "status.success": { "$ref": "#/$defs/color", "description": "Success text; also the source hue for the diff.added tints." },
+        "status.warning": { "$ref": "#/$defs/color" },
+        "status.error": { "$ref": "#/$defs/color", "description": "Error text; also the source hue for the diff.removed tints." },
+        "status.info": { "$ref": "#/$defs/color" },
+        "status.hint": { "$ref": "#/$defs/color" },
+        "search.match": { "$ref": "#/$defs/color", "description": "Background tint for every search match (use #rrggbbaa so it composes over text)." },
+        "search.match.current": { "$ref": "#/$defs/color", "description": "The current match; falls back to search.match." },
+        "diff.added": { "$ref": "#/$defs/color", "description": "Added-line background. Omit to derive from status.success per appearance." },
+        "diff.added.word": { "$ref": "#/$defs/color", "description": "Changed words within an added line; falls back to diff.added." },
+        "diff.removed": { "$ref": "#/$defs/color", "description": "Removed-line background. Omit to derive from status.error per appearance." },
+        "diff.removed.word": { "$ref": "#/$defs/color", "description": "Changed words within a removed line; falls back to diff.removed." },
+        "diff.filler": { "$ref": "#/$defs/color", "description": "Neutral pad for an aligned-but-empty side-by-side row." },
+        "diff.fold": { "$ref": "#/$defs/color", "description": "Neutral band for a collapsed-context placeholder row." },
+        "flash": { "$ref": "#/$defs/color", "description": "Brief tint over an operated/yanked range (vim)." },
+        "pr.open": { "$ref": "#/$defs/color", "description": "GitHub pull-request state colors." },
+        "pr.merged": { "$ref": "#/$defs/color" },
+        "pr.closed": { "$ref": "#/$defs/color" }
+      }
+    },
+    "syntax": {
+      "type": "object",
+      "description": "Tree-sitter capture name → color + optional font style. KEY ORDER MATTERS: a tag is created per entry in this order and later tags win, so more-specific categories come last (escapes after string; tag before type; property before function). Dotted captures inherit by longest-prefix (keyword.control → keyword).",
+      "additionalProperties": { "$ref": "#/$defs/syntaxToken" }
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "string",
+      "description": "A CSS color: #rgb, #rgba, #rrggbb, #rrggbbaa, or rgb()/rgba().",
+      "pattern": "^(#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|rgba?\\([^)]*\\))$"
+    },
+    "syntaxToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": { "$ref": "#/$defs/color", "description": "Foreground color." },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "underline": { "type": "boolean" },
+        "strikethrough": { "type": "boolean" },
+        "scale": { "type": "number", "description": "Relative font size (1 = normal); e.g. 1.5 for an h1 heading." },
+        "background": { "$ref": "#/$defs/color", "description": "Text-only background (inline code)." },
+        "lineBackground": { "$ref": "#/$defs/color", "description": "Full-line/paragraph background (block code)." }
+      }
+    }
+  }
+}
