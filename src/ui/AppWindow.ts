@@ -573,14 +573,15 @@ export class AppWindow {
       if (focus) existing.focus();
       return existing;
     }
-    return this.openFileViewIn(path, panel, options.owner);
+    return this.openFileViewIn(path, panel, { focus, owner: options.owner });
   }
 
   // Open a *new* view of `path` in `panel` — no reveal-if-open, so the same file can
   // show in two panes as two views sharing one Document (live model + undo). Used by
   // splitPane; openFileIn reveals instead. `owner` is the workbench the editor lives
   // in (its git feeds the gutter); defaults to the active one.
-  private openFileViewIn(path: string, panel: Panel, owner: Workbench<'user' | AgentTerminal> = this.workbench): TextEditor {
+  private openFileViewIn(path: string, panel: Panel, options: { focus?: boolean; owner?: Workbench<'user' | AgentTerminal> } = {}): TextEditor {
+    const { focus = true, owner = this.workbench } = options;
     const built = this.createEditorTab(path, { owner });
     const child = panel.add(built.widget, {
       title: built.title,
@@ -588,7 +589,7 @@ export class AppWindow {
     });
     built.onAttached?.(child);
     const editor = this.editors.get(built.widget)!;
-    editor.focus();
+    if (focus) editor.focus();
     return editor;
   }
 
