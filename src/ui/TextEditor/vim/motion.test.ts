@@ -87,6 +87,26 @@ test('0 / ^ / $ move within the line', () => {
   assert.deepEqual(pos(), [0, 13]); // end of line (onemore default; 'd' is at col 12)
 });
 
+test('^ toggles between the first non-blank char and column 0 (^ first)', () => {
+  const { run, at, pos } = setup('  hello\n');
+  at(0, 5);
+  run('MoveToFirstCharacterOfLine');
+  assert.deepEqual(pos(), [0, 2]); // first press → first non-blank
+  run('MoveToFirstCharacterOfLine');
+  assert.deepEqual(pos(), [0, 0]); // already on ^ → toggle to column 0
+  run('MoveToFirstCharacterOfLine');
+  assert.deepEqual(pos(), [0, 2]); // toggle back to ^
+});
+
+test('MoveDown / MoveUp accept a line count (default 1)', () => {
+  const { vimState, at, pos } = setup('one\ntwo\nthree\nfour\nfive\n');
+  at(0, 0);
+  vimState.operationStack.run('MoveDown', { count: 3 });
+  assert.deepEqual(pos(), [3, 0]); // down 3 lines
+  vimState.operationStack.run('MoveUp', { count: 2 });
+  assert.deepEqual(pos(), [1, 0]); // up 2 lines
+});
+
 test('gg / G jump to the first and last line', () => {
   const { run, at, pos } = setup('one\ntwo\nthree\n');
   at(1, 1);

@@ -261,8 +261,13 @@ class BracketFinder extends PairFinder {
 }
 
 class QuoteFinder extends PairFinder {
-  quoteChar!: string
-  pairStates!: (PairSide | undefined)[]
+  // `declare` (not a plain field): `quoteChar` is assigned by setPatternForPair,
+  // which the *base* PairFinder constructor calls. Node runs this .ts by stripping
+  // types, so a real field declaration here would emit `quoteChar = undefined` that
+  // runs after super() and clobbers that value — leaving the quote regex empty and
+  // breaking every quote text object. `declare` emits no runtime field.
+  declare quoteChar: string
+  declare pairStates: (PairSide | undefined)[]
 
   setPatternForPair (pair: [string, string]): void {
     this.quoteChar = pair[0]
@@ -274,9 +279,15 @@ class QuoteFinder extends PairFinder {
     // So preset open/close state to get desiable result.
     let nextQuoteIsOpen: boolean
     {
-      const {left, right, balanced} = getCharacterRangeInformation(this.editor, from, this.quoteChar)
-      const onQuoteChar = right[0] && right[0].start.isEqual(from)
-      if (balanced && onQuoteChar) {
+      const {left, balanced} = getCharacterRangeInformation(this.editor, from, this.quoteChar)
+      if (balanced) {
+        // On a balanced line every quote is paired, so an even number of quotes
+        // to the left means the cursor is outside any string and the next quote
+        // opens one; odd means we're inside a string and the next quote closes
+        // it. Testing `left.length === 0` here mishandled a cursor sitting in the
+        // gap between two complete strings (e.g. on the `,` in `'a', 'b'`): with
+        // two quotes already to the left it treated the next opening quote as a
+        // close and selected the gap instead of seeking forward to the string.
         nextQuoteIsOpen = left.length % 2 === 0
       } else {
         nextQuoteIsOpen = left.length === 0

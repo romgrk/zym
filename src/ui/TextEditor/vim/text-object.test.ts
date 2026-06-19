@@ -120,6 +120,16 @@ test('quote / backtick text objects seek to the next pair on the line', () => {
   assert.equal(bt.editor.getText(), 'use `` now\n');
 });
 
+test('inner quote in the gap between strings seeks the next string (not the gap)', () => {
+  // Cursor on the comma between two complete strings used to select the `, `
+  // gap; it should seek forward to the next string instead.
+  const sq = setup("const x = [['string1', 'string2'], ['string3']]\n");
+  sq.at(0, 21); // on the first ','
+  sq.run('Delete');
+  sq.run('InnerSingleQuote');
+  assert.equal(sq.editor.getText(), "const x = [['string1', ''], ['string3']]\n");
+});
+
 test('iW selects the WHITESPACE-delimited word', () => {
   const { editor, run, at } = setup('foo-bar baz\n');
   at(0, 0); // inside "foo-bar"

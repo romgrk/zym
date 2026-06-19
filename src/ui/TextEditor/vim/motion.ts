@@ -740,9 +740,15 @@ class MoveToLastNonblankCharacterOfLineAndDown extends Motion {
 // MoveToFirstCharacterOfLine faimily
 // ------------------------------------
 // ^
+// Toggle between the first non-blank character and column 0 (going to ^ first).
 class MoveToFirstCharacterOfLine extends Motion {
   moveCursor (cursor: Cursor): void {
-    cursor.setBufferPosition(this.getFirstCharacterPositionForBufferRow(cursor.getBufferRow())!)
+    const firstCharacterPoint = this.getFirstCharacterPositionForBufferRow(cursor.getBufferRow())!
+    if (cursor.getBufferColumn() === firstCharacterPoint.column && firstCharacterPoint.column !== 0) {
+      this.utils.setBufferColumn(cursor, 0)
+    } else {
+      cursor.setBufferPosition(firstCharacterPoint)
+    }
   }
 }
 

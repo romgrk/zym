@@ -13,6 +13,7 @@
  * keymap entry are derived from it.
  */
 import { quilx } from '../../../quilx.ts';
+import type { CommandRef } from '../../../KeymapManager.ts';
 import type { EditorModel } from '../EditorModel.ts';
 import VimState from './vim-state.ts';
 import { StatusBarManager } from './stubs.ts';
@@ -422,16 +423,17 @@ const MULTI_CURSOR_CLEAR: Record<string, string> = {
   escape: 'vim-mode-plus:clear-multiple-cursors',
 };
 
-// Alt-navigation, ported from the user's nvim keymap (`<A-j/k>` = 5gj/5gk,
-// `<A-d/u>` = 12<C-e>/12<C-y>): alt-j/k step 5 display lines; alt-d/u scroll the
-// view 12 lines, keeping the cursor on screen. Each runs an operation class with
-// a preset count, so they're plain commands wired in `attachVim` (like the
-// multi-cursor entries) rather than count-less class-table bindings.
-const ALT_NAV_COMMANDS: Record<string, string> = {
-  'alt-j': 'vim-mode-plus:move-down-5-lines',
-  'alt-k': 'vim-mode-plus:move-up-5-lines',
-  'alt-d': 'vim-mode-plus:scroll-down-12-lines',
-  'alt-u': 'vim-mode-plus:scroll-up-12-lines',
+// Alt-navigation, ported from the user's nvim keymap (`<A-j/k>` = 5j/5k,
+// `<A-d/u>` = 12<C-e>/12<C-y>): alt-j/k step 5 lines; alt-d/u scroll the view 12
+// lines, keeping the cursor on screen. alt-j/k pass a line count to the plain
+// `move-down`/`move-up` commands via the keymap's `{ command, args }` form; the
+// scroll entries run an operation class with a preset count, wired as plain
+// commands in `attachVim`.
+const ALT_NAV_COMMANDS: Record<string, CommandRef> = {
+  'alt-j': { command: 'vim-mode-plus:move-down', args: [5] },
+  'alt-k': { command: 'vim-mode-plus:move-up', args: [5] },
+  'alt-d': { command: 'vim-mode-plus:scroll-down-12-lines' },
+  'alt-u': { command: 'vim-mode-plus:scroll-up-12-lines' },
 };
 
 // Leap (leap.nvim-style two-char labeled jump). `g s` / `g S` because plain
@@ -649,14 +651,8 @@ export function attachVim(editor: EditorModel): VimState {
       editor.clearExtraSelections();
       editor.renderExtraSelections();
     },
-    // Alt-navigation: run the underlying motion / mini-scroll with a preset count
-    // (the count rides on the operation instance via `run`'s properties arg).
-    'vim-mode-plus:move-down-5-lines': () => {
-      vimState.operationStack.run('MoveDownDisplayLine', { count: 5 });
-    },
-    'vim-mode-plus:move-up-5-lines': () => {
-      vimState.operationStack.run('MoveUpDisplayLine', { count: 5 });
-    },
+    // Alt-navigation: run the mini-scroll with a preset count (the count rides on
+    // the operation instance via `run`'s properties arg).
     'vim-mode-plus:scroll-down-12-lines': () => {
       vimState.operationStack.run('MiniScrollDown', { count: 12 });
     },
@@ -669,6 +665,15 @@ export function attachVim(editor: EditorModel): VimState {
       vimState.operationStack.run(klass);
     };
   }
+
+  // move-down / move-up take a line count as their first dispatch argument
+  // (default 1), so a keybinding can step several lines at once (e.g. alt-j → 5).
+  // Registered after the generic loop so these count-aware handlers win.
+  const runWithCount = (klass: string, count: unknown) => {
+    vimState.operationStack.run(klass, { count: typeof count === 'number' ? count : 1 });
+  };
+  commands[commandName('MoveDown')] = (_event, _element, count) => runWithCount('MoveDown', count);
+  commands[commandName('MoveUp')] = (_event, _element, count) => runWithCount('MoveUp', count);
 
   quilx.commands.add(editor.view, commands);
   return vimState;
