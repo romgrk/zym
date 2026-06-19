@@ -9,7 +9,7 @@
  * consumed `Theme.ui` mirrors the file's `ui` shape 1:1 — concern-grouped nested
  * objects, so a theme JSON's `ui.editor.background` is read in code as exactly
  * `theme.ui.editor.background`. `syntax` maps a tree-sitter capture name → a color
- * + optional font style. `loadTheme` deep-merges the file's `ui` over `DEFAULT_UI`
+ * + optional font style. `loadTheme` deep-merges the file's `ui` over `DEFAULT_THEME_UI`
  * (the built-in fallback theme), derives the diff tints, and splits the syntax
  * tokens into the color + style maps.
  */
@@ -23,9 +23,9 @@ import { alpha as withAlpha, darken, formatHEXA, lighten, parse } from 'color-bi
  * UI / editor chrome colors, grouped by concern to mirror the theme JSON's `ui`
  * object 1:1 (read in code as `theme.ui.editor.background`, `theme.ui.status.error`,
  * `theme.ui.diff.addedWord`, …). Every field is filled at load from the theme file
- * over `DEFAULT_UI`, so consumers never see `undefined` — except `editor.background`.
+ * over `DEFAULT_THEME_UI`, so consumers never see `undefined` — except `editor.background`.
  */
-export interface UiColors {
+export interface ThemeUi {
   editor: {
     /** Default editor text foreground. */
     foreground: string;
@@ -136,7 +136,7 @@ export type SyntaxStyles = Record<string, SyntaxStyle>;
 export interface Theme {
   name: string;
   appearance: 'light' | 'dark';
-  ui: UiColors;
+  ui: ThemeUi;
   syntax: SyntaxColors;
   /** Per-capture font styling (bold/italic/scale/background/…). */
   syntaxStyle: SyntaxStyles;
@@ -163,43 +163,43 @@ interface ThemeSyntaxToken {
 }
 
 /**
- * The on-disk theme — a format we own (see theme.schema.json). `ui` is the nested,
- * concern-grouped color object that `UiColors` consumes, but every field is
- * optional: the loader deep-merges it over `DEFAULT_UI`. `syntax` key order drives
- * tag priority (see SyntaxColors).
+ * The on-disk theme — a format we own (see theme.schema.json). Mirrors the consumed
+ * `Theme` shape, but `ui` is a deep-partial of `ThemeUi` (every field optional): the
+ * loader deep-merges it over `DEFAULT_THEME_UI`. `syntax` key order drives tag
+ * priority (see SyntaxColors).
  */
-interface ThemeFile {
+interface ThemeFromFile {
   name: string;
   appearance: 'light' | 'dark';
-  ui?: ThemeFileUi;
+  ui?: ThemeFromFileUi;
   syntax?: Record<string, ThemeSyntaxToken>;
 }
 
-/** A theme file's `ui`: the same concern groups as `UiColors`, each field optional. */
-interface ThemeFileUi {
-  editor?: Partial<UiColors['editor']>;
-  text?: Partial<UiColors['text']>;
+/** A theme file's `ui`: the same concern groups as `ThemeUi`, each field optional. */
+interface ThemeFromFileUi {
+  editor?: Partial<ThemeUi['editor']>;
+  text?: Partial<ThemeUi['text']>;
   border?: string;
   shadow?: string;
-  surface?: Partial<UiColors['surface']>;
-  status?: Partial<UiColors['status']>;
-  search?: Partial<UiColors['search']>;
-  diff?: Partial<UiColors['diff']>;
+  surface?: Partial<ThemeUi['surface']>;
+  status?: Partial<ThemeUi['status']>;
+  search?: Partial<ThemeUi['search']>;
+  diff?: Partial<ThemeUi['diff']>;
   flash?: string;
-  pr?: Partial<UiColors['pr']>;
+  pr?: Partial<ThemeUi['pr']>;
 }
 
 /*
- * The built-in fallback theme — a complete dark `UiColors`, structured exactly like
+ * The built-in fallback theme — a complete dark `ThemeUi`, structured exactly like
  * a theme file's `ui` so the rest of the app never needs an inline color literal
  * (the theme module is the single source of color). The loader deep-merges a theme
  * file's `ui` over this; a theme's own values always win. `editor.background` is the
  * one field with no default — its absence is the signal to follow the system
- * light/dark scheme (see UiColors.editor.background). The `diff.added`/`removed`
+ * light/dark scheme (see ThemeUi.editor.background). The `diff.added`/`removed`
  * (line + word) tints are DERIVED from `status` per appearance (see diffTones); here
  * they're the dark derivation of the default status colors.
  */
-const DEFAULT_UI: UiColors = {
+const DEFAULT_THEME_UI: ThemeUi = {
   editor: { foreground: '#ffffff', lineNumber: '#888888' },
   text: { muted: '#9a9996', accent: '#c678dd' },
   border: 'rgba(0, 0, 0, 0.3)',
@@ -215,7 +215,7 @@ const DEFAULT_UI: UiColors = {
 /** Load the owned theme `<name>.json` from next to this module. */
 export function loadTheme(name: string): Theme {
   const file = Path.join(import.meta.dirname, `${name}.json`);
-  return adaptTheme(JSON.parse(Fs.readFileSync(file, 'utf8')) as ThemeFile);
+  return adaptTheme(JSON.parse(Fs.readFileSync(file, 'utf8')) as ThemeFromFile);
 }
 
 /**
@@ -230,7 +230,7 @@ function diffTones(
   success: string,
   error: string,
   appearance: 'light' | 'dark',
-): Pick<UiColors['diff'], 'added' | 'addedWord' | 'removed' | 'removedWord'> {
+): Pick<ThemeUi['diff'], 'added' | 'addedWord' | 'removed' | 'removedWord'> {
   const mute = appearance === 'dark' ? darken : lighten;
   const line = (c: string): string => formatHEXA(withAlpha(mute(parse(c), 0.25), 0.18));
   const word = (c: string): string => formatHEXA(withAlpha(mute(parse(c), 0.2), 0.3));
@@ -243,12 +243,12 @@ function diffTones(
 }
 
 /**
- * Normalize an on-disk `ThemeFile` into the internal `Theme` the app consumes:
- * deep-merge the file's `ui` over `DEFAULT_UI` (concern by concern), derive the
+ * Normalize an on-disk `ThemeFromFile` into the internal `Theme` the app consumes:
+ * deep-merge the file's `ui` over `DEFAULT_THEME_UI` (concern by concern), derive the
  * diff tints, and split each `syntax` token into the color + style maps. Exported
  * for tests.
  */
-export function adaptTheme(file: ThemeFile): Theme {
+export function adaptTheme(file: ThemeFromFile): Theme {
   if (file.appearance !== 'light' && file.appearance !== 'dark') {
     throw new Error(`theme "${file.name ?? '?'}": appearance must be "light" or "dark"`);
   }
@@ -257,31 +257,31 @@ export function adaptTheme(file: ThemeFile): Theme {
 
   // status drives the diff tints, so resolve it first; the diff.* keys still win
   // where the theme sets them, and the word tints fall back to their line tint.
-  const status = { ...DEFAULT_UI.status, ...f.status };
+  const status = { ...DEFAULT_THEME_UI.status, ...f.status };
   const derived = diffTones(status.success, status.error, file.appearance);
-  const diff: UiColors['diff'] = {
+  const diff: ThemeUi['diff'] = {
     added: f.diff?.added ?? derived.added,
     addedWord: f.diff?.addedWord ?? f.diff?.added ?? derived.addedWord,
     removed: f.diff?.removed ?? derived.removed,
     removedWord: f.diff?.removedWord ?? f.diff?.removed ?? derived.removedWord,
-    filler: f.diff?.filler ?? DEFAULT_UI.diff.filler,
-    fold: f.diff?.fold ?? DEFAULT_UI.diff.fold,
+    filler: f.diff?.filler ?? DEFAULT_THEME_UI.diff.filler,
+    fold: f.diff?.fold ?? DEFAULT_THEME_UI.diff.fold,
   };
 
-  const ui: UiColors = {
-    editor: { ...DEFAULT_UI.editor, ...f.editor }, // editor.background absent ⇒ follow system scheme
-    text: { ...DEFAULT_UI.text, ...f.text },
-    border: f.border ?? DEFAULT_UI.border,
-    shadow: f.shadow ?? DEFAULT_UI.shadow,
-    surface: { ...DEFAULT_UI.surface, ...f.surface },
+  const ui: ThemeUi = {
+    editor: { ...DEFAULT_THEME_UI.editor, ...f.editor }, // editor.background absent ⇒ follow system scheme
+    text: { ...DEFAULT_THEME_UI.text, ...f.text },
+    border: f.border ?? DEFAULT_THEME_UI.border,
+    shadow: f.shadow ?? DEFAULT_THEME_UI.shadow,
+    surface: { ...DEFAULT_THEME_UI.surface, ...f.surface },
     status,
     search: {
-      match: f.search?.match ?? DEFAULT_UI.search.match,
-      matchCurrent: f.search?.matchCurrent ?? f.search?.match ?? DEFAULT_UI.search.matchCurrent,
+      match: f.search?.match ?? DEFAULT_THEME_UI.search.match,
+      matchCurrent: f.search?.matchCurrent ?? f.search?.match ?? DEFAULT_THEME_UI.search.matchCurrent,
     },
     diff,
-    flash: f.flash ?? DEFAULT_UI.flash,
-    pr: { ...DEFAULT_UI.pr, ...f.pr },
+    flash: f.flash ?? DEFAULT_THEME_UI.flash,
+    pr: { ...DEFAULT_THEME_UI.pr, ...f.pr },
   };
 
   // Preserve `syntax` key order — it drives tag priority (see SyntaxColors).
@@ -310,7 +310,7 @@ export function adaptTheme(file: ThemeFile): Theme {
  * stay theme-consistent; styles give markup its visual hallmarks. Existing theme
  * entries always win (we only set what's missing).
  */
-function applyMarkupDefaults(syntax: SyntaxColors, syntaxStyle: SyntaxStyles, ui: UiColors): void {
+function applyMarkupDefaults(syntax: SyntaxColors, syntaxStyle: SyntaxStyles, ui: ThemeUi): void {
   const fg = ui.editor.foreground;
   const colorDefaults: SyntaxColors = {
     'markup.heading': syntax.function ?? syntax.keyword ?? fg,

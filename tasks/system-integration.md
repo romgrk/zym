@@ -31,7 +31,7 @@ What exists, and whether it reacts to a live change:
 - **Editor color scheme** — `TextEditor.followSystemColorScheme`
   (`src/ui/TextEditor/TextEditor.ts`) subscribes to `Adw.StyleManager`
   `notify::dark`, re-applies the GtkSource scheme, and re-runs `syntax.restyle()`.
-  ✅ *reacts* — **but only when the theme defines no `ui.bg`**: a theme with its
+  ✅ *reacts* — **but only when the theme defines no `editor.background`**: a theme with its
   own background gets a fixed `createSourceScheme(theme)` built once that does not
   follow the OS; otherwise it swaps between `Adwaita` / `Adwaita-dark`.
 - **Terminal colors** — `Terminal.followSystemColorScheme` (`src/ui/Terminal.ts`)
@@ -60,9 +60,9 @@ What exists, and whether it reacts to a live change:
   (`src/ui/Picker.ts`) is a module-load constant baked into row Pango markup.
   ❌ static (follows neither a theme change nor the OS accent).
 - **Color palette is centralized** — ✅ chrome/syntax/picker colors come from
-  `theme.ui.*` / `theme.syntax.*`. The loader resolves every `UiColors` field at
+  `theme.ui.*` / `theme.syntax.*`. The loader resolves every `ThemeUi` field at
   load (`adaptTheme` in `src/theme/theme.ts` deep-merges the file's nested `ui`
-  over `DEFAULT_UI`), so most consumers read `theme.ui.editor.background`-style
+  over `DEFAULT_THEME_UI`), so most consumers read `theme.ui.editor.background`-style
   paths that mirror the theme JSON 1:1. `editor.background` stays optional (its
   absence is the "follow the system scheme" signal). Semantic tokens carry what used
   to be hardcoded: `shadow`, `flash`, the diff tints `diff.added`/`diff.removed`/
