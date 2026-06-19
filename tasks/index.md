@@ -248,6 +248,19 @@ It replaced `GtkSource.VimIMContext` and is now the default (no flag).
 - [x] visual-blockwise (`ctrl-v`) and multiple cursors — emulated on `MarkerLayer` mark pairs surfaced through the array-shaped `getCursors()`/`getSelections()`. Entry points: blockwise `ctrl-v` (I/A/c/d/yank/paste), occurrence `c o p`, and persistent `ctrl-alt-↑/↓` (add cursor above/below; `escape` collapses). Extra-caret rendering (reverse-video block tags in normal/visual; host-drawn beam carets in insert); multi-cursor operations undo as one step; insert is incrementally replicated to every cursor live. (`blockwise.test.ts`, `multicursor.test.ts`.) Caret visuals + `ctrl-alt-arrow` keys need in-app verification (headless can't realize the view).
 - [x] Polish: `=`/`==` auto-indent (real tree-sitter indent source — `syntax/indent.ts` + `EditorModel.setIndentSource`), matching-bracket highlight (`syntax/bracketMatch.ts`; ignores strings/comments/regex; enclosing pair when inside), indent guides (`IndentGuides`, `editor.indentGuides`), tree-sitter text objects `ic`/`ac` (class) alongside `if`/`af`/`ia`/`aa`, H/M/L screen motions, ctrl-f/b/d/u/e/y scrolling, flash-on-operate.
 
+## Tasks & runners (idea — not started)
+
+Run tests/mains/scripts from the editor. Two decoupled layers, from Zed
+([syntax-aware tasks](https://zed.dev/blog/zed-decoded-tasks),
+[debugger](https://zed.dev/blog/debugger)):
+
+- [ ] **Detection** — tree-sitter `runnables.scm` tags runnable nodes
+  (`@test`/`@main`); gutter play-glyph + palette, context vars from the node.
+- [ ] **Locator** — per-language `(task) → (exec config)`, deriving the concrete
+  command by invoking the build tool (Cargo `--no-run --message-format=json` →
+  artifact path) rather than guessing. Keeps detection toolchain-agnostic; fits
+  plugin contribution points; same seam later yields a *debug* (DAP) config.
+
 ## Session management
 
 See [session-management.md](session-management.md) for the architecture. The core
