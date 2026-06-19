@@ -28,7 +28,8 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space space': 'command-palette:toggle',
   'space w': 'file:save',
   'space o': 'file:find', // fuzzy file picker
-  'space O': 'file:open-path', // open by path (directory-navigating opener)
+  'space f o': 'file:find', // fuzzy file picker
+  'space f e': 'file:open-path', // open by path (directory-navigating opener)
   'space /': 'project:search', // full-text search (ripgrep)
   'space q': 'app:quit',
   'space t': 'terminal:new',
