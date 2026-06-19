@@ -108,9 +108,10 @@ synthesized-buffer `DiffView` — that buffer construction is what we replace.
 
 ## Phasing
 
-- **Phase 0 — SyntaxController split.** `DocumentSyntax` (model parse, shared) +
-  view painter (projection-aware paint + fold state). No multibuffer yet; ships as a
-  refactor that also removes redundant per-view parses.
+- **[x] Phase 0 — SyntaxController split.** Done (branch `feat/multibuffer-phase0`).
+  `DocumentSyntax` (model parse, shared) + view painter (projection-aware paint + fold
+  state). No multibuffer yet; a refactor that also removes redundant per-view parses.
+  See **Phase 0 — as built** below.
 - **Phase 1a — multibuffer core, validated on project-wide search.** Excerpt map +
   syntax projector + filename headers + read-only single `GtkSourceView` over N
   excerpts. Simplest data (all segments `real`, one source each, no phantoms, no
@@ -123,6 +124,52 @@ synthesized-buffer `DiffView` — that buffer construction is what we replace.
 - **Phase 2 — editable.** Flip new-side segments `editable`, write-through to the
   `Document`, live re-diff on edit. The same write-through then powers
   search-replace-all and multi-file refactors.
+
+## Phase 0 — as built
+
+`SyntaxController` (per `GtkSource.View`/`Buffer`) was split; the parse moved out to a new
+`src/syntax/DocumentSyntax.ts` (per `Document`, shared by all its views).
+
+- **`DocumentSyntax(sourceBuffer)`** owns the tree-sitter `Tree`, injection parsers,
+  incremental reparse (debounced 60ms, driven off the source buffer's `insert-text`/
+  `delete-range`/`changed`), fold-region **discovery** (`foldRanges()` →
+  `computeFoldRanges`), and the tree queries (`captures(fromLine,toLine)`,
+  `isInStringOrComment`/`indentLevelForRow`/`functionRangeAt`/`classRangeAt`/`tagNamesAt`/
+  `captureCounts`) — **all in model coordinates**. `onDidReparse(cb)` fans out to the
+  painters; `setLanguageForPath` is idempotent (a sibling view reuses the existing tree).
+- **`Document`** owns one `DocumentSyntax` lazily (`get syntax()` over its headless model
+  buffer) and disposes it with the document. Buffer-only / diff documents never touch it.
+- **`SyntaxController`** is now the per-view *painter*: it pulls model-coord captures + fold
+  ranges from a `DocumentSyntax`, translates them into its view (`viewIterForModel` /
+  `modelRow`/`viewRow`/`modelPos`, all **identity unless the view has collapsed folds**),
+  and paints. It keeps the per-buffer `HighlightTags`, fold/placeholder/bracket tags, the
+  composite gutter, the persistent paint cache, and the per-view fold **state**.
+  `TextEditor` passes `documentSyntax: this.document.syntax` for file/peek views (one parse
+  for N views); buffer-only/diff panes get a **private** `DocumentSyntax` over their own
+  view buffer (source == view → identity), preserving today's behavior until Phase 1b
+  parses the old/new sides separately.
+
+Translation seam: `FoldHost` gained `viewLineForModelLine`/`modelPointFromView`/
+`viewPointFromModel`/`modelLineText` (all already on `Document`).
+
+Things that **fell out** of parsing the model: folds never touch the model, so the model
+tree stays valid through a fold — the `fullReparseNext` fold-drift hack and the
+`include_hidden_chars` parse hack are gone (a *private* parse over a view buffer still asks
+for a full reparse after a fold via `requestFullReparse()`, since that buffer did change).
+
+Tests: `src/syntax/DocumentSyntax.test.ts` proves one parse paints N view buffers and that
+an edit through one view reparses + repaints both. Full suite + `tsc` green (704 tests).
+
+Known Phase-0 limitations (acceptable; revisit with Phase 2 correctness work):
+- When a discovered fold and a collapsed fold map to the **same view line** (e.g.
+  `} function f2() {` joined onto a collapsed line), the collapsed fold wins that gutter
+  slot, so the second region isn't `zc`-reachable until the first unfolds. (Old code let
+  the discovered one win, but the model parse now rediscovers collapsed bodies, so
+  collapsed-wins is required for the chevron/state to be truthful.)
+- Highlighting + tree queries under *active folds* over a shared model walk
+  `Document.viewPointFromModel`; correct for whole-line folds, not stress-tested for a
+  fold splitting a multi-line token. Realized-view viewport-bounded paint + scroll repaint
+  are unchanged in logic but only exercised live (headless tests hit the whole-buffer path).
 
 ## Correctness notes (bank for Phase 2, not Phase 1)
 

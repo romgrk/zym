@@ -425,6 +425,10 @@ export class TextEditor implements DocumentHost {
       lineNumbers: !compact,
       folding: this.bufferMode?.folding ?? (this.peekMode ? false : undefined),
       folds: this.document, // folding collapses view ranges through the model projection
+      // File / peek views share the document's ONE parse (model coords) — so a file open
+      // in N views parses once. Buffer-only / diff panes keep a private parse over their
+      // own view buffer (the diff's old/new sides become separate parses in Phase 1b).
+      documentSyntax: this.bufferMode ? undefined : this.document.syntax,
     });
     // The buffer/cursor model the custom vim layer drives.
     this.editorModel = new EditorModel(this.view, this.buffer);

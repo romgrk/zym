@@ -1,46 +1,54 @@
 /*
- * SyntaxController — drives tree-sitter highlighting and code folding for one
- * GtkSource.View/Buffer pair, replacing GtkSourceView's `.lang` engine for the
- * languages we have a grammar for.
+ * SyntaxController — the per-view syntax *painter*. It paints tree-sitter highlighting
+ * and drives code folding for one GtkSource.View/Buffer pair, replacing GtkSourceView's
+ * `.lang` engine for the languages we have a grammar for.
  *
- * Highlighting: parse on (debounced) change, run the grammar's highlights query,
- * apply our own TextTags by range. Tag colors come from the active GtkSource
- * style scheme so they follow the Adwaita light/dark theme.
+ * The parse itself lives in a shared `DocumentSyntax` (per Document, model coords —
+ * Phase 0 of the multibuffer split). This painter pulls model-coordinate captures and
+ * fold-region discovery from it, translates them into *this* view's coordinates (identity
+ * while the view has no collapsed folds), and applies its own TextTags by range. Tag
+ * colors come from the theme palette. It subscribes to `DocumentSyntax.onDidReparse` to
+ * repaint its viewport after a (debounced) reparse.
  *
- * Folding: foldable ranges come from the same parse. A clickable chevron is
- * drawn by a custom GutterRenderer subclass, and a range collapses by applying a
- * TextTag with `invisible = true` over its body lines. Folded state is derived
- * from the live tag (iter.hasTag), so folds move with edits instead of resetting.
+ * Folding: foldable ranges are discovered on the model (by DocumentSyntax) and mapped to
+ * this view; a range collapses by physically replacing its body with a `[N]` placeholder
+ * in the VIEW buffer (the model keeps the full text — the projection lives in the
+ * Document). Folds are per-view state, owned here. Since folds never touch the model, the
+ * model parse stays valid through a fold — no reparse-after-fold dance.
  *
  * Folding is driven by the public `toggleFoldAtCursor`/`setFoldAtCursor`/
  * `foldAll`/`unfoldAll` methods; the editor wires them to `fold:*` commands that
  * the vim keymap's `z`-prefix (za/zo/zc/zR/zM) dispatches.
  */
 import { Gtk, Pango, type SourceBuffer, type SourceView } from '../gi.ts';
-import { type Grammar, createParser, getGrammar, langIdForPath } from './grammar.ts';
+import { Point } from '../text/Point.ts';
 import { theme } from '../theme/theme.ts';
 import { findBracketPair } from './bracketMatch.ts';
-import { indentLevelAt, enclosingTypeMatches, enclosingNodeRange, type NodeRowRange } from './indent.ts';
-import { computeFoldRanges } from './folds.ts';
-import { tagNamesAt, type TagName } from './tags.ts';
-import { isFunctionNodeType, isClassNodeType, STRING_COMMENT_RE, RUN_FOLD_RE } from './nodeTypes.ts';
-import { collectCaptures, type RawCapture, type VisibleRange } from './injection.ts';
+import { type NodeRowRange } from './indent.ts';
+import { type TagName } from './tags.ts';
+import { DocumentSyntax } from './DocumentSyntax.ts';
 import { rangeGaps, mergeRange, type LineRange } from './paintRegions.ts';
 import { HighlightTags } from './highlightTags.ts';
 import { GutterRenderer } from './gutterRenderers.ts';
-/** The view↔model projection a SyntaxController folds through (the editor's Document). */
+/** The view↔model projection a SyntaxController folds through (the editor's Document).
+ *  The painter parses the *model* (via a shared `DocumentSyntax`) and translates captures
+ *  + tree-query results through these, so the line/point translators are now part of the
+ *  contract (each returns identity while a view has no collapsed folds). */
 export interface FoldHost {
   foldViewRange(buffer: SourceBuffer, viewStart: number, viewEnd: number, placeholder: string): any;
   unfoldView(buffer: SourceBuffer, fold: any): void;
   foldPlaceholderRange(buffer: SourceBuffer, fold: any): [number, number];
   modelLineForViewLine(buffer: SourceBuffer, viewLine: number): number;
+  viewLineForModelLine(buffer: SourceBuffer, modelLine: number): number;
+  modelPointFromView(buffer: SourceBuffer, point: Point): Point;
+  viewPointFromModel(buffer: SourceBuffer, point: Point): Point;
+  modelLineText(row: number): string;
   /** False once an enclosing fold has subsumed this one (its marks are gone). */
   isFoldAlive(fold: any): boolean;
   /** The model text a fold currently collapses (for matching during search). */
   foldModelText(buffer: SourceBuffer, fold: any): string;
 }
 
-const HIGHLIGHT_DEBOUNCE_MS = 60;
 // Paint newly-revealed lines this often *during* a scroll (a throttle, not a trailing
 // debounce — so a held ctrl-d/ctrl-u keeps up instead of leaving white text until it
 // stops). One frame; the gap painted per tick is bounded by the visible range, and
@@ -127,12 +135,13 @@ export class SyntaxController {
   private readonly buffer: SourceBuffer;
   private readonly view: SourceView;
 
-  private grammar: Grammar | null = null;
-  private parser: any = null;
-  private tree: any = null; // last parse tree, kept for incremental reparsing
-  // One parser per injected guest grammar (Markdown code fences / inline spans),
-  // created lazily and reused across refreshes; their trees are transient.
-  private readonly injectionParsers = new Map<Grammar, any>();
+  // The shared per-Document parse (model coords). The painter pulls captures + fold
+  // discovery + tree queries from here and translates them into this view. When no shared
+  // instance is supplied (bare-buffer tests, diff panes), it owns a private one over its
+  // own view buffer — then source == view, so the translation below is identity.
+  private readonly docSyntax: DocumentSyntax;
+  private readonly ownsDocSyntax: boolean;
+  private reparseUnsub: (() => void) | undefined;
 
   // The syntax-highlight tag vocabulary (color + decoration tags) built from the
   // theme; owns capture→tag resolution and the paint sweep (see highlightTags.ts).
@@ -176,14 +185,12 @@ export class SyntaxController {
   private gutterInstalled = false;
   private gutterReserved = false;
 
-  // Whether the current buffer contains any astral (surrogate-pair) char, so the
-  // highlight path only converts tree-sitter's UTF-16 columns to codepoints when
-  // it must; the per-line text cache (cleared each refresh) backs that conversion.
-  private hasAstral = false;
+  // Per-line text cache (this VIEW buffer) backing the UTF-16→codepoint column conversion
+  // on the identity (no-fold) paint path; cleared on each repaint. astral-ness itself is
+  // tracked by the shared DocumentSyntax (`docSyntax.hasAstral`).
   private readonly lineTextCache = new Map<number, string>();
   readonly foldsByHeaderLine = new Map<number, FoldRegion>();
 
-  private debounceId: NodeJS.Timeout | null = null;
   private viewportThrottleId: NodeJS.Timeout | null = null;
   // The vadjustment our scroll-repaint handler is bound to. The ScrolledWindow swaps
   // the view's adjustment when it's parented, so we rebind when it changes (a plain
@@ -198,12 +205,6 @@ export class SyntaxController {
   // The signal connections we own, so dispose() can detach them. node-gtk's
   // `off(event, cb)` needs the exact callback reference, so we keep them.
   private readonly connections: Array<{ target: any; event: string; cb: (...args: any[]) => any }> = [];
-  // Cached buffer text from the last parse, reused by viewport repaints on scroll
-  // (no edit → no reparse, just a re-query + re-paint over the new visible range).
-  private cachedText = '';
-  // Set by a fold toggle so the next refresh reparses from scratch (not incrementally
-  // from the fold's large structural edit, which leaves drifted node positions).
-  private fullReparseNext = false;
   // The line ranges whose token highlighting is currently applied and valid — a PERSISTENT
   // cache that grows as the view scrolls (we never clear it on scroll: the text didn't
   // change, so the tags stay correct). Sorted, non-overlapping, inclusive `[from, to]`.
@@ -227,7 +228,7 @@ export class SyntaxController {
   constructor(
     view: SourceView,
     buffer: SourceBuffer,
-    options: { lineNumbers?: boolean; folding?: boolean; folds?: FoldHost } = {},
+    options: { lineNumbers?: boolean; folding?: boolean; folds?: FoldHost; documentSyntax?: DocumentSyntax } = {},
   ) {
     this.view = view;
     this.buffer = buffer;
@@ -271,16 +272,17 @@ export class SyntaxController {
     this.wantLineNumbers = !!options.lineNumbers;
     if (this.foldingEnabled) this.foldHost = options.folds ?? null;
 
-    // Feed edits into the current tree for incremental reparsing. insert-text /
-    // delete-range run before the buffer is modified (the default handlers are
-    // RUN_LAST), so the iters still reflect the pre-edit state. 'changed' (which
-    // schedules the reparse) fires after, so the edit is recorded first.
-    this.connect(buffer, 'insert-text', (location: any, text: string) => this.onInsert(location, text));
-    this.connect(buffer, 'delete-range', (start: any, end: any) => this.onDelete(start, end));
-    this.connect(buffer, 'changed', () => {
-      this.primeGutter(); // keep the gutter wide enough as the line count grows
-      this.scheduleRefresh();
-    });
+    // The shared parse runs on the model; this painter owns only its view. Use the
+    // supplied DocumentSyntax (one parse for all of a document's views) or, with none,
+    // a private one over this view's own buffer (source == view → identity translation).
+    this.docSyntax = options.documentSyntax ?? new DocumentSyntax(buffer);
+    this.ownsDocSyntax = !options.documentSyntax;
+    // Repaint this view's viewport + rebuild its fold map after every (debounced) reparse.
+    this.reparseUnsub = this.docSyntax.onDidReparse(() => this.onReparse());
+
+    // Keep the gutter wide enough as the line count grows. The reparse is driven off the
+    // model by DocumentSyntax (not from here) — we only react to it via onReparse.
+    this.connect(buffer, 'changed', () => this.primeGutter());
 
     // Re-highlight the newly-revealed lines as the view scrolls. The vadjustment
     // is set by the enclosing ScrolledWindow after construction, so connect when
@@ -316,8 +318,9 @@ export class SyntaxController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.debounceId) { clearTimeout(this.debounceId); this.debounceId = null; }
     if (this.viewportThrottleId) { clearTimeout(this.viewportThrottleId); this.viewportThrottleId = null; }
+    this.reparseUnsub?.(); // stop reacting to reparses (else a shared DocumentSyntax pins us)
+    this.reparseUnsub = undefined;
     for (const { target, event, cb } of this.connections) {
       try { target.off(event, cb); } catch { /* target already finalized — nothing to detach */ }
     }
@@ -332,7 +335,9 @@ export class SyntaxController {
     }
     this.gitCell = null;
     this.diagCell = null;
-    this.resetTree(); // delete the parse tree + injection parsers (frees their wasm allocations)
+    // Free a PRIVATE DocumentSyntax (its tree + injection parsers); a shared one is owned
+    // and disposed by the Document when its last view goes.
+    if (this.ownsDocSyntax) this.docSyntax.dispose();
   }
 
   /**
@@ -341,8 +346,8 @@ export class SyntaxController {
    * when there's no parse tree.
    */
   isInStringOrComment(row: number, column: number): boolean {
-    if (!this.grammar || !this.tree) return false;
-    return enclosingTypeMatches(this.tree.rootNode, row, column, STRING_COMMENT_RE);
+    const [mRow, mCol] = this.modelPos(row, column);
+    return this.docSyntax.isInStringOrComment(mRow, mCol);
   }
 
   /** Highlight the bracket under (or just before) the cursor and its match. */
@@ -367,95 +372,44 @@ export class SyntaxController {
     for (const { a, b } of cells) buffer.applyTag(this.bracketMatchTag, a, b);
   }
 
-  // --- incremental-parse edit tracking ---------------------------------------
-
-  private onInsert(location: any, text: string): void {
-    if (!this.tree) return;
-    const startIndex = location.getOffset();
-    const startRow = location.getLine();
-    const startCol = location.getLineOffset();
-    const newlines = text.split('\n').length - 1;
-    const lastNl = text.lastIndexOf('\n');
-    this.tree.edit({
-      startIndex,
-      oldEndIndex: startIndex,
-      newEndIndex: startIndex + text.length,
-      startPosition: { row: startRow, column: startCol },
-      oldEndPosition: { row: startRow, column: startCol },
-      newEndPosition: {
-        row: startRow + newlines,
-        column: newlines === 0 ? startCol + text.length : text.length - lastNl - 1,
-      },
-    });
-  }
-
-  private onDelete(start: any, end: any): void {
-    if (!this.tree) return;
-    const startIndex = start.getOffset();
-    this.tree.edit({
-      startIndex,
-      oldEndIndex: end.getOffset(),
-      newEndIndex: startIndex,
-      startPosition: { row: start.getLine(), column: start.getLineOffset() },
-      oldEndPosition: { row: end.getLine(), column: end.getLineOffset() },
-      newEndPosition: { row: start.getLine(), column: start.getLineOffset() },
-    });
-  }
-
-  private resetTree(): void {
-    if (this.tree) {
-      this.tree.delete();
-      this.tree = null;
-    }
-    // New document: forget the persistent highlight cache (it described the previous file).
-    this.paintedRanges = [];
-    // Drop guest parsers from the previous document's injections.
-    for (const parser of this.injectionParsers.values()) parser.delete();
-    this.injectionParsers.clear();
-  }
-
   /**
-   * Select the grammar for a file. Returns true if tree-sitter handles it (the
-   * caller should then leave the `.lang` engine off); false if unsupported (the
-   * caller should fall back to GtkSourceView's own highlighting).
+   * Select the grammar for this file's content via the shared parse, then paint this
+   * view. Returns true if tree-sitter handles it (caller leaves the `.lang` engine off);
+   * false if unsupported. For a second view of an already-parsed document the parse is
+   * reused (DocumentSyntax is idempotent) and this just paints the new view.
    *
-   * Synchronous: grammars are preloaded before the main loop (see
-   * grammar.preloadGrammars), so this only does a cache lookup.
+   * Synchronous: grammars are preloaded before the main loop, so this only does a cache
+   * lookup + (at most) one parse.
    */
   setLanguageForPath(path: string): boolean {
-    const langId = langIdForPath(path);
-    const grammar = langId ? getGrammar(langId) : null;
-
-    if (!grammar) {
-      this.disableHighlighting();
-      return false;
-    }
-
-    // New document content: drop any prior tree so the next parse is full, not
-    // an incremental reparse against the previous file.
-    this.resetTree();
     // Reserve the gutter width now (content is loaded, line count known) so the deferred
     // gutter install doesn't shift the text.
     this.reserveGutterSpace();
-
-    this.grammar = grammar;
-    this.parser = createParser(grammar);
     this.buffer.setHighlightSyntax(false); // we own highlighting now
+    const handled = this.docSyntax.setLanguageForPath(path);
+    if (!handled) {
+      this.clearHighlight();
+      this.foldsByHeaderLine.clear();
+      this.scheduleGutterInstall();
+      this.view.queueDraw();
+      return false;
+    }
     this.restyle();
-    this.refresh();
+    this.repaint(); // paint this view from the (shared) tree — silent for siblings
+    this.rebuildFoldMap();
     this.scheduleGutterInstall();
+    (this.view as any).queueDraw();
     return true;
   }
 
   /** Drop tree-sitter highlighting — for an unsupported language, or a caller (TextEditor)
    *  bailing out on a pathological long-line file so it opens instead of hanging. Clears
-   *  the highlight tags but keeps the deferred line-number gutter, and leaves grammar null
-   *  so scheduleRefresh short-circuits (no reparse/paint cost on edits either). */
+   *  this view's highlight tags but keeps the deferred line-number gutter; the shared parse
+   *  is dropped (long-line mode is a property of the whole document). */
   disableHighlighting(): void {
-    this.resetTree();
+    this.docSyntax.disableHighlighting();
+    this.paintedRanges = [];
     this.reserveGutterSpace();
-    this.grammar = null;
-    this.parser = null;
     this.clearHighlight();
     this.foldsByHeaderLine.clear();
     this.scheduleGutterInstall();
@@ -464,14 +418,7 @@ export class SyntaxController {
 
   /** Diagnostic: capture-name counts from the current parse tree (for tests). */
   captureCounts(): Record<string, number> {
-    // null-proto map: capture names like "constructor" would otherwise collide
-    // with Object.prototype keys.
-    const counts: Record<string, number> = Object.create(null);
-    if (!this.grammar || !this.tree) return counts;
-    for (const cap of this.grammar.query.captures(this.tree.rootNode)) {
-      counts[cap.name] = (counts[cap.name] ?? 0) + 1;
-    }
-    return counts;
+    return this.docSyntax.captureCounts();
   }
 
   /**
@@ -483,98 +430,66 @@ export class SyntaxController {
     this.highlight.restyle();
   }
 
-  // --- highlighting + fold discovery -----------------------------------------
+  // --- highlighting (paint shared model-coord captures into this view) -------
 
-  private scheduleRefresh(): void {
-    if (this.disposed || !this.grammar) return;
-    if (this.debounceId) clearTimeout(this.debounceId);
-    this.debounceId = setTimeout(() => {
-      this.debounceId = null;
-      this.refresh();
-    }, HIGHLIGHT_DEBOUNCE_MS);
-  }
-
-  /** On edit: reparse incrementally, then re-highlight the viewport + recompute folds. */
-  private refresh(): void {
-    if (this.disposed || !this.grammar || !this.parser) return;
-    const buffer = this.buffer as any;
-    // include_hidden_chars = true so folded (invisible) text still reaches the
-    // parser. Pass the prior (edited) tree for an incremental reparse, then
-    // delete the old one to free its wasm allocation. Cache the text so a scroll
-    // repaint can re-query without re-reading the whole buffer.
-    this.cachedText = buffer.getText(buffer.getStartIter(), buffer.getEndIter(), true);
-    // web-tree-sitter reports UTF-16 columns; getIterAtLineOffset wants codepoints.
-    // They only diverge on astral (surrogate-pair) chars — detect once so the
-    // common, BMP-only file pays nothing in iterAt.
-    this.hasAstral = /[\ud800-\udbff]/.test(this.cachedText);
-    // After a fold, reparse from scratch — the incremental tree (edited by the fold's
-    // big delete+insert) yields drifted node positions; otherwise reparse incrementally.
-    const prior = this.fullReparseNext ? undefined : (this.tree ?? undefined);
-    this.fullReparseNext = false;
-    const tree = this.parser.parse(this.cachedText, prior);
-    if (!tree) return;
-    if (this.tree && this.tree !== tree) this.tree.delete();
-    this.tree = tree;
-
-    // Paint synchronously so the text is highlighted on its first frame (no color
-    // flicker). When the view isn't laid out yet (initial load, height 0), visibleRange
-    // returns null and this covers the whole buffer; once laid out it's viewport-bounded.
+  /** React to a (debounced) reparse on the shared model: re-translate + repaint this
+   *  view's viewport and rebuild its fold map (a structural edit can add/remove
+   *  discovered fold regions). */
+  private onReparse(): void {
+    if (this.disposed) return;
     this.repaint();
-
-    // Recompute fold regions; derive folded state from the live invisible tag so
-    // it tracks edits (tags move with the text).
-    this.foldsByHeaderLine.clear();
-    // Provided folds suppress tree-sitter fold discovery — re-key the supplied ranges
-    // to their current lines instead of rediscovering from the parse.
     if (this.providedFolds) this.rebuildProvidedFoldMap();
-    else if (this.foldingEnabled) this.walkFolds(tree.rootNode);
+    else this.rebuildFoldMap();
     (this.view as any).queueDraw();
   }
 
   /**
-   * Re-highlight after a reparse (edit / fold / new content). A reparse can change tokens
-   * anywhere, so this drops ALL of our highlight tags and repaints the viewport fresh, then
-   * RESETS the persistent cache (`paintedRanges`) to that viewport — scrolling re-accumulates
-   * the rest. Bounded to the viewport (± a margin) when the view is realized, so large files
-   * only pay for what's on screen; off-screen, the whole buffer is done (small files / headless).
+   * Re-highlight after a reparse (edit / new content) or a fold toggle. A reparse can
+   * change tokens anywhere, so this drops ALL of our highlight tags and repaints the
+   * viewport fresh, then RESETS the persistent cache (`paintedRanges`) to that viewport —
+   * scrolling re-accumulates the rest. Bounded to the viewport (± a margin) when realized,
+   * so large files only pay for what's on screen; off-screen the whole buffer is done
+   * (small files / headless).
    */
   private repaint(): void {
-    if (!this.grammar || !this.tree) return;
+    if (!this.docSyntax.hasTree) return;
     this.lineTextCache.clear();
     const buffer = this.buffer as any;
-    // Clear only OUR highlight tags (the fold `invisible` tag is separate and untouched).
+    // Clear only OUR highlight tags (the fold placeholder tags are separate, untouched).
     this.highlight.clear(buffer, buffer.getStartIter(), buffer.getEndIter());
     const range = this.visibleRange() ?? this.initialPaintRange();
-    this.paintRange(range);
-    this.paintedRanges = range
-      ? [[range.startPoint.row, range.endPoint.row]]
-      : [[0, buffer.getLineCount() - 1]];
+    if (range) {
+      this.paintViewLines(range[0], range[1]);
+      this.paintedRanges = [range];
+    } else {
+      this.paintViewLines(null, null); // whole buffer (headless / pre-layout)
+      this.paintedRanges = [[0, buffer.getLineCount() - 1]];
+    }
   }
 
-  /** Paint token highlighting for `range` (base grammar + injected layers) from the current
-   *  tree, WITHOUT clearing — additive, so it never disturbs already-painted neighbours. A
-   *  null range covers the whole buffer (headless / pre-layout). */
-  private paintRange(range: VisibleRange | null): void {
-    if (!this.grammar || !this.tree) return;
-    const captures: RawCapture[] = [];
-    collectCaptures(this.grammar, this.tree.rootNode, this.cachedText, captures, 0, range, (g) => this.injectionParser(g));
-    this.highlight.paint(this.buffer, captures, (row, col) => this.iterAt(row, col));
+  /** Paint token highlighting over VIEW lines `[vFrom, vTo]` (null,null = whole buffer):
+   *  pull the corresponding MODEL-coordinate captures from the shared parse and translate
+   *  each onto this view (identity while the view has no collapsed folds). Additive — never
+   *  clears — so it doesn't disturb already-painted neighbours. */
+  private paintViewLines(vFrom: number | null, vTo: number | null): void {
+    if (!this.docSyntax.hasTree) return;
+    const [mFrom, mTo] = vFrom === null || vTo === null ? [null, null] : this.modelLineRange(vFrom, vTo);
+    const captures = this.docSyntax.captures(mFrom, mTo);
+    this.highlight.paint(this.buffer, captures, (row, col) => this.viewIterForModel(row, col));
   }
 
   /** On scroll (no reparse): paint just the parts of the visible range not already in the
-   *  persistent cache, then record the visible range. Never clears — existing tags stay valid
-   *  because the text didn't change — so previously-highlighted regions persist across scrolls
-   *  (scroll down then back up costs nothing) and re-painting only touches freshly-revealed lines. */
+   *  persistent cache, then record it. Never clears — existing tags stay valid because the
+   *  text didn't change — so scroll-down-then-up costs nothing, and a held ctrl-d/u keeps up. */
   private paintNewlyVisible(): void {
-    if (!this.grammar || !this.tree) return;
+    if (!this.docSyntax.hasTree) return;
     const range = this.visibleRange();
-    if (!range) return; // unrealized / headless — only the edit path (whole buffer) runs there
-    const top = range.startPoint.row;
-    const bottom = range.endPoint.row;
+    if (!range) return; // unrealized / headless — only the reparse path (whole buffer) runs there
+    const [top, bottom] = range;
     const gaps = rangeGaps(this.paintedRanges, top, bottom);
     if (gaps.length === 0) return; // visible rows already highlighted — nothing to do
     this.lineTextCache.clear();
-    for (const [a, b] of gaps) this.paintRange(this.lineRange(a, b));
+    for (const [a, b] of gaps) this.paintViewLines(a, b);
     this.paintedRanges = mergeRange(this.paintedRanges, top, bottom);
     (this.view as any).queueDraw();
   }
@@ -691,7 +606,7 @@ export class SyntaxController {
    *  showing white until it stops. `paintNewlyVisible` skips already-painted lines, so a
    *  pass that reveals nothing new is nearly free. */
   private scheduleViewportRepaint(): void {
-    if (this.disposed || !this.grammar) return;
+    if (this.disposed || !this.docSyntax.hasTree) return;
     if (this.viewportThrottleId) return; // a pass is already pending this interval
     this.viewportThrottleId = setTimeout(() => {
       this.viewportThrottleId = null;
@@ -699,9 +614,9 @@ export class SyntaxController {
     }, VIEWPORT_THROTTLE_MS);
   }
 
-  /** The visible buffer range (± a margin), or null (whole buffer) when the view
-   *  isn't realized/laid out yet (initial load, headless). */
-  private visibleRange(): VisibleRange | null {
+  /** The visible buffer range as VIEW lines `[top, bottom]` (± a margin), or null (whole
+   *  buffer) when the view isn't realized/laid out yet (initial load, headless). */
+  private visibleRange(): [number, number] | null {
     const view = this.view as any;
     if (!view.getRealized()) return null;
     const rect = view.getVisibleRect();
@@ -714,74 +629,98 @@ export class SyntaxController {
     const last = buffer.getLineCount() - 1;
     const top = Math.max(0, lineAtY(rect.y) - VIEWPORT_MARGIN_LINES);
     const bottom = Math.min(last, lineAtY(rect.y + rect.height) + VIEWPORT_MARGIN_LINES);
-    return this.lineRange(top, bottom);
-  }
-
-  /** A `VisibleRange` spanning view lines `[from, to]` (clamped), for `collectCaptures`. */
-  private lineRange(from: number, to: number): VisibleRange {
-    const buffer = this.buffer as any;
-    const last = buffer.getLineCount() - 1;
-    const f = Math.max(0, Math.min(from, last));
-    const t = Math.max(f, Math.min(to, last));
-    const startIter = asIter(buffer.getIterAtLine(f));
-    const endIter = t >= last ? buffer.getEndIter() : asIter(buffer.getIterAtLine(t + 1));
-    return {
-      startPoint: { row: f, column: 0 },
-      endPoint: { row: endIter.getLine(), column: endIter.getLineOffset() },
-      startIndex: startIter.getOffset(),
-      endIndex: endIter.getOffset(),
-    };
+    return [top, bottom];
   }
 
   /** Fallback range when `visibleRange` is null. A *realized but not-yet-sized* view (the
    *  first paint on open) bounds to the top INITIAL_PAINT_LINES — the initial viewport is
    *  the file's head — so open is O(viewport) not O(file). A genuinely unrealized view
    *  (headless / tests) returns null so the whole buffer is still painted. */
-  private initialPaintRange(): VisibleRange | null {
+  private initialPaintRange(): [number, number] | null {
     if (!(this.view as any).getRealized()) return null;
-    return this.lineRange(0, INITIAL_PAINT_LINES);
+    const last = (this.buffer as any).getLineCount() - 1;
+    return [0, Math.min(INITIAL_PAINT_LINES, last)];
   }
 
-  /** The syntactic indent level for `row` (enclosing fold-block depth), or null
-   *  when there's no parse tree — the editor's "real" indent source for `=` /
-   *  paste-reindent (falls back to copy-previous otherwise). */
+  /** The syntactic indent level for VIEW `row` (enclosing fold-block depth), or null when
+   *  there's no parse tree — the editor's "real" indent source for `=` / paste-reindent. */
   indentLevelForRow(row: number): number | null {
-    if (!this.grammar || !this.tree) return null;
-    return indentLevelAt(this.tree.rootNode, row, this.grammar.foldTypes);
+    return this.docSyntax.indentLevelForRow(this.modelRow(row));
   }
 
-  /** A parser for an injected guest grammar, created on first use and reused. */
-  private injectionParser(grammar: Grammar): any {
-    let parser = this.injectionParsers.get(grammar);
-    if (!parser) {
-      parser = createParser(grammar);
-      this.injectionParsers.set(grammar, parser);
+  // --- model↔view translation ------------------------------------------------
+  // Captures + tree queries come back from the shared parse in MODEL coordinates. They
+  // only differ from this view's coordinates when (a) the parse runs on a separate model
+  // buffer (a shared DocumentSyntax — `translate`) AND (b) this view has collapsed folds.
+  // Both false → every translator is identity (the common path costs nothing).
+
+  /** Whether captures need model→view translation: true when the shared parse runs on a
+   *  buffer other than this view's (i.e. the Document's model), false for a private parse. */
+  private get translate(): boolean {
+    return this.docSyntax.sourceBuffer !== this.buffer;
+  }
+
+  /** Whether this view currently collapses any model range (folds shift view lines/cols). */
+  private get viewFolded(): boolean {
+    return this.translate && !!this.foldHost && this.activeFolds.length > 0;
+  }
+
+  private modelRow(viewRow: number): number {
+    return this.viewFolded ? this.foldHost!.modelLineForViewLine(this.buffer, viewRow) : viewRow;
+  }
+  private viewRow(modelRow: number): number {
+    return this.viewFolded ? this.foldHost!.viewLineForModelLine(this.buffer, modelRow) : modelRow;
+  }
+  private modelPos(viewRow: number, viewCol: number): [number, number] {
+    if (!this.viewFolded) return [viewRow, viewCol];
+    const p = this.foldHost!.modelPointFromView(this.buffer, new Point(viewRow, viewCol));
+    return [p.row, p.column];
+  }
+  private modelLineRange(vFrom: number, vTo: number): [number, number] {
+    return [this.modelRow(vFrom), this.modelRow(vTo)];
+  }
+
+  /** A VIEW-buffer iter for a MODEL `(row, col)` capture position. Identity (direct iter,
+   *  view text == model text) unless this view has collapsed folds, in which case it walks
+   *  the Document's projection; a position inside a fold maps to its placeholder (then the
+   *  zero-width range applyTag no-ops). */
+  private viewIterForModel(modelRow: number, modelCol: number): any {
+    if (this.viewFolded) {
+      const col = this.docSyntax.hasAstral ? this.modelCodepointCol(modelRow, modelCol) : modelCol;
+      const vp = this.foldHost!.viewPointFromModel(this.buffer, new Point(modelRow, col));
+      return asIter((this.buffer as any).getIterAtLineOffset(vp.row, vp.column));
     }
-    return parser;
+    // view line == model line, view text == model text → resolve directly on the view buffer.
+    const col = this.docSyntax.hasAstral ? this.toCodepointColumn(modelRow, modelCol) : modelCol;
+    return asIter((this.buffer as any).getIterAtLineOffset(modelRow, col));
   }
 
-  private walkFolds(root: any): void {
-    const grammar = this.grammar!;
+  /** Rebuild `foldsByHeaderLine` from the shared parse's discovered fold ranges (MODEL
+   *  coords → this view's lines), plus this view's collapsed-fold placeholders. Collapsed
+   *  folds are added FIRST and own their view line: a discovered range maps to the same
+   *  (folded) line, so it must not override the collapsed state (the model still contains
+   *  the body, so the fold IS rediscovered — unlike the old view-buffer parse). */
+  private rebuildFoldMap(): void {
+    if (!this.foldingEnabled) return;
     const buffer = this.buffer as any;
-    // Expanded foldable regions from the parse (their bodies are present in the view).
-    for (const { startRow, endRow, joinFooter } of computeFoldRanges(root, grammar.foldsQuery, grammar.foldTypes, RUN_FOLD_RE)) {
-      this.foldsByHeaderLine.set(startRow, { startLine: startRow, endLine: endRow, folded: false, joinFooter });
-    }
-    // Collapsed folds: their bodies are physically gone, so the parse can't see them —
-    // add each by its placeholder line and (re)apply the placeholder style.
+    this.foldsByHeaderLine.clear();
+    // Collapsed folds first: their placeholder occupies a view line; key by it.
     if (this.foldHost) {
       this.pruneDeadFolds();
       for (const handle of this.activeFolds) {
         const [ps, pe] = this.foldHost.foldPlaceholderRange(this.buffer, handle);
         const line = asIter(buffer.getIterAtOffset(ps)).getLine();
-        // Don't clobber a foldable region that shares this line (e.g. `} function f2() {`
-        // joined onto a collapsed line) — that region must stay reachable by `zc`. This
-        // fold is still in `activeFolds`, so its marker stays navigable + unfoldable.
         if (!this.foldsByHeaderLine.has(line)) {
           this.foldsByHeaderLine.set(line, { startLine: line, endLine: line, folded: true, handle });
         }
         buffer.applyTag(this.foldPlaceholderTag, asIter(buffer.getIterAtOffset(ps)), asIter(buffer.getIterAtOffset(pe)));
       }
+    }
+    // Expanded discovered foldable regions (model coords → this view's lines).
+    for (const { startRow, endRow, joinFooter } of this.docSyntax.foldRanges()) {
+      const vStart = this.viewRow(startRow);
+      if (this.foldsByHeaderLine.has(vStart)) continue; // a collapsed fold already owns this line
+      this.foldsByHeaderLine.set(vStart, { startLine: vStart, endLine: this.viewRow(endRow), folded: false, joinFooter });
     }
   }
 
@@ -793,14 +732,22 @@ export class SyntaxController {
     buffer.removeTag(this.invisibleTag, start, end);
   }
 
-  private iterAt(line: number, col: number): any {
-    // tree-sitter columns are UTF-16 code units; getIterAtLineOffset wants
-    // codepoints. They match unless the line holds astral chars (see hasAstral).
-    const column = this.hasAstral ? this.toCodepointColumn(line, col) : col;
-    return asIter((this.buffer as any).getIterAtLineOffset(line, column));
+  /** UTF-16 column on MODEL `row` → codepoint column, for the folded translation path
+   *  (which feeds codepoint columns into the Document projection). Reads the model line
+   *  text through the fold host. Only reached on astral + folded; uncached (rare). */
+  private modelCodepointCol(modelRow: number, utf16Col: number): number {
+    if (utf16Col <= 0 || !this.foldHost) return utf16Col;
+    const text = this.foldHost.modelLineText(modelRow);
+    let cp = 0;
+    for (let i = 0; i < utf16Col && i < text.length; cp++) {
+      const code = text.charCodeAt(i);
+      i += code >= 0xd800 && code <= 0xdbff && isLowSurrogate(text.charCodeAt(i + 1)) ? 2 : 1;
+    }
+    return cp;
   }
 
-  /** UTF-16 column on `line` → codepoint column (surrogate pairs count as one). */
+  /** UTF-16 column on this VIEW buffer's `line` → codepoint column (surrogate pairs count
+   *  as one) — the identity (no-fold) paint path. */
   private toCodepointColumn(line: number, utf16Col: number): number {
     if (utf16Col <= 0) return utf16Col;
     let text = this.lineTextCache.get(line);
@@ -881,23 +828,27 @@ export class SyntaxController {
         if (cursorInside) buffer.placeCursor(asIter(buffer.getIterAtOffset(ps)));
       }
     }
-    // The collapse/expand edited the view buffer by a large structural delete+insert.
-    // An INCREMENTAL reparse from that (which the buffer 'changed' handler just
-    // scheduled, seeded by the fold's tree.edit) is unreliable — node positions below
-    // the fold drift, so highlight captures land on the wrong rows and a later scroll
-    // repaint paints unhighlighted regions until a real edit heals them. Mark the next
-    // reparse FULL; the already-scheduled (debounced) refresh then does one clean parse
-    // — so foldAll's many toggles still cost a single full parse, not one each.
-    this.fullReparseNext = true;
-    // With provided folds there's no parse-driven rebuild, so re-key the fold map to
-    // the shifted lines now (and mirror the toggle to the lockstep sibling pane).
+    // Folds never touch the MODEL, so the shared parse tree stays valid — no reparse is
+    // needed for a fold. When the parse runs on this view's OWN buffer (a private
+    // DocumentSyntax — diff panes), the fold edit DID change that buffer; ask it to reparse
+    // fully next (an incremental reparse from the fold's big delete+insert drifts node
+    // positions). foldAll's many toggles then still cost a single full parse, not one each.
+    if (!this.translate) this.docSyntax.requestFullReparse();
+    // Re-key the fold map to the shifted view lines now, and (provided folds) mirror the
+    // toggle to the lockstep sibling pane.
     if (this.providedFolds) {
       this.rebuildProvidedFoldMap();
       if (this.foldMirror && !this.mirroring) {
         const idx = this.providedFolds.indexOf(region);
         if (idx >= 0) this.foldMirror(idx);
       }
+    } else {
+      this.rebuildFoldMap();
     }
+    // Shared model parse: the tree is still valid, so re-translate the captures onto the
+    // shifted view lines immediately (no reparse will fire to do it). A private parse
+    // repaints when its (full) reparse lands via onReparse.
+    if (this.translate) this.repaint();
     (this.view as any).queueDraw();
     this.emitFoldsChanged();
     return revealed;
@@ -1051,24 +1002,37 @@ export class SyntaxController {
    * function or with no parse tree.
    */
   functionRangeAt(row: number, column: number): NodeRowRange | null {
-    return this.nodeRangeAt(row, column, isFunctionNodeType);
+    const [mRow, mCol] = this.modelPos(row, column);
+    return this.toViewRowRange(this.docSyntax.functionRangeAt(mRow, mCol));
   }
 
   /** The class/interface/enum enclosing `(row, column)`, for the `ic`/`ac` text object. */
   classRangeAt(row: number, column: number): NodeRowRange | null {
-    return this.nodeRangeAt(row, column, isClassNodeType);
+    const [mRow, mCol] = this.modelPos(row, column);
+    return this.toViewRowRange(this.docSyntax.classRangeAt(mRow, mCol));
   }
 
   /** The JSX/HTML tag-name ranges (opening + closing, or one self-closing) of the
    *  element at `(row, column)`, for `tag:rename`. Null when off a tag / no tree. */
   tagNamesAt(row: number, column: number): TagName[] | null {
-    return this.tree ? tagNamesAt(this.tree.rootNode, row, column) : null;
+    const [mRow, mCol] = this.modelPos(row, column);
+    const tags = this.docSyntax.tagNamesAt(mRow, mCol);
+    if (!tags || !this.viewFolded) return tags; // model coords == view coords
+    return tags.map((t) => {
+      const s = this.foldHost!.viewPointFromModel(this.buffer, new Point(t.startRow, t.startColumn));
+      const e = this.foldHost!.viewPointFromModel(this.buffer, new Point(t.endRow, t.endColumn));
+      return { ...t, startRow: s.row, startColumn: s.column, endRow: e.row, endColumn: e.column };
+    });
   }
 
-  /** Outer (whole node) + inner (its `body` field's statements) line spans for the
-   *  nearest enclosing node whose type satisfies `matches`. */
-  private nodeRangeAt(row: number, column: number, matches: (type: string) => boolean): NodeRowRange | null {
-    return this.tree ? enclosingNodeRange(this.tree.rootNode, row, column, matches) : null;
+  /** Translate a model-coord NodeRowRange to this view's lines (identity unless folded). */
+  private toViewRowRange(r: NodeRowRange | null): NodeRowRange | null {
+    if (!r || !this.viewFolded) return r;
+    const vl = (row: number): number => this.foldHost!.viewLineForModelLine(this.buffer, row);
+    return {
+      outer: { startRow: vl(r.outer.startRow), endRow: vl(r.outer.endRow) },
+      inner: { startRow: vl(r.inner.startRow), endRow: vl(r.inner.endRow) },
+    };
   }
 
   /** Digit width to pad line numbers to, so the gutter doesn't jitter while scrolling.

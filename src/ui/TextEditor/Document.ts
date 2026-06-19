@@ -27,6 +27,7 @@ import { Adw, Gio, GtkSource, type SourceBuffer } from '../../gi.ts';
 import { quilx } from '../../quilx.ts';
 import { Point } from '../../text/Point.ts';
 import type { LspDocument, DocumentEdit } from '../../lsp/LspManager.ts';
+import { DocumentSyntax } from '../../syntax/DocumentSyntax.ts';
 
 type EditKind = 'insert' | 'delete';
 
@@ -90,6 +91,15 @@ export class Document {
   private readonly views = new Set<ViewEntry>();
   private origin: ViewEntry | null = null;
   private syncing = false;
+
+  // The shared tree-sitter parse for this document (model coords), created lazily on
+  // first access — every view's SyntaxController paints from this ONE parse (Phase 0 of
+  // the multibuffer split). Buffer-only / diff documents never access it (their painters
+  // parse their own view buffer), so it isn't created for them.
+  private _syntax: DocumentSyntax | null = null;
+  get syntax(): DocumentSyntax {
+    return this._syntax ??= new DocumentSyntax(this.model);
+  }
 
   /** The LSP document identity for this file — one per Document. Text/line read the
    *  model directly; the cursor comes from the active view. */
@@ -554,12 +564,15 @@ export class Document {
     return this.diskState !== 'synced';
   }
 
-  /** Release shared resources (last view gone): cancel the monitor + close the LSP doc. */
+  /** Release shared resources (last view gone): cancel the monitor + close the LSP doc +
+   *  free the shared tree-sitter parse. */
   dispose(): void {
     this.fileMonitor?.cancel();
     this.fileMonitor = null;
     if (this.deletionCheckTimer) clearTimeout(this.deletionCheckTimer);
     this.deletionCheckTimer = null;
+    this._syntax?.dispose(); // frees the tree + injection parsers; detaches model signals
+    this._syntax = null;
     // Only close an LSP doc we actually opened — a lazily-assigned, never-shown document
     // has a path but never ran didOpen.
     if (this.contentLoaded) quilx.lsp.didClose(this.lspDocument);
