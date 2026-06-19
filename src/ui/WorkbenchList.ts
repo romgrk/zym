@@ -476,17 +476,17 @@ export class WorkbenchList {
 
   private registerCommands(): void {
     quilx.commands.add(this.root, {
-      'core:down': () => this.moveSelection(1),
-      'core:up': () => this.moveSelection(-1),
-      'core:top': () => this.selectLiveIndex(0), // `g g`
-      'core:bottom': () => this.selectLiveIndex(this.liveHandles().length - 1), // `G`
-      'core:right': () => this.activate(this.selectedEntry()), // reveal the selection
+      'core:down': { didDispatch: () => this.moveSelection(1), description: 'Move down' },
+      'core:up': { didDispatch: () => this.moveSelection(-1), description: 'Move up' },
+      'core:top': { didDispatch: () => this.selectLiveIndex(0), description: 'Go to the top' }, // `g g`
+      'core:bottom': { didDispatch: () => this.selectLiveIndex(this.liveHandles().length - 1), description: 'Go to the bottom' }, // `G`
+      'core:right': { didDispatch: () => this.activate(this.selectedEntry()), description: 'Reveal the selection' },
       // Lifecycle on the selected row (a no-op on the user row).
-      'agent:restart': () => this.withSelectedAgent((a) => this.options.onRestart?.(a)),
-      'agent:rename': () => this.withSelectedAgent((a) => this.options.onRename?.(a)),
-      'agent:stop': () => this.withSelectedAgent((a) => this.options.onStop?.(a)),
-      'agent:close': () => this.withSelectedAgent((a) => this.options.onClose?.(a)),
-      'agent:open-changes': () => this.withSelectedAgent((a) => this.options.onOpenChanges?.(a)),
+      'agent:restart': { didDispatch: () => this.withSelectedAgent((a) => this.options.onRestart?.(a)), description: 'Restart the selected agent' },
+      'agent:rename': { didDispatch: () => this.withSelectedAgent((a) => this.options.onRename?.(a)), description: 'Rename the selected agent' },
+      'agent:stop': { didDispatch: () => this.withSelectedAgent((a) => this.options.onStop?.(a)), description: 'Stop the selected agent' },
+      'agent:close': { didDispatch: () => this.withSelectedAgent((a) => this.options.onClose?.(a)), description: 'Close the selected agent' },
+      'agent:open-changes': { didDispatch: () => this.withSelectedAgent((a) => this.options.onOpenChanges?.(a)), description: "Open the selected agent's changes" },
     });
   }
 

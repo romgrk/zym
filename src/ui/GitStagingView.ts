@@ -163,16 +163,16 @@ export class GitStagingView {
 
   private registerCommands(): void {
     quilx.commands.add(this.root, {
-      'core:down': () => this.move(+1),
-      'core:up': () => this.move(-1),
-      'core:top': () => this.selectIndex(0),
-      'core:bottom': () => this.selectIndex(this.fileRows.length - 1),
-      'core:right': () => this.toggleDiff(), // `o` — expand/collapse the inline diff
-      'git:stage': () => this.act((c) => stage(this.repo!, c.relPath, this.done)),
-      'git:unstage': () => this.act((c) => unstage(this.repo!, c.relPath, this.done)),
-      'git:discard': () => this.discardSelected(),
-      'git:commit': () => this.onCommit(),
-      'git:close-diff': () => this.closeFocusedDiff(), // `q` while a diff is focused
+      'core:down': { didDispatch: () => this.move(+1), description: 'Move down' },
+      'core:up': { didDispatch: () => this.move(-1), description: 'Move up' },
+      'core:top': { didDispatch: () => this.selectIndex(0), description: 'Go to the top' },
+      'core:bottom': { didDispatch: () => this.selectIndex(this.fileRows.length - 1), description: 'Go to the bottom' },
+      'core:right': { didDispatch: () => this.toggleDiff(), description: 'Expand / collapse the diff' }, // `o`
+      'git:stage': { didDispatch: () => this.act((c) => stage(this.repo!, c.relPath, this.done)), description: 'Stage changes' },
+      'git:unstage': { didDispatch: () => this.act((c) => unstage(this.repo!, c.relPath, this.done)), description: 'Unstage changes' },
+      'git:discard': { didDispatch: () => this.discardSelected(), description: 'Discard changes' },
+      'git:commit': { didDispatch: () => this.onCommit(), description: 'Commit staged changes' },
+      'git:close-diff': { didDispatch: () => this.closeFocusedDiff(), description: 'Close the focused diff' }, // `q` while a diff is focused
     });
   }
 

@@ -144,13 +144,16 @@ export class LocationList {
     // LocationList instance.
     this.subs.add(
       quilx.commands.add(this.root, {
-        'core:down': () => this.moveSelection(1),
-        'core:up': () => this.moveSelection(-1),
-        'core:top': () => this.selectIndex(0),
-        'core:bottom': () => this.selectIndex(this.items.length - 1),
-        'core:right': () => {
-          const row = this.listBox.getSelectedRow();
-          if (row) this.activate(row.getIndex());
+        'core:down': { didDispatch: () => this.moveSelection(1), description: 'Move down' },
+        'core:up': { didDispatch: () => this.moveSelection(-1), description: 'Move up' },
+        'core:top': { didDispatch: () => this.selectIndex(0), description: 'Go to the top' },
+        'core:bottom': { didDispatch: () => this.selectIndex(this.items.length - 1), description: 'Go to the bottom' },
+        'core:right': {
+          didDispatch: () => {
+            const row = this.listBox.getSelectedRow();
+            if (row) this.activate(row.getIndex());
+          },
+          description: 'Open the selection',
         },
       }),
     );

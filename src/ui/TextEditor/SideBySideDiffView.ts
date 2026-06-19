@@ -99,7 +99,9 @@ export class SideBySideDiffView {
 
     // `Tab` switches focus between the panes — via the command/keymap system, not a
     // raw controller, so it stays consistent with the rest of the app's bindings.
-    quilx.commands.add(this.root, { 'diff:focus-other-pane': () => this.toggleFocus() });
+    quilx.commands.add(this.root, {
+      'diff:focus-other-pane': { didDispatch: () => this.toggleFocus(), description: 'Focus the other diff pane' },
+    });
     registerDiffKeymapsOnce();
   }
 

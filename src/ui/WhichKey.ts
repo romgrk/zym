@@ -89,7 +89,7 @@ export class WhichKey {
     );
     box.append(key);
 
-    const label = quilx.commands.descriptions[binding.command] ?? binding.command;
+    const label = quilx.commands.descriptionFor(binding.command) ?? binding.command;
     const cmd = new Gtk.Label({ xalign: 0, useMarkup: true });
     cmd.setMarkup(`<span alpha="65%">${escapeMarkup(label)}</span>`);
     box.append(cmd);

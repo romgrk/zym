@@ -151,7 +151,7 @@ export class KeymapPanel {
   }
 
   private addRow(binding: BindingInfo, row: number, overridden: boolean): void {
-    const description = quilx.commands.descriptions[binding.command] ?? '';
+    const description = quilx.commands.descriptionFor(binding.command) ?? '';
     const source = SOURCE_LABELS[binding.source] ?? binding.source;
 
     const mono = fonts.monospaceFamily;

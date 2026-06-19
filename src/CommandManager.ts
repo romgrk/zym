@@ -44,15 +44,19 @@ export class CommandManager {
   commandsByName: Record<string, CommandBundle[]> = {};
   commandsByElement = new WeakMap<Widget, CommandBundle[]>();
   sources: Record<string, Array<{ selector: string; commands: CommandMap }>> = {};
-  // Human descriptions keyed by command name (shown in the command palette).
-  // Keyed by name (not by registration) so descriptions can be declared in one
-  // place for commands registered across many components.
-  descriptions: Record<string, string> = {};
+  // Human descriptions indexed by command name, harvested from the inline
+  // `description` on each command as it is registered (see `add`). Descriptions
+  // are declared together with the command (the `{ didDispatch, description }`
+  // form) — the one idiomatic way; this index just lets name-only consumers (the
+  // keymap reference, which-key) label a command without an element context,
+  // including commands registered on element instances (which live in a non-
+  // enumerable WeakMap and so can't be scanned on demand). Last registration wins.
+  private descriptionsByName: Record<string, string> = {};
   emitter = new Emitter();
 
-  /** Attach human descriptions to commands by name (merged; last wins). */
-  describe(descriptions: Record<string, string>): void {
-    Object.assign(this.descriptions, descriptions);
+  /** The human description declared for a command name, if any. */
+  descriptionFor(name: string): string | undefined {
+    return this.descriptionsByName[name];
   }
 
   get(element: Widget, command: string): CommandEffect | undefined {
@@ -122,7 +126,7 @@ export class CommandManager {
           seen.add(name);
           const effect = bundle.commands[name];
           const description =
-            (typeof effect === 'object' ? effect.description : undefined) ?? this.descriptions[name];
+            (typeof effect === 'object' ? effect.description : undefined) ?? this.descriptionsByName[name];
           // A throwing/odd `when` shouldn't break the palette — treat as enabled.
           let enabled = true;
           if (typeof effect === 'object' && effect.when) {
@@ -138,6 +142,14 @@ export class CommandManager {
 
   add(element: string | Widget, commands: CommandMap): Disposable {
     const source = getSource();
+
+    // Index any inline descriptions by name so name-only consumers (keymap
+    // reference, which-key) can label the command without an element.
+    for (const name in commands) {
+      const effect = commands[name];
+      if (typeof effect === 'object' && effect.description)
+        this.descriptionsByName[name] = effect.description;
+    }
 
     if (typeof element === 'string') {
       const selector = element;

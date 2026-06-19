@@ -390,7 +390,6 @@ export class AppWindow {
     this.registerConfigCommands();
     this.registerSessionCommands();
     this.registerLspCommands();
-    this.registerCommandDescriptions();
     this.keymapWatcher = loadKeymaps();
 
     // Seed/load the user config and keep it in sync with on-disk edits. Done
@@ -1581,8 +1580,11 @@ export class AppWindow {
   }
 
   // --- Commands --------------------------------------------------------------
-  // Each group registers its command handlers; the key bindings that invoke them
-  // live in the central keymap (src/keymaps/default.ts), loaded once at startup.
+  // Each group registers its command handlers together with their palette
+  // descriptions (the `{ didDispatch, description }` form); the key bindings that
+  // invoke them live in the central keymap (src/keymaps/default.ts), loaded once
+  // at startup. Commands owned by other widgets (tabs, file tree, git panel,
+  // editor, …) declare their own action+description in those widgets' modules.
 
   // --- Pane switching (demo of the ported command/keymap managers) -----------
 
@@ -1592,145 +1594,29 @@ export class AppWindow {
   // Directional focus stays within the center; at the left edge `pane:focus-left`
   // falls back to the file-tree dock, and from the file tree `pane:focus-right`
   // returns to it.
-  // Human descriptions for the command palette, keyed by command name (so
-  // commands registered by other components — tabs, file tree, git panel — can be
-  // described here too). Commands without an entry still show, name only.
-  private registerCommandDescriptions() {
-    quilx.commands.describe({
-      // File / app
-      'file:open': 'Open a file (dialog)',
-      'file:open-path': 'Open a file by path',
-      'file:find': 'Find a file by name',
-      'project:search': 'Search file contents (ripgrep)',
-      'file:save': 'Save the current file',
-      'file:save-as': 'Save the current file as…',
-      'app:quit': 'Quit quilx',
-      'command-palette:toggle': 'Show all commands',
-      // Panes / splits
-      'pane:split-right': 'Split the pane to the right',
-      'pane:split-down': 'Split the pane downward',
-      'pane:close': 'Close the active pane',
-      'pane:focus-left': 'Focus the pane to the left',
-      'pane:focus-right': 'Focus the pane to the right',
-      'pane:focus-up': 'Focus the pane above',
-      'pane:focus-down': 'Focus the pane below',
-      'pane:focus-next': 'Cycle to the next pane',
-      'file-tree:focus': 'Focus the file tree',
-      'git-panel:focus': 'Focus Source Control',
-      'workbench-list:focus': 'Focus the workbench sidebar',
-      'workbench:previous': 'Switch to the previous workbench',
-      'workbench:next': 'Switch to the next workbench',
-      // Tabs
-      'tab:next': 'Next tab',
-      'tab:previous': 'Previous tab',
-      'tab:go-to': 'Go to tab by index',
-      'tab:go-to-last': 'Go to the last tab',
-      'tab:move-backward': 'Move tab before',
-      'tab:move-forward': 'Move tab after',
-      'tab:close': 'Close the active tab',
-      // File tree
-      'core:down': 'Move down',
-      'core:up': 'Move up',
-      'core:left': 'Collapse / go to parent',
-      'core:right': 'Expand / open',
-      'tree:toggle-hidden-files': 'Toggle hidden files',
-      'tree:toggle-untracked-files': 'Toggle untracked files',
-      // Terminal / agents
-      'terminal:new': 'Open a new terminal',
-      'terminal:insert-mode': 'Terminal: enter insert mode (type into the child)',
-      'terminal:normal-mode': 'Terminal: enter normal mode (app shortcuts)',
-      'terminal:send-escape': 'Terminal: send Escape to the child',
-      'agent:new': 'Start a new agent',
-      'agent:new-in-worktree': 'Start a new agent in a chosen git worktree',
-      'agent:picker': 'Open the agent picker (agents, conversations, new)',
-      'agent:resume': 'Resume the stopped agent',
-      'agent:resume-conversation': 'Resume a past conversation…',
-      'agent:continue': 'Continue the latest conversation',
-      'agent:branch': 'Branch the agent into a new forked agent',
-      'agent:stop': 'Stop the active agent',
-      'agent:restart': 'Restart the agent (resume its conversation)',
-      'agent:rename': 'Rename the agent',
-      'agent:close': 'Close the agent (terminate it and remove it from the list)',
-      'agent:open-changes': "Open the agent's edited files",
-      'agent:focus-next': 'Focus the next agent',
-      'agent:focus-prev': 'Focus the previous agent',
-      'agent:send-selection': 'Send the selection to the current agent',
-      'agent:send-file': 'Send the file path to the current agent',
-      'agent:send-selection-to': 'Send the selection to an agent…',
-      'agent:send-file-to': 'Send the file path to an agent…',
-      'agent:send-selection-to-new': 'Send the selection to a new agent',
-      'agent:send-file-to-new': 'Send the file path to a new agent',
-      // Git
-      'git:fetch': 'Fetch from the remote',
-      'git:pull': 'Pull from upstream (fast-forward)',
-      'git:push': 'Push to the remote',
-      'git:branch-switch': 'Switch or create a branch…',
-      'git:branch-delete': 'Delete a branch…',
-      'git:branch-merge': 'Merge a branch into current…',
-      'git:branch-rename': 'Rename the current branch…',
-      'git:stash-push': 'Stash changes',
-      'git:stash-pop': 'Pop a stash…',
-      'git:stash-apply': 'Apply a stash…',
-      'git:stash-drop': 'Drop a stash…',
-      'git:commit': 'Commit staged changes',
-      'git:discard': 'Discard changes',
-      'git:stage': 'Stage changes',
-      'git:unstage': 'Unstage changes',
-      // LSP
-      'lsp:go-to-definition': 'Go to definition',
-      'lsp:peek-definition': 'Peek definition (inline)',
-      'lsp:go-to-declaration': 'Go to declaration',
-      'lsp:go-to-type-definition': 'Go to type definition',
-      'lsp:go-to-implementation': 'Go to implementation',
-      'lsp:find-references': 'Find references',
-      'lsp:workspace-symbols': 'Go to workspace symbol…',
-      'lsp:document-symbols': 'Go to symbol in document…',
-      'lsp:hover': 'Show hover (type / docs)',
-      'lsp:code-action': 'Code action / quick fix…',
-      'lsp:rename': 'Rename symbol…',
-      'tag:rename': 'Rename JSX/HTML tag pair…',
-      'lsp:format': 'Format document',
-      'lsp:toggle-diagnostics-panel': 'Toggle the Diagnostics panel',
-      'lsp:install-server': 'Install a language server…',
-      'keymap:show': 'Show all keybindings and their source',
-      // Notifications / config / session
-      'notifications:toggle-log': 'Toggle the notification log',
-      'notifications:clear': 'Clear notifications',
-      'config:open': 'Open preferences',
-      'config:open-as-text': 'Open config.json',
-      'session:save': 'Save the session',
-      'session:restore': 'Restore the last session',
-      // Dock visibility
-      'dock:toggle-left': 'Toggle the left dock',
-      'dock:toggle-right': 'Toggle the right dock (Files / Source Control)',
-      'dock:toggle-top': 'Toggle the top dock',
-      'dock:toggle-bottom': 'Toggle the bottom dock',
-    });
-  }
-
   private registerPaneCommands() {
     quilx.commands.add('#AppWindow', {
-      'pane:split-right': () => this.splitPane('right'),
-      'pane:split-down': () => this.splitPane('down'),
-      'pane:close': () => this.closePane(),
-      'pane:focus-left': () => this.navPane('left'),
-      'pane:focus-right': () => this.navPane('right'),
-      'pane:focus-up': () => this.navPane('up'),
-      'pane:focus-down': () => this.navPane('down'),
-      'pane:focus-next': () => this.focusNextPane(),
+      'pane:split-right': { didDispatch: () => this.splitPane('right'), description: 'Split the pane to the right' },
+      'pane:split-down': { didDispatch: () => this.splitPane('down'), description: 'Split the pane downward' },
+      'pane:close': { didDispatch: () => this.closePane(), description: 'Close the active pane' },
+      'pane:focus-left': { didDispatch: () => this.navPane('left'), description: 'Focus the pane to the left' },
+      'pane:focus-right': { didDispatch: () => this.navPane('right'), description: 'Focus the pane to the right' },
+      'pane:focus-up': { didDispatch: () => this.navPane('up'), description: 'Focus the pane above' },
+      'pane:focus-down': { didDispatch: () => this.navPane('down'), description: 'Focus the pane below' },
+      'pane:focus-next': { didDispatch: () => this.focusNextPane(), description: 'Cycle to the next pane' },
       // Reveal+focus a specific left-dock tab (re-adding it if the dock had been
       // collapsed away by closing its last tab).
-      'file-tree:focus': () => this.revealLeftTab('files'),
-      'git-panel:focus': () => this.revealLeftTab('git'),
-      'workbench-list:focus': () => this.workbenchList.focus(),
+      'file-tree:focus': { didDispatch: () => this.revealLeftTab('files'), description: 'Focus the file tree' },
+      'git-panel:focus': { didDispatch: () => this.revealLeftTab('git'), description: 'Focus Source Control' },
+      'workbench-list:focus': { didDispatch: () => this.workbenchList.focus(), description: 'Focus the workbench sidebar' },
       // Cycle the active workbench through [user, …agents] (the workbench-list order).
-      'workbench:previous': () => this.cycleWorkbench(-1),
-      'workbench:next': () => this.cycleWorkbench(1),
+      'workbench:previous': { didDispatch: () => this.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
+      'workbench:next': { didDispatch: () => this.cycleWorkbench(1), description: 'Switch to the next workbench' },
       // Show/hide each dock side without discarding the panels it holds.
-      'dock:toggle-left': () => this.toggleDockSide('left'),
-      'dock:toggle-right': () => this.toggleDockSide('right'),
-      'dock:toggle-top': () => this.toggleDockSide('top'),
-      'dock:toggle-bottom': () => this.toggleDockSide('bottom'),
+      'dock:toggle-left': { didDispatch: () => this.toggleDockSide('left'), description: 'Toggle the left dock' },
+      'dock:toggle-right': { didDispatch: () => this.toggleDockSide('right'), description: 'Toggle the right dock (Files / Source Control)' },
+      'dock:toggle-top': { didDispatch: () => this.toggleDockSide('top'), description: 'Toggle the top dock' },
+      'dock:toggle-bottom': { didDispatch: () => this.toggleDockSide('bottom'), description: 'Toggle the bottom dock' },
     });
   }
 
@@ -1782,22 +1668,22 @@ export class AppWindow {
 
   private registerLspCommands() {
     quilx.commands.add('#AppWindow', {
-      'lsp:go-to-definition': () => void this.goto('definition'),
-      'lsp:peek-definition': () => void this.peekDefinition(),
-      'lsp:go-to-declaration': () => void this.goto('declaration'),
-      'lsp:go-to-type-definition': () => void this.goto('typeDefinition'),
-      'lsp:go-to-implementation': () => void this.goto('implementation'),
-      'lsp:find-references': () => void this.findReferences(),
-      'lsp:workspace-symbols': () => this.workspaceSymbolPicker(),
-      'lsp:document-symbols': () => void this.documentSymbolPicker(),
-      'lsp:hover': () => void this.activeEditor?.hover(),
-      'lsp:code-action': () => void this.codeActionMenu(),
-      'lsp:rename': () => this.renamePrompt(),
-      'tag:rename': () => this.renameTagPrompt(),
-      'lsp:format': () => void this.formatActive(),
-      'lsp:toggle-diagnostics-panel': () => this.toggleDiagnosticsPanel(),
-      'lsp:install-server': () => this.installServerPicker(),
-      'keymap:show': () => this.toggleKeymapPanel(),
+      'lsp:go-to-definition': { didDispatch: () => void this.goto('definition'), description: 'Go to definition' },
+      'lsp:peek-definition': { didDispatch: () => void this.peekDefinition(), description: 'Peek definition (inline)' },
+      'lsp:go-to-declaration': { didDispatch: () => void this.goto('declaration'), description: 'Go to declaration' },
+      'lsp:go-to-type-definition': { didDispatch: () => void this.goto('typeDefinition'), description: 'Go to type definition' },
+      'lsp:go-to-implementation': { didDispatch: () => void this.goto('implementation'), description: 'Go to implementation' },
+      'lsp:find-references': { didDispatch: () => void this.findReferences(), description: 'Find references' },
+      'lsp:workspace-symbols': { didDispatch: () => this.workspaceSymbolPicker(), description: 'Go to workspace symbol…' },
+      'lsp:document-symbols': { didDispatch: () => void this.documentSymbolPicker(), description: 'Go to symbol in document…' },
+      'lsp:hover': { didDispatch: () => void this.activeEditor?.hover(), description: 'Show hover (type / docs)' },
+      'lsp:code-action': { didDispatch: () => void this.codeActionMenu(), description: 'Code action / quick fix…' },
+      'lsp:rename': { didDispatch: () => this.renamePrompt(), description: 'Rename symbol…' },
+      'tag:rename': { didDispatch: () => this.renameTagPrompt(), description: 'Rename JSX/HTML tag pair…' },
+      'lsp:format': { didDispatch: () => void this.formatActive(), description: 'Format document' },
+      'lsp:toggle-diagnostics-panel': { didDispatch: () => this.toggleDiagnosticsPanel(), description: 'Toggle the Diagnostics panel' },
+      'lsp:install-server': { didDispatch: () => this.installServerPicker(), description: 'Install a language server…' },
+      'keymap:show': { didDispatch: () => this.toggleKeymapPanel(), description: 'Show all keybindings and their source' },
     });
   }
 
@@ -2174,14 +2060,23 @@ export class AppWindow {
   // most) on the space leader. Handlers only; bindings live in the central keymap.
   private registerWindowCommands() {
     quilx.commands.add('#AppWindow', {
-      'file:open': () => this.openDialog(),
-      'file:find': () => openFilePicker(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
-      'file:open-path': () => openFileOpener(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
-      'project:search': () =>
-        openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.openFile(path).restoreCursor(cursor)),
+      'file:open': { didDispatch: () => this.openDialog(), description: 'Open a file (dialog)' },
+      'file:find': {
+        didDispatch: () => openFilePicker(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
+        description: 'Find a file by name',
+      },
+      'file:open-path': {
+        didDispatch: () => openFileOpener(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
+        description: 'Open a file by path',
+      },
+      'project:search': {
+        didDispatch: () =>
+          openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.openFile(path).restoreCursor(cursor)),
+        description: 'Search file contents (ripgrep)',
+      },
       // Save commands only apply with an editor open.
-      'file:save': { didDispatch: () => this.saveActive(), when: () => this.activeEditor !== null },
-      'file:save-as': { didDispatch: () => this.saveAsDialog(), when: () => this.activeEditor !== null },
+      'file:save': { didDispatch: () => this.saveActive(), description: 'Save the current file', when: () => this.activeEditor !== null },
+      'file:save-as': { didDispatch: () => this.saveAsDialog(), description: 'Save the current file as…', when: () => this.activeEditor !== null },
       'git:diff-current': {
         didDispatch: () => this.diffActiveAgainstHead(),
         description: 'Diff the current file (working tree vs HEAD)',
@@ -2191,8 +2086,8 @@ export class AppWindow {
         didDispatch: () => this.openStagingView(),
         description: 'Open the staging view (status + diff) in a tab',
       },
-      'app:quit': () => this.onQuit(),
-      'command-palette:toggle': () => openCommandPicker(this.overlay),
+      'app:quit': { didDispatch: () => this.onQuit(), description: 'Quit quilx' },
+      'command-palette:toggle': { didDispatch: () => openCommandPicker(this.overlay), description: 'Show all commands' },
     });
   }
 
@@ -2241,58 +2136,66 @@ export class AppWindow {
   // bound to `space t` in the central keymap.
   private registerTerminalCommands() {
     quilx.commands.add('#AppWindow', {
-      'terminal:new': () => this.openTerminal(),
+      'terminal:new': { didDispatch: () => this.openTerminal(), description: 'Open a new terminal' },
       'scripts:run': {
         didDispatch: () => openScriptRunner(this.overlay, this.workbench.cwd, (name) => this.runScript(name)),
         description: 'Run a package.json script in a terminal',
       },
-      'agent:new': () =>
-        openModelPicker(this.overlay, (extraArgs) =>
-          this.openAgent({ command: ['claude', ...extraArgs] }),
-        ),
+      'agent:new': {
+        didDispatch: () =>
+          openModelPicker(this.overlay, (extraArgs) =>
+            this.openAgent({ command: ['claude', ...extraArgs] }),
+          ),
+        description: 'Start a new agent',
+      },
       // Pick an existing worktree to launch the agent in (its workbench is rooted
       // there). New worktrees are created by the agent itself, then detected live.
-      'agent:new-in-worktree': () =>
-        openWorktreePicker(this.overlay, this.workbench.cwd, (cwd) => this.openAgent({ cwd })),
-      'agent:picker': () => openAgentPicker(this.overlay, {
-        onActivate: (agent) => this.showAgent(agent),
-        sessionRoots: this.agentSessionRoots(),
-        // Resume restoring the conversation's branch/worktree/cwd (see resumeOptions).
-        onResume: (session) => this.openAgent(this.resumeOptions(session)),
-        onStart: (prompt) => this.openAgent({ prompt }),
-      }),
+      'agent:new-in-worktree': {
+        didDispatch: () => openWorktreePicker(this.overlay, this.workbench.cwd, (cwd) => this.openAgent({ cwd })),
+        description: 'Start a new agent in a chosen git worktree',
+      },
+      'agent:picker': {
+        didDispatch: () => openAgentPicker(this.overlay, {
+          onActivate: (agent) => this.showAgent(agent),
+          sessionRoots: this.agentSessionRoots(),
+          // Resume restoring the conversation's branch/worktree/cwd (see resumeOptions).
+          onResume: (session) => this.openAgent(this.resumeOptions(session)),
+          onStart: (prompt) => this.openAgent({ prompt }),
+        }),
+        description: 'Open the agent picker (agents, conversations, new)',
+      },
       // Resume a stopped agent in place (current agent, if exited). Resuming a
       // past *conversation* as a fresh agent is agent:resume-conversation (a
       // picker); agent:continue picks up the latest conversation in this folder.
-      'agent:resume': { didDispatch: () => this.resumeCurrentAgent(), when: () => this.currentAgent()?.exited === true },
-      'agent:resume-conversation': () => this.resumeAgentPicker(),
-      'agent:continue': () => this.openAgent({ resume: { continue: true } }),
+      'agent:resume': { didDispatch: () => this.resumeCurrentAgent(), description: 'Resume the stopped agent', when: () => this.currentAgent()?.exited === true },
+      'agent:resume-conversation': { didDispatch: () => this.resumeAgentPicker(), description: 'Resume a past conversation…' },
+      'agent:continue': { didDispatch: () => this.openAgent({ resume: { continue: true } }), description: 'Continue the latest conversation' },
       // Branch the current agent into a new agent/workbench: a fresh session
       // forked off its conversation (`--resume <id> --fork-session`), so the
       // original agent is left running and untouched.
-      'agent:branch': { didDispatch: () => this.branchCurrentAgent(), when: () => this.currentAgent() !== null },
+      'agent:branch': { didDispatch: () => this.branchCurrentAgent(), description: 'Branch the agent into a new forked agent', when: () => this.currentAgent() !== null },
       // Lifecycle / navigation for the active agent. Stop SIGTERMs the child (the widget
       // lingers as exited, resumable); next/prev cycle through the running agents.
       // Closing an agent's tab never retires it — it just backgrounds it (the agent stays
       // listed whether running or stopped); retiring it from the list is a separate command.
-      'agent:stop': { didDispatch: () => this.activeAgent?.kill(), when: () => this.activeAgent !== null },
+      'agent:stop': { didDispatch: () => this.activeAgent?.kill(), description: 'Stop the active agent', when: () => this.activeAgent !== null },
       // Lifecycle on the current agent (active, else last focused).
-      'agent:restart': { didDispatch: () => this.restartCurrentAgent(), when: () => this.currentAgent() !== null },
-      'agent:rename': { didDispatch: () => this.renameCurrentAgent(), when: () => this.currentAgent() !== null },
+      'agent:restart': { didDispatch: () => this.restartCurrentAgent(), description: 'Restart the agent (resume its conversation)', when: () => this.currentAgent() !== null },
+      'agent:rename': { didDispatch: () => this.renameCurrentAgent(), description: 'Rename the agent', when: () => this.currentAgent() !== null },
       // Close for good: terminate the child if it's still running, then remove its
       // workbench and retire it from the list (unlike tab:close, which only backgrounds).
-      'agent:close': { didDispatch: () => this.closeCurrentAgent(), when: () => this.currentAgent() !== null },
-      'agent:open-changes': { didDispatch: () => this.openChangesOfCurrentAgent(), when: () => this.currentAgent() !== null },
-      'agent:focus-next': () => this.focusAdjacentAgent(1),
-      'agent:focus-prev': () => this.focusAdjacentAgent(-1),
+      'agent:close': { didDispatch: () => this.closeCurrentAgent(), description: 'Close the agent (terminate it and remove it from the list)', when: () => this.currentAgent() !== null },
+      'agent:open-changes': { didDispatch: () => this.openChangesOfCurrentAgent(), description: "Open the agent's edited files", when: () => this.currentAgent() !== null },
+      'agent:focus-next': { didDispatch: () => this.focusAdjacentAgent(1), description: 'Focus the next agent' },
+      'agent:focus-prev': { didDispatch: () => this.focusAdjacentAgent(-1), description: 'Focus the previous agent' },
       // Push the active editor's context into an agent's prompt — the current
       // agent (send-*), or one chosen from the picker (send-*-to).
-      'agent:send-selection': () => this.sendToAgent(this.editorSelectionText()),
-      'agent:send-file': () => this.sendToAgent(this.editorFileText()),
-      'agent:send-selection-to': () => this.pickAgentAndSend(this.editorSelectionText()),
-      'agent:send-file-to': () => this.pickAgentAndSend(this.editorFileText()),
-      'agent:send-selection-to-new': () => this.composeNewAgent(this.editorSelectionText()),
-      'agent:send-file-to-new': () => this.composeNewAgent(this.editorFileText()),
+      'agent:send-selection': { didDispatch: () => this.sendToAgent(this.editorSelectionText()), description: 'Send the selection to the current agent' },
+      'agent:send-file': { didDispatch: () => this.sendToAgent(this.editorFileText()), description: 'Send the file path to the current agent' },
+      'agent:send-selection-to': { didDispatch: () => this.pickAgentAndSend(this.editorSelectionText()), description: 'Send the selection to an agent…' },
+      'agent:send-file-to': { didDispatch: () => this.pickAgentAndSend(this.editorFileText()), description: 'Send the file path to an agent…' },
+      'agent:send-selection-to-new': { didDispatch: () => this.composeNewAgent(this.editorSelectionText()), description: 'Send the selection to a new agent' },
+      'agent:send-file-to-new': { didDispatch: () => this.composeNewAgent(this.editorFileText()), description: 'Send the file path to a new agent' },
     });
   }
 
@@ -2302,62 +2205,75 @@ export class AppWindow {
   private registerGitCommands() {
     quilx.commands.add('#AppWindow', {
       // Git commands only apply inside a repository (a resolvable branch).
-      'git:fetch': { didDispatch: () => this.runGit((d) => this.workbench.git.fetch(d), 'Fetch'), when: () => this.workbench.git.getBranch() !== null },
-      'git:pull': { didDispatch: () => this.runGit((d) => this.workbench.git.pull(d), 'Pull'), when: () => this.workbench.git.getBranch() !== null },
+      'git:fetch': { didDispatch: () => this.runGit((d) => this.workbench.git.fetch(d), 'Fetch'), description: 'Fetch from the remote', when: () => this.workbench.git.getBranch() !== null },
+      'git:pull': { didDispatch: () => this.runGit((d) => this.workbench.git.pull(d), 'Pull'), description: 'Pull from upstream (fast-forward)', when: () => this.workbench.git.getBranch() !== null },
       'git:push': {
         // After a successful push, GitHub re-runs the PR's checks; schedule a CI
         // refresh ~10s out. The service stays busy until then, so the CI segment
         // shows the in-progress (loading) look in the meantime.
         didDispatch: () =>
           this.runGit((d) => this.workbench.git.push(d), 'Push', () => this.github.scheduleRefresh(10000)),
+        description: 'Push to the remote',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:branch-switch': {
         didDispatch: () => openBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
+        description: 'Switch or create a branch…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:branch-delete': {
         didDispatch: () => openDeleteBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
+        description: 'Delete a branch…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:branch-merge': {
         didDispatch: () => openMergeBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
+        description: 'Merge a branch into current…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:branch-rename': {
         didDispatch: () => openRenameBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
+        description: 'Rename the current branch…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:stash-push': {
         didDispatch: () => this.stashChanges(),
+        description: 'Stash changes',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:stash-pop': {
         didDispatch: () => openStashPicker(this.overlay, this.workbench.cwd, 'pop', this.workbench.git),
+        description: 'Pop a stash…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:stash-apply': {
         didDispatch: () => openStashPicker(this.overlay, this.workbench.cwd, 'apply', this.workbench.git),
+        description: 'Apply a stash…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:stash-drop': {
         didDispatch: () => openStashPicker(this.overlay, this.workbench.cwd, 'drop', this.workbench.git),
+        description: 'Drop a stash…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'github:issue-picker': {
         didDispatch: () => openGithubIssuePicker(this.overlay, this.workbench.cwd),
+        description: 'Open a GitHub issue…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'github:failed-ci-picker': {
         didDispatch: () => openGithubFailedCIPicker(this.overlay, this.workbench.cwd),
+        description: 'Open a failed CI check…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'github:ci-checks': {
         didDispatch: () => openGithubCIChecksPicker(this.overlay, this.workbench.cwd),
+        description: 'Show CI checks for this branch…',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'github:pull-request-checkout': {
         didDispatch: () => switchToGithubPrPicker(this.overlay, this.workbench.cwd, this.workbench.git),
+        description: 'Check out a pull request…',
         when: () => this.workbench.git.getBranch() !== null,
       },
     });
@@ -2471,28 +2387,40 @@ export class AppWindow {
   // central keymap.
   private registerNotificationCommands() {
     quilx.commands.add('#AppWindow', {
-      'notifications:toggle-log': () => this.toggleNotificationLog(),
-      'notifications:clear': () => quilx.notifications.clear(),
+      'notifications:toggle-log': { didDispatch: () => this.toggleNotificationLog(), description: 'Toggle the notification log' },
+      'notifications:clear': { didDispatch: () => quilx.notifications.clear(), description: 'Clear notifications' },
       // Run the default action of the most recent notification that has one.
-      'notifications:activate': () => quilx.notifications.activateLast(),
+      'notifications:activate': { didDispatch: () => quilx.notifications.activateLast(), description: 'Run the latest notification’s action' },
       // Demo commands (command palette only): post one notification of each
       // severity so the toast styling and the log can be exercised by hand.
-      'notifications:test-info': () =>
-        quilx.notifications.addInfo('Info notification', {
-          detail: 'Click me to run a default action.',
-          onDidClick: () => quilx.notifications.addSuccess('Default action ran'),
-        }),
-      'notifications:test-success': () =>
-        quilx.notifications.addSuccess('Success notification', { detail: 'Something worked.' }),
-      'notifications:test-warning': () =>
-        quilx.notifications.addWarning('Warning notification', { detail: 'Something looks off.' }),
-      'notifications:test-error': () =>
-        quilx.notifications.addError('Error notification', { detail: 'Something failed.' }),
-      'notifications:test-fatal': () =>
-        quilx.notifications.addFatalError('Fatal notification', {
-          detail: 'Something failed badly.',
-          dismissable: true,
-        }),
+      'notifications:test-info': {
+        didDispatch: () =>
+          quilx.notifications.addInfo('Info notification', {
+            detail: 'Click me to run a default action.',
+            onDidClick: () => quilx.notifications.addSuccess('Default action ran'),
+          }),
+        description: 'Post a test info notification',
+      },
+      'notifications:test-success': {
+        didDispatch: () => quilx.notifications.addSuccess('Success notification', { detail: 'Something worked.' }),
+        description: 'Post a test success notification',
+      },
+      'notifications:test-warning': {
+        didDispatch: () => quilx.notifications.addWarning('Warning notification', { detail: 'Something looks off.' }),
+        description: 'Post a test warning notification',
+      },
+      'notifications:test-error': {
+        didDispatch: () => quilx.notifications.addError('Error notification', { detail: 'Something failed.' }),
+        description: 'Post a test error notification',
+      },
+      'notifications:test-fatal': {
+        didDispatch: () =>
+          quilx.notifications.addFatalError('Fatal notification', {
+            detail: 'Something failed badly.',
+            dismissable: true,
+          }),
+        description: 'Post a test fatal notification',
+      },
     });
   }
 
@@ -2501,8 +2429,8 @@ export class AppWindow {
   // `space ,` in the central keymap.
   private registerConfigCommands() {
     quilx.commands.add('#AppWindow', {
-      'config:open': () => openConfigEditor(this.window),
-      'config:open-as-text': () => this.openFile(configPath()),
+      'config:open': { didDispatch: () => openConfigEditor(this.window), description: 'Open preferences' },
+      'config:open-as-text': { didDispatch: () => this.openFile(configPath()), description: 'Open config.json' },
     });
   }
 
@@ -2510,13 +2438,19 @@ export class AppWindow {
   // common case; these are manual controls (command palette / keymap).
   private registerSessionCommands() {
     quilx.commands.add('#AppWindow', {
-      'session:save': () => {
-        this.sessionController.saveNow();
-        this.toast('Session saved');
+      'session:save': {
+        didDispatch: () => {
+          this.sessionController.saveNow();
+          this.toast('Session saved');
+        },
+        description: 'Save the session',
       },
-      'session:restore': () => {
-        if (this.sessionController.restore()) this.activateOwner('user'); // settle on user after agent relaunches
-        else this.toast('No saved session for this folder');
+      'session:restore': {
+        didDispatch: () => {
+          if (this.sessionController.restore()) this.activateOwner('user'); // settle on user after agent relaunches
+          else this.toast('No saved session for this folder');
+        },
+        description: 'Restore the last session',
       },
     });
   }

@@ -161,16 +161,16 @@ export class GitPanel {
 
   private registerCommands(): void {
     quilx.commands.add(this.root, {
-      'core:down': () => this.move(+1),
-      'core:up': () => this.move(-1),
-      'core:top': () => this.selectIndex(0), // `g g`
-      'core:bottom': () => this.selectIndex(this.fileRows.length - 1), // `G`
-      'core:right': () => this.openSelected(), // `l` — edit, like the file tree
-      'git:stage': () => this.act((c) => stage(this.repo!, c.relPath, this.done)),
-      'git:unstage': () => this.act((c) => unstage(this.repo!, c.relPath, this.done)),
-      'git:stage-all': () => this.stageAllToggle(), // `A`
-      'git:discard': () => this.discardSelected(),
-      'git:commit': () => this.onCommit(),
+      'core:down': { didDispatch: () => this.move(+1), description: 'Move down' },
+      'core:up': { didDispatch: () => this.move(-1), description: 'Move up' },
+      'core:top': { didDispatch: () => this.selectIndex(0), description: 'Go to the top' }, // `g g`
+      'core:bottom': { didDispatch: () => this.selectIndex(this.fileRows.length - 1), description: 'Go to the bottom' }, // `G`
+      'core:right': { didDispatch: () => this.openSelected(), description: 'Open the selected file' }, // `l` — edit, like the file tree
+      'git:stage': { didDispatch: () => this.act((c) => stage(this.repo!, c.relPath, this.done)), description: 'Stage changes' },
+      'git:unstage': { didDispatch: () => this.act((c) => unstage(this.repo!, c.relPath, this.done)), description: 'Unstage changes' },
+      'git:stage-all': { didDispatch: () => this.stageAllToggle(), description: 'Stage / unstage all' }, // `A`
+      'git:discard': { didDispatch: () => this.discardSelected(), description: 'Discard changes' },
+      'git:commit': { didDispatch: () => this.onCommit(), description: 'Commit staged changes' },
     });
   }
 

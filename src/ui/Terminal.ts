@@ -250,11 +250,11 @@ export class Terminal {
   // and keep the mode in lockstep with where focus actually sits.
   private setupModalInput(): void {
     quilx.commands.add(this.root, {
-      'terminal:insert-mode': () => this.setMode('insert'),
-      'terminal:normal-mode': () => this.setMode('normal'),
-      'terminal:send-escape': () => this.feedChild('\x1b'),
-      'terminal:copy': () => this.copySelection(),
-      'terminal:paste': () => this.terminal.pasteClipboard(),
+      'terminal:insert-mode': { didDispatch: () => this.setMode('insert'), description: 'Terminal: enter insert mode (type into the child)' },
+      'terminal:normal-mode': { didDispatch: () => this.setMode('normal'), description: 'Terminal: enter normal mode (app shortcuts)' },
+      'terminal:send-escape': { didDispatch: () => this.feedChild('\x1b'), description: 'Terminal: send Escape to the child' },
+      'terminal:copy': { didDispatch: () => this.copySelection(), description: 'Terminal: copy the selection' },
+      'terminal:paste': { didDispatch: () => this.terminal.pasteClipboard(), description: 'Terminal: paste the clipboard' },
     });
     this.applyMode();
 

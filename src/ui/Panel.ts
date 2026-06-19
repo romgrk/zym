@@ -332,15 +332,15 @@ export class Panel {
   // route keystrokes to the focused panel, which dispatches them back here.
   private registerTabCommands(): void {
     quilx.commands.add(this.root, {
-      'tab:next': () => this.selectNextTab(),
-      'tab:previous': () => this.selectPreviousTab(),
-      'tab:go-to-last': () => this.selectLastTab(),
+      'tab:next': { didDispatch: () => this.selectNextTab(), description: 'Next tab' },
+      'tab:previous': { didDispatch: () => this.selectPreviousTab(), description: 'Previous tab' },
+      'tab:go-to-last': { didDispatch: () => this.selectLastTab(), description: 'Go to the last tab' },
       // Parameterized: the first argument is the 0-based tab index (the central
       // keymap binds alt-1..8 to `{ command: 'tab:go-to', args: [n] }`).
-      'tab:go-to': (_event, _element, index) => this.selectTab(index),
-      'tab:move-backward': () => this.moveTabBackward(),
-      'tab:move-forward': () => this.moveTabForward(),
-      'tab:close': () => this.closeActiveTab(),
+      'tab:go-to': { didDispatch: (_event, _element, index) => this.selectTab(index), description: 'Go to tab by index' },
+      'tab:move-backward': { didDispatch: () => this.moveTabBackward(), description: 'Move tab before' },
+      'tab:move-forward': { didDispatch: () => this.moveTabForward(), description: 'Move tab after' },
+      'tab:close': { didDispatch: () => this.closeActiveTab(), description: 'Close the active tab' },
     });
   }
 

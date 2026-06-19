@@ -551,21 +551,27 @@ export class TextEditor implements DocumentHost {
   private installSearch() {
     registerSearchKeymapsOnce();
     quilx.commands.add(this.view, {
-      'editor:search-forward': () => this.searchBar.open(false),
-      'editor:search-backward': () => this.searchBar.open(true),
+      'editor:search-forward': { didDispatch: () => this.searchBar.open(false), description: 'Search forward' },
+      'editor:search-backward': { didDispatch: () => this.searchBar.open(true), description: 'Search backward' },
       // n/N outside the bar repeat the last search (no-op when none is active).
-      'editor:search-next': () => {
-        if (this.search.hasActiveSearch) this.search.next();
+      'editor:search-next': {
+        didDispatch: () => {
+          if (this.search.hasActiveSearch) this.search.next();
+        },
+        description: 'Repeat the search forward',
       },
-      'editor:search-previous': () => {
-        if (this.search.hasActiveSearch) this.search.previous();
+      'editor:search-previous': {
+        didDispatch: () => {
+          if (this.search.hasActiveSearch) this.search.previous();
+        },
+        description: 'Repeat the search backward',
       },
       // `*`/`#`: whole-word search of the word under the cursor; `g*`/`g#` match
       // substrings too.
-      'editor:search-word-forward': () => this.searchWordUnderCursor(false, true),
-      'editor:search-word-backward': () => this.searchWordUnderCursor(true, true),
-      'editor:search-word-forward-loose': () => this.searchWordUnderCursor(false, false),
-      'editor:search-word-backward-loose': () => this.searchWordUnderCursor(true, false),
+      'editor:search-word-forward': { didDispatch: () => this.searchWordUnderCursor(false, true), description: 'Search the word under the cursor forward' },
+      'editor:search-word-backward': { didDispatch: () => this.searchWordUnderCursor(true, true), description: 'Search the word under the cursor backward' },
+      'editor:search-word-forward-loose': { didDispatch: () => this.searchWordUnderCursor(false, false), description: 'Search the word under the cursor forward (substring)' },
+      'editor:search-word-backward-loose': { didDispatch: () => this.searchWordUnderCursor(true, false), description: 'Search the word under the cursor backward (substring)' },
     });
 
     // Search-as-motion (`d/foo`): the vim layer requests multi-char input through
@@ -793,9 +799,9 @@ export class TextEditor implements DocumentHost {
     // `space h …` leader; the gutter does the index `git apply`, revert is an
     // in-buffer edit (so it's a single undo).
     quilx.commands.add(this.view, {
-      'git:stage-hunk': () => this.stageHunkAtCursor(),
-      'git:unstage-hunk': () => this.unstageHunkAtCursor(),
-      'git:revert-hunk': () => this.revertHunkAtCursor(),
+      'git:stage-hunk': { didDispatch: () => this.stageHunkAtCursor(), description: 'Stage the hunk under the cursor' },
+      'git:unstage-hunk': { didDispatch: () => this.unstageHunkAtCursor(), description: 'Unstage the hunk under the cursor' },
+      'git:revert-hunk': { didDispatch: () => this.revertHunkAtCursor(), description: 'Revert the hunk under the cursor' },
     });
   }
 
@@ -1345,11 +1351,11 @@ export class TextEditor implements DocumentHost {
     // (tree-sitter folds, or a diff pane's unchanged-run folds). Registered per-view
     // so a keystroke folds the focused editor.
     quilx.commands.add(this.view, {
-      'fold:toggle': () => this.selectRevealedFold(this.syntax.toggleFoldAtCursor()),
-      'fold:open': () => this.selectRevealedFold(this.syntax.setFoldAtCursor(false)),
-      'fold:close': () => this.syntax.setFoldAtCursor(true),
-      'fold:open-all': () => this.syntax.unfoldAll(),
-      'fold:close-all': () => this.syntax.foldAll(),
+      'fold:toggle': { didDispatch: () => this.selectRevealedFold(this.syntax.toggleFoldAtCursor()), description: 'Toggle the fold at the cursor' },
+      'fold:open': { didDispatch: () => this.selectRevealedFold(this.syntax.setFoldAtCursor(false)), description: 'Open the fold at the cursor' },
+      'fold:close': { didDispatch: () => this.syntax.setFoldAtCursor(true), description: 'Close the fold at the cursor' },
+      'fold:open-all': { didDispatch: () => this.syntax.unfoldAll(), description: 'Open all folds' },
+      'fold:close-all': { didDispatch: () => this.syntax.foldAll(), description: 'Close all folds' },
     });
 
     // Keep the cursor visible: if a move (w, /, G, a click, …) lands it inside a

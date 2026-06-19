@@ -159,13 +159,13 @@ export class GithubButtons {
 
   private registerCommands(): void {
     quilx.commands.add('#AppWindow', {
-      'github:repository-open': () => this.openOrNotify(this.repoUrl, 'GitHub repository'),
-      'github:actions-open': () => this.openOrNotify(this.actionsUrl, 'GitHub repository'),
-      'github:issues-open': () => this.openOrNotify(this.issuesUrl, 'GitHub repository'),
-      'github:pull-requests-open': () => this.openOrNotify(this.pullsUrl, 'GitHub repository'),
-      'github:pull-request-open': () => this.openOrNotify(this.prUrl, 'pull request for this branch'),
-      'github:issue-open': () => this.openOrNotify(this.issueUrl, 'linked issue'),
-      'github:pull-request-create': () => this.createPr(),
+      'github:repository-open': { didDispatch: () => this.openOrNotify(this.repoUrl, 'GitHub repository'), description: 'Open the repository on GitHub' },
+      'github:actions-open': { didDispatch: () => this.openOrNotify(this.actionsUrl, 'GitHub repository'), description: 'Open GitHub Actions' },
+      'github:issues-open': { didDispatch: () => this.openOrNotify(this.issuesUrl, 'GitHub repository'), description: 'Open GitHub issues' },
+      'github:pull-requests-open': { didDispatch: () => this.openOrNotify(this.pullsUrl, 'GitHub repository'), description: 'Open GitHub pull requests' },
+      'github:pull-request-open': { didDispatch: () => this.openOrNotify(this.prUrl, 'pull request for this branch'), description: 'Open the pull request for this branch' },
+      'github:issue-open': { didDispatch: () => this.openOrNotify(this.issueUrl, 'linked issue'), description: 'Open the linked issue' },
+      'github:pull-request-create': { didDispatch: () => this.createPr(), description: 'Create a pull request' },
     });
   }
 

@@ -8,8 +8,9 @@ Core pieces:
 
 - **`src/CommandManager.ts`** — `commands.add(selectorOrWidget, map)`; dispatch
   resolves up the focus chain (`dispatchAlongChain`); commands take **arguments**
-  (`{ command, args }`) and **descriptions** (`describe()` or `{ didDispatch,
-  description }`); `getAvailableCommands()` powers the palette.
+  (`{ command, args }`) and **descriptions** (declared inline with the command,
+  `{ didDispatch, description }`, indexed by name for name-only consumers via
+  `descriptionFor()`); `getAvailableCommands()` powers the palette.
 - **`src/KeymapManager.ts`** — multi-key sequences, **priority** layering,
   `unset!` (release a key to the widget), deferred full-matches (a prefix that is
   also a complete binding, e.g. `y` vs `y s`), CAPTURE-phase controller on the

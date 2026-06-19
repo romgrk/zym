@@ -454,15 +454,15 @@ export class FileTree {
 
   private registerCommands(): void {
     quilx.commands.add(this.root, {
-      'core:down': () => this.move(+1),
-      'core:up': () => this.move(-1),
-      'core:top': () => this.select(0), // `g g`
-      'core:bottom': () => this.select(this.tree.getNItems() - 1), // `G`
-      'core:right': () => this.enter(),
-      'core:left': () => this.exit(),
+      'core:down': { didDispatch: () => this.move(+1), description: 'Move down' },
+      'core:up': { didDispatch: () => this.move(-1), description: 'Move up' },
+      'core:top': { didDispatch: () => this.select(0), description: 'Go to the top' }, // `g g`
+      'core:bottom': { didDispatch: () => this.select(this.tree.getNItems() - 1), description: 'Go to the bottom' }, // `G`
+      'core:right': { didDispatch: () => this.enter(), description: 'Expand / open' },
+      'core:left': { didDispatch: () => this.exit(), description: 'Collapse / go to parent' },
       // Toggle the config value; the observer applies it and rebuilds.
-      'tree:toggle-hidden-files': () => treeConfig.toggle('hideHidden'),
-      'tree:toggle-untracked-files': () => treeConfig.toggle('hideUntracked'),
+      'tree:toggle-hidden-files': { didDispatch: () => treeConfig.toggle('hideHidden'), description: 'Toggle hidden files' },
+      'tree:toggle-untracked-files': { didDispatch: () => treeConfig.toggle('hideUntracked'), description: 'Toggle untracked files' },
     });
   }
 
