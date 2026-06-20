@@ -709,10 +709,10 @@ export class AppWindow {
     this.terminals.set(terminal.root, terminal);
     return {
       widget: terminal.root,
-      title: terminal.title,
+      title: terminalTabTitle(terminal),
       onAttached: (attached) => {
         child = attached;
-        terminal.onTitleChange(() => attached.setTitle(terminal.title));
+        terminal.onTitleChange(() => attached.setTitle(terminalTabTitle(terminal)));
       },
     };
   }
@@ -2975,6 +2975,13 @@ const AGENT_STATUS_DOT = '●';
 function agentTabTitle(agent: AgentTerminal): string {
   const glyph = agent.status === 'working' ? AGENT_WORKING_GLYPH : AGENT_STATUS_DOT;
   return `${glyph} ${agent.title}`;
+}
+
+// A terminal tab is prefixed with the shell glyph (the Adw tab-icon convention is
+// a glyph embedded in the title; see icons.ts), mirroring how editor/agent tabs
+// carry their own marker.
+function terminalTabTitle(terminal: Terminal): string {
+  return `${Icons.terminal} ${terminal.title}`;
 }
 
 function truncate(text: string, max: number): string {
