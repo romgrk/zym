@@ -210,8 +210,15 @@ const schema: Record<string, ConfigSchema> = {
   // --- Undo / redo ---
   setCursorToStartOfChangeOnUndoRedo: {
     type: 'boolean',
-    default: false,
+    default: true,
     description: 'Move the cursor to the start of the change after undo/redo.',
+  },
+  setCursorToStartOfChangeOnUndoRedoStrategy: {
+    type: 'string',
+    default: 'simple',
+    enum: ['simple', 'smart'],
+    description:
+      "How the cursor finds the change after undo/redo. 'simple' always lands on the start of the earliest changed range; 'smart' only repositions into a re-inserted range that already contains the cursor.",
   },
   flashOnUndoRedo: {
     type: 'boolean',

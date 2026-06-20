@@ -248,3 +248,28 @@ test('editing across a fold reveals it and edits the real (former-folded) text',
   m.setTextInBufferRange(new Range(new Point(0, 2), new Point(0, 3)), '');
   assert.equal(doc.getText(), 'abcd\n', 'the former-folded XYZ was deleted from the model');
 });
+
+test('duplicateLineBelow copies the line and moves the cursor onto the copy', () => {
+  const m = model('one\ntwo\nthree\n');
+  m.setCursorBufferPosition(new Point(1, 2)); // on "two"
+  m.duplicateLineBelow();
+  assert.equal(m.getText(), 'one\ntwo\ntwo\nthree\n');
+  assert.deepEqual(m.getCursorBufferPosition().toArray(), [2, 2]); // moved down, column kept
+});
+
+test('duplicateLineAbove copies the line and keeps the cursor on the upper copy', () => {
+  const m = model('one\ntwo\nthree\n');
+  m.setCursorBufferPosition(new Point(1, 2)); // on "two"
+  m.duplicateLineAbove();
+  assert.equal(m.getText(), 'one\ntwo\ntwo\nthree\n');
+  assert.deepEqual(m.getCursorBufferPosition().toArray(), [1, 2]); // stays on the upper copy
+});
+
+test('duplicateLine* are a single undo step', () => {
+  const m = model('one\ntwo\n');
+  m.setCursorBufferPosition(new Point(0, 0));
+  m.duplicateLineBelow();
+  assert.equal(m.getText(), 'one\none\ntwo\n');
+  m.undo();
+  assert.equal(m.getText(), 'one\ntwo\n');
+});

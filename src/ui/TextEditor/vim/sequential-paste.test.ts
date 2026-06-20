@@ -60,3 +60,33 @@ test('a non-paste command breaks the sequence (next paste is normal)', () => {
   run('PutAfter'); // normal paste of the most-recent yank again -> c
   assert.equal(editor.getText(), 'a b c .c.c...\n');
 });
+
+test('a whole paste cycle is undone by a single u', () => {
+  const { editor, run, at, yankWord } = setup('a b c .....\n');
+  yankWord(0);
+  yankWord(2);
+  yankWord(4); // history [c, b, a]
+  at(6);
+  run('PutAfter'); // c
+  run('PutAfter'); // -> b
+  run('PutAfter'); // -> a
+  assert.equal(editor.getText(), 'a b c .a....\n');
+  run('Undo'); // one step reverts the initial paste + both cycles
+  assert.equal(editor.getText(), 'a b c .....\n');
+});
+
+test('breaking the chain splits the pastes into separate undo steps', () => {
+  const { editor, run, at, yankWord } = setup('a b c .....\n');
+  yankWord(0);
+  yankWord(2);
+  yankWord(4); // history [c, b, a]
+  at(6);
+  run('PutAfter'); // c   (group 1)
+  run('MoveRight'); // breaks the chain, commits group 1
+  run('PutAfter'); // c   (group 2)
+  assert.equal(editor.getText(), 'a b c .c.c...\n');
+  run('Undo'); // undoes only the second paste
+  assert.equal(editor.getText(), 'a b c .c....\n');
+  run('Undo'); // undoes the first paste
+  assert.equal(editor.getText(), 'a b c .....\n');
+});

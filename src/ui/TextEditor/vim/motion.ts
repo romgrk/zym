@@ -1395,18 +1395,46 @@ class MoveToPair extends Motion {
 
     // AAnyPairAllowForwarding return forwarding range or enclosing range.
     const range = (this.getInstance('AAnyPairAllowForwarding', {member: this.member}) as any).getRange(cursor.selection)
-    if (!range) return
-
-    const {start, end} = range
-    if (start.row === cursorRow && start.isGreaterThanOrEqual(cursorPosition)) {
-      // Forwarding range found
-      return end.translate([0, -1])
-    } else if (end.row === cursorPosition.row) {
-      // Enclosing range was returned
-      // We move to start( open-pair ) only when close-pair was at same row as cursor-row.
-      return start
+    if (range) {
+      const {start, end} = range
+      if (start.row === cursorRow && start.isGreaterThanOrEqual(cursorPosition)) {
+        // Forwarding range found
+        return end.translate([0, -1])
+      } else if (end.row === cursorPosition.row) {
+        // Enclosing range was returned
+        // We move to start( open-pair ) only when close-pair was at same row as cursor-row.
+        return start
+      }
     }
+
+    // Nothing found from the cursor onward. If the cursor sits just *after* a
+    // bracket, match that preceding bracket (Vim treats `)|` like `|)`).
+    return this.getPointForPrecedingPair(cursorPosition)
   }
+
+  getPointForPrecedingPair (cursorPosition: Point): Point | undefined {
+    if (cursorPosition.column === 0) return
+    const precedingPoint = cursorPosition.translate([0, -1])
+    const leftChar = this.editor.lineTextForBufferRow(cursorPosition.row)[precedingPoint.column]
+    const pair = PAIR_MEMBER_BY_BRACKET[leftChar]
+    if (!pair) return
+
+    const pairInfo = (this.getInstance(pair.member, {inclusive: true}) as any).getPairInfo(precedingPoint)
+    if (!pairInfo) return
+    return pair.open ? pairInfo.closeRange.start : pairInfo.openRange.start
+  }
+}
+
+// Bracket character -> the Pair text-object that matches it, and whether the
+// character itself is the opening side (used by MoveToPair's after-a-bracket
+// fallback to pick which end to jump to).
+const PAIR_MEMBER_BY_BRACKET: Record<string, {member: string, open: boolean}> = {
+  '(': {member: 'Parenthesis', open: true},
+  ')': {member: 'Parenthesis', open: false},
+  '{': {member: 'CurlyBracket', open: true},
+  '}': {member: 'CurlyBracket', open: false},
+  '[': {member: 'SquareBracket', open: true},
+  ']': {member: 'SquareBracket', open: false}
 }
 
 // Search as a motion (`/` `?` in operator-pending / visual mode), so an operator

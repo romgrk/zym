@@ -188,6 +188,23 @@ function registerSearchKeymapsOnce(): void {
   });
 }
 
+// Line-editing commands bound in normal mode. `y d`/`y u` (d = down, u = up)
+// duplicate the current line below/above. Their `y` prefix collides with the vim
+// Yank operator; the KeymapManager's longest-match deferral resolves it (it waits
+// to see if `d`/`u` follows, falling back to bare Yank otherwise — exactly like
+// the `y s` surround binding).
+let editingKeymapsRegistered = false;
+function registerEditingKeymapsOnce(): void {
+  if (editingKeymapsRegistered) return;
+  editingKeymapsRegistered = true;
+  quilx.keymaps.add('editor-editing', {
+    '#TextEditor.normal-mode': {
+      'y d': 'editor:duplicate-line-below',
+      'y u': 'editor:duplicate-line-above',
+    },
+  });
+}
+
 export interface TextEditorOptions {
   /**
    * Close request for this editor. Was fired by the `:q`/`:wq`/`:x` ex-commands;
@@ -514,6 +531,7 @@ export class TextEditor implements DocumentHost {
     this.root.setName('TextEditorArea');
 
     this.installFoldCommands();
+    this.installEditingCommands();
     this.installAutoPair();
     this.installCursorOverlay();
     this.installShowcmd();
@@ -1402,6 +1420,17 @@ export class TextEditor implements DocumentHost {
     this.showcmd = text;
     this.showcmdLabel.setLabel(text);
     this.showcmdLabel.setVisible(text.length > 0);
+  }
+
+  // --- Line-editing commands (vim `y d`/`y u`, via the keymap) ---------------
+
+  private installEditingCommands() {
+    registerEditingKeymapsOnce();
+    // Registered per-view so the keystroke duplicates the focused editor's line.
+    quilx.commands.add(this.view, {
+      'editor:duplicate-line-below': { didDispatch: () => this.editorModel.duplicateLineBelow(), description: 'Duplicate the current line below' },
+      'editor:duplicate-line-above': { didDispatch: () => this.editorModel.duplicateLineAbove(), description: 'Duplicate the current line above' },
+    });
   }
 
   // --- Folding commands (vim za/zo/zc/zR/zM, via the keymap's z-prefix) -------

@@ -159,3 +159,45 @@ test('a count applies through the keymap (3l, 2dw)', () => {
   d.type('2dw'); // delete two words
   assert.equal(d.line(0), 'three four');
 });
+
+// --- `y d` / `y u` duplicate-line bindings (y-prefix deferral, like `y s`) ---
+//
+// The real wiring lives in TextEditor (registerEditingKeymapsOnce + the
+// `editor:duplicate-line-*` commands). This harness only runs `attachVim`, so we
+// mirror that wiring here against the same view to exercise the deferral against
+// the live Yank operator.
+function withDuplicateLineBindings(m: ReturnType<typeof focusedEditor>) {
+  quilx.keymaps.add('editor-editing-test', {
+    '#TextEditor.normal-mode': {
+      'y d': 'editor:duplicate-line-below',
+      'y u': 'editor:duplicate-line-above',
+    },
+  });
+  quilx.commands.add(m.view, {
+    'editor:duplicate-line-below': { didDispatch: () => m.editor.duplicateLineBelow() },
+    'editor:duplicate-line-above': { didDispatch: () => m.editor.duplicateLineAbove() },
+  });
+  return m;
+}
+
+test('y d duplicates the line below via the keymap (y-prefix deferral)', () => {
+  const m = withDuplicateLineBindings(focusedEditor('one\ntwo\n'));
+  m.editor.setCursorBufferPosition({ row: 0, column: 1 });
+  m.type('yd');
+  assert.equal(m.editor.getText(), 'one\none\ntwo\n');
+  assert.deepEqual(m.editor.getCursorBufferPosition().toArray(), [1, 1]);
+});
+
+test('y u duplicates the line above via the keymap', () => {
+  const m = withDuplicateLineBindings(focusedEditor('one\ntwo\n'));
+  m.editor.setCursorBufferPosition({ row: 1, column: 0 });
+  m.type('yu');
+  assert.equal(m.editor.getText(), 'one\ntwo\ntwo\n');
+  assert.deepEqual(m.editor.getCursorBufferPosition().toArray(), [1, 0]);
+});
+
+test('yw still yanks a word when the duplicate-line bindings are present', () => {
+  const m = withDuplicateLineBindings(focusedEditor('hello world\n'));
+  m.type('yw');
+  assert.equal(clipboard.read(), 'hello ');
+});

@@ -231,6 +231,13 @@ test('% jumps between matching pairs', () => {
   assert.deepEqual(pos(), [0, 7]); // on ')'
 });
 
+test('% matches the preceding bracket when cursor sits just after a close', () => {
+  const { run, at, pos } = setup('foo(bar)\n');
+  at(0, 8); // after ')', nothing forward on the line
+  run('MoveToPair');
+  assert.deepEqual(pos(), [0, 3]); // jumps back to '('
+});
+
 test('| moves to a column by count', () => {
   const { vimState, run, at, pos } = setup('abcdef\n');
   at(0, 0);

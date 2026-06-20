@@ -62,3 +62,15 @@ test('u undoes the last change and ctrl-r redoes it', () => {
   run('Redo');
   assert.equal(editor.getText(), 'world\n');
 });
+
+test('u places the cursor at the start of the undone range, not its end', () => {
+  const { editor, run, at } = setup('one two three\n');
+  at(0, 4); // on "two"
+  run('Delete');
+  run('MoveToNextWord'); // dw -> deletes "two ", cursor at col 4
+  assert.equal(editor.getText(), 'one three\n');
+
+  run('Undo'); // re-inserts "two " over [0,4]-[0,8]
+  assert.equal(editor.getText(), 'one two three\n');
+  assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 4]); // start, not [0, 8]
+});

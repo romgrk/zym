@@ -387,7 +387,9 @@ export class SequentialPasteManager {
   private readonly vimState: VimState;
   private readonly pastedRangeBySelection = new Map<unknown, unknown>();
   private originalTarget: unknown;
-  private pasteCheckpoint?: number;
+  // True while the cross-operation undo group (the initial paste + every cycle)
+  // is open. See onExecute / finalizePasteGroup.
+  private pasteGroupOpen = false;
 
   constructor(vimState: VimState) {
     this.vimState = vimState;
@@ -395,6 +397,7 @@ export class SequentialPasteManager {
   }
 
   destroy(): void {
+    this.finalizePasteGroup();
     this.pastedRangeBySelection.clear();
   }
 
@@ -429,14 +432,34 @@ export class SequentialPasteManager {
       operator.setTarget(sequentialPaste ? operator.getInstance('LastPastedRange') : this.originalTarget);
     }
 
-    if (sequentialPaste) {
-      // Fold the replacement into the first paste's undo step.
-      this.vimState.onDidFinishOperation(() => this.vimState.editor.groupChangesSinceCheckpoint(this.pasteCheckpoint!));
-    } else {
+    if (!sequentialPaste) {
+      // Starting a fresh paste. Close any group left open by an earlier chain,
+      // then open a new one BEFORE the edit. Each cycle is a separate operation,
+      // but its `transact` nests inside this still-open GTK user action, so the
+      // initial paste and every subsequent cycle coalesce into one undo step
+      // (closed by finalizePasteGroupIfInterrupted on the next command).
+      this.finalizePasteGroup();
       this.pastedRangeBySelection.clear();
-      const pasteCheckpoint = this.vimState.editor.createCheckpoint();
-      this.vimState.onDidFinishOperation(() => (this.pasteCheckpoint = pasteCheckpoint));
+      this.vimState.editor.beginUndoGroup();
+      this.pasteGroupOpen = true;
     }
     return sequentialPaste;
+  }
+
+  /** Commit the open cycle group as a single undo step. Idempotent. */
+  private finalizePasteGroup(): void {
+    if (!this.pasteGroupOpen) return;
+    this.pasteGroupOpen = false;
+    this.vimState.editor.endUndoGroup();
+  }
+
+  /**
+   * Called by the operation stack before every operation: any command that does
+   * NOT continue the paste chain closes the open group, so the paste(s) so far
+   * commit as one undo step ahead of (e.g.) the undo command itself. A continuing
+   * paste leaves the group open for its nested `transact`.
+   */
+  finalizePasteGroupIfInterrupted(operation: PasteOperator): void {
+    if (this.pasteGroupOpen && !this.isSequentialPaste(operation)) this.finalizePasteGroup();
   }
 }

@@ -234,6 +234,11 @@ export default class OperationStack {
   }
 
   execute (operation: Base): void {
+    // Any command that isn't the next paste in a cycle closes the cross-operation
+    // paste-undo group, so the paste(s) so far commit as one undo step before this
+    // command runs (notably before `u` undoes them in a single step).
+    this.vimState.sequentialPasteManager.finalizePasteGroupIfInterrupted(operation as any)
+
     // Intentionally avoild wrapping by Promise.resolve() to make test easy.
     // Since almost all command don't return promise, finish synchronously.
     // execute() is defined on operation subclasses. TODO(vim-ts): tighten.
