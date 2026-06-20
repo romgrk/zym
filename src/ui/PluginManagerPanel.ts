@@ -1,159 +1,187 @@
 /*
- * PluginManagerPanel — lists every registered plugin with its status (active,
- * disabled, failed) and source (builtin / user). Shows name, version, source,
- * and an error message for plugins that failed to activate.
+ * PluginManagerPanel — lists every registered plugin grouped by source.
  *
- * Refreshes each time it is shown (via `refresh()`). Built on a Gtk.ScrolledWindow
- * containing a Gtk.Box of rows, one per plugin. Exposed as `root`.
+ * Each row is an Adw.ExpanderRow with a Gtk.Switch suffix. Clicking the row
+ * header expands it to show the plugin's raw package.json in a monospace label.
+ * The switch toggles the plugin on/off immediately (persisted to config) without
+ * rebuilding the list, so expanded state is preserved.
+ *
+ * Keyboard bindings (j/k/o/space) are declared in src/keymaps/default.ts under
+ * the #PluginManagerPanel selector and dispatched via the quilx command system.
  */
-import { Gtk, Pango } from '../gi.ts';
-import { addStyles } from '../styles.ts';
-import { theme } from '../theme/theme.ts';
-import { plugins } from '../plugin/index.ts';
-import { disabledPluginIds } from '../plugin/index.ts';
+import * as Fs from 'node:fs';
+import * as Path from 'node:path';
+import { Adw, Gtk } from '../gi.ts';
+import { plugins, disabledPluginIds } from '../plugin/index.ts';
+import { saveConfig } from '../config/load.ts';
+import { quilx } from '../quilx.ts';
 import type { PluginInfo } from '../plugin/PluginRegistry.ts';
 
-const TEXT_MUTED = theme.ui.text.muted ?? 'rgba(255,255,255,0.5)';
-const TEXT_ERROR = theme.ui.status?.error ?? '#e06c75';
-const TEXT_OK = theme.ui.status?.success ?? '#98c379';
-
-addStyles(`
-  #PluginManagerPanel {
-    padding: 8px 12px;
-  }
-  #PluginManagerPanel .plugin-row {
-    padding: 6px 0;
-    border-bottom: 1px solid rgba(127,127,127,0.15);
-  }
-  #PluginManagerPanel .plugin-row:last-child {
-    border-bottom: none;
-  }
-  #PluginManagerPanel .plugin-name {
-    font-weight: bold;
-  }
-  #PluginManagerPanel .plugin-badge {
-    font-size: 0.8em;
-    padding: 1px 5px;
-    border-radius: 3px;
-    opacity: 0.8;
-  }
-`);
-
-function escapeMarkup(text: string): string {
+function esc(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function badge(label: string, color: string): InstanceType<typeof Gtk.Label> {
-  const lbl = new Gtk.Label({ label });
-  lbl.addCssClass('plugin-badge');
-  const attrs = Pango.AttrList.new();
-  attrs.insert(Pango.attrForegroundAlphaNew(32768)); // tint the fg to match
-  lbl.setAttributes(attrs);
-  lbl.setMarkup(`<span foreground="${escapeMarkup(color)}">${escapeMarkup(label)}</span>`);
-  return lbl;
-}
-
-function buildRow(info: PluginInfo): InstanceType<typeof Gtk.Box> {
-  const row = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
-  row.addCssClass('plugin-row');
-
-  // Top line: name + version + badges
-  const topLine = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-  topLine.setValign(Gtk.Align.CENTER);
-
-  const nameLabel = new Gtk.Label({ label: info.name, xalign: 0 });
-  nameLabel.addCssClass('plugin-name');
-  topLine.append(nameLabel);
-
-  if (info.version) {
-    const versionLabel = new Gtk.Label({ xalign: 0 });
-    versionLabel.setMarkup(`<span foreground="${escapeMarkup(TEXT_MUTED)}">${escapeMarkup(info.version)}</span>`);
-    topLine.append(versionLabel);
-  }
-
-  if (info.source === 'user') {
-    topLine.append(badge('user', theme.ui.text.accent ?? '#61afef'));
-  }
-
-  if (info.disabled) {
-    topLine.append(badge('disabled', TEXT_MUTED));
-  } else if (info.error) {
-    topLine.append(badge('failed', TEXT_ERROR));
-  } else if (info.active) {
-    topLine.append(badge('active', TEXT_OK));
-  } else {
-    topLine.append(badge('inactive', TEXT_MUTED));
-  }
-
-  row.append(topLine);
-
-  // Second line: id + description
-  if (info.description || info.id) {
-    const detailLine = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-
-    const idLabel = new Gtk.Label({ xalign: 0 });
-    idLabel.setMarkup(`<span foreground="${escapeMarkup(TEXT_MUTED)}" size="small">${escapeMarkup(info.id)}</span>`);
-    detailLine.append(idLabel);
-
-    if (info.description) {
-      const descLabel = new Gtk.Label({ label: info.description, xalign: 0 });
-      descLabel.setEllipsize(Pango.EllipsizeMode.END);
-      descLabel.setMarkup(
-        `<span foreground="${escapeMarkup(TEXT_MUTED)}" size="small"> — ${escapeMarkup(info.description)}</span>`,
-      );
-      detailLine.append(descLabel);
-    }
-
-    row.append(detailLine);
-  }
-
-  // Error line (only on failure)
-  if (info.error) {
-    const errLabel = new Gtk.Label({ xalign: 0 });
-    errLabel.setMarkup(
-      `<span foreground="${escapeMarkup(TEXT_ERROR)}" size="small">${escapeMarkup(info.error)}</span>`,
-    );
-    errLabel.setWrap(true);
-    errLabel.setWrapMode(Pango.WrapMode.WORD_CHAR);
-    row.append(errLabel);
-  }
-
-  return row;
+interface PluginRow {
+  expander: InstanceType<typeof Adw.ExpanderRow>;
+  sw: InstanceType<typeof Gtk.Switch>;
+  info: PluginInfo;
 }
 
 export class PluginManagerPanel {
   readonly root: InstanceType<typeof Gtk.ScrolledWindow>;
-  private readonly list: InstanceType<typeof Gtk.Box>;
+  private readonly content: InstanceType<typeof Gtk.Box>;
+  private rows: PluginRow[] = [];
 
   constructor() {
-    this.list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
-    this.list.setName('PluginManagerPanel');
-    this.list.setValign(Gtk.Align.START);
+    this.content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 24 });
+    this.content.setMarginTop(24);
+    this.content.setMarginBottom(24);
+    this.content.setMarginStart(24);
+    this.content.setMarginEnd(24);
+
+    const clamp = new Adw.Clamp();
+    clamp.setChild(this.content);
+    clamp.setMaximumSize(640);
 
     const viewport = new Gtk.Viewport();
-    viewport.setChild(this.list);
+    viewport.setChild(clamp);
 
     this.root = new Gtk.ScrolledWindow();
+    this.root.setName('PluginManagerPanel');
     this.root.setChild(viewport);
     this.root.setHexpand(true);
     this.root.setVexpand(true);
+
+    quilx.commands.add(this.root, {
+      'plugin-manager:focus-next':      { didDispatch: () => this.moveFocus(1),            description: 'Focus next plugin row' },
+      'plugin-manager:focus-prev':      { didDispatch: () => this.moveFocus(-1),           description: 'Focus previous plugin row' },
+      'plugin-manager:toggle-expander': { didDispatch: () => this.toggleFocusedExpander(), description: 'Expand or collapse the focused plugin' },
+      'plugin-manager:toggle-switch':   { didDispatch: () => this.toggleFocusedSwitch(),   description: 'Enable or disable the focused plugin' },
+    });
 
     this.refresh();
   }
 
   refresh(): void {
-    // Clear existing rows
-    let child = this.list.getFirstChild();
+    this.rows = [];
+    let child = this.content.getFirstChild();
     while (child) {
       const next = child.getNextSibling();
-      this.list.remove(child);
+      this.content.remove(child);
       child = next;
     }
 
     const disabled = disabledPluginIds();
     const infos = plugins.list(disabled);
-    for (const info of infos) {
-      this.list.append(buildRow(info));
+    const builtins = infos.filter((i) => i.source === 'builtin');
+    const userPlugins = infos.filter((i) => i.source === 'user');
+
+    if (builtins.length > 0) {
+      const group = new Adw.PreferencesGroup();
+      group.setTitle('Built-in');
+      for (const info of builtins) {
+        const row = this.buildRow(info);
+        group.add(row.expander);
+        this.rows.push(row);
+      }
+      this.content.append(group);
+    }
+
+    if (userPlugins.length > 0) {
+      const group = new Adw.PreferencesGroup();
+      group.setTitle('User');
+      for (const info of userPlugins) {
+        const row = this.buildRow(info);
+        group.add(row.expander);
+        this.rows.push(row);
+      }
+      this.content.append(group);
+    }
+
+    if (infos.length === 0) {
+      const status = new Adw.StatusPage();
+      status.setTitle('No plugins loaded');
+      this.content.append(status);
+    }
+  }
+
+  private buildRow(info: PluginInfo): PluginRow {
+    const expander = new Adw.ExpanderRow();
+    expander.setTitle(esc(info.name));
+    if (info.description) expander.setSubtitle(esc(info.description));
+
+    // Switch in the header suffix. Non-focusable so Tab/j/k stay on the row;
+    // mouse clicks still work. State set before signal connection so the initial
+    // setActive() doesn't trigger the handler.
+    const sw = new Gtk.Switch();
+    sw.setValign(Gtk.Align.CENTER);
+    sw.setFocusable(false);
+    sw.setActive(!info.disabled);
+    sw.on('notify::active', () => void this.toggle(info.id, sw.getActive()));
+    expander.addSuffix(sw);
+
+    // Revealed content: formatted package.json in a selectable monospace label.
+    const detailBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    detailBox.setMarginTop(8);
+    detailBox.setMarginBottom(8);
+    detailBox.setMarginStart(16);
+    detailBox.setMarginEnd(16);
+
+    const label = new Gtk.Label({ xalign: 0, yalign: 0 });
+    label.setSelectable(true);
+    try {
+      const raw = Fs.readFileSync(Path.join(info.dir, 'package.json'), 'utf8');
+      const formatted = JSON.stringify(JSON.parse(raw), null, 2);
+      label.setMarkup(`<tt>${esc(formatted)}</tt>`);
+    } catch {
+      label.setMarkup(`<tt><i>(package.json unavailable)</i></tt>`);
+    }
+    detailBox.append(label);
+    expander.addRow(detailBox);
+
+    return { expander, sw, info };
+  }
+
+  // Find the row that contains (or is) the currently focused widget.
+  private getFocusedRow(): PluginRow | null {
+    const window = this.root.getRoot() as InstanceType<typeof Gtk.Window> | null;
+    const focused = window?.getFocus() as InstanceType<typeof Gtk.Widget> | null;
+    if (!focused) return null;
+    return this.rows.find((r) => focused === r.expander || focused.isAncestor(r.expander)) ?? null;
+  }
+
+  private moveFocus(delta: number): void {
+    if (this.rows.length === 0) return;
+    const current = this.rows.indexOf(this.getFocusedRow()!);
+    const from = current >= 0 ? current : (delta > 0 ? -1 : this.rows.length);
+    const next = Math.max(0, Math.min(this.rows.length - 1, from + delta));
+    this.rows[next].expander.grabFocus();
+  }
+
+  private toggleFocusedExpander(): void {
+    const row = this.getFocusedRow();
+    if (!row) return;
+    row.expander.setExpanded(!row.expander.getExpanded());
+  }
+
+  private toggleFocusedSwitch(): void {
+    const row = this.getFocusedRow();
+    if (!row) return;
+    row.sw.setActive(!row.sw.getActive());
+  }
+
+  private async toggle(id: string, enable: boolean): Promise<void> {
+    const disabled = disabledPluginIds();
+    if (enable) {
+      disabled.delete(id);
+      quilx.config.set('plugins.disabled', [...disabled]);
+      saveConfig();
+      await plugins.activate(id);
+    } else {
+      disabled.add(id);
+      quilx.config.set('plugins.disabled', [...disabled]);
+      saveConfig();
+      await plugins.deactivate(id);
     }
   }
 }

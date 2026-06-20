@@ -271,6 +271,14 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'ctrl-w': 'unset!',
   },
 
+  // Plugin manager: vim-style list navigation plus expand/toggle.
+  '#PluginManagerPanel': {
+    j:     'plugin-manager:focus-next',
+    k:     'plugin-manager:focus-prev',
+    o:     'plugin-manager:toggle-expander',
+    space: 'plugin-manager:toggle-switch',
+  },
+
   // Any widget that takes literal text input carries the `.has-text-input` class
   // (text entries, the terminal / agent terminal, the editor in insert mode).
   // Releasing `space` there with `unset!` lets it type a literal space instead of

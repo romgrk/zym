@@ -28,8 +28,7 @@ import type { Plugin } from './types.ts';
 
 export { PluginRegistry } from './PluginRegistry.ts';
 export type { PluginInfo } from './PluginRegistry.ts';
-export type { Plugin, PluginManifest, PluginContext, PanelRegistration } from './types.ts';
-export { panelRegistry } from './PanelRegistry.ts';
+export type { Plugin, PluginManifest, PluginContext } from './types.ts';
 
 /** The current quilx version — checked against a plugin's `minQuilxVersion`. */
 export const QUILX_VERSION = '0.1.0';

@@ -20,8 +20,7 @@ import type { LanguageDef, GrammarDef, ServerDef } from '../lang/types.ts';
 import type { ConfigSchema } from '../util/Config.ts';
 import type { CommandMap } from '../CommandManager.ts';
 import type { KeymapBySelector } from '../KeymapManager.ts';
-import { panelRegistry } from './PanelRegistry.ts';
-import type { PluginContext, PluginLanguages, PanelRegistration } from './types.ts';
+import type { PluginContext, PluginLanguages } from './types.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 
@@ -91,10 +90,6 @@ export class PluginContextImpl implements PluginContext {
 
   observeTextEditors(callback: (editor: TextEditor) => DisposableLike | void): Disposable {
     return this.track(quilx.workspace.observeTextEditors(callback));
-  }
-
-  registerPanel(registration: PanelRegistration): Disposable {
-    return this.track(panelRegistry.register(registration));
   }
 
   /** Dispose every tracked contribution (called by the registry on deactivate). */

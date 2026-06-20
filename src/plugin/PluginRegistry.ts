@@ -33,6 +33,8 @@ export interface PluginInfo extends PluginManifest {
   disabled: boolean;
   /** 'builtin' = shipped with quilx, 'user' = loaded from the user plugins dir. */
   source: 'builtin' | 'user';
+  /** The plugin's base directory (for reading assets like package.json). */
+  dir: string;
 }
 
 export class PluginRegistry {
@@ -49,7 +51,7 @@ export class PluginRegistry {
   /** Manifest + active state for every registered plugin (registration order).
    *  Pass the `disabled` set (from config) to populate the `disabled` field. */
   list(disabled: ReadonlySet<string> = new Set()): PluginInfo[] {
-    return [...this.entries.values()].map(({ plugin, context, error, source }) => ({
+    return [...this.entries.values()].map(({ plugin, context, error, source, dir }) => ({
       id: plugin.id,
       name: plugin.name,
       description: plugin.description,
@@ -59,6 +61,7 @@ export class PluginRegistry {
       error,
       disabled: disabled.has(plugin.id),
       source,
+      dir,
     }));
   }
 

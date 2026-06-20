@@ -48,7 +48,7 @@ export type DockSide = 'left' | 'right' | 'top' | 'bottom';
 export const DOCK_SIDES: DockSide[] = ['left', 'right', 'top', 'bottom'];
 
 // What currently occupies the (otherwise empty) bottom dock.
-export type BottomDock = 'notifications' | 'diagnostics' | 'keymap' | 'plugins' | null;
+export type BottomDock = 'notifications' | 'diagnostics' | 'keymap' | null;
 
 // The widgets that fill a workbench's slots, built by AppWindow.buildWorkbench and
 // handed to the constructor (which docks the center + Source-Control). `bottomDock`
@@ -70,8 +70,6 @@ export interface WorkbenchContents {
   diagnosticsDock: Panel;
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
-  /** Bottom dock hosting the plugin manager and plugin-contributed bottom panels. */
-  pluginsDock: Panel;
 }
 
 export class Workbench<TOwner = unknown> {
@@ -105,7 +103,6 @@ export class Workbench<TOwner = unknown> {
   diagnosticsDock: Panel;
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
-  pluginsDock: Panel;
   bottomDock: BottomDock = null;
 
   private readonly hLeft: InstanceType<typeof Gtk.Paned>;
@@ -139,7 +136,6 @@ export class Workbench<TOwner = unknown> {
     this.diagnosticsDock = contents.diagnosticsDock;
     this.keymapPanel = contents.keymapPanel;
     this.keymapDock = contents.keymapDock;
-    this.pluginsDock = contents.pluginsDock;
 
     this.hLeft = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
     this.hCenterRight = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
