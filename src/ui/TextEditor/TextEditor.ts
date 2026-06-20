@@ -1210,27 +1210,6 @@ export class TextEditor implements DocumentHost {
     // The search/replace bar floats at the top-right; it adds itself to `overlay`.
     this.searchBar = new SearchBar(overlay, this.search, this.view);
 
-    // Autocompletion: the popup floats in this overlay; sources are registered
-    // here (buffer words + LSP — Copilot lands later). It is dismissed whenever
-    // the vim layer leaves insert mode. The LSP source no-ops for a fileless
-    // buffer (`lspDocument` undefined) or until a server is up.
-    this.completion = new CompletionController(
-      this.editorModel,
-      overlay,
-      () => this.vimState.mode === 'insert',
-      // Tree-sitter highlight code blocks in completion docs, like the hover card;
-      // unlabeled fences fall back to this file's language.
-      (code, lang) => {
-        const fallbackLang = this._currentFile ? langIdForPath(this._currentFile) ?? undefined : undefined;
-        return highlightToMarkup(code, lang ?? fallbackLang);
-      },
-    );
-    this.completion.addSource(createBufferWordsSource(() => this.editorModel.getText()));
-    this.completion.addSource(createLspCompletionSource(quilx.lsp, () => this.lspDocument ?? null));
-    this.vimState.onDidActivateMode(({ mode }: { mode: string }) => {
-      if (mode !== 'insert') this.completion.dismiss();
-    });
-
     this.showcmdLabel.addCssClass('quilx-showcmd');
     this.showcmdLabel.setHalign(Gtk.Align.END);
     this.showcmdLabel.setValign(Gtk.Align.END);
@@ -1257,6 +1236,31 @@ export class TextEditor implements DocumentHost {
         new Promise((resolve) =>
           this.vimState.readChar({ onConfirm: (c: string) => resolve(c), onCancel: () => resolve(null) }),
         ),
+    });
+
+    // Autocompletion: the popup floats in this overlay; sources are registered
+    // here (buffer words + LSP — Copilot lands later). It is dismissed whenever
+    // the vim layer leaves insert mode. The LSP source no-ops for a fileless
+    // buffer (`lspDocument` undefined) or until a server is up.
+    // Built *after* `caretLayer`/`leapLayer` so the popup (which adds itself to
+    // `overlay` in its constructor) stacks above the carets — GtkOverlay paints
+    // children in add order, so an earlier popup would sit under the secondary
+    // multi-cursor carets.
+    this.completion = new CompletionController(
+      this.editorModel,
+      overlay,
+      () => this.vimState.mode === 'insert',
+      // Tree-sitter highlight code blocks in completion docs, like the hover card;
+      // unlabeled fences fall back to this file's language.
+      (code, lang) => {
+        const fallbackLang = this._currentFile ? langIdForPath(this._currentFile) ?? undefined : undefined;
+        return highlightToMarkup(code, lang ?? fallbackLang);
+      },
+    );
+    this.completion.addSource(createBufferWordsSource(() => this.editorModel.getText()));
+    this.completion.addSource(createLspCompletionSource(quilx.lsp, () => this.lspDocument ?? null));
+    this.vimState.onDidActivateMode(({ mode }: { mode: string }) => {
+      if (mode !== 'insert') this.completion.dismiss();
     });
 
     // LSP hover card: a non-interactive overlay positioned by margins +
