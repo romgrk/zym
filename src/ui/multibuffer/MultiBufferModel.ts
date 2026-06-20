@@ -36,10 +36,11 @@ export interface MatchRange {
 export const GAP_LABEL = '⋯';
 
 export interface ExcerptLayoutOptions {
-  /** How the filename header is rendered. `'block'` (default) emits a header text row in the
-   *  buffer (plus a blank separator between excerpts). `'widget'` emits NO header/blank rows —
-   *  the surface draws each header as a real widget anchored above the excerpt's first row
-   *  (so the filename isn't navigable buffer text); only segments + `⋯` gaps reach the buffer. */
+  /** How the filename header + gaps are rendered. `'block'` (default) emits a header text row in
+   *  the buffer (plus a blank separator between excerpts and a `⋯` gap row between non-adjacent
+   *  segments). `'widget'` emits NONE of those rows — the surface draws each header AND gap as a
+   *  real widget band (so neither is navigable/copyable buffer text); only real source segments
+   *  reach the buffer. */
   headers?: 'block' | 'widget';
 }
 
@@ -58,7 +59,10 @@ export function excerptsToItems(excerpts: Excerpt[], opts: ExcerptLayoutOptions 
       items.push({ type: 'block', block: { kind: 'header', text: excerpt.header } });
     }
     excerpt.segments.forEach((segment, segmentIndex) => {
-      if (segmentIndex > 0) items.push({ type: 'block', block: { kind: 'gap', text: GAP_LABEL } });
+      // Block-header layout emits a `⋯` gap row between non-adjacent segments; widget layout emits
+      // none — the surface draws each gap as a widget band (so it's not navigable/copyable text),
+      // exactly like the headers.
+      if (segmentIndex > 0 && !widgetHeaders) items.push({ type: 'block', block: { kind: 'gap', text: GAP_LABEL } });
       items.push({ type: 'segment', segment });
     });
   });

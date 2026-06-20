@@ -28,9 +28,16 @@ export function lineNumberLabel(projection: ViewProjection, viewRow: number, wid
 class MultiBufferLineRenderer extends GtkSource.GutterRendererText {
   // Assigned after construction; read on every draw.
   getProjection!: () => ViewProjection;
+  // The band placement at a row ('above' = header band, 'below' = gap band, null = none), so the
+  // number can be aligned onto the text instead of floating into the reserved band.
+  bandAt!: (line: number) => 'above' | 'below' | null;
   width = 1;
 
   queryData(_lines: any, line: number) {
+    // A header band ABOVE makes the cell taller above → bottom-align (yalign 1) keeps the number on
+    // the text; a gap band BELOW makes it taller below → top-align (yalign 0). Plain rows: either
+    // (cell == text height). `queryData` runs per row right before it's drawn, so this is per-row.
+    (this as any).yalign = this.bandAt(line) === 'below' ? 0 : 1;
     const label = lineNumberLabel(this.getProjection(), line, this.width);
     this.setMarkup(`<span foreground="${COLOR}">${label || ' '}</span>`, -1);
   }
@@ -43,18 +50,16 @@ export class SourceLineNumberGutter {
 
   /** `maxLineNumber` is the widest 1-based source line that can show (sizes the column; an
    *  edit can grow a source past it, but crossing a digit boundary is rare and only widens
-   *  padding, never the rendered number, which is read live). */
-  constructor(view: SourceView, getProjection: () => ViewProjection, maxLineNumber: number) {
+   *  padding, never the rendered number, which is read live). `bandAt` reports the band placement
+   *  at a row (from the live `BlockDecorations`) so the number aligns onto the text, not into the
+   *  reserved header/gap band. */
+  constructor(view: SourceView, getProjection: () => ViewProjection, maxLineNumber: number, bandAt: (line: number) => 'above' | 'below' | null) {
     this.view = view;
     this.renderer = new MultiBufferLineRenderer();
     (this.renderer as any).getProjection = getProjection;
+    (this.renderer as any).bandAt = bandAt;
     (this.renderer as any).width = String(Math.max(1, maxLineNumber)).length;
     this.renderer.setXpad(4);
-    // Bottom-align the number within its cell. An excerpt's first row carries a header-widget
-    // band above it (`pixels-above-lines`), so a top-aligned number would float up in that band
-    // beside the filepath widget; aligning to the cell bottom keeps it on the text line. A
-    // no-op for ordinary rows (cell height == text height).
-    (this.renderer as any).yalign = 1;
     (this.view as any).getGutter(Gtk.TextWindowType.LEFT).insert(this.renderer, 0);
 
     // Reserve width for the widest number up front (a number measured on a short line crops).

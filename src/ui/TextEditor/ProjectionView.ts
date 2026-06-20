@@ -215,23 +215,45 @@ export class ProjectionView {
       this.suppressing(this.projection.soleKey!, () => (src as any).delete(iterAtOffset(src, s), iterAtOffset(src, e)));
       return;
     }
-    // MULTI-SOURCE: only a delete within ONE editable segment routes; one spanning segments /
-    // blocks is rejected (boundary clamp — hard problem #1).
-    const a = this.projection.viewToSource(startIter.getLine(), startIter.getLineOffset());
-    const b = this.projection.viewToSource(endIter.getLine(), endIter.getLineOffset());
-    if (a.kind !== 'source' || b.kind !== 'source') return;
-    if (a.sourceKey !== b.sourceKey || a.segmentIndex !== b.segmentIndex) return;
-    if (!this.projection.isViewPositionEditable(startIter.getLine(), startIter.getLineOffset())) return;
+    // MULTI-SOURCE: a delete within ONE editable segment routes to its source. A delete ending at
+    // COLUMN 0 of `endLine` (a linewise `dd`/`cc`, range `[L,0]–[L+1,0]`) only removes through the
+    // end of row L's source line — even when row L+1 begins a DIFFERENT excerpt — so it still maps
+    // wholly to source `a`. Any other span across segments/blocks is rejected (boundary clamp —
+    // hard problem #1).
+    const startLine = startIter.getLine();
+    const startCol = startIter.getLineOffset();
+    const endLine = endIter.getLine();
+    const endCol = endIter.getLineOffset();
+    const a = this.projection.viewToSource(startLine, startCol);
+    if (a.kind !== 'source') return;
+    if (!this.projection.isViewPositionEditable(startLine, startCol)) return;
+    let bRow: number;
+    let bCol: number;
+    if (endCol === 0 && endLine > startLine) {
+      // The last TOUCHED view row is endLine-1; it must be in the SAME SEGMENT as `a` — same source
+      // AND contiguous source rows. (Two regions of one file are the same source but different
+      // segments, with HIDDEN rows between them; deleting across that gap would silently remove the
+      // unshown lines.) The source deletion ends at the start of the next source line.
+      const last = this.projection.viewToSource(endLine - 1, 0);
+      if (last.kind !== 'source' || last.sourceKey !== a.sourceKey || last.segmentIndex !== a.segmentIndex) return;
+      bRow = last.row + 1;
+      bCol = 0;
+    } else {
+      const b = this.projection.viewToSource(endLine, endCol);
+      if (b.kind !== 'source' || b.sourceKey !== a.sourceKey || b.segmentIndex !== a.segmentIndex) return;
+      bRow = b.row;
+      bCol = b.column;
+    }
     const src = this.sources.get(a.sourceKey);
     if (!src) return;
     this.noteSourceEdit(a.sourceKey);
     this.suppressing(a.sourceKey, () =>
       (src as any).delete(
         asIter((src as any).getIterAtLineOffset(a.row, a.column)),
-        asIter((src as any).getIterAtLineOffset(b.row, b.column)),
+        asIter((src as any).getIterAtLineOffset(bRow, bCol)),
       ),
     );
-    const removed = b.row - a.row; // rows merged away by a multi-line delete (0 = in-place)
+    const removed = bRow - a.row; // rows merged away by a multi-line delete (0 = in-place)
     if (removed > 0) this.resegment(a.sourceKey, a.row, -removed);
   }
 
@@ -303,8 +325,12 @@ export class ProjectionView {
         // the excerpt), fall back to a full rebuild so the regenerated view reflects the clamp.
         this.adjustItems(key, sr, newlineCount(text));
         if (pos) {
+          // Mark the remap pending BEFORE mirroring: applyToView fires the view's 'changed', whose
+          // observers (the search results' band reconcile) must defer their projection-dependent work
+          // to the post-rebuild reflow rather than read the now-stale current map.
+          this.scheduleRemap();
           this.applyToView((b) => b.insert(asIter((b as any).getIterAtLineOffset(pos.row, pos.column)), text, -1));
-          return this.scheduleRemap();
+          return;
         }
         return this.scheduleRebuild();
       }
@@ -334,8 +360,11 @@ export class ProjectionView {
         // view span equals the source span, so there's no block (gap) row in between. Otherwise
         // (endpoint off-screen, or the delete crosses a region boundary) fall back to a rebuild.
         if (a && b && b.row - a.row === removed) {
+          // Flag the remap pending BEFORE mirroring (see onSourceInsert) so band-reconcile observers
+          // defer to the reflow instead of reading the stale map mid-undo.
+          this.scheduleRemap();
           this.applyToView((buf) => buf.delete(asIter((buf as any).getIterAtLineOffset(a.row, a.column)), asIter((buf as any).getIterAtLineOffset(b.row, b.column))));
-          return this.scheduleRemap();
+          return;
         }
         return this.scheduleRebuild();
       }
@@ -591,7 +620,13 @@ export class ProjectionView {
     if (resync) this.needsResync = true;
     if (this.syncScheduled) return;
     this.syncScheduled = true;
-    queueMicrotask(() => {
+    // MUST be a macrotask, NOT queueMicrotask: under node-gtk's GLib main loop microtasks never
+    // fire (only on a libuv turn), so a microtask-deferred remap would never run in the app —
+    // the projection would stay stale after an undo / cross-view edit until the next edit forced
+    // a synchronous resegment (the "corrected after another edit" symptom). setTimeout(0) runs on
+    // the next loop turn under both the GLib loop and the headless test runner. The source has
+    // mutated by then (its default insert/delete handler ran), so re-reading source text is valid.
+    setTimeout(() => {
       this.syncScheduled = false;
       const resync = this.needsResync;
       this.needsResync = false;
@@ -604,7 +639,16 @@ export class ProjectionView {
       if (!resync) this.projection = ViewProjection.build(this.items, (seg) => this.sourceLines(seg));
       else if (this.resyncHandler) this.resyncHandler();
       else this.retarget(this.items);
+      // The map is now current — let the owner reconcile projection-dependent chrome (the search
+      // results' header/gap bands), which it skipped on the mid-undo 'changed' (stale map then).
+      this.reflowHandler?.();
     });
+  }
+
+  /** True while a deferred remap/rebuild is queued — so a 'changed' observer can skip work that
+   *  reads the coordinate map (it's stale until the rebuild) and do it in the reflow instead. */
+  isSyncPending(): boolean {
+    return this.syncScheduled;
   }
 
   // Optional owner hook: re-derive the item list + re-flow the view (a diff's re-diff). Set by a
@@ -612,6 +656,14 @@ export class ProjectionView {
   private resyncHandler: (() => void) | null = null;
   setResyncHandler(fn: () => void): void {
     this.resyncHandler = fn;
+  }
+
+  // Optional owner hook fired AFTER a deferred remap/rebuild settles the coordinate map — for a
+  // surface that reconciles projection-dependent chrome (the search results' bands) and must do so
+  // against the fresh map, not the stale one a mid-undo 'changed' exposes.
+  private reflowHandler: (() => void) | null = null;
+  setReflowHandler(fn: () => void): void {
+    this.reflowHandler = fn;
   }
 
   /** Rebuild the projection from the current source state + re-materialize. Used when the

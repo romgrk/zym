@@ -188,6 +188,13 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // Editable diff multibuffer (git:continuous-diff): fold-style keys expand the elided `⋯`
   // unchanged lines. More specific than the vim `#TextEditor` bindings, so these win; `z z`/
   // `z t`/`z b` (scroll) aren't bound here and still fall through to vim.
+  // Project-search results multibuffer: per-file (excerpt) collapse. `z a` toggles the file under
+  // the cursor; `z M`/`z R` collapse/expand all. More specific than vim's `#TextEditor`, so these win.
+  '#TextEditor.search-results': {
+    'z a': 'search:toggle-collapse',
+    'z M': 'search:collapse-all',
+    'z R': 'search:expand-all',
+  },
   '#TextEditor.continuous-diff': {
     'z o': 'diff:expand-context', // reveal more unchanged lines at the nearest gap
     'z R': 'diff:expand-all', // reveal all unchanged lines (show the full files)

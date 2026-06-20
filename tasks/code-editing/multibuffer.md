@@ -69,7 +69,8 @@ their name; that's the model layer):
   deferred, not a loose end.
 - **G2 — Editable everywhere.** ✅ single-file (identity), project search, and diff all write
   through to live `Document`s; replace-all across files is one transaction.
-- **G3 — Folds are a transform.** ✅ single-file. *Per-excerpt collapse = Phase 4.*
+- **G3 — Folds are a transform.** ✅ single-file (code folding); per-excerpt collapse done as an
+  item-level re-derive (G8), not a view-fold.
 - **G4 — Per-source-correct.** ✅ highlighting, line-number gutters (project-search
   `SourceLineNumberGutter`; diff `CombinedDiffLineNumberGutter` — old|new in one renderer), decorations.
   *Diagnostics / LSP across excerpts = Phase 4.*
@@ -95,8 +96,14 @@ their name; that's the model layer):
   multibuffer).
 - **G7 — Cross-source undo/redo.** ✅ `ProjectionView` is the `UndoTarget`; re-entrant user
   actions; multi-file edit = one Ctrl-Z.
-- **G8 — Multibuffer interaction.** ◐ vim works (real editor); expand-context done. *Remaining:*
-  copy strips header/gap rows; per-excerpt collapse.
+- **G8 — Multibuffer interaction.** ✅ vim works (real editor); expand-context (diff); **copy is
+  clean** — headers AND gaps are now widget bands in BOTH surfaces (no block rows in any buffer; the
+  search `⋯` gap stopped being buffer text), so a yank across excerpts carries only real source
+  lines, with no copy-time filtering; **per-excerpt collapse** (`SearchResultsView`, `z a` toggle /
+  `z M` all / `z R` none) re-derives the items so a collapsed file shows only its first source row
+  (`▸` chevron) — an item-level transform, NOT a view-fold (keeps the painter fold-naive per the
+  Invariant). All three band consumers (diff, search, markdown image preview) reconcile through one
+  shared `BlockBandSet` (`BlockDecorations.bands()`).
 - **G9 — Multiple diff sources.** ☐ only working-tree vs HEAD today; commit / PR / range TODO.
 - **G10 — Performance.** ◐ single-file identity is zero-cost. *Viewport virtualization across many
   excerpts = TODO if profiling demands.*
@@ -137,9 +144,9 @@ duality, so low-value / high-risk to touch.*
 ### Backlog (after the two pickups)
 
 - **Gutter band background** (G5 polish, blocked on node-gtk) — `tasks/code-editing/gutter-cell-background.md`.
-- **G8** copy-strips-header/gap rows + per-excerpt collapse; **G9** more diff sources (commit / PR /
-  range); **G10** viewport virtualization (only if profiling demands); **G11** session persistence +
-  a close-confirmation for a file edited ONLY in a multibuffer.
+- **G9** more diff sources (commit / PR / range); **G10** viewport virtualization (only if profiling
+  demands); **G11** session persistence + a close-confirmation for a file edited ONLY in a
+  multibuffer. (G8 — copy + per-excerpt collapse — is done.)
 
 ## Invariants
 
@@ -161,11 +168,36 @@ duality, so low-value / high-risk to touch.*
   which never happens during the GLib main loop, so a microtask-scheduled re-diff silently never
   runs in the app. (`ContinuousDiffView.scheduleMicroReDiff`.) Tests must drive a realized view +
   `GLib.MainContext.iteration(true)`, not `await`. See the `queuemicrotask-dead-under-glib-loop`
-  memory.
-- **Overlay bands (headers/gaps) must be reconciled in place, not torn down.** Removing +
+  memory. **Two timings, two tools:** *before-paint* work (a re-diff that must land in the same
+  frame as the caret move) → `addTickCallback`; *after-settle* work where the view buffer is
+  ALREADY correct and only a derived map must catch up (a one-frame lag is invisible) → a
+  macrotask is fine, and `setTimeout` DOES fire under the GLib loop (libuv is pumped every loop
+  iteration — see the `js-timers-refactor` memory). `ProjectionView.scheduleSync` (the multi-source
+  reverse-sync remap/rebuild for undo + cross-view edits) is the latter: it uses `setTimeout`,
+  because the reverse-sync handlers already mirrored the exact edit into the view synchronously;
+  only `this.projection` (the gutter/painter coordinate map) needs to catch up. It MUST NOT be a
+  `queueMicrotask` — that never fires in the app, leaving the map stale until the next edit forces a
+  synchronous resegment (the "corrupts, then a later edit fixes it" symptom). Corollary: anything
+  that reads the coordinate map in reaction to a buffer `changed` (the search results' band
+  reconcile, which anchors each header via `viewRowForSource`) must NOT run while a remap is pending
+  — a reverse-sync `changed` fires *during* the mirror, when the map is still stale. `SearchResultsView`
+  skips its reconcile when `ProjectionView.isSyncPending()` and re-runs it from `setReflowHandler`
+  (fired after the deferred rebuild), so headers always anchor off the fresh map. Write-through
+  edits resegment synchronously (no pending sync), so they reconcile inline on `changed` as before.
+- **Cross-segment edits must be rejected at the FUNNEL, not in write-through.** A view range can be
+  contiguous yet map to a non-contiguous source range — two regions of one file are the same source
+  in different segments, with hidden rows between them. `EditorModel.setTextInBufferRange`'s
+  `editableAt` gate (→ `ViewProjection.isViewRangeEditable`) requires a SINGLE SEGMENT, so such an
+  edit is refused before GTK mutates the buffer. Rejecting later (in `ProjectionView.writeThrough*`)
+  is too late: the `insert-text`/`delete-range` handlers are *before* handlers, so returning early
+  skips the SOURCE write but GTK still applies the edit to the VIEW — view and source diverge
+  (visible as a visual-`c`/`d` across two regions deleting the wrong lines).
+- **Overlay bands (headers/gaps/images) must be reconciled in place, not torn down.** Removing +
   re-adding a `BlockDecoration` collapses its reserved band and re-expands it a frame later
-  (flicker + text jump). `ContinuousDiffView.installOverlays` reuses handles via
-  `BlockDecorations.handle.update({ line?, widget? })`.
+  (flicker + text jump). The one shared mechanism is **`BlockBandSet`** (`BlockDecorations.bands()`):
+  `reconcile(specs)` matches bands by a stable `id`, rebuilds a widget only when its content `key`
+  changed, and adds/removes the delta — used by `ContinuousDiffView`, `SearchResultsView`, and the
+  markdown image-preview plugin. Headers AND gaps are widget bands (never buffer rows).
 - **Per-row gutter alignment.** An excerpt's first row carries a header band ABOVE it, so its
   gutter number must bottom-align (`yalign=1`); rows with a `⋯` gap band BELOW stay top-aligned.
   Toggled per row inside the renderer's `queryData` (the only gutter vfunc node-gtk invokes).
@@ -175,7 +207,6 @@ duality, so low-value / high-risk to touch.*
 
 ## Hard problems still open
 
-- **Per-excerpt collapse** as another fold-like transform (G8).
 - **Per-source decorations across excerpts**: diagnostics/inlay/LSP key off one Document today;
   must place through the unified map for multi-file (G4 remainder).
 - **Viewport virtualization** across thousands of excerpts (G10) — a sum-tree coordinate map only

@@ -97,6 +97,13 @@ export class BlockDecorations {
       this.scheduleFlush(0);
       this.hookVadjustment();
     });
+
+    // An edit to (or around) a band's anchor line can drop the reserved-space tag and leave the
+    // overlay stranded — fatal on an EDITABLE surface (the search/diff multibuffers), where you type
+    // on the very rows carrying header/gap bands. Re-reserve + reposition every band after any buffer
+    // mutation (coalesced to one frame), so a band's space survives editing. Tag/overlay ops don't
+    // fire `changed`, so this never re-enters.
+    this.buffer.on('changed', () => this.scheduleReserve());
   }
 
   /** Reposition whenever the content height changes — a fold collapse/expand, an
@@ -180,6 +187,30 @@ export class BlockDecorations {
    *  re-validated line geometry yet, so reading get_iter_location now is stale. */
   repositionAll(): void {
     this.scheduleReposition();
+  }
+
+  /** The band placement anchored at view `line` — `'above'` (a header band, taller cell above) or
+   *  `'below'` (a gap/image band, taller cell below), else null. A gutter uses this to align its
+   *  number onto the text rather than floating it into the reserved band. */
+  placementAtLine(line: number): BlockDecorationPlacement | null {
+    for (const block of this.blocks) if (block.placed && this.markLine(block) === line) return block.placement;
+    return null;
+  }
+
+  /** Re-reserve + reposition every placed band after an edit (which can drop the reserved-space tag
+   *  on its anchor line, or — after an undo — leave the band mispositioned until the layout settles).
+   *  Deferred to a tick (a synchronous re-place during the edit's layout-invalidation leaves the
+   *  overlay unallocated), then the geometry is settled over the next few frames via
+   *  `scheduleReposition`. Coalesced. */
+  private reserveTickId = 0;
+  private scheduleReserve(): void {
+    if (this.reserveTickId || this.blocks.size === 0) return;
+    this.reserveTickId = (this.view as any).addTickCallback(() => {
+      this.reserveTickId = 0;
+      for (const block of this.blocks) if (block.placed) this.place(block); // re-apply the tag + reposition
+      this.scheduleReposition(); // settle the position over the next frames (post-undo relayout)
+      return false; // G_SOURCE_REMOVE — run once; the reposition window does the multi-frame settle
+    });
   }
 
   // --- internals -------------------------------------------------------------
@@ -277,6 +308,12 @@ export class BlockDecorations {
     (this.view as any).moveOverlay(block.slot, 0, y);
   }
 
+  /** A reconciled band set backed by this controller — one per consumer (markdown images, the
+   *  continuous diff's headers/gaps, the search results' headers/gaps). See `BlockBandSet`. */
+  bands(): BlockBandSet {
+    return new BlockBandSet(this);
+  }
+
   private removeBlock(block: Block): void {
     if (!this.blocks.delete(block)) return;
     this.buffer.removeTag(block.tag, this.buffer.getStartIter(), this.buffer.getEndIter());
@@ -292,5 +329,61 @@ export class BlockDecorations {
     // Re-pool any slot that's an overlay child of the view (parented), regardless of
     // whether it finished placing; a never-parented fresh slot is just dropped (GC).
     if (block.slot.getParent?.()) this.freeSlots.push(block.slot);
+  }
+}
+
+/** One band in a reconciled set: a stable `id` (which band — reused/moved across reconciles), a
+ *  content `key` (the widget is rebuilt only when it changes), its anchor `line`, and a lazy
+ *  `build`. */
+export interface BlockBandSpec {
+  id: string;
+  key: string;
+  line: number;
+  placement?: BlockDecorationPlacement;
+  build: () => InstanceType<typeof Gtk.Widget>;
+}
+
+/**
+ * A keyed set of block-decoration bands reconciled in place against a freshly-derived list — the
+ * one mechanism behind every consumer that re-flows its header/gap/image bands: the continuous
+ * diff (`ContinuousDiffView`), the project-search results (`SearchResultsView`), and the markdown
+ * image preview. Reusing handles in place (vs. teardown + re-add) avoids the band collapse →
+ * re-expand that flickers and jumps the text. Owns its handles; create one per consumer via
+ * `BlockDecorations.bands()`.
+ */
+export class BlockBandSet {
+  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string }>();
+  private readonly blocks: BlockDecorations;
+  constructor(blocks: BlockDecorations) {
+    this.blocks = blocks;
+  }
+
+  /** Reconcile to `specs`: move/rebuild bands matched by `id` (rebuilding the widget only when its
+   *  `key` changed, else keeping the live one), add new ones, and remove any whose `id` is gone. */
+  reconcile(specs: BlockBandSpec[]): void {
+    const seen = new Set<string>();
+    for (const spec of specs) {
+      seen.add(spec.id);
+      const prev = this.entries.get(spec.id);
+      if (prev) {
+        prev.handle.update({ line: spec.line, widget: prev.key === spec.key ? undefined : spec.build() });
+        prev.key = spec.key;
+      } else {
+        const handle = this.blocks.add({ line: spec.line, widget: spec.build(), placement: spec.placement });
+        this.entries.set(spec.id, { handle, key: spec.key });
+      }
+    }
+    for (const [id, entry] of this.entries) {
+      if (!seen.has(id)) {
+        entry.handle.remove();
+        this.entries.delete(id);
+      }
+    }
+  }
+
+  /** Remove every band (teardown). */
+  clear(): void {
+    for (const entry of this.entries.values()) entry.handle.remove();
+    this.entries.clear();
   }
 }

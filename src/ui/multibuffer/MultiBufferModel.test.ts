@@ -96,7 +96,7 @@ test('editability reflects the segment flag', () => {
   assert.equal(rw.isViewPositionEditable(1, 0), true, 'an editable real segment row');
 });
 
-test('widget-header mode emits only segments + gaps (no header/blank rows)', () => {
+test('widget-header mode emits ONLY segments (headers + gaps are widgets, not buffer rows)', () => {
   const items = excerptsToItems(
     [
       { header: 'a.ts', segments: [seg('a.ts', 0, 1), seg('a.ts', 4, 4)] },
@@ -104,13 +104,13 @@ test('widget-header mode emits only segments + gaps (no header/blank rows)', () 
     ],
     { headers: 'widget' },
   );
-  // No 'header' or 'blank' blocks — only segments and the within-file gap.
+  // No 'header'/'blank'/'gap' blocks — the surface draws each as a widget band. Only real segments.
   assert.deepEqual(
     items.map((i) => (i.type === 'block' ? `block:${i.block.kind}` : `seg:${i.segment.startRow}`)),
-    ['seg:0', 'block:gap', 'seg:4', 'seg:0'],
+    ['seg:0', 'seg:4', 'seg:0'],
   );
   const p = ViewProjection.build(items, resolve);
-  assert.equal(p.viewText, `l0\nl1\n${GAP_LABEL}\nl4\nB0`); // l0, l1, ⋯, l4, B0 — no headers/blank
+  assert.equal(p.viewText, 'l0\nl1\nl4\nB0'); // l0, l1, l4, B0 — no headers/blank/gap rows
   assert.deepEqual(p.sourceRowAtViewRow(0), { sourceKey: 'a.ts', sourceRow: 0 }, 'first row is a source row, not a header');
 });
 

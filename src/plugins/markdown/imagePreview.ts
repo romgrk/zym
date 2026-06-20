@@ -22,7 +22,7 @@ import { Disposable } from '../../util/eventKit.ts';
 import type { PluginContext } from '../../plugin/types.ts';
 import type { TextEditor } from '../../ui/TextEditor/index.ts';
 import type { ScanMatchResult } from '../../ui/TextEditor/EditorModel.ts';
-import type { BlockDecorationHandle } from '../../ui/TextEditor/BlockDecorations.ts';
+import type { BlockBandSpec } from '../../ui/TextEditor/BlockDecorations.ts';
 
 // Coalesce rapid edits before re-scanning. Loading images is heavier than the
 // color-preview regex pass, so a slightly longer idle than that plugin's.
@@ -118,19 +118,16 @@ export function activateImagePreview(ctx: PluginContext, markdownFileTypes: read
     if (!isMarkdown(editor.currentFile)) return;
     const docPath = editor.currentFile;
 
-    // Active image blocks, keyed by `${absPath}#${ordinal}` — a stable identity per
-    // distinct image occurrence, so blocks survive edits that merely shift their
-    // line (the BlockDecorations anchor mark tracks the move); we only add/
-    // remove when images actually appear, disappear, or change source.
-    const blocks = new Map<string, BlockDecorationHandle>();
+    // Image bands keyed by `${absPath}#${ordinal}` — a stable identity per distinct image
+    // occurrence, so a band survives edits that merely shift its line. Reconciled in place each
+    // refresh (add/move/remove the delta) via the shared `BlockBandSet`.
+    const bands = editor.inlineBlocks.bands();
     const cache = new Map<string, CachedTexture>();
     let timer: NodeJS.Timeout | null = null;
 
     const refresh = (): void => {
       const enabled = quilx.config.get('markdown.imagePreview') !== false;
-
-      // Desired occurrences in document order: key → anchor line.
-      const desired = new Map<string, number>();
+      const specs: BlockBandSpec[] = [];
       if (enabled) {
         const ordinals = new Map<string, number>();
         editor.model.scan(IMAGE_RE, ({ match, range }: ScanMatchResult) => {
@@ -138,25 +135,13 @@ export function activateImagePreview(ctx: PluginContext, markdownFileTypes: read
           if (!absPath) return;
           const ordinal = ordinals.get(absPath) ?? 0;
           ordinals.set(absPath, ordinal + 1);
-          desired.set(`${absPath}#${ordinal}`, range.start.row);
+          const entry = loadTexture(absPath, cache);
+          if (!entry) return;
+          const id = `${absPath}#${ordinal}`;
+          specs.push({ id, key: id, line: range.start.row, placement: 'below', build: () => buildPicture(entry) });
         });
       }
-
-      // Remove blocks whose image is gone.
-      for (const [key, handle] of blocks) {
-        if (!desired.has(key)) {
-          handle.remove();
-          blocks.delete(key);
-        }
-      }
-      // Add blocks for new images (kept ones already track their line via the mark).
-      for (const [key, line] of desired) {
-        if (blocks.has(key)) continue;
-        const absPath = key.slice(0, key.lastIndexOf('#'));
-        const entry = loadTexture(absPath, cache);
-        if (!entry) continue;
-        blocks.set(key, editor.inlineBlocks.add({ line, widget: buildPicture(entry), placement: 'below' }));
-      }
+      bands.reconcile(specs);
     };
 
     const schedule = (): void => {
@@ -175,8 +160,7 @@ export function activateImagePreview(ctx: PluginContext, markdownFileTypes: read
       if (timer) clearTimeout(timer);
       sub.dispose();
       configSub.dispose();
-      for (const handle of blocks.values()) handle.remove();
-      blocks.clear();
+      bands.clear();
       cache.clear();
     });
   });

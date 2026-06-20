@@ -283,8 +283,9 @@ test('editable diff: re-diff reconciles the header/gap bands in place (no teardo
   const ib = mbv.editor.inlineBlocks as any;
   const origAdd = ib.add.bind(ib);
   ib.add = (o: any) => { adds++; return origAdd(o); };
-  const header = (mbv as any).headerOverlays[0].handle;
-  const gap = (mbv as any).gapOverlays[0].handle;
+  const entries = (mbv as any).bands.entries as Map<string, { handle: any }>;
+  const header = entries.get('header:0')!.handle;
+  const gap = entries.get('gap:0')!.handle;
   for (const h of [header, gap]) { const r = h.remove.bind(h); h.remove = () => { removes++; return r(); }; }
 
   mbv.editor.model.setCursorBufferPosition({ row: 0, column: 0 });
@@ -293,8 +294,8 @@ test('editable diff: re-diff reconciles the header/gap bands in place (no teardo
 
   assert.equal(adds, 0, 'no bands added across the re-diff (reused in place)');
   assert.equal(removes, 0, 'no bands removed across the re-diff (reused in place)');
-  assert.equal((mbv as any).headerOverlays[0].handle, header, 'the header band handle is the same (reused, not recreated)');
-  assert.equal((mbv as any).gapOverlays[0].handle, gap, 'the gap band handle is the same (reused, not recreated)');
+  assert.equal(entries.get('header:0')!.handle, header, 'the header band handle is the same (reused, not recreated)');
+  assert.equal(entries.get('gap:0')!.handle, gap, 'the gap band handle is the same (reused, not recreated)');
   win.destroy();
   mbv.dispose();
 });

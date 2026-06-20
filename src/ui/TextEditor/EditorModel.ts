@@ -414,6 +414,7 @@ export class EditorModel {
     return this.buffer.getText(this.iterAtPoint(r.start), this.iterAtPoint(r.end), true);
   }
 
+
   /** The text of `row`, excluding its trailing newline. */
   lineTextForBufferRow(row: number): string {
     const start = this.iterAtLineStart(clamp(row, 0, this.getLastBufferRow()));
@@ -759,8 +760,14 @@ export class EditorModel {
     // A read-only viewer rejects every edit — this is the single funnel all vim operators
     // (and programmatic edits) route through, so gating it here blocks them all.
     if (this.readOnly) return new Range(r.start, r.start);
-    // A partially-editable surface (diff multibuffer) rejects edits on non-editable rows.
-    if (this.editableAt && !this.editableAt(r.start.row, r.end.row)) return new Range(r.start, r.start);
+    // A partially-editable surface (the multibuffers) rejects edits touching non-editable rows.
+    // A range ending at column 0 of `end.row` (a linewise `dd`/`cc`, range `[L,0]–[L+1,0]`) does
+    // NOT modify `end.row` — only `L`'s newline — so don't require `end.row` (which may be the next
+    // excerpt's first row, a different source) to be editable; gate on the last TOUCHED row.
+    if (this.editableAt) {
+      const lastTouched = r.end.column === 0 && r.end.row > r.start.row ? r.end.row - 1 : r.end.row;
+      if (!this.editableAt(r.start.row, lastTouched)) return new Range(r.start, r.start);
+    }
     // An edit spanning a fold placeholder reveals those folds first, then acts on the
     // real (former-folded) text — so deleting/changing a selection that includes a
     // folded region works. Marks keep the edit range across the expansion.

@@ -557,18 +557,23 @@ export class ViewProjection {
   }
 
   /** Whether a view range `[startRow..endRow]` is wholly editable AND maps to a single
-   *  source — the precondition for a write-through edit (otherwise the caller clamps or
-   *  rejects, hard problem #1). Columns aren't needed: editability is a per-row property. */
+   *  SEGMENT — the precondition for a write-through edit. A single source is not enough: two
+   *  regions of one file are the same source but DIFFERENT segments, with hidden rows between
+   *  them, so a view range spanning them maps to a non-contiguous source range. Such an edit
+   *  must be rejected at the funnel (`setTextInBufferRange`), BEFORE GTK mutates the view —
+   *  rejecting later (in write-through) is too late, since the view edit already happened and
+   *  the view/source diverge (hard problem #1). Columns aren't needed: editability + segment
+   *  membership are per-row. */
   isViewRangeEditable(startRow: number, endRow: number): boolean {
     if (this.isIdentity) return true;
-    let key: string | null = null;
+    let segIndex: number | null = null;
     for (let r = startRow; r <= endRow; r++) {
       const target = this.viewToSource(r, 0);
       if (target.kind !== 'source') return false;
       const seg = this.segments[target.segmentIndex];
       if (!seg || !seg.editable || seg.kind !== 'real') return false;
-      if (key === null) key = target.sourceKey;
-      else if (key !== target.sourceKey) return false; // spans two sources
+      if (segIndex === null) segIndex = target.segmentIndex;
+      else if (segIndex !== target.segmentIndex) return false; // spans a segment boundary / hidden gap
     }
     return true;
   }

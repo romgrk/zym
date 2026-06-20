@@ -462,13 +462,29 @@ class Change extends ActivateInsertModeBase {
       if (isLinewiseTarget) {
         // Keep the changed line's own indentation (vim `autoindent`): capture it
         // before clearing, then restore it on the emptied line.
-        const indent = this.editor.leadingWhitespaceForBufferRow(selection.getBufferRange().start.row)
-        // Replace the line(s) with a single empty line, then step back onto it.
-        // The insert leaves the cursor at the start of the *following* line, so
-        // the move must wrap across the newline — a plain moveLeft stalls at col 0.
-        // TODO(vim-ts): Selection.insertText models no options arg; cast keeps {autoIndent}.
-        ;(selection.insertText as any)('\n', {autoIndent: true})
-        selection.cursor.moveLeft(1, {allowWrap: true})
+        const range = selection.getBufferRange()
+        const startRow = range.start.row
+        // A linewise selection ends at column 0 of the row AFTER its last line.
+        const lastRow = range.end.column === 0 && range.end.row > startRow ? range.end.row - 1 : range.end.row
+        const indent = this.editor.leadingWhitespaceForBufferRow(startRow)
+        if (startRow === lastRow) {
+          // Single line: CLEAR its content, keeping the line and its trailing newline. (`insertText
+          // ('\n')` instead replaces the line AND its newline — visually identical in a plain buffer,
+          // but at a projection/multibuffer excerpt boundary it deletes the line OUT of its excerpt,
+          // shifts the next excerpt up, and lands the insert in that next excerpt. Clearing stays
+          // inside the line's own source.)
+          const end = this.editor.bufferRangeForBufferRow(startRow).end
+          selection.setBufferRange([[startRow, 0], [end.row, end.column]])
+          ;(selection.insertText as any)('', {autoIndent: false})
+          selection.cursor.setBufferPosition([startRow, 0])
+        } else {
+          // Multi-line: replace the lines with a single empty line, then step back onto it. The
+          // insert leaves the cursor at the start of the *following* line, so the move must wrap
+          // across the newline — a plain moveLeft stalls at col 0.
+          // TODO(vim-ts): Selection.insertText models no options arg; cast keeps {autoIndent}.
+          ;(selection.insertText as any)('\n', {autoIndent: true})
+          selection.cursor.moveLeft(1, {allowWrap: true})
+        }
         if (indent) {
           const row = selection.cursor.getBufferPosition().row
           this.editor.setTextInBufferRange([[row, 0], [row, 0]], indent)

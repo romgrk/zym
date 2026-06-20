@@ -29,7 +29,7 @@ import { applyDiffDecorations } from './TextEditor/applyDiffDecorations.ts';
 import { CombinedDiffLineNumberGutter } from './TextEditor/DiffLineNumberGutter.ts';
 import { buildDiffMultiBuffer, type DiffFile, type DiffMultiBuffer } from './multibuffer/diffMultiBuffer.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
-import type { BlockDecorationHandle } from './TextEditor/BlockDecorations.ts';
+import type { BlockBandSpec, BlockBandSet } from './TextEditor/BlockDecorations.ts';
 import { buildRowMap, computeHunks, formatHunkPatch, hunkContainsBufferRow, type Hunk } from '../util/hunkPatch.ts';
 import { applyPatch, git, repoRoot, type GitDone, type GitRepo } from '../git.ts';
 import { quilx } from '../quilx.ts';
@@ -98,8 +98,9 @@ export class ContinuousDiffView {
   // a re-flow moves them and changes their text (gap counts, leading-gap subtitle), but reusing the
   // handles in place avoids the band collapse/re-expand that flickers + jumps the text. Each entry
   // keeps the anchor's CONTENT key so we only rebuild the widget when its content actually changed.
-  private headerOverlays: Array<{ handle: BlockDecorationHandle; key: string }> = [];
-  private gapOverlays: Array<{ handle: BlockDecorationHandle; key: string }> = [];
+  // Header (filename, above each file's first row) + `⋯` gap (below the last shown row before each
+  // elision) widget bands, reconciled in place on each re-diff via the shared BlockBandSet.
+  private bands!: BlockBandSet;
   // Expand-context state: NEW-side rows the user forced visible, and a reveal-everything flag.
   // The current diff's anchors, kept for the keyboard `expandContextAtCursor`.
   private revealAll = false;
@@ -155,6 +156,7 @@ export class ContinuousDiffView {
     const painter = new ExcerptSyntaxProjection(() => this.projection, syntaxMap);
     this.editor = new TextEditor({ source: new MultiBufferDocument(this.projectionView, painter) });
     if (!this.editable) this.editor.model.setReadOnly(true);
+    this.bands = this.editor.inlineBlocks.bands();
     this.root = this.editor.root;
     // Scope the expand-context keymap to this surface: `#TextEditor.continuous-diff` is more
     // specific than vim's `#TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
@@ -409,47 +411,27 @@ export class ContinuousDiffView {
   private installOverlays(dmb: DiffMultiBuffer): void {
     this.gapAnchors = dmb.gapAnchors; // kept for the keyboard expand (`expandContextAtCursor`)
     this.headerAnchors = dmb.headerAnchors;
-    this.reconcileOverlays(
-      this.headerOverlays,
-      dmb.headerAnchors,
-      ContinuousDiffView.headerKey,
-      (h) => h.viewRow,
-      (h) => buildHeaderWidget(h.label, h.path, () => this.onActivate?.({ path: h.path, row: 0 }), h.subtitle),
-      'above',
+    const specs: BlockBandSpec[] = [];
+    dmb.headerAnchors.forEach((h, i) =>
+      specs.push({
+        id: `header:${i}`, // reconcile by ordinal: count changes by delta, content-key rebuilds the widget
+        key: ContinuousDiffView.headerKey(h),
+        line: h.viewRow,
+        placement: 'above',
+        build: () => buildHeaderWidget(h.label, h.path, () => this.onActivate?.({ path: h.path, row: 0 }), h.subtitle),
+      }),
     );
-    this.reconcileOverlays(
-      this.gapOverlays,
-      dmb.gapAnchors,
-      ContinuousDiffView.gapKey,
-      (g) => g.viewRow,
-      // Clicking the gap reveals a chunk of its elided lines (extends the window above it).
-      (g) => buildGapWidget(g.label, () => this.revealChunk(g.revealRows, true)),
-      'below',
+    dmb.gapAnchors.forEach((g, i) =>
+      specs.push({
+        id: `gap:${i}`,
+        key: ContinuousDiffView.gapKey(g),
+        line: g.viewRow,
+        placement: 'below',
+        // Clicking the gap reveals a chunk of its elided lines (extends the window above it).
+        build: () => buildGapWidget(g.label, () => this.revealChunk(g.revealRows, true)),
+      }),
     );
-  }
-
-  /** Reconcile one band kind (headers or gaps) against its new anchors, reusing handles in place. */
-  private reconcileOverlays<A>(
-    entries: Array<{ handle: BlockDecorationHandle; key: string }>,
-    anchors: A[],
-    keyOf: (a: A) => string,
-    lineOf: (a: A) => number,
-    build: (a: A) => InstanceType<typeof Gtk.Widget>,
-    placement: 'above' | 'below',
-  ): void {
-    for (let i = 0; i < anchors.length; i++) {
-      const key = keyOf(anchors[i]);
-      const line = lineOf(anchors[i]);
-      if (i < entries.length) {
-        // Reuse: move it; swap the widget only if its content changed (else keep the live one).
-        const widget = entries[i].key === key ? undefined : build(anchors[i]);
-        entries[i].handle.update({ line, widget });
-        entries[i].key = key;
-      } else {
-        entries.push({ handle: this.editor.inlineBlocks.add({ line, widget: build(anchors[i]), placement }), key });
-      }
-    }
-    while (entries.length > anchors.length) entries.pop()!.handle.remove();
+    this.bands.reconcile(specs);
   }
 
   private currentNewText(file: DiffFile): string {
@@ -634,9 +616,7 @@ export class ContinuousDiffView {
     this.gitUnsub = undefined;
     for (const unsub of this.modifiedUnsubs) unsub(); // detach from the (possibly shared) Documents
     this.modifiedUnsubs.length = 0;
-    for (const { handle } of [...this.headerOverlays, ...this.gapOverlays]) handle.remove();
-    this.headerOverlays = [];
-    this.gapOverlays = [];
+    this.bands.clear();
     this.lineNumbers?.dispose();
     // The editor owns the ProjectionView (via its MultiBufferDocument) and disposes it below.
     for (const entry of this.sources.values()) {

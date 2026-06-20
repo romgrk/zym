@@ -2120,6 +2120,21 @@ export class AppWindow {
         description: 'Re-collapse expanded context back to the windowed diff',
         when: () => this.activeContinuousDiff() !== null,
       },
+      'search:toggle-collapse': {
+        didDispatch: () => this.activeSearchResults()?.toggleCollapseAtCursor(),
+        description: 'Collapse / expand the file under the cursor (search results)',
+        when: () => this.activeSearchResults() !== null,
+      },
+      'search:collapse-all': {
+        didDispatch: () => this.activeSearchResults()?.collapseAll(),
+        description: 'Collapse every file (search results)',
+        when: () => this.activeSearchResults() !== null,
+      },
+      'search:expand-all': {
+        didDispatch: () => this.activeSearchResults()?.expandAll(),
+        description: 'Expand every file (search results)',
+        when: () => this.activeSearchResults() !== null,
+      },
       'diff:stage-hunk': {
         didDispatch: () => this.activeContinuousDiff()?.stageHunkAtCursor(),
         description: 'Stage the hunk under the cursor (continuous diff)',
@@ -2874,6 +2889,12 @@ export class AppWindow {
   private activeContinuousDiff(): ContinuousDiffView | null {
     const widget = this.activeChildWidget();
     return widget ? this.continuousDiffViews.get(widget) ?? null : null;
+  }
+
+  /** The search-results multibuffer hosted by the active child, if any (for the collapse commands). */
+  private activeSearchResults(): SearchResultsView | null {
+    const widget = this.activeChildWidget();
+    return widget ? this.searchResultsViews.get(widget) ?? null : null;
   }
 
   private openDialog() {
