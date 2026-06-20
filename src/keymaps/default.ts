@@ -257,6 +257,10 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   '#AgentTerminal': {
     'ctrl-d ctrl-d': 'agent:close',
   },
+  // The headless claude-sdk conversation: same double-`ctrl-d` to close.
+  '#AgentConversation': {
+    'ctrl-d ctrl-d': 'agent:close',
+  },
   '.quilx-terminal.terminal-insert': {
     escape: 'terminal:normal-mode',
     'ctrl-[': 'terminal:send-escape',

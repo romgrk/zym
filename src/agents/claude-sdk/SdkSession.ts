@@ -498,9 +498,13 @@ export class SdkSession {
       const text = toolResultText(b.content);
       this.emitter.emit('tool-result', { id: b.tool_use_id, isError: !!b.is_error, text });
       // An `Agent` tool result is the subagent's final answer — also append it to
-      // that subagent's transcript so its page shows the complete conversation.
+      // that subagent's transcript so its page shows the complete conversation. The
+      // result carries a trailing agentId/usage metadata block; strip it.
       const sub = this.subagents.get(b.tool_use_id);
-      if (sub && text) { sub.messages.push({ kind: 'text', text }); this.emitter.emit('subagent-update', { id: b.tool_use_id }); }
+      if (sub) {
+        const answer = stripSubagentMeta(text);
+        if (answer) { sub.messages.push({ kind: 'text', text: answer }); this.emitter.emit('subagent-update', { id: b.tool_use_id }); }
+      }
     }
   }
 
@@ -624,6 +628,12 @@ export function parseQuestions(input: unknown): AgentQuestion[] {
 function parentToolUseId(event: StreamEvent): string | null {
   const p = (event as { parent_tool_use_id?: string | null }).parent_tool_use_id;
   return typeof p === 'string' && p ? p : null;
+}
+
+/** Strip the trailing `agentId: … (use SendMessage…)` + `<usage>…</usage>` metadata
+ *  block that the Agent tool appends to a subagent's final answer. */
+function stripSubagentMeta(text: string): string {
+  return text.replace(/\s*agentId:\s*\S+\s*\(use SendMessage[\s\S]*$/, '').trimEnd();
 }
 
 /** Flatten a tool_result's `content` (a string, or an array of text blocks) to text. */

@@ -222,8 +222,12 @@ test('subagent events are captured into a transcript, kept out of the main threa
   fake.emit({ type: 'assistant', parent_tool_use_id: P, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_inner', name: 'Bash', input: { command: 'pwd' } }] } } as unknown as StreamEvent);
   fake.emit({ type: 'user', parent_tool_use_id: P, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_inner', content: '/repo', is_error: false }] } } as unknown as StreamEvent);
   fake.emit({ type: 'system', subtype: 'task_notification', tool_use_id: P, status: 'completed' } as unknown as StreamEvent);
-  // The Agent result (parent null) is the subagent's final answer.
-  fake.emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: P, content: 'final answer' }] } } as unknown as StreamEvent);
+  // The Agent result (parent null) is the subagent's final answer — a separate
+  // trailing agentId/usage metadata block must be stripped from the captured text.
+  fake.emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: P, content: [
+    { type: 'text', text: 'final answer' },
+    { type: 'text', text: "agentId: a49a92eb (use SendMessage with to: 'a49a92eb' to continue this agent)\n<usage>subagent_tokens: 11771\ntool_uses: 0\nduration_ms: 2689</usage>" },
+  ] }] } } as unknown as StreamEvent);
 
   assert.equal(started, P);
   assert.equal(done, true);
