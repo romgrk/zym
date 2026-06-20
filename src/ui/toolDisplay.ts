@@ -46,7 +46,8 @@ export function describeTool(name: string, input: unknown, cwd?: string): ToolVi
 
   switch (name) {
     case 'Bash':
-      return { icon: glyph(G.bash), title: 'Bash', detail: s(i.command) || s(i.description) };
+      // No label for Bash — the terminal icon + the command read clearly on their own.
+      return { icon: glyph(G.bash), title: '', detail: s(i.command) || s(i.description) };
     case 'Read':
       return { icon: glyph(G.read), title: 'Read', detail: p(i.file_path) };
     case 'Write':
@@ -79,10 +80,22 @@ export function describeTool(name: string, input: unknown, cwd?: string): ToolVi
   }
 }
 
+/** The file a tool acts on (for click-to-open), or null when it isn't a file tool. */
+export function toolFilePath(name: string, input: unknown): string | null {
+  const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const path = name === 'NotebookEdit'
+    ? i.notebook_path
+    : name === 'Read' || name === 'Write' || name === 'Edit' || name === 'MultiEdit'
+      ? i.file_path
+      : undefined;
+  return typeof path === 'string' && path ? path : null;
+}
+
 /** Pango markup for a tool-use row: icon (icon font) + bold title + mono detail. */
 export function toolMarkup(name: string, input: unknown, opts: { cwd?: string; monoFamily: string }): string {
   const { icon, title, detail } = describeTool(name, input, opts.cwd);
-  let markup = `<span font_family="${attrEscape(ICON_FONT_FAMILY)}">${escapeMarkup(icon)}</span>  <b>${escapeMarkup(title)}</b>`;
+  let markup = `<span font_family="${attrEscape(ICON_FONT_FAMILY)}">${escapeMarkup(icon)}</span>`;
+  if (title) markup += `  <b>${escapeMarkup(title)}</b>`;
   if (detail) markup += `  <span face="${attrEscape(opts.monoFamily)}">${escapeMarkup(detail)}</span>`;
   return markup;
 }

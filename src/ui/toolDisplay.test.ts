@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { describeTool } from './toolDisplay.ts';
 
-test('Bash shows the command', () => {
+test('Bash shows the command, no label', () => {
   const v = describeTool('Bash', { command: 'ls -la', description: 'list' });
-  assert.equal(v.title, 'Bash');
+  assert.equal(v.title, ''); // icon-only
   assert.equal(v.detail, 'ls -la');
   assert.ok(v.icon.length > 0);
 });

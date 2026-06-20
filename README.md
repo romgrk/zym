@@ -180,7 +180,7 @@ Running agents appear in the workbench list:
 | Indicator      | Meaning                          |
 | -------------- | -------------------------------- |
 | green dot      | idle / ready                     |
-| amber dot      | waiting for the user (e.g. a permission prompt) |
+| amber dot      | waiting for the user (e.g. a permission prompt)  |
 | grey cog       | working                          |
 | muted dot      | the process has exited           |
 
@@ -244,5 +244,4 @@ baseline keys:
 
 The tree-sitter highlight queries under `src/syntax/queries/` are vendored from
 [Zed](https://github.com/zed-industries/zed) (`crates/grammars/src/`), which are
-licensed GPL-3.0. Bundling them is why quilx as a whole is distributed under the
-GPL.
+licensed GPL-3.0 — bundling them is why quilx is distributed under the GPL.

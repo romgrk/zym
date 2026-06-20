@@ -21,6 +21,11 @@ export function createBufferWordsSource(getText: () => string): CompletionSource
   return {
     name: 'buffer',
     complete(context: CompletionContext): CompletionItem[] {
+      // A word-completion source: open on word typing (`auto`) or an explicit
+      // request (`manual`), but not on a punctuation trigger it doesn't own (e.g.
+      // `.` for LSP, `/` for slash commands) — otherwise every such char would pop
+      // the full buffer-word list.
+      if (context.trigger === 'character') return [];
       const counts = new Map<string, number>();
       const text = getText();
       WORD_RE.lastIndex = 0;

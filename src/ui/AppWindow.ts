@@ -745,6 +745,7 @@ export class AppWindow {
     const cwd = options.cwd ?? process.cwd();
     const agent = AGENT_CONFIGS[kind].create({
       cwd, command: options.command, prompt: options.prompt, resume: options.resume, title: options.title,
+      onOpenFile: (path) => this.openFile(path),
     });
     // Track in the kind's map (terminal focus-routing / headless disposal key off these).
     if (agent instanceof AgentTerminal) this.terminals.set(agent.root, agent);

@@ -31,6 +31,8 @@ export interface AgentLaunch {
   resume?: AgentResume;
   /** Initial title override. */
   title?: string;
+  /** Open a file the agent touched (sdk conversation rows; tui ignores it). */
+  onOpenFile?: (path: string) => void;
 }
 
 export interface AgentConfig {
@@ -55,11 +57,12 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   },
   'claude-sdk': {
     kind: 'claude-sdk',
-    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt }),
+    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, onOpenFile: l.onOpenFile }),
   },
 };
 
-/** Pick a kind from the `agent.implementation` config value (default claude-tui). */
+/** Pick a kind from the `agent.implementation` config value (default claude-sdk;
+ *  set `agent.implementation` to `claude-tui` for the Vte terminal agent). */
 export function resolveAgentKind(implementation: unknown): AgentKind {
-  return implementation === 'claude-sdk' ? 'claude-sdk' : 'claude-tui';
+  return implementation === 'claude-tui' ? 'claude-tui' : 'claude-sdk';
 }

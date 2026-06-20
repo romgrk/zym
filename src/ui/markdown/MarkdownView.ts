@@ -14,10 +14,13 @@ import { theme } from '../../theme/theme.ts';
 import { fonts } from '../../fonts.ts';
 import { markdownToPango } from '../markdownMarkup.ts';
 import { escapeMarkup } from '../proseMarkup.ts';
+import { iconLabel } from '../icons.ts';
+import { clipboard } from '../TextEditor/vim/clipboard.ts';
 import { highlightToMarkup } from '../../syntax/highlightToMarkup.ts';
 import { parseBlocks, type Block, type ListItem } from './blocks.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
+const COPY_GLYPH = String.fromCodePoint(0xf0c5); // nf-fa-copy
 
 addStyles(`
   .quilx-md { }
@@ -34,6 +37,15 @@ addStyles(`
   .quilx-md-table { }
   .quilx-md-th { font-weight: bold; padding: 3px 10px 3px 0; }
   .quilx-md-cell { padding: 3px 10px 3px 0; }
+  .quilx-md-copy { padding: 2px 6px; margin: 4px; min-height: 0; min-width: 0; opacity: 0.45; }
+  .quilx-md-copy:hover { opacity: 1; }
+  /* Breathing room between blocks. */
+  .quilx-md-heading { margin-top: 6px; margin-bottom: 2px; }
+  .quilx-md-para { margin: 2px 0; }
+  .quilx-md-code { margin: 4px 0; }
+  .quilx-md-table { margin: 4px 0; }
+  .quilx-md-list { margin: 2px 0; }
+  .quilx-md-quote { margin: 4px 0; }
 `);
 // Code blocks use the app monospace font (not a generic family).
 fonts.monospace('.quilx-md-code');
@@ -45,14 +57,34 @@ export class MarkdownView {
   readonly root: InstanceType<typeof Gtk.Box>;
 
   constructor() {
-    this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4 });
+    this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6 });
     this.root.addCssClass('quilx-md');
   }
 
-  /** Replace the rendered content with `md`. */
+  /** Replace the rendered content with `md`.
+   *
+   * Consecutive prose blocks (headings, paragraphs, lists, quotes, rules) are
+   * merged into ONE label so the user can drag-select across all of them at once
+   * (GTK can't select across separate widgets). Tables and code blocks render as
+   * their own widgets — they're selection "islands", but each is independently
+   * selectable. */
   setMarkdown(md: string): void {
     clear(this.root);
-    for (const block of parseBlocks(md)) this.root.append(renderBlock(block));
+    let flow: string[] = [];
+    const flush = () => {
+      if (flow.length === 0) return;
+      const markup = flow.join('\n\n');
+      const label = markupLabel(markup, markup);
+      label.addCssClass('quilx-md-flow');
+      this.root.append(label);
+      flow = [];
+    };
+    for (const block of parseBlocks(md)) {
+      if (block.type === 'code') { flush(); this.root.append(renderCode(block.lang, block.code)); }
+      else if (block.type === 'table') { flush(); this.root.append(renderTable(block.headers, block.aligns, block.rows)); }
+      else flow.push(blockMarkup(block));
+    }
+    flush();
   }
 
   dispose(): void {
@@ -62,25 +94,46 @@ export class MarkdownView {
 
 // --- block rendering ---------------------------------------------------------
 
-function renderBlock(block: Block): Widget {
+// Pango markup for a prose block (everything except code/table, which are widgets).
+function blockMarkup(block: Block): string {
   switch (block.type) {
-    case 'heading': {
-      const markup = `<span size="${HEADING_SIZE[block.level - 1] ?? 'medium'}" weight="bold">${inline(block.text)}</span>`;
-      return markupLabel(markup, block.text);
-    }
+    case 'heading':
+      return `<span size="${HEADING_SIZE[block.level - 1] ?? 'medium'}" weight="bold">${inline(block.text)}</span>`;
     case 'paragraph':
-      return markupLabel(inline(block.text), block.text);
-    case 'code':
-      return renderCode(block.lang, block.code);
+      return inline(block.text);
     case 'list':
-      return renderList(block.ordered, block.items);
-    case 'table':
-      return renderTable(block.headers, block.aligns, block.rows);
+      return listMarkup(block.ordered, block.items, 0);
     case 'blockquote':
-      return renderBlockquote(block.blocks);
+      return blockquoteMarkup(block.blocks);
     case 'hr':
-      return new Gtk.Separator({ orientation: Gtk.Orientation.HORIZONTAL });
+      return `<span foreground="${attrEscape(theme.ui.text.muted)}">────────────────</span>`;
+    default:
+      return ''; // code / table are rendered as widgets in setMarkdown
   }
+}
+
+// A list as markup lines (bullets / numbers), nested lists indented.
+function listMarkup(ordered: boolean, items: ListItem[], depth: number): string {
+  const indent = '    '.repeat(depth);
+  const out: string[] = [];
+  items.forEach((item, i) => {
+    out.push(`${indent}${ordered ? `${i + 1}.` : '•'} ${inline(item.text)}`);
+    for (const child of item.children) {
+      if (child.type === 'list') out.push(listMarkup(child.ordered, child.items, depth + 1));
+      else out.push(indent + '    ' + blockMarkup(child));
+    }
+  });
+  return out.join('\n');
+}
+
+// A blockquote as markup: each line prefixed with a muted bar.
+function blockquoteMarkup(blocks: Block[]): string {
+  const inner = blocks
+    .filter((b) => b.type !== 'code' && b.type !== 'table')
+    .map(blockMarkup)
+    .join('\n');
+  const bar = `<span foreground="${attrEscape(theme.ui.text.muted)}">│</span> `;
+  return inner.split('\n').map((line) => bar + line).join('\n');
 }
 
 function renderCode(lang: string | undefined, code: string): Widget {
@@ -88,30 +141,26 @@ function renderCode(lang: string | undefined, code: string): Widget {
   const markup = `<span face="${attrEscape(fonts.monospaceFamily)}">${inner}</span>`;
   const label = markupLabel(markup, code);
   label.setSelectable(true);
+
+  // A small copy button in the top-right corner.
+  const copy = new Gtk.Button();
+  copy.addCssClass('flat');
+  copy.addCssClass('quilx-md-copy');
+  copy.setChild(iconLabel(COPY_GLYPH));
+  copy.setTooltipText('Copy');
+  copy.setHalign(Gtk.Align.END);
+  copy.setValign(Gtk.Align.START);
+  copy.on('clicked', () => { clipboard.write(code); copy.setTooltipText('Copied'); });
+
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   box.addCssClass('quilx-md-code');
   box.append(label);
-  return box;
-}
 
-function renderList(ordered: boolean, items: ListItem[]): Widget {
-  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
-  items.forEach((item, index) => {
-    const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-    const marker = new Gtk.Label({ label: ordered ? `${index + 1}.` : '•', xalign: 0 });
-    marker.setValign(Gtk.Align.START);
-    const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2, hexpand: true });
-    content.append(markupLabel(inline(item.text), item.text));
-    for (const child of item.children) {
-      const childWidget = renderBlock(child);
-      childWidget.setMarginStart(12); // indent nested blocks
-      content.append(childWidget);
-    }
-    row.append(marker);
-    row.append(content);
-    box.append(row);
-  });
-  return box;
+  // Overlay the button so it doesn't take a header row.
+  const overlay = new Gtk.Overlay();
+  overlay.setChild(box);
+  overlay.addOverlay(copy);
+  return overlay;
 }
 
 function renderTable(
@@ -139,13 +188,6 @@ function cell(text: string, align: 'left' | 'center' | 'right' | null, cssClass:
   label.setHalign(align === 'right' ? Gtk.Align.END : align === 'center' ? Gtk.Align.CENTER : Gtk.Align.START);
   label.setXalign(align === 'right' ? 1 : align === 'center' ? 0.5 : 0);
   return label;
-}
-
-function renderBlockquote(blocks: Block[]): Widget {
-  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 4 });
-  box.addCssClass('quilx-md-quote');
-  for (const block of blocks) box.append(renderBlock(block));
-  return box;
 }
 
 // --- helpers -----------------------------------------------------------------

@@ -48,10 +48,10 @@ test('maps the stream into status + transcript domain events', () => {
   session.prompt('hello');
   assert.deepEqual(fake.sent, [{ type: 'user', message: { role: 'user', content: 'hello' } }]);
 
-  // Assistant blocks arrive one event per completed block (thinking, then text,
-  // then a tool_use), and we append each.
-  fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }] } } as StreamEvent);
-  fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] } } as StreamEvent);
+  // Text + thinking stream as token-level deltas (stream_event); the tool_use
+  // arrives in the complete assistant event.
+  fake.emit({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } } as unknown as StreamEvent);
+  fake.emit({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi there' } } } as unknown as StreamEvent);
   fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] } } as StreamEvent);
 
   // Turn closes → idle.
@@ -66,6 +66,40 @@ test('maps the stream into status + transcript domain events', () => {
     'tool:Bash',
     'status:idle',
   ]);
+});
+
+test('surfaces a non-streamed assistant reply (slash command) from the complete message', () => {
+  // Slash-command replies (e.g. /context) arrive only as a complete `assistant`
+  // event with NO preceding stream_event deltas — the text must still render.
+  const { session, fake } = makeSession();
+  const log: string[] = [];
+  session.onAssistantStart(() => log.push('assistant-start'));
+  session.onAssistantText(({ delta }) => log.push(`text:${delta}`));
+  session.start();
+
+  session.prompt('/context');
+  // No deltas — just the complete assistant message, then the result.
+  fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '## Context Usage' }] } } as StreamEvent);
+  fake.emit({ type: 'result', subtype: 'success' } as StreamEvent);
+
+  assert.deepEqual(log, ['assistant-start', 'text:## Context Usage']);
+  session.dispose();
+});
+
+test('does not double-render text that already streamed', () => {
+  const { session, fake } = makeSession();
+  const log: string[] = [];
+  session.onAssistantStart(() => log.push('assistant-start'));
+  session.onAssistantText(({ delta }) => log.push(`text:${delta}`));
+  session.start();
+
+  session.prompt('hi');
+  fake.emit({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'streamed' } } } as unknown as StreamEvent);
+  // The complete message echoes the same text — it must NOT be emitted again.
+  fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'streamed' }] } } as StreamEvent);
+
+  assert.deepEqual(log, ['assistant-start', 'text:streamed']);
+  session.dispose();
 });
 
 test('process exit flips to exited and fires onExit', () => {
@@ -86,11 +120,11 @@ test('a new turn re-opens a fresh assistant row', () => {
   session.start();
 
   session.prompt('one');
-  fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'a' }] } } as StreamEvent);
+  fake.emit({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'a' } } } as unknown as StreamEvent);
   fake.emit({ type: 'result', subtype: 'success' } as StreamEvent);
 
   session.prompt('two');
-  fake.emit({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'b' }] } } as StreamEvent);
+  fake.emit({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'b' } } } as unknown as StreamEvent);
 
   assert.equal(starts.length, 2); // one assistant-start per turn
   session.dispose();
