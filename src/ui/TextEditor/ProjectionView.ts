@@ -289,6 +289,7 @@ export class ProjectionView {
   private onSourceInsert(key: string, iter: any, text: string): void {
     if (!this.projection.isSingleSource) {
       if (this.sourceSuppress.has(key)) return;
+      if (this.replaying && this.resyncHandler) return; // diff undo/redo: afterReplay re-derives once
       // A COMPUTED surface (a diff) can't be re-flowed by window arithmetic — the row's
       // classification (added/context) + the elision can change — so always re-derive it.
       if (text.includes('\n') && this.resyncHandler) return this.scheduleRebuild();
@@ -321,6 +322,7 @@ export class ProjectionView {
   private onSourceDelete(key: string, startIter: any, endIter: any): void {
     if (!this.projection.isSingleSource) {
       if (this.sourceSuppress.has(key)) return;
+      if (this.replaying && this.resyncHandler) return; // diff undo/redo: afterReplay re-derives once
       // A COMPUTED surface (a diff) always re-derives on a row-count change (see onSourceInsert).
       if (startIter.getLine() !== endIter.getLine() && this.resyncHandler) return this.scheduleRebuild();
       const a = this.projection.sourceToView(key, startIter.getLine(), startIter.getLineOffset());
@@ -514,20 +516,44 @@ export class ProjectionView {
     }
   }
 
+  // Set while replaying source undo/redo: a COMPUTED surface (a diff) re-derives the whole view
+  // ONCE, synchronously, in `afterReplay` (the sources are mutated by then) — so the reverse-sync
+  // handlers skip their per-edit work, and the view updates within the undo/redo command rather
+  // than on a later microtask the paint might miss. (A search multibuffer has no resync handler,
+  // so its reverse-sync mirror still runs.)
+  private replaying = false;
+
   /** Undo the last transaction: replay each touched source's native undo (reverse order). The
    *  sources' change signals reverse-sync the result into the view (and the files' own views). */
   undo(): void {
     const txn = this.undoStack.pop();
     if (!txn) return;
-    for (let i = txn.length - 1; i >= 0; i--) (this.sources.get(txn[i]) as any)?.undo();
+    this.replaying = true;
+    try {
+      for (let i = txn.length - 1; i >= 0; i--) (this.sources.get(txn[i]) as any)?.undo();
+    } finally {
+      this.replaying = false;
+    }
     this.redoStack.push(txn);
+    this.afterReplay();
   }
 
   redo(): void {
     const txn = this.redoStack.pop();
     if (!txn) return;
-    for (const key of txn) (this.sources.get(key) as any)?.redo();
+    this.replaying = true;
+    try {
+      for (const key of txn) (this.sources.get(key) as any)?.redo();
+    } finally {
+      this.replaying = false;
+    }
     this.undoStack.push(txn);
+    this.afterReplay();
+  }
+
+  /** After an undo/redo settles the sources: a computed surface re-derives the view synchronously. */
+  private afterReplay(): void {
+    if (this.resyncHandler) this.resyncHandler();
   }
 
   canUndo(): boolean {

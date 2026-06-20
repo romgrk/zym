@@ -205,8 +205,9 @@ test('editable diff: undo of an `o` just before a trailing fold reverts the view
   assert.notDeepEqual(linesOf(mbv), before, 'the inserted line shows');
 
   mbv.editor.model.undo();
-  await flushReDiff();
-  assert.deepEqual(linesOf(mbv), before, 'undo reverted the view');
+  // The revert must be SYNCHRONOUS (no awaited microtask): in the GUI the paint happens before a
+  // deferred re-diff would run, which left the view stale.
+  assert.deepEqual(linesOf(mbv), before, 'undo reverted the view synchronously');
   assert.equal(registry.find(path)!.getText(), newText, 'and the document');
   mbv.dispose();
 });
