@@ -18,15 +18,26 @@
  * layout per renderer, re-`setMarkup` per line, force layout via getSize) across a
  * simulated scroll, and reports CPU-per-frame.
  *
- *   custom-ln    our LineNumberRenderer alone               (1 layout/line)
- *   plain-ln     a markup-free number layout                (≈ floor for one column)
- *   custom-4     line-number + chevron + git + diag         (CURRENT: 4 layouts/line)
- *   composite-1  one renderer composing all four            (PROPOSED 4->1, display-only)
+ *   plain-ln       a markup-free (setText) number layout      (≈ floor for one column)
+ *   custom-ln      our LineNumberRenderer alone               (1 markup layout/line)
+ *   custom-4       line-number + chevron + git + diag         (the original 4 renderers)
+ *   composite-1    one renderer composing all four as markup  (the PREVIOUS setMarkup gutter)
+ *   composite-snap snapshot renderer: setText number + markup ONLY on non-empty cells (NEW)
  *
- * The delta custom-4 -> composite-1 is the prize the collapse buys; per-line work
- * drops from 4 markup-parse+shape passes to 1. Markup strings are copied verbatim
- * from the real renderers (same <span>s, same ' ' on clean lines — the real
- * git/diag renderers emit a space per visible line, paying a layout regardless).
+ * Two deltas: custom-4 -> composite-1 is the already-shipped 4->1 collapse; the new
+ * lever is composite-1 -> composite-snap, which drops the per-line markup PARSE for the
+ * line-number column (setText instead of setMarkup) and builds a layout for the git /
+ * chevron / diagnostic cells only on the few lines that have one (the old composite paid
+ * a space-layout on every clean line). Markup strings are copied from the real renderers.
+ *
+ * CAVEAT — this bench measures ONLY Pango layout cost (setMarkup/setText + shaping). It
+ * does NOT count the FFI the snapshot renderer adds: composite-1 (GtkSourceGutterRenderer-
+ * Text) draws in C with one JS callback/line (queryData); composite-snap draws from JS, so
+ * each line crosses JS->C ~6x (alignCell + save + translate + appendLayout + restore, plus
+ * the Point alloc). Measured separately, that draw sequence is ~165-210 us/frame for the
+ * number column alone (~3.7-4.7 us/line) — which OUTWEIGHS composite-snap's ~51 us layout
+ * saving. So composite-snap is a net perf REGRESSION; its justification is control (custom
+ * drawing beside decorations, future clickability), not speed.
  *
  *   node src/poc/gutter-bench.ts
  */
@@ -85,6 +96,15 @@ const diagMarkup = (line: number) =>
 const compositeMarkup = (line: number) =>
   `${gitMarkup(line)}<span foreground="${LINE_NUMBER_COLOR}">${numStr(line)}</span>${chevronMarkup(line)}${diagMarkup(line)}`;
 
+// Snapshot-renderer per-line work: a plain-TEXT number every line (no markup parse),
+// plus a markup layout ONLY on the lines carrying a git bar / chevron / diagnostic —
+// `null` means draw nothing (the old composite paid a space-layout on every clean line).
+const gitOrNull = (line: number) => { const c = gitColor(line); return c ? `<span foreground="${c}">${BAR}</span>` : null; };
+const chevronOrNull = (line: number) =>
+  isFoldHeader(line) ? `<span face="${ICON_FONT_FAMILY}" size="75%" foreground="${LINE_NUMBER_COLOR}">▾</span>` : null;
+const diagOrNull = (line: number) =>
+  hasDiag(line) ? `<span face="${ICON_FONT_FAMILY}" size="85%" foreground="${DIAG_COLOR}">${DIAG_GLYPH}</span>` : null;
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -93,34 +113,47 @@ const FRAMES = 4000;
 const WARMUP = 400;
 const SCROLL_STEP = 3; // lines advanced per "frame"
 
-type Config = { name: string; note: string; cols: ((line: number) => string)[] };
+// A column either builds Pango MARKUP (parsed per draw) or plain TEXT (no parse);
+// `build` returning null means the cell is empty and draws nothing at all.
+type Col = { build: (line: number) => string | null; markup: boolean };
+const mk = (build: (line: number) => string | null): Col => ({ build, markup: true });
+const txt = (build: (line: number) => string | null): Col => ({ build, markup: false });
+
+type Config = { name: string; note: string; cols: Col[] };
 const CONFIGS: Config[] = [
-  { name: 'plain-ln', note: 'markup-free number layout (~1-column floor)', cols: [plainNumber] },
-  { name: 'custom-ln', note: 'our LineNumberRenderer alone (1 layout/line)', cols: [numberMarkup] },
-  { name: 'custom-4', note: 'line-number + chevron + git + diag (CURRENT)', cols: [numberMarkup, chevronMarkup, gitMarkup, diagMarkup] },
-  { name: 'composite-1', note: 'one composite renderer (PROPOSED 4->1)', cols: [compositeMarkup] },
+  { name: 'plain-ln', note: 'markup-free number layout (~1-column floor)', cols: [txt(plainNumber)] },
+  { name: 'custom-ln', note: 'our LineNumberRenderer alone (1 layout/line)', cols: [mk(numberMarkup)] },
+  { name: 'custom-4', note: 'line-number + chevron + git + diag (the original 4 renderers)', cols: [mk(numberMarkup), mk(chevronMarkup), mk(gitMarkup), mk(diagMarkup)] },
+  { name: 'composite-1', note: 'one markup composite (the setMarkup gutter, PREVIOUS)', cols: [mk(compositeMarkup)] },
+  { name: 'composite-snap', note: 'snapshot renderer: text number + markup only on non-empty cells (NEW)', cols: [txt(plainNumber), mk(gitOrNull), mk(chevronOrNull), mk(diagOrNull)] },
 ];
 
 function runConfig(cfg: Config): { cpuUsPerFrame: number; cpuUsPerLineLayout: number } {
   const layouts = cfg.cols.map(() => makeLayout());
+  let built = 0;
   const oneFrame = (f: number) => {
     const base = (f * SCROLL_STEP) % (BUFFER_LINES - VISIBLE_LINES);
     for (let row = 0; row < VISIBLE_LINES; row++) {
       const line = base + row;
       for (let i = 0; i < layouts.length; i++) {
-        layouts[i].setMarkup(cfg.cols[i](line), -1);
-        layouts[i].getSize(); // force markup parse + shaping
+        const s = cfg.cols[i].build(line);
+        if (s === null) continue; // empty cell — no layout built (snapshot renderer)
+        if (cfg.cols[i].markup) layouts[i].setMarkup(s, -1);
+        else layouts[i].setText(s, -1);
+        layouts[i].getSize(); // force (markup parse +) shaping
+        built++;
       }
     }
   };
   for (let f = 0; f < WARMUP; f++) oneFrame(f);
+  built = 0;
   const c0 = process.cpuUsage();
   for (let f = 0; f < FRAMES; f++) oneFrame(f);
   const c = process.cpuUsage(c0); // microseconds (user+system)
   const total = c.user + c.system;
   return {
     cpuUsPerFrame: total / FRAMES,
-    cpuUsPerLineLayout: total / (FRAMES * VISIBLE_LINES * layouts.length),
+    cpuUsPerLineLayout: built ? total / built : 0, // per layout ACTUALLY built
   };
 }
 
@@ -146,15 +179,22 @@ emit([pad('config', 13), pad('cpu µs/frame', 14), pad('µs/line·layout', 16), 
 for (const r of results)
   emit([pad(r.cfg.name, 13), pad(r.cpuUsPerFrame.toFixed(1), 14), pad(r.cpuUsPerLineLayout.toFixed(3), 16), r.cfg.note].join(' '));
 
-const cur = results.find((r) => r.cfg.name === 'custom-4')!;
-const prop = results.find((r) => r.cfg.name === 'composite-1')!;
-const saved = cur.cpuUsPerFrame - prop.cpuUsPerFrame;
-const pct = (saved / cur.cpuUsPerFrame) * 100;
-emit('\n  4->1 collapse (display-only):');
-emit(`    current 4-renderer : ${cur.cpuUsPerFrame.toFixed(1)} µs/frame`);
-emit(`    composite 1        : ${prop.cpuUsPerFrame.toFixed(1)} µs/frame`);
-emit(`    saved              : ${saved.toFixed(1)} µs/frame (${pct.toFixed(0)}%)`);
-emit(`\n  @60Hz frame budget = 16667 µs; gutter layout is ${(cur.cpuUsPerFrame / 16667 * 100).toFixed(2)}% today,`);
-emit(`  ${(prop.cpuUsPerFrame / 16667 * 100).toFixed(2)}% after the collapse (per ${VISIBLE_LINES}-line viewport).`);
+const four = results.find((r) => r.cfg.name === 'custom-4')!;
+const composite = results.find((r) => r.cfg.name === 'composite-1')!;
+const snap = results.find((r) => r.cfg.name === 'composite-snap')!;
+const delta = (from: number, to: number) => `${(from - to).toFixed(1)} µs/frame (${((from - to) / from * 100).toFixed(0)}%)`;
+const budget = (us: number) => `${(us / 16667 * 100).toFixed(2)}%`;
+
+emit('\n  4 renderers -> 1 markup composite (already shipped):');
+emit(`    custom-4          : ${four.cpuUsPerFrame.toFixed(1)} µs/frame`);
+emit(`    composite-1       : ${composite.cpuUsPerFrame.toFixed(1)} µs/frame   saved ${delta(four.cpuUsPerFrame, composite.cpuUsPerFrame)}`);
+
+emit('\n  markup composite -> snapshot renderer (THIS change):');
+emit(`    composite-1       : ${composite.cpuUsPerFrame.toFixed(1)} µs/frame   (setMarkup every line)`);
+emit(`    composite-snap    : ${snap.cpuUsPerFrame.toFixed(1)} µs/frame   saved ${delta(composite.cpuUsPerFrame, snap.cpuUsPerFrame)}`);
+
+emit(`\n  cumulative custom-4 -> snapshot: saved ${delta(four.cpuUsPerFrame, snap.cpuUsPerFrame)}`);
+emit(`\n  @60Hz frame budget = 16667 µs (per ${VISIBLE_LINES}-line viewport):`);
+emit(`    custom-4 ${budget(four.cpuUsPerFrame)}  ->  composite-1 ${budget(composite.cpuUsPerFrame)}  ->  snapshot ${budget(snap.cpuUsPerFrame)}`);
 emit('');
 try { Fs.writeFileSync('/tmp/gutter-bench.txt', out); } catch {}

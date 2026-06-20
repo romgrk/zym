@@ -618,6 +618,10 @@ export class SyntaxController {
     const renderer = new GutterRenderer();
     (renderer as any).controller = this;
     renderer.setXpad(3);
+    // Left-align the composite block; columns are then laid out left→right from the xpad
+    // edge. Top-align vertically so the number sits on the text line.
+    (renderer as any).setXalign(0);
+    (renderer as any).setYalign(0);
     gutter.insert(renderer, 0);
     this.gutterRenderer = renderer;
     this.primeGutter();
@@ -1120,10 +1124,8 @@ export class SyntaxController {
     if (!this.gutterRenderer) return;
     if (digits === this.lineNumberPrimedDigits) return;
     this.lineNumberPrimedDigits = digits;
-    // Representative widest content: number + (space+chevron) + git cell + diag cell. The
-    // extra cells are one monospace char each (the bar/glyph aren't wider than a digit).
-    const extra = (this.foldingEnabled ? 2 : 0) + (this.gitCell ? 1 : 0) + (this.diagCell ? 1 : 0);
-    this.gutterRenderer.setText('0'.repeat((this.wantLineNumbers ? digits : 0) + extra), -1);
+    // The renderer sizes itself from the live column set in its `measure` (digits + present
+    // columns × monospace char width); a re-measure is all that's needed when width changes.
     this.gutterRenderer.queueResize();
   }
 
