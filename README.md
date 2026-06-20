@@ -66,7 +66,7 @@ Create a pull request in a single click.
 
 ![Creating a pull request from the current branch](img/demo-github-pr-create.png)
 
-See CI checks live status, and jump to any run log:
+See live CI check status, and jump to any run log:
 
 ![CI checks all passing for a branch](img/demo-github-ci-success.png)
 

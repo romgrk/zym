@@ -20,13 +20,13 @@ import * as Path from 'node:path';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
 import { listResumableSessions, relativeTime, type AgentSession } from '../agentSessions.ts';
 import { quilx } from '../quilx.ts';
-import type { AgentTerminal } from './AgentTerminal.ts';
+import type { Agent } from '../agents/types.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 export interface AgentPickerOptions {
   /** Reveal and focus an existing agent's terminal (or, for send-to, its target). */
-  onActivate: (agent: AgentTerminal) => void;
+  onActivate: (agent: Agent) => void;
   /** Launch a new agent with the typed prompt. */
   onStart: (prompt: string) => void;
   /** Resume a past conversation as a fresh agent. When supplied, the project's
@@ -40,7 +40,7 @@ export interface AgentPickerOptions {
 }
 
 type Entry =
-  | { kind: 'agent'; agent: AgentTerminal }
+  | { kind: 'agent'; agent: Agent }
   | { kind: 'session'; session: AgentSession };
 
 export function openAgentPicker(host: Overlay, options: AgentPickerOptions): void {

@@ -1,89 +1,49 @@
 /*
- * claudeAgent — the Claude-Code-specific integration for an agent terminal,
- * isolated from the tool-agnostic AgentTerminal host.
+ * claude-tui/session — the Claude-Code-specific integration for the terminal
+ * agent host (`claude-tui`), isolated from the tool-agnostic AgentTerminal.
  *
  * `ClaudeSession.create(command, resume)` decides whether a command is a `claude`
  * agent; for one it builds the augmented argv (a per-session `--settings` block
  * whose hooks report to IPC files) and returns a session that, once `watch()`n,
- * translates Claude's file-based signals into host callbacks:
+ * translates Claude's file-based signals into `AgentHost` callbacks:
  *
  *   - status (idle | working | waiting) from the hook status file;
  *   - the permission mode (plan | acceptEdits | auto | …) from the `.mode` file;
  *   - edited files from the PostToolUse `.files` log;
  *   - the session name (`/rename`) from `~/.claude/sessions/<pid>.json`.
  *
- * For any non-claude command `create` returns null and the host runs it plain.
- * Reporter script: assets/hooks/agent-status.sh.
+ * It is an `AgentDriver` (see ../types.ts); `createClaudeTuiDriver` is the
+ * factory the host installs. For any non-claude command `create` returns null
+ * and the host runs it plain. Reporter script: assets/hooks/agent-status.sh.
  */
 import * as Fs from 'node:fs';
 import * as Os from 'node:os';
 import * as Path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Gio } from '../gi.ts';
-
-/** Live status of an agent session. */
-export type AgentStatus = 'idle' | 'working' | 'waiting' | 'exited';
-
-/** Claude's permission mode, as reported by the hooks (`shift-tab` cycles it).
- *  `default` asks; the rest auto-allow to varying degrees, `plan` only plans. */
-export type AgentMode =
-  | 'default'
-  | 'plan'
-  | 'acceptEdits'
-  | 'auto'
-  | 'dontAsk'
-  | 'bypassPermissions';
+import { Gio } from '../../gi.ts';
+import type { AgentDriver, AgentHost, AgentMode, AgentResume } from '../types.ts';
 
 const AGENT_MODES = new Set<AgentMode>([
   'default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions',
 ]);
-
-/** Resume a past `claude` conversation rather than starting fresh. */
-export interface AgentResume {
-  /** Resume a specific session id (`claude --resume <id>`). */
-  sessionId?: string;
-  /** Continue the most recent conversation in the cwd (`claude --continue`). */
-  continue?: boolean;
-  /** Branch a copy instead of appending to the original (`--fork-session`). */
-  fork?: boolean;
-}
-
-/** Callbacks a ClaudeSession drives as Claude's IPC files change. */
-export interface ClaudeHost {
-  /** The spawned child's pid, or null before it has spawned. */
-  getPid(): number | null;
-  /** A new session status was reported by a hook. */
-  onStatus(status: AgentStatus): void;
-  /** The permission mode changed (`shift-tab` cycles plan/acceptEdits/auto/…). */
-  onMode(mode: AgentMode): void;
-  /** The edited-files list grew (deduped, launch order). */
-  onChangedFiles(files: string[]): void;
-  /** The session name changed (`/rename` / auto-summary), or null when cleared. */
-  onSessionName(name: string | null): void;
-  /** The agent reported a new working directory via the `set_worktree` bridge tool
-   *  (it moved into a different git worktree). Absolute path. */
-  onCwd(cwd: string): void;
-  /** The Bash validator spotted a `git worktree add <path>`; used to warn if the
-   *  agent then fails to announce it via set_worktree. Absolute path. */
-  onWorktreeCreated(path: string): void;
-}
 
 // node-gtk quirk: Gio.File instance methods are undefined on the concrete
 // wrapper, so we reach them through the interface prototype (see git.ts/FileTree).
 const FileProto = (Gio.File as any).prototype;
 
 // The bundled hook reporter (assets/hooks/agent-status.sh), invoked by claude's
-// hooks to write the session status to QUILX_STATUS_FILE.
+// hooks to write the session status to QUILX_STATUS_FILE. This file lives at
+// src/agents/claude-tui/, so three `..` reach the repo root.
 const HOOK_SCRIPT = Path.join(
-  Path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets', 'hooks', 'agent-status.sh',
+  Path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'assets', 'hooks', 'agent-status.sh',
 );
 
 // The bundled agent↔editor MCP bridge (assets/mcp/quilxBridge.mjs), exposing the
 // `set_worktree` tool the agent calls to re-root the editor (Phase 4 in
 // tasks/agents.md). Run by claude as an MCP stdio server via --mcp-config.
 const BRIDGE_SCRIPT = Path.join(
-  Path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets', 'mcp', 'quilxBridge.mjs',
+  Path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'assets', 'mcp', 'quilxBridge.mjs',
 );
 
 // Appended to claude's system prompt so it announces worktree moves through the
@@ -97,11 +57,11 @@ const WORKTREE_SYSTEM_PROMPT =
   'nothing else — exactly `\u{1F4C1} worktree: <branch>` (the branch you switched ' +
   'to) — and never explain the editor integration or the tool call.';
 
-export class ClaudeSession {
+export class ClaudeSession implements AgentDriver {
   /** The augmented argv to spawn (base argv + resume flags + `--settings`). */
   readonly command: string[];
   private readonly statusFile: string;
-  private host: ClaudeHost | null = null;
+  private host: AgentHost | null = null;
   private statusMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
   private filesMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
   private modeMonitor: InstanceType<typeof Gio.FileMonitor> | null = null;
@@ -196,7 +156,7 @@ export class ClaudeSession {
   }
 
   /** Start watching the IPC files; changes are reported through `host`. */
-  watch(host: ClaudeHost): void {
+  watch(host: AgentHost): void {
     this.host = host;
     this.statusMonitor = this.monitor(this.statusFile, Gio.FileMonitorFlags.WATCH_MOVES,
       () => this.readStatus());
@@ -368,6 +328,14 @@ export class ClaudeSession {
     return m;
   }
 }
+
+/** The `claude-tui` driver factory the terminal host installs: builds a
+ *  `ClaudeSession` for a `claude` command (status hooks + `--settings` + bridge),
+ *  or returns null for any other command (the host then runs it plain). */
+export const createClaudeTuiDriver = (
+  baseCommand: string[],
+  resume?: AgentResume,
+): AgentDriver | null => ClaudeSession.create(baseCommand, resume);
 
 /** Path to Claude's per-session state file (carries `.name` from `/rename`). */
 function claudeSessionFile(pid: number): string {

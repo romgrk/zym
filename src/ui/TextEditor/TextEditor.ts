@@ -525,6 +525,12 @@ export class TextEditor implements DocumentHost {
     this.editorModel.setCursorBufferPosition({ row: 0, column: 0 });
   }
 
+  /** Insert `text` at the cursor / over the selection (e.g. a soft newline in an
+   *  embedded prompt buffer). */
+  insertText(text: string): void {
+    this.editorModel.insertText(text);
+  }
+
   /** Switch tree-sitter highlighting to match `path`'s file type (buffer/preview mode). */
   setLanguageForPath(path: string): void {
     this.syntax.setLanguageForPath(path);
