@@ -85,7 +85,7 @@ import { normalizeWorkspaceEdit, applyTextEdits } from '../lsp/workspaceEdit.ts'
 import { uriToPath, type PositionEncoding } from '../lsp/position.ts';
 import type { WorkspaceEdit, CodeAction, Command } from 'vscode-languageserver-protocol';
 import { NotificationToasts } from './NotificationToasts.ts';
-import { loadKeymaps } from '../keymaps/load.ts';
+import { loadKeymaps, ensureUserKeymap } from '../keymaps/load.ts';
 import { loadConfig, configPath } from '../config/load.ts';
 import { type Disposable, type DisposableLike } from '../util/eventKit.ts';
 import { styles, addStyles } from '../styles.ts';
@@ -2580,13 +2580,14 @@ export class AppWindow {
     });
   }
 
-  // Settings: open the Adwaita preferences window over the config schema, or the
-  // raw config.json in an editor tab. Handlers only; `config:open` is bound to
-  // `space ,` in the central keymap.
+  // Settings: open the Adwaita preferences window over the config schema, the raw
+  // config.json, or the user keymap.json in an editor tab. Handlers only; the
+  // `space , …` bindings live in the central keymap.
   private registerConfigCommands() {
     quilx.commands.add('#AppWindow', {
-      'config:open': { didDispatch: () => openConfigEditor(this.window), description: 'Open preferences' },
+      'config:open-editor': { didDispatch: () => openConfigEditor(this.window), description: 'Open preferences' },
       'config:open-as-text': { didDispatch: () => this.openFile(configPath()), description: 'Open config.json' },
+      'keymap:open-as-text': { didDispatch: () => this.openFile(ensureUserKeymap()), description: 'Edit the user keymap (keymap.json)' },
     });
   }
 

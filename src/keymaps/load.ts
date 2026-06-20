@@ -35,9 +35,31 @@ const USER_PRIORITY = 100;
 // The live registration of the user keymap, disposed + recreated on file change.
 let userKeymapDisposable: Disposable | null = null;
 
-function userKeymapPath(): string {
+// Seed for a freshly-created user keymap — an empty table the user fills in
+// (mirrors config/load.ts's SEED).
+const SEED = '{}\n';
+
+/** Absolute path to the user keymap file (`$XDG_CONFIG_HOME/quilx/keymap.json`). */
+export function userKeymapPath(): string {
   const configHome = process.env.XDG_CONFIG_HOME || Path.join(Os.homedir(), '.config');
   return Path.join(configHome, 'quilx', 'keymap.json');
+}
+
+/**
+ * Ensure the user keymap file exists (creating its directory and an empty-table
+ * seed if missing), then return its path — so a command can open it for editing
+ * even before the user has written one. The file watcher installed by
+ * `loadKeymaps` picks up subsequent edits.
+ */
+export function ensureUserKeymap(): string {
+  const path = userKeymapPath();
+  try {
+    Fs.mkdirSync(Path.dirname(path), { recursive: true });
+    if (!Fs.existsSync(path)) Fs.writeFileSync(path, SEED);
+  } catch (error) {
+    console.warn(`[keymap] could not create ${path}: ${(error as Error).message}`);
+  }
+  return path;
 }
 
 // Warn (don't throw) on malformed entries: bad selectors, keystrokes that don't

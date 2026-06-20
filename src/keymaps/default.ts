@@ -53,7 +53,11 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space a f n': 'agent:send-file-to-new', // file path → new agent (editable prompt)
   'space n': 'notifications:toggle-log', // show/hide the bottom notification log
   'space ?': 'keymap:show', // show all keybindings and their source
-  'space ,': 'config:open', // preferences (GNOME-style comma == settings)
+  // Config (space , …): the preferences editor, plus quick access to the raw user files.
+  'space , ,': 'config:open-editor', // preferences editor (GNOME-style comma == settings)
+  'space , k': 'keymap:open-as-text', // edit the user keymap (keymap.json)
+  'space , c': 'config:open-as-text', // edit the user config (config.json)
+  'space , p': 'plugin:open-manager', // plugin manager
   'space f f': 'file-tree:focus', // focus the Files tab
   'space g g': 'git-panel:focus', // focus the git (Source Control) tab
   'space g f': 'git:fetch',

@@ -194,8 +194,8 @@ script is bundled at [`assets/hooks/agent-status.sh`](assets/hooks/agent-status.
 ## Configuration
 
 Settings live in `~/.config/quilx/config.json` (or `$XDG_CONFIG_HOME/quilx/`),
-created automatically on first launch and seeded with an empty `{}`. The file is
-a flat map of dotted keys to values, mirroring the schema key paths exactly:
+created automatically on first launch. The file is a flat map of dotted keys to
+values:
 
 ```json
 {
@@ -206,30 +206,17 @@ a flat map of dotted keys to values, mirroring the schema key paths exactly:
 ```
 
 Each key is an **override** on top of its built-in default — only list the ones
-you want to change; deleting a key reverts it to the default. Values are coerced
-and validated against the schema (e.g. an out-of-range number is clamped, the
-string `"4"` becomes the integer `4`); a value that can't fit is ignored with a
-warning. The file is **watched live**: saving it applies the changes without a
-restart.
+you want to change; deleting a key reverts it to the default. A value that's out
+of range or the wrong type is ignored with a warning. Saving the file applies the
+changes immediately, no restart needed.
 
-Rather than edit the file by hand, open the **preferences window** (`Space` `,`,
-or `config:open` from the command picker). It's an Adwaita settings UI generated
-from the schema — a switch, spin, combo, or entry per parameter, grouped by
-namespace — and edits write back to `config.json`. Because both directions watch
-the same config, hand-edits and the window stay in sync while it's open. The
-`config:open-as-text` command opens `config.json` itself in an editor tab.
+You can also open the **preferences window** (`space , ,`, or
+`config:open-editor` from the command picker), which writes back to the same
+`config.json`. Its labels are the config keys themselves (e.g. the `fileTree`
+group, the `hideHidden` row), so they match exactly what you'd write by hand. To
+edit the JSON in a tab instead, use `config:open-as-text`.
 
-Its group and row labels are the **raw config keys** (e.g. the `fileTree` group,
-the `hideHidden` row), not prettified display names. This is deliberate: we value
-transparency over "perfect" UI labels, so what the preferences window shows is
-exactly what you write in `config.json` — no mental mapping between a polished
-label and the underlying key.
-
-The application-wide schema is declared in [`src/quilx.ts`](src/quilx.ts);
-subsystems contribute their own namespaced keys at load time (e.g. the file tree
-registers `fileTree.*` and the Vim layer registers under `vim-mode-plus.*` — see
-[`src/ui/TextEditor/vim/settings.ts`](src/ui/TextEditor/vim/settings.ts)). The
-baseline keys:
+The baseline keys:
 
 | Key                            | Type      | Default | Description                                        |
 | ------------------------------ | --------- | ------- | -------------------------------------------------- |

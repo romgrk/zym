@@ -60,6 +60,14 @@ GObject, handler, timer, or child.
 
 App data follows XDG: config in `$XDG_CONFIG_HOME/quilx`, state (sessions, frecency) in `$XDG_STATE_HOME/quilx`, caches (LSP installs, generated GtkSource schemes) in `$XDG_CACHE_HOME/quilx` — never `/tmp`; tests get throwaway dirs via `src/util/testTmp.ts` (`tmpDir(prefix)`), which removes them on process exit so `/tmp/quilx-*` never accumulates.
 
+### Configuration
+
+See [config.md](config.md) for the settings store: the schema-driven `Config`
+(`src/util/Config.ts`), how the schema is assembled (baseline + subsystem
+namespaces + plugin contributions), persistence/live-watch of `config.json`
+(`src/config/load.ts`), and the schema-generated preferences window
+(`src/ui/ConfigEditor.ts`). User-facing usage is in the README.
+
 ### Plugin system
 
 See [plugins.md](plugins.md) for the architecture (Atom-inspired) and status, and
