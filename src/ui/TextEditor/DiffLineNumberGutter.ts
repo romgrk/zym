@@ -15,8 +15,22 @@
  */
 import { Gtk, GtkSource, registerClass, type SourceView } from '../../gi.ts';
 import { theme } from '../../theme/theme.ts';
+import type { StagedState } from '../multibuffer/diffMultiBuffer.ts';
 
 const COLOR = theme.ui.editor.lineNumber;
+
+// The staged/unstaged marker bar drawn in the diff multibuffer's gutter: info (blue) = the change
+// is already in the index, warning (amber) = it isn't yet. A blank keeps unchanged rows aligned.
+const STAGED_COLOR = theme.ui.status.info;
+const UNSTAGED_COLOR = theme.ui.status.warning;
+const MARKER_GLYPH = '▌';
+
+/** Leading gutter cell: a colored bar for a staged/unstaged change, else a blank of equal width. */
+function markerMarkup(state: StagedState): string {
+  if (!state) return ' ';
+  const color = state === 'staged' ? STAGED_COLOR : UNSTAGED_COLOR;
+  return `<span foreground="${color}">${MARKER_GLYPH}</span>`;
+}
 
 /** Split a `#rrggbb(aa)` color into a Pango `background` color + a `background_alpha` percentage
  *  (Pango markup's `background` ignores alpha; the alpha rides in `background_alpha`). */
@@ -110,6 +124,8 @@ class CombinedDiffLineNumberRenderer extends GtkSource.GutterRendererText {
   newLabels!: string[];
   oldBg: (string | null)[] | null = null;
   newBg: (string | null)[] | null = null;
+  // Per-row staged/unstaged marker (the leading bar). null = no marker (unchanged row).
+  stagedState: StagedState[] | null = null;
   // View rows that carry a header-widget band ABOVE them (an excerpt's first row). Their gutter
   // cell is taller by the band, so the number must bottom-align to land on the text instead of
   // floating up beside the filename widget. Other rows top-align (a `⋯` gap band sits BELOW its
@@ -119,9 +135,10 @@ class CombinedDiffLineNumberRenderer extends GtkSource.GutterRendererText {
 
   queryData(_lines: any, line: number) {
     (this as any).yalign = this.headerRows.has(line) ? 1 : 0;
+    const marker = markerMarkup(this.stagedState?.[line] ?? null);
     const oldCell = cellMarkup(this.oldLabels?.[line] ?? '', this.oldBg?.[line] ?? null);
     const newCell = cellMarkup(this.newLabels?.[line] ?? '', this.newBg?.[line] ?? null);
-    this.setMarkup(`${oldCell}${newCell}`, -1); // no separator — each column carries its own [space..space]
+    this.setMarkup(`${marker}${oldCell}${newCell}`, -1); // marker bar, then old/new columns (each carries its own [space..space])
   }
 }
 registerClass(CombinedDiffLineNumberRenderer);
@@ -143,6 +160,7 @@ export class CombinedDiffLineNumberGutter {
     oldBg: (string | null)[],
     newBg: (string | null)[],
     headerRows: Set<number> = new Set(),
+    stagedState: StagedState[] | null = null,
   ) {
     this.view = view;
     this.renderer = new CombinedDiffLineNumberRenderer();
@@ -151,33 +169,39 @@ export class CombinedDiffLineNumberGutter {
     this.renderer.oldBg = oldBg;
     this.renderer.newBg = newBg;
     this.renderer.headerRows = headerRows;
+    this.renderer.stagedState = stagedState;
     this.renderer.setXpad(0); // the `[space][number][space]` format carries the gutter's only spacing
     (this.view.getGutter(Gtk.TextWindowType.LEFT) as any).insert(this.renderer, 1);
     this.primeWidth(oldLabels, newLabels);
   }
 
-  /** Swap the per-row labels + backgrounds + header rows (after a re-diff re-flows the rows) and repaint. */
+  /** Swap the per-row labels + backgrounds + header rows + staged markers (after a re-diff re-flows
+   *  the rows) and repaint. */
   setData(
     oldLabels: string[],
     newLabels: string[],
     oldBg: (string | null)[],
     newBg: (string | null)[],
     headerRows: Set<number> = new Set(),
+    stagedState: StagedState[] | null = null,
   ): void {
     this.renderer.oldLabels = oldLabels;
     this.renderer.newLabels = newLabels;
     this.renderer.oldBg = oldBg;
     this.renderer.newBg = newBg;
     this.renderer.headerRows = headerRows;
+    this.renderer.stagedState = stagedState;
     this.primeWidth(oldLabels, newLabels);
     (this.renderer as any).queueDraw?.();
   }
 
-  /** Reserve width for the widest old + new columns (a number measured on a short line crops). */
+  /** Reserve width for the marker bar + the widest old + new columns (a number measured on a short
+   *  line crops). */
   private primeWidth(oldLabels: string[], newLabels: string[]): void {
     const w = (labels: string[]) => labels.reduce((max, l) => Math.max(max, l.length), 1);
-    // Mirror the rendered run ` old  new ` (each column ` <num> `, adjacent → two spaces at the seam).
-    this.renderer.setText(` ${'0'.repeat(w(oldLabels))}  ${'0'.repeat(w(newLabels))} `, -1);
+    // Mirror the rendered run `▌ old  new ` (marker bar, then each column ` <num> `, adjacent → two
+    // spaces at the seam).
+    this.renderer.setText(`${MARKER_GLYPH} ${'0'.repeat(w(oldLabels))}  ${'0'.repeat(w(newLabels))} `, -1);
     this.renderer.queueResize();
   }
 

@@ -29,6 +29,10 @@ import { CombinedDiffLineNumberGutter } from '../TextEditor/DiffLineNumberGutter
 import { buildDiffMultiBuffer, type DiffFile, type DiffMultiBuffer } from './diffMultiBuffer.ts';
 import { buildHeaderWidget, buildGapWidget } from './MultiBufferHeader.ts';
 import type { BlockDecorationHandle } from '../TextEditor/BlockDecorations.ts';
+import { buildRowMap, computeHunks, formatHunkPatch, hunkContainsBufferRow, type Hunk } from '../../util/hunkPatch.ts';
+import { applyPatch, git, repoRoot, type GitDone, type GitRepo } from '../../git.ts';
+import { quilx } from '../../quilx.ts';
+import * as Path from 'node:path';
 
 export interface DiffMultiBufferOptions {
   /** Changed files: base (old/HEAD) + current (new/working) content. */
@@ -40,6 +44,9 @@ export interface DiffMultiBufferOptions {
   editable?: boolean;
   /** The app's document registry — required when `editable`. */
   documents?: DocumentRegistry;
+  /** The repo model — enables hunk staging (the gutter marker + `s`/`u`): refreshes Source Control
+   *  after a stage/unstage, and re-reads the index when it changes externally. */
+  git?: GitRepo;
 }
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
@@ -101,6 +108,13 @@ export class DiffMultiBufferView {
   private readonly onActivate?: (location: { path: string; row: number }) => void;
   private readonly editable: boolean;
   private readonly registry?: DocumentRegistry;
+  // Hunk staging: the repo root, the per-file staged (index) blob, the last-built diff (for the
+  // caret→file/row lookup), and the repo model (refresh + external-change subscription).
+  private readonly repo: string | null;
+  private readonly gitRepo?: GitRepo;
+  private readonly indexText = new Map<string, string>();
+  private dmb: DiffMultiBuffer;
+  private gitUnsub?: () => void;
   private reDiffTimer: NodeJS.Timeout | null = null;
   private suppressReDiff = false;
   private lastLineCount = 0; // view buffer line count, to detect line-count-changing edits
@@ -118,6 +132,8 @@ export class DiffMultiBufferView {
     this.cwd = options.cwd;
     this.editable = !!options.editable;
     this.registry = options.documents;
+    this.gitRepo = options.git;
+    this.repo = options.cwd ? repoRoot(options.cwd) : null;
     if (this.editable && !this.registry) {
       throw new Error('DiffMultiBufferView: editable mode requires a DocumentRegistry');
     }
@@ -126,6 +142,7 @@ export class DiffMultiBufferView {
     // disk snapshot; the old/base side is always a read-only blob), then diff + project.
     for (const file of this.files) this.ensureSources(file);
     const dmb = this.buildDiff();
+    this.dmb = dmb;
 
     const sourceBuffers = new Map([...this.sources].map(([key, e]) => [key, e.buffer] as const));
     const syntaxMap = new Map([...this.sources].map(([key, e]) => [key, e.syntax] as const));
@@ -163,6 +180,7 @@ export class DiffMultiBufferView {
       gutterBg(dmb, 'old'),
       gutterBg(dmb, 'new'),
       headerRows(dmb),
+      dmb.stagedState,
     );
 
     this.installOverlays(dmb);
@@ -191,12 +209,20 @@ export class DiffMultiBufferView {
     }
     // Materializing the buffer (setText) leaves the caret at the END; start at the top.
     this.editor.model.setCursorBufferPosition({ row: 0, column: 0 });
+
+    // Staging is only meaningful inside a repo with the live worktree. Read each file's index blob
+    // (async) so the gutter marker can show staged vs unstaged, and refresh it when the index moves
+    // out from under us (someone stages elsewhere).
+    if (this.editable && this.repo) {
+      this.fetchIndexText(this.files.map((f) => f.path), () => this.refreshMarkers());
+      this.gitUnsub = this.gitRepo?.onChange(() => this.fetchIndexText(this.files.map((f) => f.path), () => this.refreshMarkers()));
+    }
   }
 
   /** Build the windowed diff from each file's base blob + its CURRENT new-side text (the live
    *  Document's text when editable, else the snapshot passed in). */
   private buildDiff(): DiffMultiBuffer {
-    const files = this.files.map((f) => ({ ...f, newText: this.currentNewText(f) }));
+    const files = this.files.map((f) => ({ ...f, newText: this.currentNewText(f), indexText: this.indexText.get(f.path) }));
     // Filename headers are widgets (not navigable buffer text), anchored above each file's rows.
     // `reveal` forces user-expanded (otherwise-elided) new-side rows visible (expand-context).
     const reveal = this.revealAll ? () => true : (r: number) => this.revealedNewRows.has(r);
@@ -247,6 +273,125 @@ export class DiffMultiBufferView {
     this.revealAll = false;
     this.revealedNewRows.clear();
     this.reDiff();
+  }
+
+  // --- hunk staging ----------------------------------------------------------
+
+  /** Stage the hunk under the caret (its unstaged change → the index). */
+  stageHunkAtCursor(): void {
+    this.applyStaging('stage');
+  }
+
+  /** Unstage the staged hunk under the caret (its index change reverted out of the index). */
+  unstageHunkAtCursor(): void {
+    this.applyStaging('unstage');
+  }
+
+  private applyStaging(mode: 'stage' | 'unstage'): void {
+    if (!this.repo) return void quilx.notifications.addTrace('Not in a git repository');
+    const ctx = this.caretFileContext();
+    if (!ctx) return void quilx.notifications.addTrace('No change under the cursor');
+    const { path, headLines, indexLines, worktreeLines, worktreeRow } = ctx;
+    const relPath = Path.relative(this.repo, path);
+
+    let hunk: Hunk | undefined;
+    let opts: { cached: boolean; reverse?: boolean };
+    if (mode === 'stage') {
+      // Unstaged hunks live in the index→worktree diff; the displayed new side IS the worktree, so
+      // the caret's worktree row indexes them directly.
+      hunk = computeHunks(indexLines, worktreeLines).find((h) => hunkContainsBufferRow(h, worktreeRow));
+      opts = { cached: true };
+      if (!hunk) return void quilx.notifications.addTrace('No unstaged change under the cursor');
+    } else {
+      // Staged hunks live in the HEAD→index diff (index coords); map the caret's worktree row into
+      // index coords to find the one under the cursor (mirrors GitGutter).
+      const wToIndex = buildRowMap(worktreeLines, indexLines);
+      const indexRow = wToIndex[Math.min(worktreeRow, wToIndex.length - 1)] ?? indexLines.length - 1;
+      hunk = computeHunks(headLines, indexLines).find((h) => hunkContainsBufferRow(h, indexRow));
+      opts = { cached: true, reverse: true };
+      if (!hunk) return void quilx.notifications.addTrace('No staged change under the cursor');
+    }
+
+    const done: GitDone = (ok, _out, err) => {
+      if (!ok) return void quilx.notifications.addError(`Failed to ${mode} hunk`, { detail: err.trim() });
+      this.gitRepo?.refresh(); // let the Source Control panel pick up the new index state
+      this.fetchIndexText([path], () => this.refreshMarkers()); // re-read the index → repaint markers
+    };
+    applyPatch(this.repo, formatHunkPatch(relPath, hunk), opts, done);
+  }
+
+  /** The file + worktree row under the caret, with that file's HEAD/index/worktree line arrays —
+   *  the inputs a staging op needs. Returns null when the caret isn't on a file's rows. */
+  private caretFileContext(): {
+    path: string;
+    headLines: string[];
+    indexLines: string[];
+    worktreeLines: string[];
+    worktreeRow: number;
+  } | null {
+    const hit = this.fileAtViewRow(this.cursorRow());
+    if (!hit) return null;
+    const file = this.files.find((f) => f.path === hit.path);
+    if (!file) return null;
+    return {
+      path: hit.path,
+      headLines: file.oldText.split('\n'),
+      indexLines: (this.indexText.get(hit.path) ?? '').split('\n'),
+      worktreeLines: this.currentNewText(file).split('\n'),
+      worktreeRow: hit.worktreeRow,
+    };
+  }
+
+  /** Which file a view row belongs to (via the header anchors) and a worktree row inside it a hunk
+   *  can key off: the row's own new-side line, or — for a removed/phantom or header/gap row — the
+   *  nearest new-side line in the same file (forward first, so a deletion anchors to the line that
+   *  follows it; `hunkContainsBufferRow` tolerates the ±1). */
+  private fileAtViewRow(viewRow: number): { path: string; worktreeRow: number } | null {
+    const anchors = this.headerAnchors;
+    if (!anchors.length) return null;
+    let fi = 0;
+    for (let i = 0; i < anchors.length; i++) if (anchors[i].viewRow <= viewRow) fi = i;
+    const start = anchors[fi].viewRow;
+    const end = fi + 1 < anchors.length ? anchors[fi + 1].viewRow : this.dmb.rowKinds.length;
+    const newOf = (r: number): number | null => (r >= start && r < end ? this.dmb.newNums[r] : null);
+    let wr = newOf(viewRow);
+    for (let d = 1; wr == null && (viewRow + d < end || viewRow - d >= start); d++) {
+      wr = newOf(viewRow + d) ?? newOf(viewRow - d);
+    }
+    return { path: anchors[fi].path, worktreeRow: wr != null ? wr - 1 : 0 };
+  }
+
+  /** Read each path's staged (index) blob (`git show :rel`) into `indexText`, then run `cb`. A file
+   *  absent from the index (untracked / staged-deleted) reads as empty (nothing staged there). */
+  private fetchIndexText(paths: string[], cb: () => void): void {
+    if (!this.repo || this.disposed) return;
+    let pending = paths.length;
+    if (pending === 0) return void cb();
+    for (const path of paths) {
+      const rel = Path.relative(this.repo, path);
+      git(this.repo, ['show', `:${rel}`], (ok, out) => {
+        if (this.disposed) return;
+        this.indexText.set(path, ok ? out : '');
+        if (--pending === 0) cb();
+      });
+    }
+  }
+
+  /** Rebuild the diff only to recompute the staged/unstaged classification and repaint the gutter
+   *  markers. Geometry is worktree↔HEAD, unchanged by an index move, so this skips the retarget
+   *  splice (no flash, no caret move). */
+  private refreshMarkers(): void {
+    if (this.disposed) return;
+    const dmb = this.buildDiff();
+    this.dmb = dmb;
+    this.lineNumbers?.setData(
+      lineLabels(dmb.oldNums),
+      lineLabels(dmb.newNums),
+      gutterBg(dmb, 'old'),
+      gutterBg(dmb, 'new'),
+      headerRows(dmb),
+      dmb.stagedState,
+    );
   }
 
   /** (Re)place the header widgets (above each file's first row) + the `⋯` gap bands (below the
@@ -381,6 +526,7 @@ export class DiffMultiBufferView {
     const caret = this.editor.model.getCursorBufferPosition();
     const anchor = this.projection.viewToSource(caret.row, caret.column);
     const dmb = this.buildDiff();
+    this.dmb = dmb;
     this.suppressReDiff = true; // retarget's view edits must not re-trigger a re-diff
     try {
       this.projectionView.retarget(dmb.items);
@@ -388,7 +534,7 @@ export class DiffMultiBufferView {
       this.suppressReDiff = false;
     }
     this.applyDecorations(dmb);
-    this.lineNumbers?.setData(lineLabels(dmb.oldNums), lineLabels(dmb.newNums), gutterBg(dmb, 'old'), gutterBg(dmb, 'new'), headerRows(dmb));
+    this.lineNumbers?.setData(lineLabels(dmb.oldNums), lineLabels(dmb.newNums), gutterBg(dmb, 'old'), gutterBg(dmb, 'new'), headerRows(dmb), dmb.stagedState);
     this.installOverlays(dmb); // re-place header + gap widgets (counts/positions re-flowed)
     // retarget swapped rows but didn't repaint — re-highlight the spliced sections.
     this.editor.repaintSyntax();
@@ -486,6 +632,8 @@ export class DiffMultiBufferView {
     this.reDiffTimer = null;
     if (this.microReDiffTickId) (this.editor.sourceView as any).removeTickCallback(this.microReDiffTickId);
     this.microReDiffTickId = 0;
+    this.gitUnsub?.(); // stop listening for external index changes
+    this.gitUnsub = undefined;
     for (const unsub of this.modifiedUnsubs) unsub(); // detach from the (possibly shared) Documents
     this.modifiedUnsubs.length = 0;
     for (const { handle } of [...this.headerOverlays, ...this.gapOverlays]) handle.remove();

@@ -13,6 +13,7 @@
  */
 import type { Item } from '../TextEditor/ViewProjection.ts';
 import { diffRows, rowsToItems, type DiffRow } from './diffSegments.ts';
+import { diffLines } from '../../util/lineDiff.ts';
 import * as Path from 'node:path';
 
 /** One changed file: its base (old / HEAD) and current (new / working) content. */
@@ -22,16 +23,26 @@ export interface DiffFile {
   label?: string;
   oldText: string;
   newText: string;
+  /** The staged (index) blob, when known — `git show :path`. Drives the per-row staged/unstaged
+   *  classification (the gutter marker). Omitted in read-only mode / outside a repo. */
+  indexText?: string;
 }
 
 /** The kind of each projection row, for decorations / gutters. */
 export type DiffRowKind = 'header' | 'blank' | 'gap' | 'context' | 'added' | 'removed';
+
+/** Whether a changed row's change is already in the index. `null` for rows with no change to stage
+ *  (header/blank/gap/context, and any file whose `indexText` wasn't supplied). */
+export type StagedState = 'staged' | 'unstaged' | null;
 
 export interface DiffMultiBuffer {
   /** The ordered projection items for `ViewProjection.build`. */
   items: Item[];
   /** Per projection row (0-based), aligned with the materialized view. */
   rowKinds: DiffRowKind[];
+  /** Per projection row: whether the change there is staged / unstaged (the gutter marker), or
+   *  `null` for an unchanged / non-stageable row, or any file with no `indexText`. */
+  stagedState: StagedState[];
   /** Per projection row: the 1-based OLD / NEW file line number, or null (header/gap/blank,
    *  and the side a row doesn't exist on — added has no old, removed no new). For the gutters. */
   oldNums: (number | null)[];
@@ -72,6 +83,36 @@ const newKey = (path: string): string => `new:${path}`;
 const oldKey = (path: string): string => `old:${path}`;
 const OP_KIND = { eq: 'context', ins: 'added', del: 'removed' } as const;
 
+/**
+ * Classify each change in the displayed worktree↔HEAD diff as staged or unstaged, by where it sits
+ * relative to the index — the same model `GitGutter` uses (unstaged = index↔worktree, staged =
+ * HEAD↔index). Returns two membership lookups:
+ *   - `wtInIndex[worktreeRow]` — true when that worktree line is already in the index (so a row
+ *     ADDED vs HEAD is a STAGED addition; false = an unstaged addition).
+ *   - `headRemovedInIndex[headRow]` — true when that HEAD line is also gone from the index (so a
+ *     row REMOVED vs HEAD is a STAGED deletion; false = an unstaged deletion).
+ */
+function classifyStaged(headLines: string[], indexLines: string[], worktreeLines: string[]): {
+  wtInIndex: boolean[];
+  headRemovedInIndex: boolean[];
+} {
+  const wtInIndex = new Array<boolean>(worktreeLines.length).fill(false);
+  let wi = 0;
+  for (const op of diffLines(indexLines, worktreeLines)) {
+    if (op === 'ins') wtInIndex[wi++] = false; // in worktree, not in index → unstaged add
+    else if (op === 'eq') wtInIndex[wi++] = true; // in both → already staged
+    // 'del' consumes an index line only — no worktree row to mark
+  }
+  const headRemovedInIndex = new Array<boolean>(headLines.length).fill(false);
+  let hi = 0;
+  for (const op of diffLines(headLines, indexLines)) {
+    if (op === 'del') headRemovedInIndex[hi++] = true; // gone from the index → staged deletion
+    else if (op === 'eq') headRemovedInIndex[hi++] = false; // still in the index → unstaged deletion
+    // 'ins' is an index-only addition — no HEAD row to mark
+  }
+  return { wtInIndex, headRemovedInIndex };
+}
+
 // Lines of unchanged context kept around each change; unchanged runs longer than this on a
 // side collapse to a `⋯` gap. A gap shorter than MIN_ELIDE is shown instead (eliding it saves
 // nothing). Matches the search multibuffer's context feel.
@@ -83,6 +124,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
   const widgetHeaders = opts.headers === 'widget';
   const items: Item[] = [];
   const rowKinds: DiffRowKind[] = [];
+  const stagedState: StagedState[] = [];
   const oldNums: (number | null)[] = [];
   const newNums: (number | null)[] = [];
   const sources = new Map<string, string[]>();
@@ -93,6 +135,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
   // Emit one row: its kind + the old/new line numbers it carries.
   const block = (kind: DiffRowKind): void => {
     rowKinds.push(kind);
+    stagedState.push(null);
     oldNums.push(null);
     newNums.push(null);
   };
@@ -112,6 +155,16 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
     // a bare `⋯ N unchanged lines` for them (e.g. a mode-only change, or the node_modules
     // symlink whose blob round-trips equal) is just a non-expandable dead entry.
     if (!recs.some((r) => r.op !== 'eq')) return;
+
+    // Staged/unstaged classification (the gutter marker), when the index blob is known. A row
+    // ADDED vs HEAD is staged iff its worktree line is already in the index; a row REMOVED vs HEAD
+    // is staged iff that HEAD line is also gone from the index.
+    const staged = file.indexText !== undefined ? classifyStaged(oldLines, split(file.indexText), newLines) : null;
+    const stagedFor = (rec: DiffRow): StagedState => {
+      if (!staged || rec.op === 'eq') return null;
+      const inIndex = rec.op === 'ins' ? staged.wtInIndex[rec.newRow] : staged.headRemovedInIndex[rec.oldRow];
+      return inIndex ? 'staged' : 'unstaged';
+    };
 
     const label = file.label ?? (cwd ? Path.relative(cwd, file.path) : Path.basename(file.path));
     let header: DiffMultiBuffer['headerAnchors'][number] | null = null;
@@ -172,6 +225,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
         items.push(...rowsToItems(window, nKey, oKey).items);
         for (const rec of window) {
           rowKinds.push(OP_KIND[rec.op]);
+          stagedState.push(stagedFor(rec));
           oldNums.push(rec.op === 'ins' ? null : rec.oldRow + 1);
           newNums.push(rec.op === 'del' ? null : rec.newRow + 1);
         }
@@ -187,7 +241,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
     }
   });
 
-  return { items, rowKinds, oldNums, newNums, sources, language, headerAnchors, gapAnchors };
+  return { items, rowKinds, stagedState, oldNums, newNums, sources, language, headerAnchors, gapAnchors };
 }
 
 function gapLabel(count: number): string {

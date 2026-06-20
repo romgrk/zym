@@ -60,8 +60,20 @@ Three layers — all shipped and live:
   *Diagnostics / LSP across excerpts = Phase 4.*
 - **G5 — Continuous multi-file editable diff.** ✅ surface built + GUI-verified (write-through,
   phantom rejection, live re-diff with no flash/caret-jump, gutter alignment, expand-context
-  `zo`/`zR`/`zm`). **Remaining: staging ops (stage/unstage hunks/lines) + retire `GitStagingView`
-  — this is the next task (#17).** Also one deferred polish: the gutter band beside the filename
+  `zo`/`zR`/`zm`). **Hunk staging ✅** (`feat/multibuffer-staging`): each file's index blob (`git
+  show :p`) is read and every changed row classified staged/unstaged (the same model `GitGutter`
+  uses — staged = HEAD↔index, unstaged = index↔worktree); a gutter marker bar shows it (info/blue =
+  staged, warning/amber = unstaged). `space h s`/`space h u` (scoped to `#TextEditor.diff-multibuffer`
+  so bare vim `s`/`u` stay substitute/undo) → `diff:stage-hunk`/`diff:unstage-hunk` build the hunk
+  patch (`formatHunkPatch`) and `applyPatch --cached` (`--reverse` for unstage), then re-read the
+  index + repaint markers (no geometry reflow — staging doesn't touch the worktree↔HEAD diff).
+  Partial-file (per-hunk) staging works; external index moves refresh via `git.onChange`. Tested:
+  `DiffMultiBufferStaging.test.ts` (real temp-repo round-trip). **Commit ✅** — `space g c` →
+  `git:start-commit` opens `.git/COMMIT_EDITMSG` in a tab (save+close commits). **`GitStagingView`
+  retired ✅** — view + `openStagingView`/`stagingViews` + `git:open-staging` + the `#GitStagingView`
+  keymaps deleted; `space g o` now opens the diff multibuffer (the replacement). *Remaining polish:
+  hunk-level discard on the surface (whole-file discard still lives on `GitPanel`).* Also one
+  deferred polish: the gutter band beside the filename
   widget can't be painted the header color (node-gtk blocks gutter background drawing) — see
   `tasks/code-editing/gutter-cell-background.md`.
 - **G6 — Editable project search + replace-all.** ✅ (`space *`; `file:save` routes to the active
@@ -76,34 +88,16 @@ Three layers — all shipped and live:
 - **G11 — Session persistence.** ☐ serialize/restore multibuffer tabs; also a close-confirmation
   for a file edited ONLY in a multibuffer (unsaved edits discarded on close).
 
-## Next pickup (two tasks)
+## Next pickup
 
-### Task A — finish G5: staging ops on the editable diff, then retire `GitStagingView`
+### ~~Task A — finish G5: staging ops on the editable diff, then retire `GitStagingView`~~ ✅ DONE
 
-The editable continuous diff (`DiffMultiBufferView`, `space g D`) is the replacement surface; it
-just needs staging affordances, then `GitStagingView` (the old file-list accordion) is deleted.
-
-- **Reuse the machinery — it already exists:**
-  - `src/git/cli.ts`: `stage(root, relPath)`, `unstage(root, relPath)`, `stageAll`/`unstageAll`,
-    and **`applyPatch(...)`** (runs `git apply --cached`, with reverse for unstage) — the path for
-    partial/hunk/line staging.
-  - `src/util/hunkPatch.ts`: `computeHunks`, **`formatHunkPatch(relPath, hunk)`**,
-    `hunkContainsBufferRow(hunk, row)`, `buildRowMap` — build the patch to feed `applyPatch`.
-  - `DiffMultiBufferView` already has the windowed diff, per-row `DiffRowKind`, old/new line
-    numbers, caret row, and live re-diff on change.
-- **Wiring:** add commands scoped to `#TextEditor.diff-multibuffer` (e.g. `s`/`u` = stage/unstage
-  the hunk at the caret; a visual range = line-level via a row-subset patch) → build the patch with
-  `formatHunkPatch` → `applyPatch` (`--cached`, `--reverse` for unstage) → refresh git status +
-  re-diff. Commit reuses GitStagingView's `onCommit` (opens `.git/COMMIT_EDITMSG`); add discard.
-- **Decision to make (the real design question):** today the diff is **working-tree vs HEAD** only.
-  Staging introduces the **index** as a third state. Decide how the one continuous surface shows
-  staged vs unstaged — sections (Staged / Unstaged like the old view), a per-file toggle, or two
-  diff bases per file (staged = index↔HEAD, unstaged = worktree↔index). `buildDiffMultiBuffer`
-  takes `files: {path, oldText, newText}[]`; extend it to carry the staged/unstaged dimension.
-- **Retire:** delete `src/ui/GitStagingView.ts`; remove `AppWindow.openStagingView` + `stagingViews`
-  + the `git:open-staging` command and its `space g o` keymap (or repoint them at the diff
-  multibuffer). Read `tasks/git/staging-interface.md` for the original design + decisions to carry
-  over (per-row diff base, discard semantics, untracked = all-added).
+Shipped on `feat/multibuffer-staging` (see G5 above). The design question resolved to: **keep the one
+worktree↔HEAD editable surface**, classify each changed row staged/unstaged against the index, and
+show it with a **gutter marker bar** (info/blue = staged, warning/amber = unstaged) — not sections.
+`space h s`/`space h u` stage/unstage the hunk at the caret; `space g c` commits; `GitStagingView`
+is deleted (`space g o` now opens the diff multibuffer). *Only remaining bit: hunk-level discard on
+the surface (whole-file discard still lives on `GitPanel`).*
 
 ### Task B — merge `TextEditor` and `MultiBufferView` into one (the G1 cleanup)
 

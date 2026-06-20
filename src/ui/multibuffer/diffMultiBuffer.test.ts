@@ -89,6 +89,39 @@ test('a file with no text change is skipped entirely (no dead `⋯ unchanged` en
   assert.deepEqual(dmb.rowKinds, []);
 });
 
+test('stagedState is null on every row when no index blob is supplied', () => {
+  const dmb = buildDiffMultiBuffer([{ path: '/a.ts', oldText: 'a\nb\nc\n', newText: 'a\nX\nc\n' }]);
+  assert.equal(dmb.stagedState.length, dmb.rowKinds.length, 'one staged-state per row');
+  assert.ok(dmb.stagedState.every((s) => s === null), 'no classification without an index');
+});
+
+test('stagedState: addition already in the index reads staged, not-yet in index reads unstaged', () => {
+  // HEAD has neither X nor Y; the index has only X staged; the worktree adds both.
+  const dmb = buildDiffMultiBuffer([
+    { path: '/a.ts', oldText: 'a\nc\n', indexText: 'a\nX\nc\n', newText: 'a\nX\nY\nc\n' },
+  ]);
+  // rows: header, a(ctx), X(added→staged), Y(added→unstaged), c(ctx), ""(ctx)
+  assert.deepEqual(dmb.rowKinds, ['header', 'context', 'added', 'added', 'context', 'context']);
+  assert.deepEqual(dmb.stagedState, [null, null, 'staged', 'unstaged', null, null]);
+});
+
+test('stagedState: deletion gone from the index reads staged, still in index reads unstaged', () => {
+  // HEAD has b and d; the index has dropped b (staged delete) but kept d; worktree drops both.
+  const dmb = buildDiffMultiBuffer([
+    { path: '/a.ts', oldText: 'a\nb\nd\ne\n', indexText: 'a\nd\ne\n', newText: 'a\ne\n' },
+  ]);
+  // rows: header, a(ctx), b(removed→staged), d(removed→unstaged), e(ctx), ""(ctx)
+  assert.deepEqual(dmb.rowKinds, ['header', 'context', 'removed', 'removed', 'context', 'context']);
+  assert.deepEqual(dmb.stagedState, [null, null, 'staged', 'unstaged', null, null]);
+});
+
+test('stagedState: untracked file (empty HEAD+index) is all-unstaged; fully-staged reads staged', () => {
+  const unstaged = buildDiffMultiBuffer([{ path: '/n.ts', oldText: '', indexText: '', newText: 'x\ny\n' }]);
+  assert.ok(unstaged.stagedState.filter((s) => s !== null).every((s) => s === 'unstaged'));
+  const staged = buildDiffMultiBuffer([{ path: '/n.ts', oldText: '', indexText: 'x\ny\n', newText: 'x\ny\n' }]);
+  assert.ok(staged.stagedState.filter((s) => s !== null).every((s) => s === 'staged'));
+});
+
 test('long unchanged runs are elided to a ⋯ gap; the change + context stay', () => {
   const base = Array.from({ length: 22 }, (_, i) => `L${i}`);
   const oldText = base.join('\n') + '\n';

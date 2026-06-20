@@ -1,5 +1,12 @@
 # Staging interface (tab-based)
 
+> **RETIRED (2026-06).** `GitStagingView` (`src/ui/GitStagingView.ts`) and its `git:open-staging`
+> command were deleted; its job is now the **continuous editable diff multibuffer**
+> (`DiffMultiBufferView`, `space g o`/`space g D`) with hunk staging on the gutter marker
+> (`space h s`/`space h u`) and commit via `space g c`. This doc is kept for history — the
+> per-row diff base, discard semantics, and untracked=all-added decisions informed the replacement.
+> See [../code-editing/multibuffer.md](../code-editing/multibuffer.md).
+
 A second Source-Control surface that opens **as an editor tab** (via
 `workbench.center.add`), distinct from the left-dock `GitPanel` (which stays).
 It mirrors what `git status` shows — staged files in green, unstaged/untracked in

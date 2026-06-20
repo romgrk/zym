@@ -32,7 +32,6 @@ import { listResumableSessions, recordSessionWorktree, relativeTime, type AgentS
 import { WorkbenchList, PROJECT_NAME } from './WorkbenchList.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
 import { GitPanel } from './GitPanel.ts';
-import { GitStagingView } from './GitStagingView.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { Icons, iconLabel } from './icons.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
@@ -155,9 +154,6 @@ export class AppWindow {
   // Maps an editor's root widget to its center tab handle, so a location jump can
   // reveal an already-open file instead of opening a duplicate tab.
   private readonly editorChildren = new Map<Widget, PanelChild>();
-  // Tab-hosted staging views (git:open-staging), keyed by root widget so the view
-  // is disposed (releasing its embedded editor's document ref) when its tab closes.
-  private readonly stagingViews = new Map<Widget, GitStagingView>();
   // Tab-hosted multibuffers (project:search-multibuffer), keyed by root widget so the view
   // is disposed (freeing its per-source DocumentSyntax parses) when its tab closes.
   private readonly multibufferViews = new Map<Widget, MultiBufferView>();
@@ -1221,8 +1217,6 @@ export class AppWindow {
     this.editorRegistrations.delete(widget);
     this.editors.get(widget)?.dispose(); // explicit teardown, not reliant on the GTK destroy signal
     this.editors.delete(widget);
-    this.stagingViews.get(widget)?.dispose(); // release its embedded editor + git subscription
-    this.stagingViews.delete(widget);
     this.multibufferViews.get(widget)?.dispose(); // free its per-source parses
     this.multibufferViews.delete(widget);
     this.diffMultibufferViews.get(widget)?.dispose();
@@ -2098,9 +2092,9 @@ export class AppWindow {
         description: 'Diff the current file (working tree vs HEAD)',
         when: () => this.activeEditor?.currentFile != null,
       },
-      'git:open-staging': {
-        didDispatch: () => this.openStagingView(),
-        description: 'Open the staging view (status + diff) in a tab',
+      'git:start-commit': {
+        didDispatch: () => this.startCommit(),
+        description: 'Commit staged changes (edit the message in a tab)',
       },
       'project:search-multibuffer': {
         didDispatch: () => this.openSearchMultibuffer(),
@@ -2124,6 +2118,16 @@ export class AppWindow {
       'diff:collapse-context': {
         didDispatch: () => this.activeDiffMultibuffer()?.collapseContext(),
         description: 'Re-collapse expanded context back to the windowed diff',
+        when: () => this.activeDiffMultibuffer() !== null,
+      },
+      'diff:stage-hunk': {
+        didDispatch: () => this.activeDiffMultibuffer()?.stageHunkAtCursor(),
+        description: 'Stage the hunk under the cursor (continuous diff)',
+        when: () => this.activeDiffMultibuffer() !== null,
+      },
+      'diff:unstage-hunk': {
+        didDispatch: () => this.activeDiffMultibuffer()?.unstageHunkAtCursor(),
+        description: 'Unstage the hunk under the cursor (continuous diff)',
         when: () => this.activeDiffMultibuffer() !== null,
       },
       'app:quit': { didDispatch: () => this.onQuit(), description: 'Quit quilx' },
@@ -2236,6 +2240,7 @@ export class AppWindow {
       cwd,
       editable: true,
       documents: this.documents,
+      git: this.workbench.git, // enables the staged/unstaged gutter marker + `space h s`/`space h u`
       onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
     });
     const title = () => (view.isModified() ? `${Icons.modified} ${Icons.git}  Diff` : `${Icons.git}  Diff`);
@@ -2245,22 +2250,6 @@ export class AppWindow {
     });
     this.diffMultibufferViews.set(view.root, view); // disposeChild tears it down on close
     view.onModifiedChange(() => child.setTitle(title())); // show the unsaved marker on edit/save
-    child.select();
-    view.focus();
-  }
-
-  /** Open the tab-hosted staging view (status list + an editable diff pane). */
-  private openStagingView(): void {
-    const view = new GitStagingView({
-      cwd: this.workbench.cwd,
-      git: this.workbench.git,
-      onCommit: () => this.startCommit(), // opens COMMIT_EDITMSG in the editor area
-    });
-    const child = this.workbench.center.add(view.root, {
-      title: `${Icons.git}  Staging`,
-      requireTabBar: true,
-    });
-    this.stagingViews.set(view.root, view); // disposeChild tears it down on close
     child.select();
     view.focus();
   }
