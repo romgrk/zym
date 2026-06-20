@@ -88,11 +88,12 @@ activation state.
   `<script>` → the TypeScript plugin's tsx grammar (`js`), each a no-op if its
   guest grammar isn't registered.
 - [x] **More bundled plugins** (`registerBuiltinPlugins()` in `src/plugin/index.ts`
-  registers all 9): **markdown** (LSP + config + vendored block/inline grammars +
+  registers all 10): **markdown** (LSP + config + vendored block/inline grammars +
   image preview), **css** (CSS/SCSS/Sass; bundled + vendored grammars), **json**
   (JSON/JSONC), **cpp** (C/C++; clangd), **rust** (rust-analyzer), **python**
-  (pyright/pylsp/ruff), and **color-preview** (the `observeTextEditors` reference
-  consumer — no language layer). See [plugins.md](plugins.md) → Bundled plugins.
+  (pyright/pylsp/ruff), **bash** (shell; bash-language-server), and **color-preview**
+  (the `observeTextEditors` reference consumer — no language layer). See
+  [plugins.md](plugins.md) → Bundled plugins.
 - [ ] UI-component / panel contributions (register a `Panel`/dock widget).
 - [ ] Snippets, menus, and command-palette categories as contribution points.
 - [ ] Out-of-repo plugin discovery + loading (npm-style packages, a manifest

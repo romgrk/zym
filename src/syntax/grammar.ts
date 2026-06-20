@@ -31,6 +31,9 @@ let initPromise: Promise<void> | null = null;
  * tree corrupt so a later incremental `tree.edit` faults with "memory access out of
  * bounds". We supply the gap through `Parser.init`: the linker resolves side-module
  * imports against these (keyed by emscripten's mangled names — a leading underscore).
+ *
+ * Bash's external scanner additionally calls `isalpha` (variable-name
+ * classification in `$((...))` / parameter expansion), which the runtime also omits.
  */
 function initOptions(dir: string): Record<string, unknown> {
   // `strcmp` compares NUL-terminated strings by pointer, so it needs the wasm heap.
@@ -52,6 +55,11 @@ function initOptions(dir: string): Record<string, unknown> {
       if (!heap) return 0;
       while (heap[a] !== 0 && heap[a] === heap[b]) { a++; b++; }
       return heap[a] - heap[b];
+    },
+    // isalpha(int): nonzero for ASCII letters in the C locale (the scanner only
+    // classifies ASCII), 0 otherwise.
+    _isalpha(c: number): number {
+      return ((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)) ? 1 : 0;
     },
     // Surface a scanner assertion as a real error rather than an opaque wasm fault.
     ___assert_fail(): never { throw new Error('tree-sitter grammar scanner assertion failed (__assert_fail)'); },

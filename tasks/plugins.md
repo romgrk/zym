@@ -127,6 +127,8 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   `grammar.test.ts`).
 - `plugins/python/` — the Python plugin (`index.ts`, `queries/python/`,
   `python.test.ts`, `grammar.test.ts`).
+- `plugins/bash/` — the Bash plugin (`index.ts`, `queries/bash/`, `bash.test.ts`,
+  `grammar.test.ts`).
 - `plugins/color-preview/` — the color-preview plugin (`index.ts` editor wiring +
   `colors.ts` pure parser/contrast, `colors.test.ts`); the `observeTextEditors`
   reference consumer.
@@ -193,6 +195,14 @@ Keymaps and commands already returned Disposables (`quilx.keymaps.add`,
   venv's console script symlinked into the `node_modules/.bin` the manager searches
   (the only discoverable managed path), so nothing touches the user's global env.
   Needs `python3`; absent servers are skipped gracefully until installed.
+- **bash** — shell detection (`.sh`/`.bash`/`.ksh`/`.zsh`/… plus extension-less
+  config files like `.bashrc`/`.profile`/`PKGBUILD`) and the bundled
+  `tree-sitter-bash` grammar (highlighting + folding, queries under `queries/bash/`),
+  with **bash-language-server** as the LSP (single-file; prefers a `.git` root),
+  installable via a plain `{ via: 'npm' }` spec. The language sets `lspId:
+  'shellscript'` (the protocol's id for shell). The grammar's external scanner imports
+  `isalpha`, which the pinned web-tree-sitter runtime omits — shimmed once in
+  `src/syntax/grammar.ts` alongside the Markdown scanner's `strcmp`/`towlower`.
 - **color-preview** — the first **`observeTextEditors`** consumer (no language layer at
   all). Background-tints color literals — hex (`#rgb`…`#rrggbbaa`), `rgb()/rgba()`,
   `hsl()/hsla()` — with the color they represent, contrast-picking black/white

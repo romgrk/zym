@@ -1,0 +1,10 @@
+{
+  "name": "@quilx/plugin-bash",
+  "version": "0.1.0",
+  "description": "Bash / shell support for quilx",
+  "type": "module",
+  "main": "./index.ts",
+  "peerDependencies": {
+    "quilx": "^0.1.0"
+  }
+}
