@@ -32,7 +32,7 @@ import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { SourceLineNumberGutter } from './SourceLineNumberGutter.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
 import { Range } from '../text/Range.ts';
-import type { BlockBandSpec, BlockBandSet } from './TextEditor/BlockDecorations.ts';
+import type { BlockDecorationSpec, BlockDecorationSet } from './TextEditor/BlockDecorationSet.ts';
 
 /** One file's contribution: the regions (source model row spans) to show. */
 export interface ExcerptInput {
@@ -76,8 +76,9 @@ export class SearchResultsView {
   private readonly editable: boolean;
   private readonly registry?: DocumentRegistry;
   private readonly gutter: SourceLineNumberGutter;
-  // Filename-header + `⋯` gap widget bands (not buffer rows), reconciled via the shared BlockBandSet.
-  private bands!: BlockBandSet;
+  // Filename-header + `⋯` gap widget bands (not buffer rows), declared as SOURCE-anchored block
+  // decorations — the editor projects + reconciles them; their positions then ride the anchor marks.
+  private bands!: BlockDecorationSet;
   // Per-excerpt collapse: the full excerpts (re-derived on toggle), the raw inputs (for re-
   // highlighting), and the set of collapsed excerpt indices. A collapsed excerpt shows only its
   // first source row (always anchorable — no block rows, no view-fold; the painter stays fold-naive).
@@ -119,7 +120,7 @@ export class SearchResultsView {
     // editor owns + disposes it.
     this.editor = new TextEditor({ source: new MultiBufferDocument(this.projectionView, painter) });
     if (!this.editable) this.editor.model.setReadOnly(true);
-    this.bands = this.editor.inlineBlocks.bands();
+    this.bands = this.editor.blockDecorations();
     // Scope the per-excerpt collapse keymap (`z a`/`z M`/`z R`) to this surface — more specific than
     // vim's `#TextEditor`, so it wins while other `z` motions fall through.
     (this.editor.sourceView as any).addCssClass('search-results');
@@ -145,71 +146,68 @@ export class SearchResultsView {
     this.highlightMatches(this.excerptInputs);
     this.installBands();
     if (this.editable) {
-      // A row-count-changing edit (Enter / `o` / `dd`) re-segments the projection, so the view↔
-      // source mapping shifts under the painter and the band anchors land on new rows. Repaint the
-      // stitched highlighting and re-place the header/gap bands so both follow the reflow. (A within-
-      // line edit needs neither — BlockDecorations re-reserves bands itself, and the painter
-      // repaints the reparsed source range.)
+      // The HEADER/GAP bands need no per-edit handling: declared as source anchors (installBands),
+      // their positions ride the BlockDecorations marks through every edit/undo/splice, and the
+      // band SET only changes on collapse (which re-runs installBands). The only remaining per-edit
+      // concern is the stitched SYNTAX highlighting — the painter needs a nudge after a row-count
+      // reflow. Repaint on a row-count change (write-through; the projection is fresh then), and
+      // again after a deferred reverse-sync remap settles (its 'changed' fires on a stale map).
       this.lastLineCount = (this.editor.sourceView as any).getBuffer().getLineCount();
       this.editor.model.onDidChangeText(() => {
-        // A reverse-sync edit (undo / another view) defers its remap, so the projection is stale
-        // here — reconciling bands now would anchor headers off the old map. Skip; the post-rebuild
-        // reflow handler below does it against the fresh map. A write-through edit re-segments
-        // synchronously (no pending sync), so this runs immediately as before.
-        if (this.projectionView.isSyncPending()) return;
+        if (this.projectionView.isSyncPending()) return; // stale map — the reflow handler repaints
         const n = (this.editor.sourceView as any).getBuffer().getLineCount();
         if (n === this.lastLineCount) return;
         this.lastLineCount = n;
         this.editor.repaintSyntax();
-        this.installBands();
       });
-      // After a deferred remap settles the projection (undo / cross-view edit), reconcile the bands
-      // against the now-current map (the 'changed' above skipped it while the sync was pending).
       this.projectionView.setReflowHandler(() => {
         this.lastLineCount = (this.editor.sourceView as any).getBuffer().getLineCount();
         this.editor.repaintSyntax();
-        this.installBands();
       });
     }
     // Materializing the buffer (setText) leaves the caret at the END; start at the top.
     this.editor.model.setCursorBufferPosition({ row: 0, column: 0 });
   }
 
-  /** Place the filename-header widget above each excerpt's first row, and a `⋯` gap band below the
-   *  last row of each non-final segment (separating non-adjacent regions of one file). Both are
-   *  widget bands (BlockDecorations), not navigable/copyable buffer rows; their anchor marks track
-   *  edits that shift the row. Reconciled in place via the shared BlockBandSet (re-derivable for
-   *  per-excerpt collapse). */
+  /** Declare the filename-header widget above each excerpt's first source row, and a `⋯` gap band
+   *  below the last row of each non-final segment (separating non-adjacent regions of one file).
+   *  Both are SOURCE-anchored block decorations (the editor projects them to view rows + reconciles
+   *  in place); their positions then ride their anchor marks across edits. Only the band SET changes
+   *  here — on construct and on collapse/expand (the chevron + which gaps exist). */
   private installBands(): void {
-    const projection = this.projectionView.view;
-    const specs: BlockBandSpec[] = [];
+    const specs: BlockDecorationSpec[] = [];
     this.excerpts.forEach((excerpt, ei) => {
       const first = excerpt.segments[0];
       if (!first) return;
-      const headerRow = projection.viewRowForSource(first.sourceKey, first.startRow);
       const collapsed = this.collapsed.has(ei);
-      if (headerRow !== null) {
-        // A `▸` chevron marks a collapsed file; an expanded one keeps the plain filename.
-        const label = collapsed ? `▸ ${excerpt.header}` : excerpt.header;
-        specs.push({
-          id: `header:${ei}`,
-          key: label,
-          line: headerRow,
-          placement: 'above',
-          build: () => buildHeaderWidget(label, first.sourceKey, () => this.onActivate?.({ path: first.sourceKey, row: first.startRow })),
-        });
-      }
-      // Gaps only when expanded (a collapsed excerpt is a single row — no gaps).
+      // A `▸` chevron marks a collapsed file; an expanded one keeps the plain filename.
+      const label = collapsed ? `▸ ${excerpt.header}` : excerpt.header;
+      specs.push({
+        id: `header:${ei}`,
+        key: label,
+        anchor: { sourceKey: first.sourceKey, row: first.startRow },
+        placement: 'above',
+        build: () => buildHeaderWidget(label, first.sourceKey, () => this.onActivate?.({ path: first.sourceKey, row: first.startRow })),
+      });
+      // Gaps only when expanded (a collapsed excerpt is a single row — no gaps). Anchor the `⋯`
+      // ABOVE the NEXT segment's first row (a start-anchor), not below the previous segment's last
+      // row: `o` on that last line inserts after a left-gravity start-of-line mark, so a below-anchor
+      // wouldn't ride the growth and the opened line would land below the gap. The next segment's
+      // first row is stable content its mark tracks, keeping the gap between the two regions.
       if (!collapsed) {
         for (let i = 1; i < excerpt.segments.length; i++) {
-          const prev = excerpt.segments[i - 1];
-          const gapRow = projection.viewRowForSource(prev.sourceKey, prev.endRow);
-          if (gapRow === null) continue;
-          specs.push({ id: `gap:${ei}:${i}`, key: '⋯', line: gapRow, placement: 'below', build: () => buildGapWidget('⋯') });
+          const seg = excerpt.segments[i];
+          specs.push({
+            id: `gap:${ei}:${i}`,
+            key: '⋯',
+            anchor: { sourceKey: seg.sourceKey, row: seg.startRow },
+            placement: 'above',
+            build: () => buildGapWidget('⋯'),
+          });
         }
       }
     });
-    this.bands.reconcile(specs);
+    this.bands.set(specs);
   }
 
   // --- per-excerpt collapse --------------------------------------------------

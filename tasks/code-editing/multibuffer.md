@@ -12,7 +12,8 @@ Built **hard parts first**, on `GtkSourceView` (the view buffer is a *materializ
 of its sources, because GtkTextView needs real text). The editor has no users; the single-file
 editor's behavior + the headless suite are the regression net.
 
-Branch: `feat/multibuffer-staging` (G5 staging + G1 one-editor merge).
+Branch: `feat/multibuffer-staging` (G5 staging + G1 one-editor merge + the block-decoration
+consolidation) — merges to `master`.
 
 ## Architecture (as built)
 
@@ -102,8 +103,9 @@ their name; that's the model layer):
   lines, with no copy-time filtering; **per-excerpt collapse** (`SearchResultsView`, `z a` toggle /
   `z M` all / `z R` none) re-derives the items so a collapsed file shows only its first source row
   (`▸` chevron) — an item-level transform, NOT a view-fold (keeps the painter fold-naive per the
-  Invariant). All three band consumers (diff, search, markdown image preview) reconcile through one
-  shared `BlockBandSet` (`BlockDecorations.bands()`).
+  Invariant). All three band consumers (diff, search, markdown image preview) declare their header/
+  gap/image bands as SOURCE-anchored block decorations via `editor.blockDecorations()` — see
+  `tasks/code-editing/block-decorations.md` (generic primitive + declarative `BlockDecorationSet`).
 - **G9 — Multiple diff sources.** ☐ only working-tree vs HEAD today; commit / PR / range TODO.
 - **G10 — Performance.** ◐ single-file identity is zero-cost. *Viewport virtualization across many
   excerpts = TODO if profiling demands.*
@@ -178,12 +180,13 @@ duality, so low-value / high-risk to touch.*
   only `this.projection` (the gutter/painter coordinate map) needs to catch up. It MUST NOT be a
   `queueMicrotask` — that never fires in the app, leaving the map stale until the next edit forces a
   synchronous resegment (the "corrupts, then a later edit fixes it" symptom). Corollary: anything
-  that reads the coordinate map in reaction to a buffer `changed` (the search results' band
-  reconcile, which anchors each header via `viewRowForSource`) must NOT run while a remap is pending
-  — a reverse-sync `changed` fires *during* the mirror, when the map is still stale. `SearchResultsView`
-  skips its reconcile when `ProjectionView.isSyncPending()` and re-runs it from `setReflowHandler`
-  (fired after the deferred rebuild), so headers always anchor off the fresh map. Write-through
-  edits resegment synchronously (no pending sync), so they reconcile inline on `changed` as before.
+  that reads the coordinate map in reaction to a buffer `changed` (the search results' SYNTAX
+  repaint, which paints each view row from its projected source) must NOT run while a remap is
+  pending — a reverse-sync `changed` fires *during* the mirror, when the map is still stale.
+  `SearchResultsView` skips its repaint when `ProjectionView.isSyncPending()` and re-runs it from
+  `setReflowHandler` (after the deferred rebuild), so the painter always reads the fresh map.
+  (Header/gap *bands* don't need this — they're source-anchored block decorations that ride their
+  marks; see `tasks/code-editing/block-decorations.md`.)
 - **Cross-segment edits must be rejected at the FUNNEL, not in write-through.** A view range can be
   contiguous yet map to a non-contiguous source range — two regions of one file are the same source
   in different segments, with hidden rows between them. `EditorModel.setTextInBufferRange`'s
@@ -192,15 +195,23 @@ duality, so low-value / high-risk to touch.*
   is too late: the `insert-text`/`delete-range` handlers are *before* handlers, so returning early
   skips the SOURCE write but GTK still applies the edit to the VIEW — view and source diverge
   (visible as a visual-`c`/`d` across two regions deleting the wrong lines).
-- **Overlay bands (headers/gaps/images) must be reconciled in place, not torn down.** Removing +
-  re-adding a `BlockDecoration` collapses its reserved band and re-expands it a frame later
-  (flicker + text jump). The one shared mechanism is **`BlockBandSet`** (`BlockDecorations.bands()`):
-  `reconcile(specs)` matches bands by a stable `id`, rebuilds a widget only when its content `key`
-  changed, and adds/removes the delta — used by `ContinuousDiffView`, `SearchResultsView`, and the
-  markdown image-preview plugin. Headers AND gaps are widget bands (never buffer rows).
-- **Per-row gutter alignment.** An excerpt's first row carries a header band ABOVE it, so its
-  gutter number must bottom-align (`yalign=1`); rows with a `⋯` gap band BELOW stay top-aligned.
-  Toggled per row inside the renderer's `queryData` (the only gutter vfunc node-gtk invokes).
+- **Overlay bands (headers/gaps/images) are SOURCE-anchored block decorations.** Each consumer
+  declares them via `editor.blockDecorations()` (a `BlockDecorationSet`) and calls `set(specs)` only
+  on a logical-model change (collapse, re-diff, image re-scan) — NOT per edit. Positions then ride
+  the decoration's anchor mark across every edit/undo/splice; reconcile matches by `id`, rebuilds a
+  widget only when its `key` changed, and the editor re-projects only on a re-materialize. Full
+  design + the mark-survival proof: `tasks/code-editing/block-decorations.md`. Headers AND gaps are
+  widget bands (never buffer rows).
+- **Per-row gutter alignment.** A row that carries a band ABOVE it (a filename header, or the search
+  `⋯` gap — anchored above the NEXT region's first row, see below) bottom-aligns its gutter number
+  (`yalign=1`) so it sits next to the text under the reserved band; a band BELOW a row top-aligns it
+  (`yalign=0`). Toggled per row inside the renderer's `queryData` (the only gutter vfunc node-gtk
+  invokes), via `BlockDecorations.placementAtLine`.
+- **Anchor a separator band to the STABLE side.** The search `⋯` gap is anchored ABOVE the *next*
+  region's first row, not below the previous region's last row. A below-anchor uses a left-gravity
+  mark at the line *start*, but `o` inserts at the line *end* (after the mark), so the mark wouldn't
+  ride the growth and the opened line would land below the gap. The next region's first row is stable
+  content its mark tracks. (The filename header is naturally a start-anchor, so it never had this.)
 - **Computed surfaces re-derive, they don't row-shift.** The diff's segment structure can't be
   maintained by row arithmetic through row-count changes that cross fragmented phantom/new
   segments; it re-derives via `setResyncHandler` → `reDiff` → `retarget`.
@@ -208,7 +219,9 @@ duality, so low-value / high-risk to touch.*
 ## Hard problems still open
 
 - **Per-source decorations across excerpts**: diagnostics/inlay/LSP key off one Document today;
-  must place through the unified map for multi-file (G4 remainder).
+  must place through the unified map for multi-file (G4 remainder). The block-decoration substrate is
+  ready: `editor.blockDecorations()` already projects SOURCE anchors (`{sourceKey,row}`) through the
+  unified map, so inline diagnostics/inlay/code-lens become another channel (see block-decorations.md).
 - **Viewport virtualization** across thousands of excerpts (G10) — a sum-tree coordinate map only
   if profiling demands it.
 - **Gutter cell background drawing** in node-gtk (G5 polish) — blocked, see its task doc.
@@ -223,10 +236,11 @@ zero-cost single-file identity, the `Document` view/sync/fold extraction — all
   `DocumentRegistry.ts`.
 - Surfaces (UI, `src/ui/`): `SearchResultsView.ts`, `ContinuousDiffView.ts`,
   `SourceLineNumberGutter.ts`, `HeaderBands.ts`; plus `src/ui/TextEditor/DiffLineNumberGutter.ts`,
-  `BlockDecorations.ts`, `applyDiffDecorations.ts`.
+  `applyDiffDecorations.ts`.
+- Block decorations: `src/ui/TextEditor/BlockDecorations.ts` (generic primitive),
+  `BlockDecorationSet.ts` (declarative source-anchored layer) — full design in `block-decorations.md`.
 - Model (`src/ui/multibuffer/`): `MultiBufferModel.ts`, `MultiBufferDocument.ts`, `diffMultiBuffer.ts`,
   `diffSegments.ts`, `projectSearch.ts`, `ExcerptSyntaxProjection.ts`.
 - Wiring: `src/ui/AppWindow.ts` (`openSearchResults`/`space *`, `openContinuousDiff`/
   `space g D`, `file:save` routing, `diff:expand-*`).
-- To replace: `src/ui/GitStagingView.ts`.
 - Reuse: `src/util/lineDiff.ts`, `DiffModel.ts`; `src/lsp/workspaceEdit.ts`.

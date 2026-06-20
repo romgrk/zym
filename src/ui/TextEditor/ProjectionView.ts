@@ -132,6 +132,18 @@ export class ProjectionView {
     } finally {
       this.viewSuppress = false;
     }
+    // setText destroyed every view-buffer mark — the lone event a block decoration's mark anchor
+    // can't ride (every incremental edit/splice it does). Notify so anchored decorations re-place
+    // from the fresh projection. Fired after the rebuild, so subscribers read the new buffer.
+    for (const cb of this.materializeHandlers) cb();
+  }
+
+  // Subscribers (block-decoration sets) notified after every materialize (initial / rebuild /
+  // reload), the one place marks are lost. Incremental edits/splices never fire this.
+  private readonly materializeHandlers = new Set<() => void>();
+  onDidMaterialize(cb: () => void): () => void {
+    this.materializeHandlers.add(cb);
+    return () => this.materializeHandlers.delete(cb);
   }
 
   /** Tag every non-editable row (block / phantom) so the user can't type there. Identity

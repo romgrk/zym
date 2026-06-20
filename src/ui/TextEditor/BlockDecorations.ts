@@ -43,6 +43,8 @@ export interface BlockDecorationOptions {
 }
 
 export interface BlockDecorationHandle {
+  /** The decoration's current anchor line (its mark's line), tracking edits since placement. */
+  line(): number;
   /** Remove the band + overlay and drop the anchor mark. */
   remove(): void;
   /** Re-measure the widget height and reposition (after the widget's size changes). */
@@ -148,6 +150,7 @@ export class BlockDecorations {
     this.scheduleFlush(0);
 
     return {
+      line: () => this.markLine(block),
       remove: () => this.removeBlock(block),
       invalidate: () => {
         if (block.placed) this.place(block);
@@ -308,12 +311,6 @@ export class BlockDecorations {
     (this.view as any).moveOverlay(block.slot, 0, y);
   }
 
-  /** A reconciled band set backed by this controller — one per consumer (markdown images, the
-   *  continuous diff's headers/gaps, the search results' headers/gaps). See `BlockBandSet`. */
-  bands(): BlockBandSet {
-    return new BlockBandSet(this);
-  }
-
   private removeBlock(block: Block): void {
     if (!this.blocks.delete(block)) return;
     this.buffer.removeTag(block.tag, this.buffer.getStartIter(), this.buffer.getEndIter());
@@ -329,61 +326,5 @@ export class BlockDecorations {
     // Re-pool any slot that's an overlay child of the view (parented), regardless of
     // whether it finished placing; a never-parented fresh slot is just dropped (GC).
     if (block.slot.getParent?.()) this.freeSlots.push(block.slot);
-  }
-}
-
-/** One band in a reconciled set: a stable `id` (which band — reused/moved across reconciles), a
- *  content `key` (the widget is rebuilt only when it changes), its anchor `line`, and a lazy
- *  `build`. */
-export interface BlockBandSpec {
-  id: string;
-  key: string;
-  line: number;
-  placement?: BlockDecorationPlacement;
-  build: () => InstanceType<typeof Gtk.Widget>;
-}
-
-/**
- * A keyed set of block-decoration bands reconciled in place against a freshly-derived list — the
- * one mechanism behind every consumer that re-flows its header/gap/image bands: the continuous
- * diff (`ContinuousDiffView`), the project-search results (`SearchResultsView`), and the markdown
- * image preview. Reusing handles in place (vs. teardown + re-add) avoids the band collapse →
- * re-expand that flickers and jumps the text. Owns its handles; create one per consumer via
- * `BlockDecorations.bands()`.
- */
-export class BlockBandSet {
-  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string }>();
-  private readonly blocks: BlockDecorations;
-  constructor(blocks: BlockDecorations) {
-    this.blocks = blocks;
-  }
-
-  /** Reconcile to `specs`: move/rebuild bands matched by `id` (rebuilding the widget only when its
-   *  `key` changed, else keeping the live one), add new ones, and remove any whose `id` is gone. */
-  reconcile(specs: BlockBandSpec[]): void {
-    const seen = new Set<string>();
-    for (const spec of specs) {
-      seen.add(spec.id);
-      const prev = this.entries.get(spec.id);
-      if (prev) {
-        prev.handle.update({ line: spec.line, widget: prev.key === spec.key ? undefined : spec.build() });
-        prev.key = spec.key;
-      } else {
-        const handle = this.blocks.add({ line: spec.line, widget: spec.build(), placement: spec.placement });
-        this.entries.set(spec.id, { handle, key: spec.key });
-      }
-    }
-    for (const [id, entry] of this.entries) {
-      if (!seen.has(id)) {
-        entry.handle.remove();
-        this.entries.delete(id);
-      }
-    }
-  }
-
-  /** Remove every band (teardown). */
-  clear(): void {
-    for (const entry of this.entries.values()) entry.handle.remove();
-    this.entries.clear();
   }
 }

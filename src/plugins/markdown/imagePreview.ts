@@ -22,7 +22,7 @@ import { Disposable } from '../../util/eventKit.ts';
 import type { PluginContext } from '../../plugin/types.ts';
 import type { TextEditor } from '../../ui/TextEditor/index.ts';
 import type { ScanMatchResult } from '../../ui/TextEditor/EditorModel.ts';
-import type { BlockBandSpec } from '../../ui/TextEditor/BlockDecorations.ts';
+import type { BlockDecorationSpec } from '../../ui/TextEditor/BlockDecorationSet.ts';
 
 // Coalesce rapid edits before re-scanning. Loading images is heavier than the
 // color-preview regex pass, so a slightly longer idle than that plugin's.
@@ -119,15 +119,15 @@ export function activateImagePreview(ctx: PluginContext, markdownFileTypes: read
     const docPath = editor.currentFile;
 
     // Image bands keyed by `${absPath}#${ordinal}` — a stable identity per distinct image
-    // occurrence, so a band survives edits that merely shift its line. Reconciled in place each
-    // refresh (add/move/remove the delta) via the shared `BlockBandSet`.
-    const bands = editor.inlineBlocks.bands();
+    // occurrence, so a band survives edits that merely shift its line. Declared as SOURCE-anchored
+    // block decorations (single file → no sourceKey); positions ride their marks between re-scans.
+    const bands = editor.blockDecorations();
     const cache = new Map<string, CachedTexture>();
     let timer: NodeJS.Timeout | null = null;
 
     const refresh = (): void => {
       const enabled = quilx.config.get('markdown.imagePreview') !== false;
-      const specs: BlockBandSpec[] = [];
+      const specs: BlockDecorationSpec[] = [];
       if (enabled) {
         const ordinals = new Map<string, number>();
         editor.model.scan(IMAGE_RE, ({ match, range }: ScanMatchResult) => {
@@ -138,10 +138,10 @@ export function activateImagePreview(ctx: PluginContext, markdownFileTypes: read
           const entry = loadTexture(absPath, cache);
           if (!entry) return;
           const id = `${absPath}#${ordinal}`;
-          specs.push({ id, key: id, line: range.start.row, placement: 'below', build: () => buildPicture(entry) });
+          specs.push({ id, key: id, anchor: { row: range.start.row }, placement: 'below', build: () => buildPicture(entry) });
         });
       }
-      bands.reconcile(specs);
+      bands.set(specs);
     };
 
     const schedule = (): void => {

@@ -29,7 +29,7 @@ import { applyDiffDecorations } from './TextEditor/applyDiffDecorations.ts';
 import { CombinedDiffLineNumberGutter } from './TextEditor/DiffLineNumberGutter.ts';
 import { buildDiffMultiBuffer, type DiffFile, type DiffMultiBuffer } from './multibuffer/diffMultiBuffer.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
-import type { BlockBandSpec, BlockBandSet } from './TextEditor/BlockDecorations.ts';
+import type { BlockDecorationSpec, BlockDecorationSet } from './TextEditor/BlockDecorationSet.ts';
 import { buildRowMap, computeHunks, formatHunkPatch, hunkContainsBufferRow, type Hunk } from '../util/hunkPatch.ts';
 import { applyPatch, git, repoRoot, type GitDone, type GitRepo } from '../git.ts';
 import { quilx } from '../quilx.ts';
@@ -99,8 +99,10 @@ export class ContinuousDiffView {
   // handles in place avoids the band collapse/re-expand that flickers + jumps the text. Each entry
   // keeps the anchor's CONTENT key so we only rebuild the widget when its content actually changed.
   // Header (filename, above each file's first row) + `⋯` gap (below the last shown row before each
-  // elision) widget bands, reconciled in place on each re-diff via the shared BlockBandSet.
-  private bands!: BlockBandSet;
+  // elision) widget bands, reconciled in place on each re-diff via a declarative block-decoration
+  // set. A computed surface: the structure (which gaps exist, header rows) is recomputed per re-diff,
+  // so the bands carry direct VIEW-row anchors and are re-`set()` on every reDiff.
+  private bands!: BlockDecorationSet;
   // Expand-context state: NEW-side rows the user forced visible, and a reveal-everything flag.
   // The current diff's anchors, kept for the keyboard `expandContextAtCursor`.
   private revealAll = false;
@@ -156,7 +158,7 @@ export class ContinuousDiffView {
     const painter = new ExcerptSyntaxProjection(() => this.projection, syntaxMap);
     this.editor = new TextEditor({ source: new MultiBufferDocument(this.projectionView, painter) });
     if (!this.editable) this.editor.model.setReadOnly(true);
-    this.bands = this.editor.inlineBlocks.bands();
+    this.bands = this.editor.blockDecorations();
     this.root = this.editor.root;
     // Scope the expand-context keymap to this surface: `#TextEditor.continuous-diff` is more
     // specific than vim's `#TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
@@ -411,12 +413,12 @@ export class ContinuousDiffView {
   private installOverlays(dmb: DiffMultiBuffer): void {
     this.gapAnchors = dmb.gapAnchors; // kept for the keyboard expand (`expandContextAtCursor`)
     this.headerAnchors = dmb.headerAnchors;
-    const specs: BlockBandSpec[] = [];
+    const specs: BlockDecorationSpec[] = [];
     dmb.headerAnchors.forEach((h, i) =>
       specs.push({
         id: `header:${i}`, // reconcile by ordinal: count changes by delta, content-key rebuilds the widget
         key: ContinuousDiffView.headerKey(h),
-        line: h.viewRow,
+        anchor: { viewRow: h.viewRow },
         placement: 'above',
         build: () => buildHeaderWidget(h.label, h.path, () => this.onActivate?.({ path: h.path, row: 0 }), h.subtitle),
       }),
@@ -425,13 +427,13 @@ export class ContinuousDiffView {
       specs.push({
         id: `gap:${i}`,
         key: ContinuousDiffView.gapKey(g),
-        line: g.viewRow,
+        anchor: { viewRow: g.viewRow },
         placement: 'below',
         // Clicking the gap reveals a chunk of its elided lines (extends the window above it).
         build: () => buildGapWidget(g.label, () => this.revealChunk(g.revealRows, true)),
       }),
     );
-    this.bands.reconcile(specs);
+    this.bands.set(specs);
   }
 
   private currentNewText(file: DiffFile): string {

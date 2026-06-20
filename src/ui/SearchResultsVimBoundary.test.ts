@@ -100,6 +100,21 @@ test('REAL cc on the last line of the FIRST region (hidden gap follows) stays in
   mbv.dispose();
 });
 
+test('REAL o on a region\'s last line keeps the `⋯` gap below the opened line', () => {
+  const { mbv } = setupTwoRegions();
+  // view: 0:r0 1:r1 2:r5 3:r6 — the `⋯` gap sits between region 1 (r0,r1) and region 2 (r5,r6).
+  const gap = () => ((mbv as any).bands.entries as Map<string, any>).get('gap:0:1')?.handle;
+  assert.ok(gap(), 'a gap decoration exists between the two regions');
+  // `o` on r1 (region 1's last line) opens a blank below it — the gap must stay BELOW that blank
+  // (between region 1's new end and region 2), i.e. anchored to region 2's first row.
+  mbv.editor.model.setCursorBufferPosition(new Point(1, 0));
+  run(mbv, 'InsertBelowWithNewline');
+  (mbv.editor as any).vimState.activate?.('normal');
+  // view now: 0:r0 1:r1 2:(blank) 3:r5 4:r6 — the gap must render above r5 (row 3), not above the blank.
+  assert.equal(gap().line(), 3, 'gap rides down to region 2\'s first row — the opened line is above it');
+  mbv.dispose();
+});
+
 test('REAL visual-c across two regions of one file does not corrupt the view/source', () => {
   const { a, registry, mbv, lines } = setupTwoRegions();
   // Visual-select from r1 (view row 1) across the hidden gap into r5 (view row 2), then `c`.

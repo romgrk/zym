@@ -32,6 +32,7 @@ import { highlightToMarkup } from '../../syntax/highlightToMarkup.ts';
 import { langIdForPath } from '../../syntax/grammar.ts';
 import { TextDecorations } from './TextDecorations.ts';
 import { BlockDecorations } from './BlockDecorations.ts';
+import { BlockDecorationSet } from './BlockDecorationSet.ts';
 import { OverlayDecoration } from './OverlayDecoration.ts';
 import { Peek, type PeekOptions } from './Peek.ts';
 import { GitGutter } from './GitGutter.ts';
@@ -337,7 +338,10 @@ export class TextEditor implements DocumentHost {
   private readonly editorModel: EditorModel;
   private readonly vimState: VimState;
   private readonly textDecorations: TextDecorations;
-  private readonly blockDecorations: BlockDecorations;
+  private readonly blockDecorationController: BlockDecorations;
+  // Declarative block-decoration sets created via `blockDecorations()`, re-projected on materialize.
+  private readonly decorationSets: BlockDecorationSet[] = [];
+  private decorationMaterializeSub: (() => void) | null = null;
   private readonly search: SearchController;
   private leap!: Leap; // built in buildEditorArea (needs the overlay)
   private completion!: CompletionController; // built in buildEditorArea (needs the overlay)
@@ -497,7 +501,7 @@ export class TextEditor implements DocumentHost {
     // reach it via `editor.decorations`.
     this.textDecorations = new TextDecorations(this.editorModel);
     // Inline block surface (virtual content between lines: the diff fold placeholder).
-    this.blockDecorations = new BlockDecorations(this.view);
+    this.blockDecorationController = new BlockDecorations(this.view);
     // Search/replace engine; its `SearchBar` widget is built in buildEditorArea.
     this.search = new SearchController(this.editorModel, this.textDecorations);
 
@@ -728,6 +732,8 @@ export class TextEditor implements DocumentHost {
     }
     this.dismissHover();
     this.dismissSignature();
+    this.decorationMaterializeSub?.(); // drop the materialize re-projection subscription
+    this.decorationMaterializeSub = null;
     this.syntax.dispose(); // detach buffer/view signal handlers + free the tree-sitter tree
     this.document.removeHost(this);
     this.document.removeView(this.buffer);
@@ -971,10 +977,25 @@ export class TextEditor implements DocumentHost {
     return this.editorModel;
   }
 
-  /** The inline-block surface (virtual content between lines, e.g. the diff fold
-   *  placeholder) — overlay widgets in a reserved gap, zero buffer footprint. */
+  /** The generic block-decoration primitive (virtual content between lines, e.g. the diff fold
+   *  placeholder) — a widget in a reserved gap, zero buffer footprint, anchored by a view line. */
   get inlineBlocks(): BlockDecorations {
-    return this.blockDecorations;
+    return this.blockDecorationController;
+  }
+
+  /** A declarative, SOURCE-anchored block-decoration set over this editor (the search/diff header
+   *  + gap bands, markdown inline images). Declare specs via `set()`; the set reconciles them and
+   *  projects each `{sourceKey?, row}` anchor onto its view line. Positions then ride the
+   *  primitive's marks across edits; the editor re-projects the set only on a re-materialize. */
+  blockDecorations(): BlockDecorationSet {
+    const set = new BlockDecorationSet(this.blockDecorationController, (anchor) =>
+      'viewRow' in anchor ? anchor.viewRow : this.document.viewRowForSource(this.buffer, anchor.sourceKey, anchor.row),
+    );
+    this.decorationSets.push(set);
+    this.decorationMaterializeSub ??= this.document.onDidMaterialize(() => {
+      for (const s of this.decorationSets) s.reproject();
+    });
+    return set;
   }
 
   /** Open a focusable inline peek (e.g. see-definition) below `line` — defaults to

@@ -188,6 +188,7 @@ export class Document implements TextEditorSource {
       this.syncing = false;
     }
     this.model.setModified(false);
+    for (const cb of this.materializeHandlers) cb(); // marks were dropped by the rebuild → re-project
   }
 
   /** Restore *unsaved* content on session restore: replace the buffer like
@@ -369,6 +370,18 @@ export class Document implements TextEditorSource {
   /** VIEW line showing model line `modelLine` (its start) — for diagnostics/decorations. */
   viewLineForModelLine(buffer: SourceBuffer, modelLine: number): number {
     return this.pvFor(buffer)?.viewLineForModelLine(modelLine) ?? modelLine;
+  }
+
+  // --- block-decoration anchoring (single source: the file is the sole source) -
+  /** The view row showing source `row` — `sourceKey` is ignored (one source). Fold-aware. */
+  viewRowForSource(buffer: SourceBuffer, _sourceKey: string | undefined, row: number): number | null {
+    return this.viewLineForModelLine(buffer, row);
+  }
+  /** Fired when a view re-materializes (a file load/reload via `setText`), which drops marks. */
+  private readonly materializeHandlers = new Set<() => void>();
+  onDidMaterialize(cb: () => void): () => void {
+    this.materializeHandlers.add(cb);
+    return () => this.materializeHandlers.delete(cb);
   }
 
   // --- Identity --------------------------------------------------------------

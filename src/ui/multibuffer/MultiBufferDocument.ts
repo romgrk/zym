@@ -38,6 +38,14 @@ export class MultiBufferDocument implements TextEditorSource {
   removeView(): void {
     /* the PV is disposed in dispose(); a multibuffer has exactly one view */
   }
+
+  // --- block-decoration anchoring (delegate to the PV's coordinate map) -------
+  viewRowForSource(_buffer: SourceBuffer, sourceKey: string | undefined, row: number): number | null {
+    return this.pv.view.viewRowForSource(sourceKey ?? this.pv.view.soleKey ?? '', row);
+  }
+  onDidMaterialize(cb: () => void): () => void {
+    return this.pv.onDidMaterialize(cb);
+  }
   dispose(): void {
     this.pv.dispose();
   }

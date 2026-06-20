@@ -30,6 +30,16 @@ export interface TextEditorSource extends FoldHost, UndoTarget {
   /** A multi-source painter projection (multibuffer), or null for a single source. */
   readonly syntaxProjection: SyntaxProjection | null;
 
+  // --- block-decoration anchoring (the declarative BlockDecorationSet) ------
+  /** The view row currently showing source `(sourceKey, row)` in `buffer`'s view, or null when it
+   *  isn't shown (collapsed / off the projection). `sourceKey` omitted → the sole source (single
+   *  file). Projects a block decoration's source anchor onto its view line. */
+  viewRowForSource(buffer: SourceBuffer, sourceKey: string | undefined, row: number): number | null;
+  /** Fired after a view buffer is re-materialized (`setText` — initial / rebuild / reload), the one
+   *  event that drops block-decoration marks, so the editor can re-project anchored decorations.
+   *  Returns an unsubscribe. */
+  onDidMaterialize(cb: () => void): () => void;
+
   // --- view + lifecycle -----------------------------------------------------
   createView(): SourceBuffer;
   removeView(buffer: SourceBuffer): void;
