@@ -72,6 +72,23 @@ test('; and , repeat the last find forwards and backwards', () => {
   assert.deepEqual(pos(), [0, 3]);
 });
 
+test('a find in visual mode records as the last command (so ; repeats it)', () => {
+  // In visual mode a motion runs wrapped in an implicit `VisualModeSelect`; the
+  // `;` (repeat-find-or-start-leap) heuristic keys off `lastCommandName` being a
+  // find name, so the wrapper must be unwrapped — else `;` wrongly starts a leap.
+  const FIND_NAMES = ['Find', 'FindBackwards', 'Till', 'TillBackwards'];
+  const { find, run, vimState, at } = setup('foo bar foo bar\n');
+  at(0, 0);
+  run('ActivateCharacterwiseVisualMode');
+  find('Find', 'b'); // v f b
+  assert.ok(FIND_NAMES.includes(vimState.operationStack.getLastCommandName() ?? ''));
+  assert.ok(vimState.globalState.get('currentFind'));
+
+  // A non-find motion in visual mode must NOT look like a find (so `;` leaps).
+  run('MoveToNextWholeWord');
+  assert.ok(!FIND_NAMES.includes(vimState.operationStack.getLastCommandName() ?? ''));
+});
+
 test('f / F / t / T search across lines (findAcrossLines default)', () => {
   const { find, at, pos } = setup('abc\nde xf\n'); // x at row1 col3
   at(0, 0);

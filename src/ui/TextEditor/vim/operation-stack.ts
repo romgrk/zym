@@ -267,7 +267,13 @@ export default class OperationStack {
       if (operation.recordable) {
         this.recordedOperation = operation
       }
-      this.lastCommandName = operation.name
+      // In visual mode a bare motion/text-object runs wrapped in an implicit
+      // `VisualModeSelect` operator, so record the wrapped target's name — find
+      // repeat (`;`/`,`, `repeatIfNecessary`) and the start-leap heuristic check
+      // `lastCommandName` against `Find`/`Till`/… and must see the motion, not
+      // the wrapper.
+      const target = (operation as any).target
+      this.lastCommandName = operation.name === 'VisualModeSelect' && target ? target.name : operation.name
       operation.resetState()
     }
 
