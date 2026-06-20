@@ -137,9 +137,9 @@ test('a coordinated mutation sets busy synchronously, clears + notifies + applie
 
     assert.equal(r.isBusy(), false);
     await new Promise<void>((resolve, reject) => {
-      r.createBranch('feature', (ok) => {
+      r.createBranch('feature').then((result) => {
         try {
-          assert.ok(ok, 'createBranch succeeded');
+          assert.ok(result.isOk(), 'createBranch succeeded');
           assert.equal(r.isBusy(), false, 'busy cleared on completion');
           resolve();
         } catch (e) {

@@ -26,15 +26,21 @@ import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import * as cli from './git/cli.ts';
 import { checkoutPullRequest as ghCheckoutPullRequest } from './github.ts';
 import { parseStatus, parseNumstat, parseLsFiles, type LineDelta, type ParsedStatus } from './git/status.ts';
+import { Result } from './core/Result.ts';
 
 // Public facade: `src/git/` is internal (cli.ts, status.ts) — the rest of the
 // codebase imports git operations from here, never from `git/cli.ts` directly.
 // Re-export the CLI surface (status/staging/branch/stash/commit helpers + types)
 // alongside the `GitRepo` reactive layer below.
 export * from './git/cli.ts';
+export { Result } from './core/Result.ts';
 
-/** Result callback for a coordinated mutation: success flag + git/gh stderr. */
-export type GitOpDone = (ok: boolean, stderr: string) => void;
+/**
+ * The outcome of a coordinated mutation: `Ok` on success, or `Err` carrying an
+ * `Error` whose message is git/gh's stderr. Callers must narrow (`isOk()`/
+ * `isErr()`) to read it, so the failure path can't be silently dropped.
+ */
+export type GitOpResult = Result<void>;
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -99,35 +105,36 @@ export interface GitRepo {
   isBusy(): boolean;
 
   // Coordinated mutations. Each marks the repo busy (the branch indicator spins),
-  // runs the git/gh command, then refreshes and reports `(ok, stderr)`. These are
-  // the only mutation entry points — the busy/refresh primitives behind them are
-  // private to the implementation.
+  // runs the git/gh command, then refreshes and resolves to a `GitOpResult` (`Ok`
+  // on success, `Err` carrying git's stderr on failure). These are the only
+  // mutation entry points — the busy/refresh primitives behind them are private to
+  // the implementation.
   /** `git fetch`. */
-  fetch(onDone?: GitOpDone): void;
+  fetch(): Promise<GitOpResult>;
   /** `git pull --ff-only`. */
-  pull(onDone?: GitOpDone): void;
+  pull(): Promise<GitOpResult>;
   /** `git push`. */
-  push(onDone?: GitOpDone): void;
+  push(): Promise<GitOpResult>;
   /** Commit the message in `messageFile` (`git commit -F`). */
-  commit(messageFile: string, onDone?: GitOpDone): void;
+  commit(messageFile: string): Promise<GitOpResult>;
   /** Stash the working-tree changes (`git stash push`). */
-  stash(onDone?: GitOpDone): void;
+  stash(): Promise<GitOpResult>;
   /** Pop / apply / drop a stash by ref ("stash@{N}"). */
-  stashPop(ref: string, onDone?: GitOpDone): void;
-  stashApply(ref: string, onDone?: GitOpDone): void;
-  stashDrop(ref: string, onDone?: GitOpDone): void;
+  stashPop(ref: string): Promise<GitOpResult>;
+  stashApply(ref: string): Promise<GitOpResult>;
+  stashDrop(ref: string): Promise<GitOpResult>;
   /** Switch to an existing branch (`git switch`). */
-  switchBranch(name: string, onDone?: GitOpDone): void;
+  switchBranch(name: string): Promise<GitOpResult>;
   /** Create a branch off HEAD and switch to it (`git switch -c`). */
-  createBranch(name: string, onDone?: GitOpDone): void;
+  createBranch(name: string): Promise<GitOpResult>;
   /** Delete a branch (`git branch -d`). */
-  deleteBranch(name: string, onDone?: GitOpDone): void;
+  deleteBranch(name: string): Promise<GitOpResult>;
   /** Merge a branch into the current one (`git merge`). */
-  mergeBranch(name: string, onDone?: GitOpDone): void;
+  mergeBranch(name: string): Promise<GitOpResult>;
   /** Rename the current branch (`git branch -m`). */
-  renameBranch(name: string, onDone?: GitOpDone): void;
+  renameBranch(name: string): Promise<GitOpResult>;
   /** Check out a pull request's branch (`gh pr checkout`). */
-  checkoutPullRequest(number: number, onDone?: GitOpDone): void;
+  checkoutPullRequest(number: number): Promise<GitOpResult>;
   /** Subscribe to branch / working-tree / busy changes. Returns an unsubscribe fn. */
   onChange(callback: () => void): () => void;
   /** Re-check the working tree now (and fire `onChange` if it moved) instead of
@@ -262,48 +269,48 @@ class CliGitRepo implements GitRepo {
 
   // --- mutations (coordinated: busy + refresh; see `mutate`) -----------------
 
-  fetch(onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.git(root, ['fetch'], done), onDone);
+  fetch(): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.git(root, ['fetch'], done));
   }
-  pull(onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.git(root, ['pull', '--ff-only'], done), onDone);
+  pull(): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.git(root, ['pull', '--ff-only'], done));
   }
-  push(onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.git(root, ['push'], done), onDone);
+  push(): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.git(root, ['push'], done));
   }
-  commit(messageFile: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.commit(root, messageFile, done), onDone);
+  commit(messageFile: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.commit(root, messageFile, done));
   }
-  stash(onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.stashPush(root, done), onDone);
+  stash(): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.stashPush(root, done));
   }
-  stashPop(ref: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.stashPop(root, ref, done), onDone);
+  stashPop(ref: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.stashPop(root, ref, done));
   }
-  stashApply(ref: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.stashApply(root, ref, done), onDone);
+  stashApply(ref: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.stashApply(root, ref, done));
   }
-  stashDrop(ref: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.stashDrop(root, ref, done), onDone);
+  stashDrop(ref: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.stashDrop(root, ref, done));
   }
-  switchBranch(name: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.switchBranch(root, name, done), onDone);
+  switchBranch(name: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.switchBranch(root, name, done));
   }
-  createBranch(name: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.createBranch(root, name, done), onDone);
+  createBranch(name: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.createBranch(root, name, done));
   }
-  deleteBranch(name: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.deleteBranch(root, name, done), onDone);
+  deleteBranch(name: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.deleteBranch(root, name, done));
   }
-  mergeBranch(name: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.mergeBranch(root, name, done), onDone);
+  mergeBranch(name: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.mergeBranch(root, name, done));
   }
-  renameBranch(name: string, onDone?: GitOpDone): void {
-    this.mutate((root, done) => cli.renameBranch(root, name, done), onDone);
+  renameBranch(name: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.renameBranch(root, name, done));
   }
-  checkoutPullRequest(number: number, onDone?: GitOpDone): void {
+  checkoutPullRequest(number: number): Promise<GitOpResult> {
     // `gh pr checkout` reports (ok, stderr); adapt to the cli `GitDone` shape.
-    this.mutate((root, done) => ghCheckoutPullRequest(root, number, (ok, stderr) => done(ok, '', stderr)), onDone);
+    return this.mutate((root, done) => ghCheckoutPullRequest(root, number, (ok, stderr) => done(ok, '', stderr)));
   }
 
   // --- subscription + lifecycle ----------------------------------------------
@@ -315,7 +322,7 @@ class CliGitRepo implements GitRepo {
   }
 
   refresh(): void {
-    this.pollOnce();
+    void this.pollOnce();
   }
 
   dispose(): void {
@@ -337,12 +344,18 @@ class CliGitRepo implements GitRepo {
    *  notify fills the UI in (subscribers are added on the same tick as the
    *  acquire, so they're registered before the async status returns). */
   private warmUp(): void {
-    cli.git(this.root!, ['rev-parse', '--absolute-git-dir'], (ok, out) => {
-      if (!ok || this.disposed) return;
-      this.gitDir = out.trim() || null;
-      if (this.watching) this.startHeadWatch(); // subscribed before the git dir landed
-    });
-    this.pollOnce(); // initial status/numstat/ls-files → populates state + notifies
+    // Resolve the git dir and prime the cached state concurrently — neither blocks
+    // the other, so the first status lands as early as it can.
+    void this.resolveGitDir();
+    void this.pollOnce(); // initial status/numstat/ls-files → populates state + notifies
+  }
+
+  /** Resolve the absolute git dir (for the HEAD monitor) off the UI thread. */
+  private async resolveGitDir(): Promise<void> {
+    const result = await runGit(this.root!, ['rev-parse', '--absolute-git-dir']);
+    if (this.disposed || result.isErr()) return;
+    this.gitDir = result.unwrap().trim() || null;
+    if (this.watching) this.startHeadWatch(); // subscribed before the git dir landed
   }
 
   private ensureWatching(): void {
@@ -353,7 +366,7 @@ class CliGitRepo implements GitRepo {
     // Working-tree edits have no single file to watch; poll and diff the
     // signature so listeners only fire when the visible numbers actually move.
     this.pollId = setInterval(() => {
-      this.pollOnce();
+      void this.pollOnce();
     }, POLL_INTERVAL_MS);
   }
 
@@ -366,44 +379,43 @@ class CliGitRepo implements GitRepo {
     this.watcher = chokidarWatch(Path.join(this.gitDir, 'HEAD'), { ignoreInitial: true });
     this.watcher.on('all', () => {
       this.lastSignature = ''; // HEAD moved — branch/ahead-behind may differ
-      this.pollOnce();
+      void this.pollOnce();
     });
     this.watcher.on('error', () => {}); // transient FS error — fall back to the poll
   }
 
   /** Async refresh: status + numstat; on a signature change, also refresh the
-   *  tracked set, swap in the new state, and notify. Never blocks the UI. */
-  private pollOnce(): void {
+   *  tracked set, swap in the new state, and notify. Never blocks the UI. The
+   *  `reading` guard (cleared in `finally`) keeps overlapping polls from racing. */
+  private async pollOnce(): Promise<void> {
     if (!this.root || this.reading) return;
     this.reading = true;
-    cli.git(this.root, STATUS_ARGS, (ok, statusOut) => {
-      if (!ok) {
-        this.reading = false; // transient failure — keep the last good state
-        return;
-      }
-      cli.git(this.root!, NUMSTAT_ARGS, (numOk, numstatOut) => {
-        const parsed = parseStatus(statusOut);
-        const numstat = numOk ? parseNumstat(numstatOut) : new Map<string, LineDelta>();
-        const untrackedAdded = this.untrackedInsertions(parsed);
-        const sig = signature(parsed, numstat, untrackedAdded);
-        if (sig === this.lastSignature) {
-          this.reading = false; // nothing moved
-          return;
-        }
-        // Something changed — the tracked set may have too (add/rm/commit), so
-        // refresh ls-files before rebuilding. (Plain working-tree edits don't
-        // change the set, but they're cheap relative to the rebuild + repaint.)
-        cli.git(this.root!, LSFILES_ARGS, (lsOk, lsOut) => {
-          // Fresh ls-files output is repo-relative (join with root); the carried-over
-          // set is already absolute (`trackedAbs`, so don't re-prefix it).
-          const tracked = lsOk ? parseLsFiles(lsOut) : [...this.state.tracked];
-          this.state = this.buildState(parsed, numstat, tracked, untrackedAdded, !lsOk);
-          this.lastSignature = sig;
-          this.reading = false;
-          this.notify();
-        });
-      });
-    });
+    try {
+      const status = await runGit(this.root, STATUS_ARGS);
+      if (this.disposed || status.isErr()) return; // transient failure — keep the last good state
+
+      const numstatResult = await runGit(this.root, NUMSTAT_ARGS);
+      if (this.disposed) return;
+      const parsed = parseStatus(status.unwrap());
+      const numstat = numstatResult.isOk() ? parseNumstat(numstatResult.unwrap()) : new Map<string, LineDelta>();
+      const untrackedAdded = this.untrackedInsertions(parsed);
+      const sig = signature(parsed, numstat, untrackedAdded);
+      if (sig === this.lastSignature) return; // nothing moved
+
+      // Something changed — the tracked set may have too (add/rm/commit), so
+      // refresh ls-files before rebuilding. (Plain working-tree edits don't
+      // change the set, but they're cheap relative to the rebuild + repaint.)
+      const lsFiles = await runGit(this.root, LSFILES_ARGS);
+      if (this.disposed) return;
+      // Fresh ls-files output is repo-relative (join with root); the carried-over
+      // set is already absolute (`trackedAbs`, so don't re-prefix it).
+      const tracked = lsFiles.isOk() ? parseLsFiles(lsFiles.unwrap()) : [...this.state.tracked];
+      this.state = this.buildState(parsed, numstat, tracked, untrackedAdded, lsFiles.isErr());
+      this.lastSignature = sig;
+      this.notify();
+    } finally {
+      this.reading = false;
+    }
   }
 
   /** Assemble the cached snapshot from parsed git output. `untrackedAdded` is the
@@ -468,15 +480,18 @@ class CliGitRepo implements GitRepo {
   // signature is unchanged, e.g. a fetch). The single internal entry point behind
   // every public mutation method; `run`/`beginOperation` are deliberately NOT on
   // the public interface so callers can't bypass this coordination.
-  private mutate(op: (root: string, done: cli.GitDone) => void, onDone?: GitOpDone): void {
+  private mutate(op: (root: string, done: cli.GitDone) => void): Promise<GitOpResult> {
     if (!this.root) {
-      onDone?.(false, 'not a git repository');
-      return;
+      return Promise.resolve(Result.Err(new Error('not a git repository')));
     }
+    // Enter the busy state *synchronously* (before awaiting), so the spinner is up
+    // the moment the caller invokes the mutation.
     const end = this.begin();
-    op(this.root, (ok, _stdout, stderr) => {
-      end();
-      onDone?.(ok, stderr ?? '');
+    return new Promise<GitOpResult>((resolve) => {
+      op(this.root!, (ok, _stdout, stderr) => {
+        end();
+        resolve(ok ? Result.Ok<void>(undefined) : Result.Err(new Error(stderr || 'git operation failed')));
+      });
     });
   }
 
@@ -488,7 +503,7 @@ class CliGitRepo implements GitRepo {
       if (ended) return;
       ended = true;
       this.lastSignature = ''; // the op may have moved anything — force a rebuild
-      this.pollOnce();
+      void this.pollOnce();
       this.leaveBusy();
     };
   }
@@ -504,6 +519,17 @@ class CliGitRepo implements GitRepo {
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/** Promise-returning bridge over the callback-based `cli.git`: resolves to `Ok`
+ *  with stdout on success, or `Err` carrying stderr on a non-zero exit. Never
+ *  rejects — the failure is in the `Result`, so callers branch instead of catch. */
+function runGit(cwd: string, args: string[]): Promise<Result<string>> {
+  return new Promise((resolve) => {
+    cli.git(cwd, args, (ok, stdout, stderr) =>
+      resolve(ok ? Result.Ok(stdout) : Result.Err(new Error(stderr || 'git failed'))),
+    );
+  });
 }
 
 // `--untracked-files=all` lists individual untracked files (matching the old

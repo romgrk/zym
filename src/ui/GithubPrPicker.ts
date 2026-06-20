@@ -88,9 +88,9 @@ export function switchToGithubPrPicker(host: Overlay, cwd: string, git: GitRepo)
       if (!pr) return;
       // `git.checkoutPullRequest` runs `gh pr checkout` with busy + refresh
       // coordination (it can take seconds — switches branch, fetches forks).
-      git.checkoutPullRequest(pr.number, (ok, stderr) => {
-        if (ok) quilx.notifications.addSuccess(`Switched to PR #${pr.number}`);
-        else quilx.notifications.addError('Could not switch to pull request', { detail: stderr.trim() });
+      void git.checkoutPullRequest(pr.number).then((result) => {
+        if (result.isOk()) quilx.notifications.addSuccess(`Switched to PR #${pr.number}`);
+        else quilx.notifications.addError('Could not switch to pull request', { detail: result.unwrapErr().message.trim() });
       });
     },
   });

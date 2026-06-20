@@ -37,7 +37,7 @@ import { fileIconGlyph } from './fileIcons.ts';
 import { Icons, iconLabel } from './icons.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
 import { GithubButtons } from './GithubButtons.ts';
-import { acquireGitRepo, releaseGitRepo, type GitRepo } from '../git.ts';
+import { acquireGitRepo, releaseGitRepo, type GitRepo, type GitOpResult } from '../git.ts';
 import { git, repoRoot, invalidateRepoRoot, commitMsgPath, listWorktrees } from '../git.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { computeDiff } from '../util/DiffModel.ts';
@@ -2205,14 +2205,14 @@ export class AppWindow {
   private registerGitCommands() {
     quilx.commands.add('#AppWindow', {
       // Git commands only apply inside a repository (a resolvable branch).
-      'git:fetch': { didDispatch: () => this.runGit((d) => this.workbench.git.fetch(d), 'Fetch'), description: 'Fetch from the remote', when: () => this.workbench.git.getBranch() !== null },
-      'git:pull': { didDispatch: () => this.runGit((d) => this.workbench.git.pull(d), 'Pull'), description: 'Pull from upstream (fast-forward)', when: () => this.workbench.git.getBranch() !== null },
+      'git:fetch': { didDispatch: () => this.runGit(() => this.workbench.git.fetch(), 'Fetch'), description: 'Fetch from the remote', when: () => this.workbench.git.getBranch() !== null },
+      'git:pull': { didDispatch: () => this.runGit(() => this.workbench.git.pull(), 'Pull'), description: 'Pull from upstream (fast-forward)', when: () => this.workbench.git.getBranch() !== null },
       'git:push': {
         // After a successful push, GitHub re-runs the PR's checks; schedule a CI
         // refresh ~10s out. The service stays busy until then, so the CI segment
         // shows the in-progress (loading) look in the meantime.
         didDispatch: () =>
-          this.runGit((d) => this.workbench.git.push(d), 'Push', () => this.github.scheduleRefresh(10000)),
+          this.runGit(() => this.workbench.git.push(), 'Push', () => this.github.scheduleRefresh(10000)),
         description: 'Push to the remote',
         when: () => this.workbench.git.getBranch() !== null,
       },
@@ -2279,39 +2279,36 @@ export class AppWindow {
     });
   }
 
-  // Run a coordinated git operation (e.g. `(d) => this.workbench.git.fetch(d)`) and report.
+  // Run a coordinated git operation (e.g. `() => this.workbench.git.fetch()`) and report.
   // Success is quiet (a trace, recorded in the log only); failures pop a toast.
-  private runGit(op: (done: (ok: boolean, stderr: string) => void) => void, label: string, onSuccess?: () => void) {
-    op((ok) => {
-      if (ok) {
-        quilx.notifications.addTrace(`${label} succeeded`);
-        onSuccess?.();
-      } else quilx.notifications.addError(`${label} failed`);
-    });
+  private async runGit(op: () => Promise<GitOpResult>, label: string, onSuccess?: () => void) {
+    const result = await op();
+    if (result.isOk()) {
+      quilx.notifications.addTrace(`${label} succeeded`);
+      onSuccess?.();
+    } else quilx.notifications.addError(`${label} failed`);
   }
 
   // Like `runGit`, but surfaces progress as a single in-place toast: a sticky
   // loading notice that transforms into success/error when the operation finishes
   // (the LSP install flow). All three share one `replaceKey` so the prompt that
   // triggered it, the spinner, and the result are the same card.
-  private runGitWithProgress(
-    op: (done: (ok: boolean, stderr: string) => void) => void,
+  private async runGitWithProgress(
+    op: () => Promise<GitOpResult>,
     label: string,
     replaceKey: string,
   ) {
     quilx.notifications.addInfo(`${label}…`, { replaceKey, loading: true, dismissable: true });
-    op((ok) => {
-      if (ok) quilx.notifications.addSuccess(`${label} succeeded`, { replaceKey });
-      else quilx.notifications.addError(`${label} failed`, { replaceKey });
-    });
+    const result = await op();
+    if (result.isOk()) quilx.notifications.addSuccess(`${label} succeeded`, { replaceKey });
+    else quilx.notifications.addError(`${label} failed`, { replaceKey });
   }
 
   // Stash the working-tree changes (visible success, since it's a manual action).
-  private stashChanges() {
-    this.workbench.git.stash((ok, stderr) => {
-      if (ok) quilx.notifications.addSuccess('Stashed changes');
-      else quilx.notifications.addError('Stash failed', { detail: stderr.trim() });
-    });
+  private async stashChanges() {
+    const result = await this.workbench.git.stash();
+    if (result.isOk()) quilx.notifications.addSuccess('Stashed changes');
+    else quilx.notifications.addError('Stash failed', { detail: result.unwrapErr().message.trim() });
   }
 
   // Start a commit: open the message file (`.git/COMMIT_EDITMSG`) in an editor
@@ -2345,9 +2342,9 @@ export class AppWindow {
       quilx.notifications.addInfo('Commit aborted (empty message)');
       return;
     }
-    this.workbench.git.commit(msgPath, (ok, stderr) => {
-      if (ok) quilx.notifications.addSuccess('Committed');
-      else quilx.notifications.addError('Commit failed', { detail: stderr.trim() });
+    void this.workbench.git.commit(msgPath).then((result) => {
+      if (result.isOk()) quilx.notifications.addSuccess('Committed');
+      else quilx.notifications.addError('Commit failed', { detail: result.unwrapErr().message.trim() });
     });
   }
 
@@ -2365,7 +2362,7 @@ export class AppWindow {
         detail: 'Your branch is behind its upstream — pull to update.',
         replaceKey: PULL_NOTICE_KEY,
         dismissable: true,
-        buttons: [{ text: 'Pull', onDidClick: () => this.runGitWithProgress((d) => this.workbench.git.pull(d), 'Pull', PULL_NOTICE_KEY) }],
+        buttons: [{ text: 'Pull', onDidClick: () => this.runGitWithProgress(() => this.workbench.git.pull(), 'Pull', PULL_NOTICE_KEY) }],
       });
     }
     this.lastBehind = behind;
@@ -2379,7 +2376,7 @@ export class AppWindow {
     const minutes = Number(quilx.config.get('git.autoFetchMinutes') ?? 0);
     if (!(minutes > 0)) return;
     this.autoFetchTimer = setInterval(() => {
-      if (this.workbench.git.getBranch() !== null) this.workbench.git.fetch();
+      if (this.workbench.git.getBranch() !== null) void this.workbench.git.fetch();
     }, minutes * 60_000);
   }
 

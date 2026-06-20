@@ -9,16 +9,16 @@ import { Gtk } from '../gi.ts';
 import { openPicker } from './Picker.ts';
 import { Icons } from './icons.ts';
 import { quilx } from '../quilx.ts';
-import { repoRoot, listStashes, type GitRepo, type GitOpDone } from '../git.ts';
+import { repoRoot, listStashes, type GitRepo, type GitOpResult } from '../git.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 type StashAction = 'pop' | 'apply' | 'drop';
 
 // Each action maps to the coordinated GitRepo method (busy + refresh handled there).
-const RUN: Record<StashAction, (git: GitRepo, ref: string, onDone: GitOpDone) => void> = {
-  pop: (git, ref, done) => git.stashPop(ref, done),
-  apply: (git, ref, done) => git.stashApply(ref, done),
-  drop: (git, ref, done) => git.stashDrop(ref, done),
+const RUN: Record<StashAction, (git: GitRepo, ref: string) => Promise<GitOpResult>> = {
+  pop: (git, ref) => git.stashPop(ref),
+  apply: (git, ref) => git.stashApply(ref),
+  drop: (git, ref) => git.stashDrop(ref),
 };
 const PAST: Record<StashAction, string> = { pop: 'popped', apply: 'applied', drop: 'dropped' };
 
@@ -54,9 +54,9 @@ export function openStashPicker(host: Overlay, cwd: string, action: StashAction,
       onSelect: (label) => {
         const ref = refByLabel.get(label);
         if (!ref) return;
-        RUN[action](git, ref, (ok, stderr) => {
-          if (ok) quilx.notifications.addSuccess(`Stash ${PAST[action]}`);
-          else quilx.notifications.addError(`Stash ${action} failed`, { detail: stderr.trim() });
+        void RUN[action](git, ref).then((result) => {
+          if (result.isOk()) quilx.notifications.addSuccess(`Stash ${PAST[action]}`);
+          else quilx.notifications.addError(`Stash ${action} failed`, { detail: result.unwrapErr().message.trim() });
         });
       },
     });
