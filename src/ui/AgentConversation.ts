@@ -264,7 +264,8 @@ export class AgentConversation implements Agent {
   // A resumed agent defers spawning `claude -p --resume` until the user's first
   // turn (its transcript is rebuilt from disk meanwhile); flipped false on connect.
   private deferredStart = false;
-  // The "send a message to reconnect" system row shown while disconnected; removed on connect.
+  // The permanent "session resumed" divider row (boundary between restored history
+  // and the live continuation); its text drops the reconnect nudge once connected.
   private resumeNoteRow: InstanceType<typeof Gtk.Widget> | null = null;
   // True while rebuilding the transcript from a past session (see restoreTranscript):
   // tool rows render statically and changed-file notifications are suppressed.
@@ -491,13 +492,24 @@ export class AgentConversation implements Agent {
     // restoring N agents doesn't fire N claude processes up front). A resume that
     // carries a prompt — e.g. the worktree re-announce — still starts eagerly.
     this.deferredStart = !!options.resume && !options.prompt;
-    if (this.deferredStart) {
-      // Reflect the not-yet-reconnected state (a dim hollow dot, not live green) and
-      // tell the user the session reconnects when they send something.
+    if (options.resume?.sessionId) {
+      // A permanent "session resumed" divider marking the boundary between the
+      // restored history and the live continuation. While disconnected it also tells
+      // the user how to reconnect (a dim hollow dot reflects the not-yet-live state).
       this.resumeNoteRow = this.addRow('zym-conversation-system');
-      (this.resumeNoteRow as InstanceType<typeof Gtk.Label>).setText('── send a message to resume this conversation ──');
-      this.setStatus('disconnected');
+      this.refreshResumeNote();
+      if (this.deferredStart) this.setStatus('disconnected');
     }
+  }
+
+  // Set the resume divider's text: while disconnected it nudges the user to send a
+  // message; once connected it collapses to a plain "session resumed" marker.
+  private refreshResumeNote(): void {
+    if (!this.resumeNoteRow) return;
+    const text = this.deferredStart
+      ? '── session resumed · send a message to continue ──'
+      : '── session resumed ──';
+    (this.resumeNoteRow as InstanceType<typeof Gtk.Label>).setText(text);
   }
 
   // Rebuild the conversation rows from a past session's on-disk transcript, by
@@ -542,7 +554,7 @@ export class AgentConversation implements Agent {
   private ensureConnected(): void {
     if (!this.deferredStart) return;
     this.deferredStart = false;
-    if (this.resumeNoteRow) { this.messages.remove(this.resumeNoteRow); this.resumeNoteRow = null; }
+    this.refreshResumeNote(); // keep the divider, drop the "send a message" nudge
     this.setStatus('idle'); // leave disconnected; the turn that follows flips it to working
     this.session.start();
   }

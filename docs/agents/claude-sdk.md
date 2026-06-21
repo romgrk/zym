@@ -176,10 +176,12 @@ up front. `serialize()` falls back to the resume id when the deferred process ha
 reported its own init session id yet, so a never-resumed agent still round-trips its
 id. A resume that carries a prompt (e.g. the worktree re-announce) starts eagerly.
 
-A not-yet-reconnected agent reports the `disconnected` status (a dim hollow dot,
-not live green — see `agentStatusIcon`) and shows a `── send a message to resume
-this conversation ──` note at the tail of its transcript; `ensureConnected` clears
-both on the first turn.
+A resumed transcript ends with a permanent `── session resumed ──` divider marking
+the boundary between restored history and the live continuation. While not yet
+reconnected the agent reports the `disconnected` status (a dim hollow dot, not live
+green — see `agentStatusIcon`) and the divider reads `── session resumed · send a
+message to continue ──`; `ensureConnected` collapses it to the plain marker (and
+clears the disconnected status) on the first turn — the divider itself stays.
 
 `AgentConversation.serialize()` returns `{kind:'agent', agentKind:'claude-sdk',
 …, sessionId}`; `TabState.agentKind` tells `restoreAgent` which host to relaunch.
