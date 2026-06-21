@@ -9,6 +9,8 @@ subheader becomes a directory with an `index.md`.
 
 ## Architecture
 
+- Prefer idiomatic Node.js, only use GObject libraries when required.
+
 ### UI
 
 - Components use Adwaita and GTK4 via node-gtk (in dev, linked to `../node-gtk`),
