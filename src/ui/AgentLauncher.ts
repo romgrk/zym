@@ -5,7 +5,7 @@
  * launches, Escape cancels.
  *
  * It's a `FloatingCard` (the same overlay shell the Picker uses) filled with a
- * `createInput` prompt and `Gtk.DropDown`s for the options (model, permission, agent,
+ * `createInput` prompt and `Combobox`es for the options (model, permission, agent,
  * and the worktree choice). The options come from the chosen kind's
  * `AgentLaunchOptions` (see `agents/configs.ts`), so changing the kind re-populates
  * the model/permission lists — today the Claude kinds share a list, but the wiring
@@ -103,12 +103,6 @@ addStyles(/* css */`
     background-color: var(--t-ui-editor-background);
     border-bottom-left-radius: var(--popover-radius);
     border-bottom-right-radius: var(--popover-radius);
-  }
-  /* The dropdowns sit flush in the option row (no extra button frame/background). */
-  #AgentLauncherField > dropdown {
-    background: none;
-    box-shadow: none;
-    padding: 0;
   }
   #AgentLauncherField > .field-caption {
     font-size: var(--font-size-small);
@@ -210,11 +204,10 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const worktreeDropdown = new Combobox({
     options: worktreeSpecials,
     value: savedWorktree,
-    search: true,
     specialLabels: ['create'],
     mutedLabels: ['current'],
   });
-  const worktreeField = field('worktree', worktreeDropdown.widget);
+  const worktreeField = field('worktree', worktreeDropdown.root);
   const repo = repoRoot(cwd);
   if (repo) {
     listBranches(repo, (branches) => {
@@ -230,9 +223,9 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // than overflowing. Each field carries a caption above its control.
   const optionsRow = new Adw.WrapBox({ childSpacing: 10, lineSpacing: 8 });
   optionsRow.setName('AgentLauncherOptions');
-  optionsRow.append(field('agent', kindDropdown.widget));
-  optionsRow.append(field('model', modelDropdown.widget));
-  optionsRow.append(field('permission', permissionDropdown.widget));
+  optionsRow.append(field('agent', kindDropdown.root));
+  optionsRow.append(field('model', modelDropdown.root));
+  optionsRow.append(field('permission', permissionDropdown.root));
   optionsRow.append(worktreeField);
   panel.append(optionsRow);
 
