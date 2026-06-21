@@ -15,10 +15,39 @@
 import { AgentTerminal } from '../ui/AgentTerminal.ts';
 import { AgentConversation } from '../ui/AgentConversation.ts';
 import { createClaudeTuiDriver } from './claude-tui/session.ts';
+import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
+import { claudeSdkLaunchOptions } from './claude-sdk/config.ts';
 import type { Agent, AgentResume } from './types.ts';
 import type { AgentAction } from './actions.ts';
 
 export type AgentKind = 'claude-tui' | 'claude-sdk';
+
+/** A selectable choice in the launcher (a model, a permission mode, a kind, …). */
+export interface LaunchOption {
+  /** The value applied when chosen (a model id, a `--permission-mode` value, …). */
+  value: string;
+  /** Short label shown in the combobox. */
+  label: string;
+  /** Optional muted one-liner shown beside the label. */
+  detail?: string;
+}
+
+/**
+ * The launch-time options a kind offers (its models, permission modes, and how it
+ * turns a selection into argv). Lives in each kind's own `config.ts` so the choices
+ * — which may differ per agent — stay next to the kind they belong to; gathered
+ * here onto `AGENT_CONFIGS`.
+ */
+export interface AgentLaunchOptions {
+  /** Display label for the kind itself (shown in the launcher's kind control). */
+  label: string;
+  models: LaunchOption[];
+  defaultModel: string;
+  permissionModes: LaunchOption[];
+  defaultPermissionMode: string;
+  /** Base argv for the chosen model/permission mode (e.g. `['claude','--model',…]`). */
+  buildCommand(sel: { model: string; permissionMode: string }): string[];
+}
 
 /** The per-launch parameters every kind's factory accepts. */
 export interface AgentLaunch {
@@ -41,6 +70,8 @@ export interface AgentLaunch {
 
 export interface AgentConfig {
   readonly kind: AgentKind;
+  /** The kind's launch-time options (models, permission modes, argv builder). */
+  readonly options: AgentLaunchOptions;
   /** Construct the host for a launch. The agent is **not** yet spawned — the
    *  caller mounts it, then calls `agent.start()`. */
   create(launch: AgentLaunch): Agent;
@@ -49,6 +80,7 @@ export interface AgentConfig {
 export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   'claude-tui': {
     kind: 'claude-tui',
+    options: claudeTuiLaunchOptions,
     create: (l) =>
       new AgentTerminal({
         cwd: l.cwd,
@@ -62,9 +94,18 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   },
   'claude-sdk': {
     kind: 'claude-sdk',
+    options: claudeSdkLaunchOptions,
     create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, onOpenFile: l.onOpenFile, onRunInTerminal: l.onRunInTerminal }),
   },
 };
+
+/** The agent kinds as launcher options (value = kind, label = its display name). */
+export function listAgentKinds(): LaunchOption[] {
+  return (Object.keys(AGENT_CONFIGS) as AgentKind[]).map((kind) => ({
+    value: kind,
+    label: AGENT_CONFIGS[kind].options.label,
+  }));
+}
 
 /** Pick a kind from the `agent.implementation` config value (default claude-tui,
  *  the Vte terminal agent; set `agent.implementation` to `claude-sdk` for the

@@ -62,7 +62,7 @@ import { openCommandPicker } from './CommandPicker.ts';
 import { WhichKey } from './WhichKey.ts';
 import { openAgentPicker } from './AgentPicker.ts';
 import { openWorktreePicker } from './WorktreePicker.ts';
-import { openModelPicker } from './ModelPicker.ts';
+import { openAgentLauncher } from './AgentLauncher.ts';
 import {
   openBranchPicker,
   openDeleteBranchPicker,
@@ -2406,9 +2406,15 @@ export class AppWindow {
         description: 'Run a package.json script in a terminal',
       },
       'agent:new': {
-        // openAgent picks the kind from the `agent.implementation` flag.
+        // The launcher gathers the prompt + model / permission mode / worktree /
+        // kind, then hands back the assembled argv for openAgent.
         didDispatch: () =>
-          openModelPicker(this.overlay, (extraArgs) => this.openAgent({ command: ['claude', ...extraArgs] })),
+          openAgentLauncher(this.overlay, {
+            cwd: this.workbench.cwd,
+            defaultKind: resolveAgentKind(zym.config.get('agent.implementation')),
+            onLaunch: ({ prompt, command, cwd, kind }) =>
+              this.openAgent({ prompt: prompt || undefined, command, cwd, kind }),
+          }),
         description: 'Start a new agent',
       },
       // Pick an existing worktree to launch the agent in (its workbench is rooted
