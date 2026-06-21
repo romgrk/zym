@@ -28,6 +28,9 @@ import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { buildDefinitionPeek, wrapPeekBody, LIVE_PEEK_HEIGHT } from './TextEditor/buildDefinitionPeek.ts';
 import { Terminal } from './Terminal.ts';
 import { AgentTerminal, type AgentStatus, type AgentResume } from './AgentTerminal.ts';
+import type { Agent } from '../agents/types.ts';
+import { AgentConversation } from './AgentConversation.ts';
+import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
 import { listResumableSessions, recordSessionWorktree, relativeTime, type AgentSession } from '../agentSessions.ts';
 import { WorkbenchList, PROJECT_NAME } from './WorkbenchList.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
@@ -132,7 +135,7 @@ export class AppWindow {
   private readonly editors = new Map<Widget, TextEditor>();
   // Which workbench each editor lives in, so a workbench re-root can re-point its
   // editors' git gutters (kept in lockstep with `editors`).
-  private readonly editorOwners = new Map<Widget, Workbench<'user' | AgentTerminal>>();
+  private readonly editorOwners = new Map<Widget, Workbench<'user' | Agent>>();
   // Open documents (text model + undo + file I/O), ref-counted. Editor tabs are views
   // onto these — a split or the see-definition peek shares one document (A2 model).
   private readonly documents = new DocumentRegistry();
@@ -142,6 +145,9 @@ export class AppWindow {
   // Terminal tabs share the center panel with editors; tracked separately so the
   // active child can be resolved back to its Terminal (it has no vim state).
   private readonly terminals = new Map<Widget, Terminal>();
+  // Headless `claude-sdk` agents mounted as center tabs (keyed by their root
+  // widget), disposed when their tab closes (see disposeChild).
+  private readonly conversations = new Map<Widget, AgentConversation>();
 
   private readonly workbenchList: WorkbenchList;
   // The top-level split whose start child is the workbench sidebar; its position is
@@ -170,10 +176,10 @@ export class AppWindow {
   // The plugin manager center tab handle; null after it is closed.
   private pluginManagerTab: { root: Widget; child: PanelChild } | null = null;
   // The most recently focused agent — the default target for send-to-agent.
-  private lastAgent: AgentTerminal | null = null;
+  private lastAgent: Agent | null = null;
   // The agent the user is currently looking at (its tab is the active one), so its
   // status counts as seen — clears the sidebar attention blink (see updateViewedAgent).
-  private viewedAgent: AgentTerminal | null = null;
+  private viewedAgent: Agent | null = null;
   private readonly toastOverlay: ToastOverlay;
   // Content-area overlay: hosts the active workbench (swapped on agent switch) and
   // the notification toasts — floats below the header bar, right of the sidebar.
@@ -193,8 +199,8 @@ export class AppWindow {
   // which one the overlay shows (activateWorkbench). `this.workbench` is the active
   // one; the rest live in `workbenches`, keyed by owner. All per-person state is read
   // straight off `this.workbench.*`.
-  private workbench!: Workbench<'user' | AgentTerminal>;
-  private readonly workbenches = new Map<'user' | AgentTerminal, Workbench<'user' | AgentTerminal>>();
+  private workbench!: Workbench<'user' | Agent>;
+  private readonly workbenches = new Map<'user' | Agent, Workbench<'user' | Agent>>();
 
   // Header-bar git chrome. The GitRepo itself lives on the active workbench
   // (`this.workbench.git`); these widgets are re-pointed at it on switch.
@@ -576,7 +582,7 @@ export class AppWindow {
   private openFileIn(
     path: string,
     panel: Panel,
-    options: { focus?: boolean; owner?: Workbench<'user' | AgentTerminal> } = {},
+    options: { focus?: boolean; owner?: Workbench<'user' | Agent> } = {},
   ): TextEditor {
     const focus = options.focus ?? true;
     const targetOwner = options.owner ?? this.workbench;
@@ -595,7 +601,7 @@ export class AppWindow {
   // show in two panes as two views sharing one Document (live model + undo). Used by
   // splitPane; openFileIn reveals instead. `owner` is the workbench the editor lives
   // in (its git feeds the gutter); defaults to the active one.
-  private openFileViewIn(path: string, panel: Panel, options: { focus?: boolean; owner?: Workbench<'user' | AgentTerminal> } = {}): TextEditor {
+  private openFileViewIn(path: string, panel: Panel, options: { focus?: boolean; owner?: Workbench<'user' | Agent> } = {}): TextEditor {
     const { focus = true, owner = this.workbench } = options;
     const built = this.createEditorTab(path, { owner });
     const child = panel.add(built.widget, {
@@ -618,7 +624,7 @@ export class AppWindow {
       cursor?: [number, number];
       scroll?: number;
       unsavedText?: string;
-      owner?: Workbench<'user' | AgentTerminal>;
+      owner?: Workbench<'user' | Agent>;
     } = {},
   ): RestoredChild {
     const owner = restore.owner ?? this.workbench;
@@ -727,28 +733,33 @@ export class AppWindow {
     return null;
   }
 
-  /** Launch (or resume) an agent and show it in a center tab. */
-  private openAgent(options: { prompt?: string; resume?: AgentResume; title?: string; cwd?: string; command?: string[] } = {}): AgentTerminal {
-    // The agent's root: an explicit worktree (launch-time picker, Phase 3) or the
-    // window cwd. Its workbench is built rooted at the same path.
+  /**
+   * Launch (or resume) an agent in its own workbench. The kind is an explicit
+   * `options.kind`, else `claude-tui` for a resume (only it resumes a
+   * conversation), else the `agent.implementation` flag. `AGENT_CONFIGS` builds the
+   * host; everything below is generic over the `Agent` surface, so the terminal and
+   * headless kinds share this one launch path.
+   *
+   * The agent gets its own `Workbench` (its own center + Files/Git + bottom docks)
+   * whose center pins the agent as an unsplittable leaf; everything it opens lands
+   * in a split to its right. Activate the workbench *before* pinning — adding a tab
+   * to a detached, unrooted Adw.TabView yields a blank page — then `start()` it (a
+   * terminal already spawned in its constructor; the headless kind spawns here).
+   */
+  private openAgent(
+    options: { kind?: AgentKind; prompt?: string; resume?: AgentResume; title?: string; cwd?: string; command?: string[] } = {},
+  ): Agent {
+    const kind = options.kind ?? (options.resume ? 'claude-tui' : resolveAgentKind(quilx.config.get('agent.implementation')));
     const cwd = options.cwd ?? process.cwd();
-    const agent = new AgentTerminal({
-      cwd,
-      command: options.command,
-      prompt: options.prompt,
-      resume: options.resume,
-      title: options.title,
+    const agent = AGENT_CONFIGS[kind].create({
+      cwd, command: options.command, prompt: options.prompt, resume: options.resume, title: options.title,
+      onOpenFile: (path) => this.openFile(path),
     });
-    // When the agent process exits, the agent and its workbench linger (the terminal
-    // shows an "exited" notice); the user restarts or closes it from the workbench list.
-    // The agent gets its own workbench: a fresh `Workbench` (its own center + Files/Git +
-    // bottom docks) whose center pins the terminal as the agent panel — an unsplittable
-    // leaf that takes no other tabs; everything the agent opens (reviewed files, etc.)
-    // lands in a split to its right. Activate (show) the workbench *before* adding the
-    // terminal — adding a tab to a detached, unrooted Adw.TabView yields a blank page.
+    // Track in the kind's map (terminal focus-routing / headless disposal key off these).
+    if (agent instanceof AgentTerminal) this.terminals.set(agent.root, agent);
+    else if (agent instanceof AgentConversation) this.conversations.set(agent.root, agent);
     const workbench = this.buildWorkbench(agent, cwd);
     this.activateWorkbench(workbench);
-    this.terminals.set(agent.root, agent);
     const child = workbench.center.pinChild(agent.root, { title: agentTabTitle(agent) });
     this.agentChildren.set(agent.root, child);
     this.updateViewedAgent(); // the agent's tab is now the active one — mark it viewed
@@ -791,13 +802,14 @@ export class AppWindow {
     const focus = new Gtk.EventControllerFocus();
     focus.on('enter', () => { this.lastAgent = agent; });
     agent.root.addController(focus);
-    agent.focus(); // the workbench is already active (above); focus the terminal
+    agent.start(); // terminal: no-op (already spawned); headless: spawn claude now
+    agent.focus(); // the workbench is already active (above); focus the agent
     return agent;
   }
 
   // The agent that send-to-agent targets: the active one, else the last focused,
   // else any still-running agent (skipping exited ones).
-  private targetAgent(): AgentTerminal | null {
+  private targetAgent(): Agent | null {
     for (const agent of [this.activeAgent, this.lastAgent]) {
       if (agent && !agent.exited) return agent;
     }
@@ -815,8 +827,8 @@ export class AppWindow {
   }
 
   // Feed `text` into `agent`'s prompt and reveal it.
-  private deliverToAgent(agent: AgentTerminal, text: string): void {
-    agent.feedChild(text);
+  private deliverToAgent(agent: Agent, text: string): void {
+    agent.deliver(text);
     this.showAgent(agent);
   }
 
@@ -915,12 +927,13 @@ export class AppWindow {
     if (!a) return;
     // Don't duplicate an agent that's already open (explicit restore over a live session).
     if (a.sessionId && quilx.agents.getAgents().some((ag) => ag.sessionId === a.sessionId)) return;
-    let agent: AgentTerminal;
+    let agent: Agent;
     if (a.sessionId) {
       const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);
       agent = session ? this.openAgent(this.resumeOptions(session)) : this.openAgent({ cwd: a.cwd, resume: { sessionId: a.sessionId } });
     } else {
-      agent = this.openAgent({ cwd: a.cwd, prompt: a.prompt });
+      // Restored agents are always claude-tui (the headless kind doesn't serialize).
+      agent = this.openAgent({ kind: 'claude-tui', cwd: a.cwd, prompt: a.prompt });
     }
     // Reopen the files that were in this agent's work area (its reviewed files). The
     // agent leaf itself is recreated by openAgent; the work-area split geometry
@@ -1004,7 +1017,7 @@ export class AppWindow {
   }
 
   /** The agent whose workbench is active, if any. */
-  private get activeAgent(): AgentTerminal | null {
+  private get activeAgent(): Agent | null {
     return this.workbench.owner === 'user' ? null : this.workbench.owner;
   }
 
@@ -1020,7 +1033,7 @@ export class AppWindow {
   // Surface an attention-worthy status change as a notification — but only when
   // the user isn't already watching that agent (its tab isn't the active one).
   // Clicking the notification reveals the agent.
-  private notifyAgentAttention(agent: AgentTerminal, previous: AgentStatus, current: AgentStatus): void {
+  private notifyAgentAttention(agent: Agent, previous: AgentStatus, current: AgentStatus): void {
     if (this.workbench.center.activePanel.activeChild === agent.root) return;
     const reveal = () => this.showAgent(agent);
     if (current === 'waiting') {
@@ -1031,7 +1044,7 @@ export class AppWindow {
   }
 
   // The agent a lifecycle command acts on: the active one, else the last focused.
-  private currentAgent(): AgentTerminal | null {
+  private currentAgent(): Agent | null {
     return this.activeAgent ?? this.lastAgent;
   }
 
@@ -1087,7 +1100,7 @@ export class AppWindow {
   // Review the files an agent has edited this session: switch to its workbench and
   // open every edited file as a tab in the work area split beside the agent panel
   // (created on demand, to the right of the terminal).
-  private openAgentChanges(agent: AgentTerminal): void {
+  private openAgentChanges(agent: Agent): void {
     const files = agent.changedFiles;
     if (files.length === 0) {
       quilx.notifications.addInfo(`${agent.title} hasn't edited any files yet`);
@@ -1113,7 +1126,7 @@ export class AppWindow {
   // without switching to that workbench. Mirrors openAgentChanges but targets a
   // (possibly inactive) workbench and never steals focus. A file already open
   // anywhere keeps its single editor.
-  private autoOpenChangedFile(agent: AgentTerminal, path: string): void {
+  private autoOpenChangedFile(agent: Agent, path: string): void {
     const workbench = this.workbenches.get(agent);
     if (!workbench) return;
     if ([...this.editors.values()].some((editor) => editor.currentFile === path)) return;
@@ -1126,16 +1139,19 @@ export class AppWindow {
   // Restart an agent: retire the old one and relaunch with the same cwd, resuming
   // its claude conversation (forking a still-live session so the original
   // transcript isn't clobbered). A pinned (renamed) title carries over.
-  private restartAgent(agent: AgentTerminal): void {
-    const resume = agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
+  private restartAgent(agent: Agent): void {
+    const kind: AgentKind = agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui';
     const title = agent.renamed ? agent.title : undefined;
+    // Resume is claude-tui only; a headless agent restarts fresh in its own cwd.
+    const resume = kind === 'claude-tui' && agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
+    const cwd = kind === 'claude-sdk' ? agent.effectiveCwd : undefined;
     this.closeAgent(agent);
-    this.openAgent({ resume, title });
+    this.openAgent({ kind, resume, title, cwd });
   }
 
   // Close an agent for good: SIGTERM a live child, drop its workbench (returning to
   // the user's workbench if it was active), and retire it from the registry.
-  private closeAgent(agent: AgentTerminal): void {
+  private closeAgent(agent: Agent): void {
     if (!agent.exited) agent.kill();
     if (this.workbench.owner === agent) this.activateOwner('user'); // swap away first
     const workbench = this.workbenches.get(agent);
@@ -1161,12 +1177,14 @@ export class AppWindow {
     this.participants.delete(agent.root);
     this.agentChildren.delete(agent.root);
     this.terminals.delete(agent.root);
+    this.conversations.get(agent.root)?.dispose(); // headless agent: kill child + IPC watchers
+    this.conversations.delete(agent.root);
     quilx.agents.remove(agent);
   }
 
   // Prompt for a new display name (pinned over the CLI's reported title). Reuses
   // the picker as a prose text prompt: the action row renames on Enter.
-  private renameAgentPrompt(agent: AgentTerminal): void {
+  private renameAgentPrompt(agent: Agent): void {
     openPicker({
       host: this.overlay,
       placeholder: 'Rename agent…',
@@ -1197,10 +1215,11 @@ export class AppWindow {
         // reparents the agent workbench (an ancestor of the emitting tab view), unsafe
         // mid-emit.
         const terminal = this.terminals.get(widget);
-        if (terminal instanceof AgentTerminal) {
-          if (this.workbench.owner === terminal)
+        const owner: Agent | null = terminal instanceof AgentTerminal ? terminal : (this.conversations.get(widget) ?? null);
+        if (owner) {
+          if (this.workbench.owner === owner)
             setTimeout(() => {
-              if (this.workbench.owner === terminal) this.activateOwner('user');
+              if (this.workbench.owner === owner) this.activateOwner('user');
             }, 0);
           return false;
         }
@@ -1228,6 +1247,8 @@ export class AppWindow {
     this.editorOwners.delete(widget);
     this.editorChildren.delete(widget);
     this.terminals.delete(widget);
+    this.conversations.get(widget)?.dispose(); // kill the claude child + IPC watchers
+    this.conversations.delete(widget);
     this.agentChildren.delete(widget);
     this.updateModifiedMarker(); // a closed editor no longer counts as unsaved
     // A closed commit-message tab finalizes the commit (if a message was saved).
@@ -1246,7 +1267,7 @@ export class AppWindow {
    * Nothing is shared with other workbenches, so a switch never reparents. Registers
    * and returns the `Workbench`.
    */
-  private buildWorkbench(owner: 'user' | AgentTerminal, cwd: string): Workbench<'user' | AgentTerminal> {
+  private buildWorkbench(owner: 'user' | Agent, cwd: string): Workbench<'user' | Agent> {
     const git = acquireGitRepo(cwd);
     const center = this.makeCenter();
     const fileTree = new FileTree({
@@ -1283,7 +1304,7 @@ export class AppWindow {
     const keymapDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('keymap') });
     keymapDock.add(keymapPanel.root, { title: 'Keybindings' });
 
-    const workbench = new Workbench<'user' | AgentTerminal>(
+    const workbench = new Workbench<'user' | Agent>(
       owner,
       {
         cwd, git, center, fileTree, leftPanel, filesTab,
@@ -1297,7 +1318,7 @@ export class AppWindow {
   }
 
   /** Activate the workbench owned by `owner`. */
-  private activateOwner(owner: 'user' | AgentTerminal): void {
+  private activateOwner(owner: 'user' | Agent): void {
     const workbench = this.workbenches.get(owner);
     if (workbench) this.activateWorkbench(workbench);
   }
@@ -1305,7 +1326,7 @@ export class AppWindow {
   // Step the active workbench by `step` (−1 / +1) through the workbench-list order
   // ([user, …agents]), wrapping around. No-op when the user is the only person.
   private cycleWorkbench(step: number): void {
-    const owners: Array<'user' | AgentTerminal> = ['user', ...quilx.agents.getAgents()];
+    const owners: Array<'user' | Agent> = ['user', ...quilx.agents.getAgents()];
     if (owners.length < 2) return;
     const current = owners.indexOf(this.workbench.owner);
     const next = (current + step + owners.length) % owners.length;
@@ -1319,7 +1340,7 @@ export class AppWindow {
    * lives on the workbench itself, so there's nothing to save/restore on switch. Driven
    * by the WorkbenchList / openAgent.
    */
-  private activateWorkbench(workbench: Workbench<'user' | AgentTerminal>): void {
+  private activateWorkbench(workbench: Workbench<'user' | Agent>): void {
     this.workbench = workbench;
     this.contentOverlay.setChild(workbench.root); // show this workbench
     this.workbenchList.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
@@ -1357,7 +1378,7 @@ export class AppWindow {
   // Re-root an agent's workbench after it moves into a worktree: swap the pooled
   // GitRepo and re-root the file tree + Source Control in place (the widgets/tabs
   // stay put); if it's the active workbench, re-point the header chrome too.
-  private reRootWorkbench(workbench: Workbench<'user' | AgentTerminal>, newCwd: string): void {
+  private reRootWorkbench(workbench: Workbench<'user' | Agent>, newCwd: string): void {
     if (newCwd === workbench.cwd) return;
     // The worktree at newCwd may have been probed (and cached) as a non-repo before
     // it existed; drop that stale entry so repoRoot resolves the new checkout.
@@ -1386,7 +1407,7 @@ export class AppWindow {
   // The cooperative-detection safety net: if an agent created a worktree (spotted
   // by the Bash validator) but never announced it via set_worktree, warn once when
   // it next settles — its workbench won't have re-rooted to the worktree.
-  private warnUnannouncedWorktree(agent: AgentTerminal): void {
+  private warnUnannouncedWorktree(agent: Agent): void {
     const path = agent.unannouncedWorktree;
     if (!path) return;
     agent.clearUnannouncedWorktree();
@@ -1408,14 +1429,14 @@ export class AppWindow {
   }
 
   /** Show `agent`: activate its workbench (its terminal lives there). */
-  private showAgent(agent: AgentTerminal): void {
+  private showAgent(agent: Agent): void {
     this.activateOwner(agent);
   }
 
   // Refresh the agent's tab: its glyph-prefixed title, plus Adw's accent-coloured
   // `needs-attention` highlight while it's waiting for input (the tab title text
   // itself can't be colour-coded like the sidebar dot).
-  private updateAgentTab(agent: AgentTerminal): void {
+  private updateAgentTab(agent: Agent): void {
     const child = this.agentChildren.get(agent.root);
     if (!child) return;
     child.setTitle(agentTabTitle(agent));
@@ -1817,7 +1838,7 @@ export class AppWindow {
   // Lazily create this workbench's Source Control panel on first reveal — it isn't
   // built at startup, so a workbench opens no git subscription until the user asks
   // for it. Idempotent: returns the existing panel once created.
-  private ensureGitPanel(workbench: Workbench<'user' | AgentTerminal>): GitPanel {
+  private ensureGitPanel(workbench: Workbench<'user' | Agent>): GitPanel {
     if (workbench.gitPanel) return workbench.gitPanel;
     const gitPanel = new GitPanel({
       cwd: workbench.cwd,
@@ -2300,10 +2321,9 @@ export class AppWindow {
         description: 'Run a package.json script in a terminal',
       },
       'agent:new': {
+        // openAgent picks the kind from the `agent.implementation` flag.
         didDispatch: () =>
-          openModelPicker(this.overlay, (extraArgs) =>
-            this.openAgent({ command: ['claude', ...extraArgs] }),
-          ),
+          openModelPicker(this.overlay, (extraArgs) => this.openAgent({ command: ['claude', ...extraArgs] })),
         description: 'Start a new agent',
       },
       // Pick an existing worktree to launch the agent in (its workbench is rooted
@@ -2973,7 +2993,7 @@ const AGENT_WORKING_GLYPH = NERDFONT.STATUS.SYNC;
 const AGENT_STATUS_DOT = '●';
 
 /** An agent tab's title: the WorkbenchList status glyph prefixed to the agent's name. */
-function agentTabTitle(agent: AgentTerminal): string {
+function agentTabTitle(agent: Agent): string {
   const glyph = agent.status === 'working' ? AGENT_WORKING_GLYPH : AGENT_STATUS_DOT;
   return `${glyph} ${agent.title}`;
 }

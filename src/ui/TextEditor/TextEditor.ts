@@ -44,6 +44,7 @@ import { Leap, type LeapRequest } from './Leap.ts';
 import { CompletionController } from './CompletionController.ts';
 import { createBufferWordsSource } from './createBufferWordsSource.ts';
 import { createLspCompletionSource } from './createLspCompletionSource.ts';
+import type { CompletionSource } from './CompletionSource.ts';
 import type { LspDocument } from '../../lsp/LspManager.ts';
 import { lspToRange } from '../../lsp/position.ts';
 import { replaceOverwrite, replaceBackspace } from './replaceMode.ts';
@@ -581,6 +582,18 @@ export class TextEditor implements DocumentHost {
   setText(text: string): void {
     this.document.setText(text);
     this.editorModel.setCursorBufferPosition({ row: 0, column: 0 });
+  }
+
+  /** Insert `text` at the cursor / over the selection (e.g. a soft newline in an
+   *  embedded prompt buffer). */
+  insertText(text: string): void {
+    this.editorModel.insertText(text);
+  }
+
+  /** Register an extra completion source (beyond the built-in buffer-words / LSP),
+   *  e.g. slash commands for an embedded prompt input. */
+  addCompletionSource(source: CompletionSource): void {
+    this.completion.addSource(source);
   }
 
   /** Switch tree-sitter highlighting to match `path`'s file type (buffer/preview mode). */
@@ -1870,6 +1883,14 @@ export class TextEditor implements DocumentHost {
 
   focus() {
     this.view.grabFocus();
+  }
+
+  /** Focus the editor and switch to insert mode — for embedded prompt inputs
+   *  (e.g. a chat box) where the user expects to type immediately, not land in
+   *  vim normal mode. */
+  focusInsert() {
+    this.view.grabFocus();
+    this.vimState.activate('insert');
   }
 
   // --- Session integration ---------------------------------------------------

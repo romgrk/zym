@@ -16,7 +16,8 @@ import { theme } from '../theme/theme.ts';
 import { Icons } from './icons.ts';
 import { NERDFONT } from './nerdfont.ts';
 import { escapeMarkup } from './proseMarkup.ts';
-import type { AgentStatus, AgentTerminal, WorktreeInfo } from './AgentTerminal.ts';
+import type { AgentStatus, WorktreeInfo } from './AgentTerminal.ts';
+import type { Agent } from '../agents/types.ts';
 
 export const STATUS_DOT = '●';
 export const WORKING_GLYPH = NERDFONT.STATUS.SYNC;
@@ -32,7 +33,7 @@ const STATUS_COLOR: Record<AgentStatus, string> = {
 
 const DOT_CLASSES = ['quilx-agent-working', 'quilx-agent-waiting', 'quilx-agent-idle', 'quilx-agent-exited'];
 // Slow fade in/out applied while an agent needs attention (waiting on the user, or
-// finished but unseen) — see AgentTerminal.needsAttention.
+// finished but unseen) — see Agent.needsAttention.
 const BLINK_CLASS = 'quilx-agent-blink';
 addStyles(`
   .quilx-agent-working { color: ${STATUS_COLOR.working}; }
@@ -91,7 +92,7 @@ export function applyAgentBlink(label: InstanceType<typeof Gtk.Label>, blink: bo
  * A live status indicator for `agent`: a Gtk.Label that re-renders as the agent's
  * status changes. Call `dispose` to unsubscribe (e.g. when a row is rebuilt).
  */
-export function createAgentStatusIcon(agent: AgentTerminal): {
+export function createAgentStatusIcon(agent: Agent): {
   widget: InstanceType<typeof Gtk.Label>;
   dispose: () => void;
 } {

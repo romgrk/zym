@@ -24,6 +24,12 @@ export const NERDFONT = {
     DOT:     '', // U+F444 nf-oct-dot_fill
     NEUTRAL: '', // U+F11A nf-fa-meh_o
     SYNC:    '󱥸', // U+F1978 nf-md-cog_sync (agent working spinner)
+    STOP:    '', // U+F28D nf-fa-stop_circle (interrupted)
+  },
+  TASK: {
+    DONE:   '', // U+F046 nf-fa-check_square_o
+    ACTIVE: '', // U+F138 nf-fa-caret_square_o_right (in progress)
+    OPEN:   '', // U+F096 nf-fa-square_o
   },
   GIT: {
     BRANCH:       '', // U+F418 nf-oct-git_branch
@@ -49,6 +55,7 @@ export const NERDFONT = {
     CLOSE: '', // U+F00D nf-fa-times
     EDIT:  '', // U+F040 nf-fa-pencil
     TRASH: '', // U+F1F8 nf-fa-trash
+    COPY:  '', // U+F0C5 nf-fa-copy
   },
   DIFF: {
     UNIFIED:      '', // U+F039 nf-fa-align_justify
@@ -57,5 +64,30 @@ export const NERDFONT = {
   SOCIAL: {
     GITHUB: '', // U+F09B nf-fa-github
     USER:   '', // U+F007 nf-fa-user
+  },
+  TOOL: {
+    READ:     '', // U+F15C nf-fa-file_text
+    WRITE:    '', // U+F0C7 nf-fa-floppy_o (save)
+    EDIT:     '', // U+F044 nf-fa-pencil_square_o
+    GLOB:     '', // U+F07C nf-fa-folder_open
+    WEB:      '', // U+F0AC nf-fa-globe
+    SUBAGENT: '', // U+F0C0 nf-fa-users (Task)
+    TODO:     '', // U+F0AE nf-fa-tasks (checklist)
+    NOTEBOOK: '', // U+F02D nf-fa-book
+    MCP:      '', // U+F1E6 nf-fa-plug
+    GENERIC:  '', // U+F013 nf-fa-cog (default)
+    SKILL:    '', // U+F12E nf-fa-puzzle_piece
+    QUESTION: '', // U+F059 nf-fa-question_circle
+    WORKFLOW: '', // U+F0E8 nf-fa-sitemap
+    CLOCK:    '', // U+F017 nf-fa-clock_o (ScheduleWakeup)
+    CALENDAR: '', // U+F073 nf-fa-calendar (Cron)
+    MONITOR:  '', // U+F06E nf-fa-eye (Monitor)
+    TRIGGER:  '', // U+F0E7 nf-fa-bolt (RemoteTrigger)
+    BELL:     '', // U+F0F3 nf-fa-bell (PushNotification)
+    COGS:     '', // U+F085 nf-fa-cogs (background task)
+    STOP:     '', // U+F04D nf-fa-stop (TaskStop)
+    DESIGN:   '', // U+F1FC nf-fa-paint_brush (DesignSync)
+    PLAN:     '', // U+F022 nf-fa-list_alt (plan mode)
+    WORKTREE: '', // U+F126 nf-fa-code_fork (worktree)
   },
 } as const;

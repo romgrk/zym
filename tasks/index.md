@@ -308,6 +308,7 @@ is implemented.
 
 See [agents.md](agents.md) for the architecture plan.
 
+- [x] **Two agent kinds** (`src/agents/configs.ts`, default `claude-tui`): `claude-tui` = the CLI's terminal UI in a Vte tab; `claude-sdk` = headless `claude -p` stream-json rendered in native widgets (opt-in `agent.implementation: "claude-sdk"`). Both implement one `Agent` surface. claude-sdk built: turn loop, native permissions (MCP `--permission-prompt-tool`), interrupt, subagents, shell monitors, AskUserQuestion card, message queueing. Deep dive [agents/claude-sdk.md](agents/claude-sdk.md). Deferred: sdk resume/serialize. See [agents.md](agents.md)
 - [x] Basic agent runner (claude in terminal tab)
 - [x] Basic AgentManager, sidebar list, and picker/starter
 - [x] Live agent status (idle/working/waiting/exited) via Claude Code hooks

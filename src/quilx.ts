@@ -107,6 +107,13 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     default: ['claude'],
     description: 'Argv of the terminal agent launched by AgentTerminal (agent:new).',
   },
+  'agent.implementation': {
+    type: 'string',
+    default: 'claude-sdk',
+    description:
+      "Which Claude agent host `agent:new` launches: 'claude-tui' (the terminal " +
+      "TUI) or 'claude-sdk' (headless `claude -p`, natively rendered; default).",
+  },
   'agent.autoOpenChangedFiles': {
     type: 'boolean',
     default: true,

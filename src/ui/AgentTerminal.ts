@@ -13,10 +13,11 @@
  *     flipped to an `exited` status.
  *
  * This class is the tool-agnostic host: it owns the agent's status, edited-files
- * list, display name (`rename`) and serialization. All Claude-Code-specific
- * integration — argv/`--settings` injection, the hook IPC files, and the status /
- * edited-files / session-name watchers — lives behind `ClaudeSession`
- * (see claudeAgent.ts); a non-claude command simply runs with no session.
+ * list, display name (`rename`) and serialization. Any tool-specific integration
+ * — argv augmentation and the status / edited-files / session-name reporting —
+ * lives behind an injected `AgentDriver` (see ../agents/types.ts); the host calls
+ * `options.driverFactory` to build one. For `claude` that's `createClaudeTuiDriver`
+ * (../agents/claude-tui/session.ts); a command with no driver runs plain.
  *
  * Status changes are surfaced via `status` / `onDidChangeStatus`.
  *
@@ -26,23 +27,27 @@
 import * as Path from 'node:path';
 import { Gdk } from '../gi.ts';
 import { Terminal, type TerminalOptions } from './Terminal.ts';
-import { ClaudeSession, type AgentMode, type AgentResume, type AgentStatus, type ClaudeHost } from './claudeAgent.ts';
+import type { Agent, AgentDriver, AgentDriverFactory, AgentHost, AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 import { worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { theme } from '../theme/theme.ts';
 import { quilx } from '../quilx.ts';
 import type { TabState } from '../SessionManager.ts';
 
-export type { AgentMode, AgentResume, AgentStatus } from './claudeAgent.ts';
+export type { AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 export type { WorktreeInfo } from '../git.ts';
 
 export interface AgentTerminalOptions extends TerminalOptions {
   /** An initial prompt to launch the agent with (appended to its argv). */
   prompt?: string;
-  /** Resume a past conversation rather than starting a new one (claude only). */
+  /** Resume a past conversation rather than starting a new one. */
   resume?: AgentResume;
+  /** The integration to attach (e.g. `createClaudeTuiDriver`). When it returns a
+   *  driver, that driver's argv is spawned and it reports live state; when it
+   *  returns null (or is absent) the base command runs plain (alive/exited only). */
+  driverFactory?: AgentDriverFactory;
 }
 
-export class AgentTerminal extends Terminal {
+export class AgentTerminal extends Terminal implements Agent {
   private _status: AgentStatus = 'idle';
   private readonly statusHandlers: Array<() => void> = [];
   // Attention tracking for the sidebar's blinking status dot. `_viewed` is whether
@@ -53,7 +58,8 @@ export class AgentTerminal extends Terminal {
   private _viewed = false;
   private _acknowledged = true;
   private readonly attentionHandlers: Array<() => void> = [];
-  // Claude's permission mode (`shift-tab` cycles it); `default` until a hook reports.
+  // The agent's permission mode (claude's `shift-tab` cycle); `default` until the
+  // driver reports otherwise.
   private _permissionMode: AgentMode = 'default';
   private readonly permissionModeHandlers: Array<() => void> = [];
   private _changedFiles: string[] = [];
@@ -69,29 +75,31 @@ export class AgentTerminal extends Terminal {
   // announced via set_worktree (cleared when it does); drives the warning toast.
   private _pendingWorktree: string | null = null;
   // A user-pinned display name (`agent:rename`); when set it overrides both the
-  // claude-reported session name and the CLI's reported (OSC) title.
+  // driver-reported session name and the CLI's reported (OSC) title.
   private _displayName: string | null = null;
-  // The session name Claude reports via its session file (its `/rename` command
-  // and auto-summaries), surfaced by the ClaudeSession.
+  // The session name the driver reports (claude's `/rename` command and
+  // auto-summaries), surfaced via onSessionName.
   private _sessionName: string | null = null;
-  // The Claude integration (argv/`--settings` + status/files/name watchers), or
-  // null for a non-claude command (which then runs plain, alive/exited only).
-  // Replaced on `resume()` (each run gets fresh IPC files).
-  private session: ClaudeSession | null;
-  // The agent's argv as the user requested it (before `--settings` injection) and
-  // its launch prompt — retained so a session can relaunch the agent verbatim.
+  // The integration driver (augments argv + reports status/files/name), or null
+  // when the command runs plain (alive/exited only). Replaced on `resume()`.
+  private driver: AgentDriver | null;
+  // The factory that built `driver`, retained so `resume()` can build a fresh one.
+  private readonly driverFactory?: AgentDriverFactory;
+  // The agent's argv as the user requested it (before driver augmentation) and its
+  // launch prompt — retained so the driver can relaunch the agent verbatim.
   private readonly baseCommand: string[];
   private readonly launchPrompt?: string;
 
   constructor(options: AgentTerminalOptions = {}) {
     const baseCommand = options.command ?? resolveAgentCommand();
-    const session = ClaudeSession.create(baseCommand, options.resume);
+    const driver = options.driverFactory?.(baseCommand, options.resume) ?? null;
     // A launch prompt rides along as a trailing argv element (e.g. `claude
     // "<prompt>"`), so the agent starts already working on it.
-    const launchArgv = session ? session.command : baseCommand;
+    const launchArgv = driver ? driver.command : baseCommand;
     const command = options.prompt ? [...launchArgv, options.prompt] : launchArgv;
     super({ ...options, command, title: options.title ?? agentName(baseCommand) });
-    this.session = session;
+    this.driver = driver;
+    this.driverFactory = options.driverFactory;
     this.baseCommand = baseCommand;
     this.launchPrompt = options.prompt;
     this.root.setName('AgentTerminal'); // distinct identity from a plain Terminal
@@ -103,7 +111,7 @@ export class AgentTerminal extends Terminal {
     // super() call.
     quilx.agents.add(this);
     this.terminal.on('child-exited', () => this.onChildExited());
-    this.session?.watch(this.claudeHost());
+    this.driver?.watch(this.agentHost());
   }
 
   /** The agent session's current status. */
@@ -224,14 +232,14 @@ export class AgentTerminal extends Terminal {
 
   /**
    * Resume a stopped agent in place: respawn the agent process in this same
-   * terminal (reusing the pane and its scrollback), resuming its Claude
-   * conversation via `--resume <sessionId>`. A fresh ClaudeSession is built (the
+   * terminal (reusing the pane and its scrollback), resuming its conversation via
+   * the driver (claude: `--resume <sessionId>`). A fresh driver is built (the
    * previous run's IPC files were torn down on exit). No-op while still running.
    */
   resume(): void {
     if (!this.exited) return;
     const sessionId = this.sessionId; // cached from the prior run before its files went
-    this.session = ClaudeSession.create(this.baseCommand, sessionId ? { sessionId } : undefined);
+    this.driver = this.driverFactory?.(this.baseCommand, sessionId ? { sessionId } : undefined) ?? null;
     // New run → fresh edited-files log; revive the status out of `exited` (a
     // direct write: setStatus refuses to leave the terminal `exited` state).
     this._changedFiles = [];
@@ -240,15 +248,25 @@ export class AgentTerminal extends Terminal {
     this._acknowledged = true; // user-initiated resume — nothing unseen to flag
     for (const handler of this.statusHandlers) handler();
     this.terminal.feed(encode('\r\n\x1b[2m── resuming ──\x1b[0m\r\n'));
-    this.respawn(this.session ? this.session.command : this.baseCommand);
-    this.session?.watch(this.claudeHost());
+    this.respawn(this.driver ? this.driver.command : this.baseCommand);
+    this.driver?.watch(this.agentHost());
+  }
+
+  /** No-op (Agent surface): a terminal agent already spawned its child in the
+   *  constructor; nothing to defer to a post-mount start. */
+  start(): void {}
+
+  /** Push editor context into the agent (Agent surface): typed into the child as
+   *  if at the keyboard, so the user can keep editing before submitting. */
+  deliver(text: string): void {
+    this.feedChild(text);
   }
 
   // --- Session integration ----------------------------------------------------
 
-  /** The claude session id once a hook has reported it (null until then). */
+  /** The driver's session id once it has reported one (null until then). */
   get sessionId(): string | null {
-    return this.session?.sessionId ?? null;
+    return this.driver?.sessionId ?? null;
   }
 
   /** Session state: base argv + cwd + prompt, plus the session id so a restore can
@@ -296,10 +314,10 @@ export class AgentTerminal extends Terminal {
     };
   }
 
-  // --- ClaudeSession host ------------------------------------------------------
+  // --- Agent driver host -------------------------------------------------------
 
-  // The callbacks the ClaudeSession drives as Claude's IPC files change.
-  private claudeHost(): ClaudeHost {
+  // The callbacks the driver pushes live state through as its session progresses.
+  private agentHost(): AgentHost {
     return {
       getPid: () => this.pid,
       onStatus: (status) => this.setStatus(status),
@@ -344,7 +362,7 @@ export class AgentTerminal extends Terminal {
     // its workbench linger — the user restarts (`r`) or closes (`X`) it from the
     // workbench list when they're done reading the output.
     this.terminal.feed(encode('\r\n\x1b[2m── process exited ──\x1b[0m\r\n'));
-    this.session?.dispose();
+    this.driver?.dispose();
   }
 
   // Vte inherits the Adwaita view colors by default (see Terminal); override the

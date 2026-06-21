@@ -57,6 +57,16 @@ export function iconLabel(glyph: string): InstanceType<typeof Gtk.Label> {
   return label;
 }
 
+/** A Pango-markup span rendering `glyph` in the icon font, optionally coloured —
+ *  for inline use inside a larger markup label (vs. `iconLabel`, a standalone
+ *  widget). */
+export function iconSpan(glyph: string, color?: string): string {
+  const open = color
+    ? `<span font_family="${ICON_FONT_FAMILY}" foreground="${color}">`
+    : `<span font_family="${ICON_FONT_FAMILY}">`;
+  return `${open}${glyph}</span>`;
+}
+
 // Completion-item kind → Codicon glyph (nf-cod-symbol_*), keyed by the framework's
 // CompletionItem.kind strings (see createLspCompletionSource's KIND_NAMES). These
 // are the same glyphs VSCode shows in its completion list.

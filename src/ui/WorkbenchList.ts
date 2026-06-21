@@ -28,7 +28,7 @@ import { createAgentStatusIcon, agentBranchMarkup } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
 import { NERDFONT } from './nerdfont.ts';
 import type { GitRepo } from '../git.ts';
-import type { AgentTerminal } from './AgentTerminal.ts';
+import type { Agent } from '../agents/types.ts';
 
 const USER_GLYPH = NERDFONT.SOCIAL.USER; // the default/user entry
 const CHANGED_GLYPH = NERDFONT.ACTION.EDIT; // changed-files badge
@@ -89,30 +89,30 @@ addStyles(`
 
 export interface WorkbenchListOptions {
   /** Fired when an agent row is activated (clicked / Enter). */
-  onActivate?: (agent: AgentTerminal) => void;
+  onActivate?: (agent: Agent) => void;
   /** Fired when the default (user) row is activated. */
   onActivateUser?: () => void;
   /** Fired when the robot button toggles collapse; the host resizes the sidebar. */
   onToggleCollapsed?: (collapsed: boolean) => void;
   /** Restart an agent (respawn / resume) — the list's `r` key. */
-  onRestart?: (agent: AgentTerminal) => void;
+  onRestart?: (agent: Agent) => void;
   /** Stop an agent's process (it stays listed, restartable) — the list's `x` key. */
-  onStop?: (agent: AgentTerminal) => void;
+  onStop?: (agent: Agent) => void;
   /** Close an agent (terminate if running, then remove it from the list) — the `d d` key. */
-  onClose?: (agent: AgentTerminal) => void;
+  onClose?: (agent: Agent) => void;
   /** Rename an agent — the list's `R` key. */
-  onRename?: (agent: AgentTerminal) => void;
+  onRename?: (agent: Agent) => void;
   /** Open the files an agent has edited — the changed-files badge / `o` key. */
-  onOpenChanges?: (agent: AgentTerminal) => void;
+  onOpenChanges?: (agent: Agent) => void;
   /** The git repo for an agent's workbench, so the row's branch line tracks live
    *  branch changes (in-place checkouts), not only worktree moves. */
-  gitFor?: (agent: AgentTerminal) => GitRepo | null;
+  gitFor?: (agent: Agent) => GitRepo | null;
   /** Display name for the default (user) entry; defaults to the OS username. */
   userName?: string;
 }
 
 // A list entry: the always-present user row, or one of the running agents.
-type Entry = { kind: 'user' } | { kind: 'agent'; agent: AgentTerminal };
+type Entry = { kind: 'user' } | { kind: 'agent'; agent: Agent };
 
 // A built row: its entry, the ListBoxRow, the Revealer that animates it in/out, and
 // the per-row unsubscribes (title + status + files). `removing` marks a row that is
@@ -146,7 +146,7 @@ export class WorkbenchList {
   private timers = new Set<NodeJS.Timeout>();
   // The agent whose row is selected (kept stable across rebuilds); null selects the
   // user row by default. Reflects the last-focused agent; see AppWindow.
-  private selected: AgentTerminal | null = null;
+  private selected: Agent | null = null;
   // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
   // header-bar sidebar toggle button.
   private collapsed = false;
@@ -289,7 +289,7 @@ export class WorkbenchList {
     }
 
     // Animate in rows for agents that don't have one yet (excludes rows mid-removal).
-    const shown = new Set<AgentTerminal>();
+    const shown = new Set<Agent>();
     for (const handle of this.handles) {
       if (!handle.removing && handle.entry.kind === 'agent') shown.add(handle.entry.agent);
     }
@@ -387,7 +387,7 @@ export class WorkbenchList {
   // An agent row's content. Subscriptions (status/mode/title/files) are pushed onto
   // `unsubs`, which the row's handle owns and tears down when the row goes away.
   private buildAgentContent(
-    agent: AgentTerminal,
+    agent: Agent,
     unsubs: Array<() => void>,
     registerRefresh?: (fn: () => void) => void,
   ): InstanceType<typeof Gtk.Box> {
@@ -497,7 +497,7 @@ export class WorkbenchList {
   }
 
   // Run `fn` with the agent of the currently selected row, if it's an agent row.
-  private withSelectedAgent(fn: (agent: AgentTerminal) => void): void {
+  private withSelectedAgent(fn: (agent: Agent) => void): void {
     const entry = this.selectedEntry();
     if (entry?.kind === 'agent') fn(entry.agent);
   }
@@ -530,14 +530,14 @@ export class WorkbenchList {
 
   /** Re-read an agent row's branch line and re-subscribe it to the workbench's git.
    *  Called by the host after a re-root swaps the workbench's git instance. */
-  refreshAgent(agent: AgentTerminal): void {
+  refreshAgent(agent: Agent): void {
     const handle = this.handles.find((h) => h.entry.kind === 'agent' && h.entry.agent === agent);
     handle?.refreshBranch?.();
   }
 
   /** Select the row for `agent`, or the default user row when `null`. Called when
    *  an agent gains/loses focus. */
-  selectAgent(agent: AgentTerminal | null): void {
+  selectAgent(agent: Agent | null): void {
     this.selected = agent;
     this.applySelection();
   }
@@ -557,7 +557,7 @@ export class WorkbenchList {
   private applyFiles(
     button: InstanceType<typeof Gtk.Button>,
     label: InstanceType<typeof Gtk.Label>,
-    agent: AgentTerminal,
+    agent: Agent,
   ): void {
     const changed = agent.changedFiles;
     if (changed.length === 0) {

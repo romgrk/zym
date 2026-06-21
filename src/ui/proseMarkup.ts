@@ -8,6 +8,7 @@
  * by the pickers that show free-text labels (resume conversations, switch/send-
  * to agent).
  */
+import { Gtk } from '../gi.ts';
 import { HIGHLIGHT_COLOR } from './Picker.ts';
 import { fonts } from '../fonts.ts';
 
@@ -45,4 +46,30 @@ export function proseMarkup(text: string, positions: number[] = [], muted = fals
 /** Escape the Pango-markup metacharacters in `text`. */
 export function escapeMarkup(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Set Pango `markup` on `label`, falling back to plain `fallback` if Pango rejects it. */
+export function setMarkupSafe(label: InstanceType<typeof Gtk.Label>, markup: string, fallback: string): void {
+  try {
+    label.setMarkup(markup);
+  } catch {
+    label.setText(fallback);
+  }
+}
+
+/** A new wrapped, selectable label rendered from `markup` (plain `fallback` on reject). */
+export function markupLabel(markup: string, fallback: string): InstanceType<typeof Gtk.Label> {
+  const label = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
+  setMarkupSafe(label, markup, fallback);
+  return label;
+}
+
+/** Remove every child of `box` (GTK4 has no `clear()`). */
+export function clearChildren(box: InstanceType<typeof Gtk.Box>): void {
+  let child = box.getFirstChild();
+  while (child) {
+    const next = child.getNextSibling();
+    box.remove(child);
+    child = next;
+  }
 }
