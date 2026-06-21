@@ -64,6 +64,10 @@ export function markupLabel(markup: string, fallback: string): InstanceType<type
   return label;
 }
 
+export function setLineHeight(markup: string, lineHeight: number) {
+  return `<span line_height="${lineHeight}">${markup}</span>`
+}
+
 /** Remove every child of `box` (GTK4 has no `clear()`). */
 export function clearChildren(box: InstanceType<typeof Gtk.Box>): void {
   let child = box.getFirstChild();

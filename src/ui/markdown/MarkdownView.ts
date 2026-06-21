@@ -13,7 +13,7 @@ import { addStyles } from '../../styles.ts';
 import { theme } from '../../theme/theme.ts';
 import { fonts } from '../../fonts.ts';
 import { markdownToPango } from '../markdownMarkup.ts';
-import { escapeMarkup, markupLabel, clearChildren } from '../proseMarkup.ts';
+import { escapeMarkup, markupLabel, clearChildren, setLineHeight } from '../proseMarkup.ts';
 import { iconLabel } from '../icons.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { clipboard } from '../TextEditor/vim/clipboard.ts';
@@ -43,6 +43,7 @@ addStyles(`
   .quilx-md-cell { padding: 3px 10px 3px 0; }
   .quilx-md-copy { padding: 2px 6px; margin: 4px; min-height: 0; min-width: 0; opacity: 0.45; }
   .quilx-md-copy:hover { opacity: 1; }
+  
   /* Breathing room between blocks. */
   .quilx-md-heading { margin-top: 6px; margin-bottom: 2px; }
   .quilx-md-para { margin: 2px 0; }
@@ -51,6 +52,8 @@ addStyles(`
   .quilx-md-list { margin: 2px 0; }
   .quilx-md-quote { margin: 4px 0; }
 `);
+
+const LINE_HEIGHT = 1.3
 
 // Pango named sizes per heading level (1..6).
 const HEADING_SIZE = ['x-large', 'large', 'large', 'medium', 'medium', 'small'];
@@ -102,11 +105,11 @@ function blockMarkup(block: Block): string {
     case 'heading':
       return `<span size="${HEADING_SIZE[block.level - 1] ?? 'medium'}" weight="bold">${inline(block.text)}</span>`;
     case 'paragraph':
-      return inline(block.text);
+      return setLineHeight(inline(block.text), LINE_HEIGHT);
     case 'list':
-      return listMarkup(block.ordered, block.items, 0);
+      return setLineHeight(listMarkup(block.ordered, block.items, 0), LINE_HEIGHT);
     case 'blockquote':
-      return blockquoteMarkup(block.blocks);
+      return setLineHeight(blockquoteMarkup(block.blocks), LINE_HEIGHT);
     case 'hr':
       return `<span foreground="${attrEscape(theme.ui.text.muted)}">────────────────</span>`;
     default:
