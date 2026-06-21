@@ -62,11 +62,11 @@ addStyles(/* css */`
     border-bottom-left-radius: var(--popover-radius);
     border-bottom-right-radius: var(--popover-radius);
   }
-  /* Each option sits on its own raised chip — a different theme background than the
-     footer behind them. */
+  /* Each option sits on its own raised chip: the elevated-surface background (pickers
+     / popovers / menus), a step up from the footer's editor background behind them. */
   #AgentLauncherOptions #ComboboxList,
   #AgentLauncherOptions #AgentLauncherField {
-    background-color: var(--t-ui-surface-selected);
+    background-color: var(--t-ui-surface-popover);
     border-radius: var(--popover-radius-small);
   }
   #AgentLauncherField {

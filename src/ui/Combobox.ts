@@ -45,15 +45,7 @@ addStyles(/* css */`
     background: transparent;
     box-shadow: none;
   }
-  /* Compact the Adwaita entry row: drop its tall default min-height and trim the
-     header's vertical padding so the floating label + value fit in less height. */
-  #ComboboxList > row,
-  #ComboboxRow {
-    min-height: 0;
-  }
-  #ComboboxRow > .header {
-    padding-top: 2px;
-    padding-bottom: 2px;
+  #ComboboxList > row {
     min-height: 0;
   }
   #ComboboxPopover > contents {
