@@ -239,6 +239,10 @@ export class KeymapManager {
     });
   }
 
+  private emitBindingsChanged(): void {
+    for (const listener of this.bindingsListeners) listener();
+  }
+
   /**
    * Every registered keybinding (one row per selector × keystroke), with the
    * source it came from and its priority — for a keymap reference panel. Not
