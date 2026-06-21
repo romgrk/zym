@@ -24,7 +24,9 @@ import { Gio } from '../../gi.ts';
 import { Disposable, Emitter } from '../../util/eventKit.ts';
 import { ClaudeStreamTransport, type Transport, type TransportOptions } from './transport.ts';
 import { userTurn, isSystemInit, isThinkingTokens, isResult, type StreamEvent, type ContentBlock, type Usage as TokenUsage } from './protocol.ts';
-import type { AgentMode, AgentStatus } from '../types.ts';
+import type { ReplayEntry } from './transcript.ts';
+import type { AgentMode, AgentResume, AgentStatus } from '../types.ts';
+import { resumeFlags } from '../resume.ts';
 import { parseActions, type AgentAction } from '../actions.ts';
 import { AGENT_SYSTEM_PROMPT } from '../prompts.ts';
 
@@ -143,6 +145,8 @@ export interface SdkSessionOptions {
   command?: string[];
   /** Working directory for claude. */
   cwd: string;
+  /** Resume a past conversation (`--resume`/`--continue`) instead of starting fresh. */
+  resume?: AgentResume;
   /** Override how the transport is created (tests inject a fake). */
   createTransport?: (spec: TransportOptions) => Transport;
 }
@@ -226,6 +230,11 @@ export class SdkSession {
     const base = this.options.command && this.options.command.length > 0 ? this.options.command : ['claude'];
     const args = [
       '-p',
+      // Resume flags (--resume <id> / --continue / --fork-session), when resuming a
+      // past session: claude reloads its transcript into context. It does NOT replay
+      // that history as stream events (verified) — the UI transcript is rebuilt
+      // separately by replaying claude's on-disk transcript (see SdkSession.replay).
+      ...resumeFlags(this.options.resume),
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--verbose',
@@ -275,6 +284,48 @@ export class SdkSession {
     logSend(turn);
     this.transport.send(turn);
     this.setStatus('working');
+  }
+
+  /** Rebuild the visible transcript from a past conversation by re-emitting the
+   *  same domain events a live turn would, so the widget's row handlers
+   *  (`AgentConversation.wireSession`) draw exactly what they'd draw live. Called
+   *  before `start()` on a resume; `--resume` restores claude's *context* but does
+   *  not replay history as stream events (verified), so the rows are rebuilt here
+   *  from claude's on-disk transcript (see ./transcript.ts → readTranscript). */
+  replay(entries: ReplayEntry[]): void {
+    for (const e of entries) {
+      switch (e.kind) {
+        case 'user':
+          this.emitter.emit('user-message', { text: e.text });
+          break;
+        case 'thinking':
+          this.emitter.emit('assistant-thinking', { delta: e.text });
+          break;
+        case 'text':
+          // A fresh assistant bubble per text block (post-tool text is its own block).
+          this.emitter.emit('assistant-start');
+          this.emitter.emit('assistant-text', { delta: e.text });
+          break;
+        case 'tool_use':
+          // A reconstructed subagent: seed its captured transcript before the row is
+          // drawn (so the widget spawns the real subagent button + page), then mark it
+          // done so it doesn't linger in the running panel.
+          if (e.subagent) {
+            this.subagents.set(e.id, e.subagent);
+            this.emitter.emit('tool-use', { id: e.id, name: e.name, input: e.input });
+            this.emitter.emit('subagent-done', { id: e.id });
+            break;
+          }
+          // Otherwise the widget decides how to draw it (AgentConversation renders
+          // Monitor / AskUserQuestion as static rows while replaying, since their live
+          // interactive widgets expect a lifecycle that a replay has no events for).
+          this.emitter.emit('tool-use', { id: e.id, name: e.name, input: e.input });
+          break;
+        case 'tool_result':
+          this.emitter.emit('tool-result', { id: e.id, isError: e.isError, text: e.text });
+          break;
+      }
+    }
   }
 
   /** Answer a pending permission request (writes the response file for the MCP

@@ -11,7 +11,9 @@
  */
 
 /** Live status of an agent session. */
-export type AgentStatus = 'idle' | 'working' | 'waiting' | 'exited';
+// `disconnected`: a resumed agent whose conversation is shown but whose process
+// hasn't been (re)spawned yet — it reconnects on the next user turn. See AgentConversation.
+export type AgentStatus = 'idle' | 'working' | 'waiting' | 'exited' | 'disconnected';
 
 /** An agent's permission mode (Claude's `shift-tab` cycle; other tools may map a
  *  subset). `default` asks; the rest auto-allow to varying degrees, `plan` only

@@ -491,8 +491,8 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
       `changedFiles`)
 - [ ] Worktree lifecycle (deferred) — keep/merge/discard when last agent
       leaves; per-worktree vs per-agent (baseline) review granularity
-- [ ] Resume/serialize for the `claude-sdk` kind (currently deferred; see
-      *agents/claude-sdk.md*)
+- [x] Resume/serialize for the `claude-sdk` kind — done (see *agents/claude-sdk.md*)
+- [ ] Monitor inner-state restore (`claude-sdk`) — a resumed `Monitor` tool renders as a static row; its live panel/output isn't rebuilt
 - [ ] **Retire the file-based IPC.** Every agent→editor channel today round-trips
       through atomic-rename files watched by `Gio.FileMonitor` — status hooks
       (`$ZYM_STATUS_FILE.*`), the permission server

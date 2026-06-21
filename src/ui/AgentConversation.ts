@@ -40,8 +40,9 @@ import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
 import { highlightToMarkup } from '../syntax/highlightToMarkup.ts';
 import { SdkSession, type PermissionRequest, type QuestionRequest, type TaskProgress } from '../agents/claude-sdk/SdkSession.ts';
+import { readTranscript, readContextSeed } from '../agents/claude-sdk/transcript.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import type { Agent, AgentMode, AgentStatus } from '../agents/types.ts';
+import type { Agent, AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 import type { AgentAction } from '../agents/actions.ts';
 import { ActionProcesses } from '../agents/ActionProcesses.ts';
 import type { TabState } from '../SessionManager.ts';
@@ -137,6 +138,8 @@ addStyles(`
   /* The running-subagents panel sits below the input card → divider on top, not bottom. */
   .zym-conversation-subagents { border-top: 1px solid var(--t-ui-border); border-bottom: none; }
   .zym-conversation-system { opacity: 0.6; font-style: italic; }
+  /* The resume boundary divider: centered, muted, italic. */
+  .zym-conversation-resume { color: ${theme.ui.text.muted}; font-style: italic; }
   .zym-conversation-error { color: var(--t-ui-status-error); }
   /* An unrecognised stream event, dumped as raw JSON so nothing is silently lost.
      A warning accent on the shared ToolRow (which owns padding + the expand fade). */
@@ -236,6 +239,9 @@ export interface AgentConversationOptions {
   cwd: string;
   /** Base argv (default `['claude']`). */
   command?: string[];
+  /** Resume a past conversation (`--resume`/`--continue`) instead of starting fresh.
+   *  On a `sessionId` resume the prior transcript is rebuilt into the view. */
+  resume?: AgentResume;
   /** An initial prompt to send once the session starts. */
   prompt?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
@@ -272,6 +278,25 @@ export class AgentConversation implements Agent {
   private readonly statusIcon: { widget: InstanceType<typeof Gtk.Widget>; dispose: () => void };
   private readonly subs = new CompositeDisposable();
   private readonly launchPrompt?: string;
+  // Base argv this agent was launched with (default ['claude']); kept for serialize.
+  private readonly baseCommand?: string[];
+  // The session id this agent resumes, if any — kept so serialize() preserves it
+  // even before the (deferred) live process has reported its own init session id.
+  private readonly resumeSessionId?: string;
+  // A resumed agent defers spawning `claude -p --resume` until the user's first
+  // turn (its transcript is rebuilt from disk meanwhile); flipped false on connect.
+  private deferredStart = false;
+  // The permanent "session resumed" divider row (boundary between restored history
+  // and the live continuation); its text drops the reconnect nudge once connected.
+  private resumeNoteRow: InstanceType<typeof Gtk.Widget> | null = null;
+  // While true, keep the transcript pinned to the bottom as its height changes —
+  // enabled on resume so a restored conversation lands at the latest message even
+  // though its height settles over several layout passes. Released when the user
+  // scrolls up. See enableFollowBottom.
+  private followBottom = false;
+  // True while rebuilding the transcript from a past session (see restoreTranscript):
+  // tool rows render statically and changed-file notifications are suppressed.
+  private replaying = false;
 
   // Tool-use rows keyed by tool_use_id, so the matching result can update the
   // row's status icon + append a preview.
@@ -342,9 +367,11 @@ export class AgentConversation implements Agent {
     this.cwd = options.cwd;
     this._effectiveCwd = options.cwd;
     this.launchPrompt = options.prompt;
+    this.baseCommand = options.command;
+    this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
     this.onRunInTerminal = options.onRunInTerminal;
-    this.session = new SdkSession({ cwd: options.cwd, command: options.command });
+    this.session = new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume });
 
     this.messages = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     this.messages.addCssClass('zym-conversation-transcript');
@@ -490,6 +517,74 @@ export class AgentConversation implements Agent {
     this.installCommands(); // after this.root exists (commands register on it)
     zym.agents.add(this); // join the registry → sidebar lists it
     this.wireSession();
+    // Resuming a specific session: rebuild its visible transcript now (before the
+    // workbench subscribes to onDidChangeFiles, so historical edits seed its
+    // changed-files set rather than flood-opening). `--resume` restores claude's
+    // context but doesn't replay history as events, so we draw it from disk.
+    if (options.resume?.sessionId) this.restoreTranscript(options.cwd, options.resume.sessionId);
+    // A resume with no launch prompt reconnects lazily: the transcript is rebuilt
+    // above, but `claude -p --resume` isn't spawned until the user's first turn (so
+    // restoring N agents doesn't fire N claude processes up front). A resume that
+    // carries a prompt — e.g. the worktree re-announce — still starts eagerly.
+    this.deferredStart = !!options.resume && !options.prompt;
+    if (options.resume?.sessionId) {
+      // A permanent divider marking the boundary between the restored history and
+      // the live continuation: "session disconnected …" until the first turn, then
+      // "session resumed" (a dim hollow dot reflects the not-yet-live state too).
+      const divider = this.addRow('zym-conversation-resume');
+      divider.setXalign(0.5);
+      divider.setHalign(Gtk.Align.CENTER);
+      this.resumeNoteRow = divider;
+      this.refreshResumeNote();
+      if (this.deferredStart) this.setStatus('disconnected');
+      this.enableFollowBottom(); // land at the latest message once layout settles
+    }
+  }
+
+  // Pin the transcript to the bottom as its height changes, until the user scrolls
+  // up. Restored content is appended before the widget is laid out, and its height
+  // settles over several frames (markdown wrapping/measuring), so a one-shot scroll
+  // lands short; following `changed` re-pins until the final height is reached.
+  private enableFollowBottom(): void {
+    if (this.followBottom) return;
+    this.followBottom = true;
+    const adj = this.scroller.getVadjustment();
+    adj.on('changed', () => { if (this.followBottom) adj.setValue(adj.getUpper() - adj.getPageSize()); });
+    adj.on('value-changed', () => {
+      // A user scroll away from the bottom releases the follow (a programmatic pin
+      // lands at the bottom, so it never trips this).
+      if (adj.getUpper() - adj.getPageSize() - adj.getValue() > 4) this.followBottom = false;
+    });
+  }
+
+  // Set the resume divider's text: while disconnected it nudges the user to send a
+  // message; once connected it collapses to a plain "session resumed" marker.
+  private refreshResumeNote(): void {
+    if (!this.resumeNoteRow) return;
+    const text = this.deferredStart
+      ? '── session disconnected · send a message to resume ──'
+      : '── session resumed ──';
+    (this.resumeNoteRow as InstanceType<typeof Gtk.Label>).setText(text);
+  }
+
+  // Rebuild the conversation rows from a past session's on-disk transcript, by
+  // replaying its domain events through the same row handlers a live turn uses.
+  private restoreTranscript(cwd: string, sessionId: string): void {
+    const entries = readTranscript(cwd, sessionId);
+    if (entries.length === 0) return;
+    this.replaying = true;
+    try {
+      this.session.replay(entries);
+    } finally {
+      this.replaying = false;
+      this.endTurn(); // close the last open bubble so the next live turn starts clean
+    }
+    // Seed the footer's model + context gauge from the transcript's latest usage, so
+    // a resumed agent shows its real context occupancy before the first live turn
+    // (cost + exact window arrive with the first live `result`).
+    const seed = readContextSeed(cwd, sessionId);
+    if (seed.model) this.modelContext.setModel(seed.model);
+    if (seed.usage) this.modelContext.setUsage(seed.usage);
   }
 
   // Sync the permission-mode dropdown (selection + color). The status itself is the
@@ -505,11 +600,24 @@ export class AgentConversation implements Agent {
     this.modeDropdown.addCssClass(`zym-cmode-${this._permissionMode}`);
   }
 
-  /** Spawn claude and send the launch prompt (if any). */
+  /** Spawn claude and send the launch prompt (if any). A lazily-resumed agent
+   *  skips the spawn here — `ensureConnected` runs it on the first turn instead. */
   start(): void {
-    this.session.start();
-    if (this.launchPrompt) this.session.prompt(this.launchPrompt);
+    if (!this.deferredStart) {
+      this.session.start();
+      if (this.launchPrompt) this.session.prompt(this.launchPrompt);
+    }
     this.input.focusInsert(); // ready to type immediately, not vim normal mode
+  }
+
+  // Spawn the (deferred) claude process on demand — the first time a resumed agent
+  // is actually given a turn. No-op once connected or for an eagerly-started agent.
+  private ensureConnected(): void {
+    if (!this.deferredStart) return;
+    this.deferredStart = false;
+    this.refreshResumeNote(); // keep the divider, drop the "send a message" nudge
+    this.setStatus('idle'); // leave disconnected; the turn that follows flips it to working
+    this.session.start();
   }
 
   // --- Agent surface ----------------------------------------------------------
@@ -560,8 +668,11 @@ export class AgentConversation implements Agent {
   /** Stop the claude process (keeps the widget listed as `exited`). */
   kill(): void { this.session.stop(); }
 
-  /** Restart support is a later phase; no-op for now. */
-  resume(): void { /* sdk resume — later phase */ }
+  /** No in-place resume: this host's session is wired into views built at
+   *  construction, so it can't hot-swap a fresh process. AppWindow resumes a
+   *  headless agent by restarting it (a fresh widget that rebuilds the transcript
+   *  from disk and resumes via `--resume`); see AppWindow.resumeCurrentAgent. */
+  resume(): void { /* intentionally a no-op — resume is a restart for this kind */ }
 
   focus(): void { this.input.focus(); }
 
@@ -574,9 +685,24 @@ export class AgentConversation implements Agent {
 
   clearUnannouncedWorktree(): void { /* no worktree validator for sdk */ }
 
-  serialize(): TabState | null { return null; } // not persisted across restarts yet
+  /** Session state: base argv + cwd + prompt + session id, tagged `claude-sdk` so a
+   *  restore relaunches this native host (not the terminal agent) and resumes the
+   *  conversation rather than starting over. */
+  serialize(): TabState | null {
+    return {
+      kind: 'agent',
+      agentKind: 'claude-sdk',
+      command: this.baseCommand ?? ['claude'],
+      cwd: this.cwd,
+      prompt: this.launchPrompt,
+      // Fall back to the resume id: a lazily-resumed agent that the user hasn't
+      // sent a turn to yet has no live (init-reported) session id, but must still
+      // serialize the id it resumes so a later restart can resume it again.
+      sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
+    };
+  }
   isModified(): boolean { return !this.exited; }
-  getModifiedLabel(): string { return `${this.title} (running)`; }
+  getModifiedLabel(): string { return `${this.title}${this._status === 'disconnected' ? ' (resumed)' : ' (running)'}`; }
 
   onDidChangeStatus(cb: () => void): () => void { return push(this.statusHandlers, cb); }
   onDidChangeFiles(cb: () => void): () => void { return push(this.fileHandlers, cb); }
@@ -694,6 +820,7 @@ export class AgentConversation implements Agent {
     const text = this.input.getText().trim();
     if (!text) return;
     this.input.setText('');
+    this.ensureConnected(); // a lazily-resumed agent spawns claude on its first turn
     if (this._status === 'idle') { this.session.prompt(text); return; }
     // The agent is busy — queue (accumulate) the message; it's sent on next idle.
     this.pendingText = this.pendingText ? `${this.pendingText}\n\n${text}` : text;
@@ -751,6 +878,19 @@ export class AgentConversation implements Agent {
       }),
       this.session.onToolUse(({ id, name, input }) => {
         if (this.handleTaskTool(id, name, input)) return; // TaskCreate/TaskUpdate → tasks panel, no row
+        // While rebuilding a past transcript, an Agent whose subagent transcript we
+        // reconstructed (seeded into the session before this event) spawns the real
+        // subagent button + page; every other tool draws as a static row, since the
+        // interactive Monitor/Question widgets drive off a lifecycle replay lacks.
+        if (this.replaying) {
+          if (name === 'Agent' && this.session.getSubagent(id)) {
+            this.endTurn();
+            this.messages.append(this.subagentView.spawn(id, input));
+            this.scrollToBottom();
+            return;
+          }
+          this.recordChangedFile(name, input); this.endTurn(); this.addToolRow(id, name, input); return;
+        }
         if (name === 'AskUserQuestion') return; // handled by the interactive question card
         if (name === 'Agent') { this.endTurn(); this.messages.append(this.subagentView.spawn(id, input)); this.scrollToBottom(); return; }
         if (name === 'Monitor') {
@@ -819,6 +959,9 @@ export class AgentConversation implements Agent {
     const path = (input as { file_path?: unknown })?.file_path;
     if (typeof path !== 'string' || this._changedFiles.includes(path)) return;
     this._changedFiles.push(path);
+    // Replaying a past transcript seeds the changed-files list silently — its edits
+    // already happened, so don't notify (which would re-open / re-diff them all).
+    if (this.replaying) return;
     for (const handler of this.fileHandlers) handler();
   }
 
