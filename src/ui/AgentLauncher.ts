@@ -211,7 +211,8 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     options: worktreeSpecials,
     value: savedWorktree,
     search: true,
-    specialLabels: ['create', 'current'],
+    specialLabels: ['create'],
+    mutedLabels: ['current'],
   });
   const worktreeField = field('worktree', worktreeDropdown.widget);
   const repo = repoRoot(cwd);

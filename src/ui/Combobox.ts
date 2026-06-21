@@ -32,12 +32,19 @@ export interface ComboboxConfig {
   search?: boolean;
   /** Labels rendered with emphasis (the `.combobox-special` accent). */
   specialLabels?: string[];
+  /** Labels rendered dimmed (the `.combobox-muted` look). */
+  mutedLabels?: string[];
 }
 
+// Opacity (not a theme color var) for the muted look, so it also resolves in the
+// dropdown's separate popup surface.
 addStyles(/* css */`
   .combobox-special {
     color: var(--accent-color);
     font-weight: bold;
+  }
+  .combobox-muted {
+    opacity: 0.55;
   }
 `);
 
@@ -67,16 +74,19 @@ export class Combobox {
     this.widget.addCssClass('flat');
     this.ingest(config.options);
 
-    if (config.specialLabels && config.specialLabels.length > 0) {
-      const special = new Set(config.specialLabels);
+    const special = new Set(config.specialLabels ?? []);
+    const muted = new Set(config.mutedLabels ?? []);
+    if (special.size > 0 || muted.size > 0) {
       const factory = new Gtk.SignalListItemFactory();
       factory.on('setup', (li: any) => li.setChild(new Gtk.Label({ xalign: 0 })));
       factory.on('bind', (li: any) => {
         const label = li.getChild();
         const text = (li.getItem() as any).getString();
         label.setText(text);
+        label.removeCssClass('combobox-special');
+        label.removeCssClass('combobox-muted');
         if (special.has(text)) label.addCssClass('combobox-special');
-        else label.removeCssClass('combobox-special');
+        else if (muted.has(text)) label.addCssClass('combobox-muted');
       });
       this.widget.setFactory(factory);
     }
