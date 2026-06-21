@@ -404,6 +404,9 @@ export class TextEditor implements DocumentHost {
   private readonly vimState: VimState;
   private readonly textDecorations: TextDecorations;
   private readonly blockDecorationController: BlockDecorations;
+  // Whitespace indent-guide overlay; built in buildEditorArea (needs the overlay). Held so
+  // dispose() can detach its signal handlers, which would otherwise pin the editor.
+  private indentGuides: IndentGuides | null = null;
   // Declarative block-decoration sets created via `blockDecorations()`, re-projected on materialize.
   private readonly decorationSets: BlockDecorationSet[] = [];
   private decorationMaterializeSub: (() => void) | null = null;
@@ -846,6 +849,12 @@ export class TextEditor implements DocumentHost {
     this.decorationMaterializeSub?.(); // drop the materialize re-projection subscription
     this.decorationMaterializeSub = null;
     this.syntax.dispose(); // detach buffer/view signal handlers + free the tree-sitter tree
+    // The inline overlays/decorations install their own view/buffer/adjustment signal handlers
+    // (outside `subs`); each un-disconnected one pins this editor, so tear them down explicitly.
+    this.textDecorations.dispose(); // drops the diagnostic-squiggle overlay's handlers + marks
+    this.blockDecorationController.dispose(); // drops map/changed/vadjustment handlers + tick callbacks
+    this.indentGuides?.dispose(); // drops adjustment/view/buffer handlers + the config observer
+    this.indentGuides = null;
     this.document.removeHost(this);
     this.document.removeView(this.buffer);
     if (this.releaseDocument) this.releaseDocument();
@@ -1359,8 +1368,10 @@ export class TextEditor implements DocumentHost {
     // Focusable inline peek (see-definition) — lives in this sibling overlay.
     this.inlinePeek = new Peek(this.view, overlay);
 
-    // Indent guides sit lowest (behind the squiggles/caret), in the whitespace.
-    overlay.addOverlay(new IndentGuides(this.view, this.editorModel).widget);
+    // Indent guides sit lowest (behind the squiggles/caret), in the whitespace. Held so
+    // `dispose()` can detach its view/buffer/adjustment handlers (they'd pin the editor).
+    this.indentGuides = new IndentGuides(this.view, this.editorModel);
+    overlay.addOverlay(this.indentGuides.widget);
 
     // Built here (after the view is in the ScrolledWindow, so its scroll
     // adjustments exist); fed by DiagnosticsView in installLsp.

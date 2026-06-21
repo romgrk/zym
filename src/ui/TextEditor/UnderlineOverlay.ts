@@ -18,6 +18,7 @@
 import { Gdk, Gtk, type SourceView } from '../../gi.ts';
 import { Range } from '../../text/Range.ts';
 import { Point } from '../../text/Point.ts';
+import { CompositeDisposable, Disposable } from '../../util/eventKit.ts';
 import type { EditorModel } from './EditorModel.ts';
 
 export interface Underline {
@@ -47,6 +48,11 @@ export class UnderlineOverlay {
   // text live instead of lagging until the next diagnostics push.
   private placed: Array<{ startMark: any; endMark: any; color: string }> = [];
   private readonly colorCache = new Map<string, InstanceType<typeof Gdk.RGBA>>();
+  // Every signal handler this overlay installs on the view/buffer/adjustment goes here.
+  // node-gtk roots each handler's closure in a Global for the GObject's lifetime, and the
+  // closure captures `this` (→ view + model) — so a single un-disconnected handler pins the
+  // overlay, and through it the editor, forever. `dispose()` cuts them. See TextEditor `subs`.
+  private readonly subs = new CompositeDisposable();
 
   constructor(view: SourceView, model: EditorModel) {
     this.view = view;
@@ -67,18 +73,32 @@ export class UnderlineOverlay {
       const rebind = () => {
         const adj = (this.view as any)[getter]?.();
         if (!adj || adj === bound) return;
+        if (bound) bound.off('value-changed', redraw); // drop the stale binding before re-binding
         bound = adj;
         adj.on('value-changed', redraw);
       };
       rebind();
       (this.view as any).on(notify, rebind);
+      this.subs.add(new Disposable(() => {
+        (this.view as any).off(notify, rebind);
+        if (bound) bound.off('value-changed', redraw);
+      }));
     };
     bind('getVadjustment', 'notify::vadjustment');
     bind('getHadjustment', 'notify::hadjustment');
     // Redraw on edits too: the marks have already moved with the edit, so repaint now
     // (at their new positions) rather than waiting for the next diagnostics push — this
     // is what removes the on-edit lag.
-    (this.model.buffer as any).on('changed', redraw);
+    const buffer = this.model.buffer as any;
+    buffer.on('changed', redraw);
+    this.subs.add(new Disposable(() => buffer.off('changed', redraw)));
+  }
+
+  /** Detach every signal handler (so the overlay stops pinning the editor) and drop the
+   *  anchor marks. Called by `TextDecorations.dispose()` on editor teardown. */
+  dispose(): void {
+    this.subs.dispose();
+    this.clear(); // delete the GtkTextMarks this overlay left on the buffer
   }
 
   /** Replace the underline set and repaint, anchoring each range to a mark pair. */

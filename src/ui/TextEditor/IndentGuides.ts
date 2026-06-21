@@ -15,6 +15,7 @@ import { Gdk, Gtk, type SourceView } from '../../gi.ts';
 import { Point } from '../../text/Point.ts';
 import { theme } from '../../theme/theme.ts';
 import { zym } from '../../zym.ts';
+import { CompositeDisposable, Disposable } from '../../util/eventKit.ts';
 import type { EditorModel } from './EditorModel.ts';
 
 const LINE_WIDTH = 1;
@@ -29,6 +30,10 @@ export class IndentGuides {
   private readonly model: EditorModel;
   private readonly buffer: any;
   private enabled = true;
+  // Signal handlers (view/buffer/adjustment) + the config observer all land here. Each
+  // node-gtk handler closure captures `this` (→ view + model), so a single un-disconnected
+  // one pins the editor forever; `dispose()` cuts them. See TextEditor `subs`.
+  private readonly subs = new CompositeDisposable();
   private readonly rgba = new Gdk.RGBA();
   // Monospace char advance, measured lazily from a visible content line and cached
   // (constant for the editor's font). The column-0 origin is NOT cached — it's
@@ -38,7 +43,7 @@ export class IndentGuides {
   constructor(view: SourceView, model: EditorModel) {
     this.view = view;
     this.model = model;
-    this.buffer = (view as any).getBuffer();
+    this.buffer = view.getBuffer();
     this.rgba.parse(theme.ui.border);
 
     this.widget = new Gtk.DrawingArea();
@@ -54,19 +59,33 @@ export class IndentGuides {
       const rebind = () => {
         const adj = (view as any)[getter]?.();
         if (!adj || adj === bound) return;
+        if (bound) bound.off('value-changed', redraw); // drop the stale binding before re-binding
         bound = adj;
         adj.on('value-changed', redraw);
       };
       rebind();
       (view as any).on(notify, rebind);
+      this.subs.add(new Disposable(() => {
+        view.off(notify, rebind);
+        if (bound) bound.off('value-changed', redraw);
+      }));
     };
     bind('getVadjustment', 'notify::vadjustment');
     bind('getHadjustment', 'notify::hadjustment');
     this.buffer.on('changed', redraw); // indentation may have changed
-    zym.config.observe('editor.indentGuides', (v) => {
-      this.enabled = v !== false;
-      redraw();
-    });
+    this.subs.add(new Disposable(() => this.buffer.off('changed', redraw)));
+    this.subs.add(
+      zym.config.observe('editor.indentGuides', (v) => {
+        this.enabled = v !== false;
+        redraw();
+      }),
+    );
+  }
+
+  /** Detach the view/buffer/adjustment handlers + the config observer, so this overlay
+   *  stops pinning the editor on teardown. Called from `TextEditor.dispose()`. */
+  dispose(): void {
+    this.subs.dispose();
   }
 
   private draw(cr: any): void {

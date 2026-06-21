@@ -115,6 +115,14 @@ export class TextDecorations {
     }
     return layer;
   }
+
+  /** Tear down on editor disposal — releases the squiggle overlay's view/buffer signal
+   *  handlers, which would otherwise pin the editor (see `UnderlineOverlay.dispose`). The
+   *  tag-based layers leave no signal handlers, so they need nothing beyond the buffer's
+   *  own teardown. */
+  dispose(): void {
+    this.underlines.dispose();
+  }
 }
 
 /** A named set of decorations a single producer owns and re-syncs as a unit. */

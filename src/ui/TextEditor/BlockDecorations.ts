@@ -32,6 +32,7 @@
  * move anchors (edits, fold toggles) aren't auto-followed — call `repositionAll()`.
  */
 import { Gtk, type SourceView } from '../../gi.ts';
+import { CompositeDisposable, Disposable } from '../../util/eventKit.ts';
 
 export type BlockDecorationPlacement = 'below' | 'above';
 
@@ -87,6 +88,10 @@ export class BlockDecorations {
   private repositionTickId = 0;
   private repositionFrames = 0;
   private vadjHooked = false;
+  // The view/buffer/adjustment signal handlers below. Each closure captures `this`, so an
+  // un-disconnected handler pins this controller (and the view + buffer it holds) forever;
+  // `dispose()` releases them. See TextEditor `subs`.
+  private readonly subs = new CompositeDisposable();
 
   constructor(view: SourceView) {
     this.view = view;
@@ -95,17 +100,21 @@ export class BlockDecorations {
     // Place any blocks added before the view was mapped. `map` fires before the
     // first layout pass, so line geometry (get_iter_location) is still 0 — defer
     // and retry until it's valid (see scheduleFlush).
-    (view as any).on('map', () => {
+    const onMap = () => {
       this.scheduleFlush(0);
       this.hookVadjustment();
-    });
+    };
+    view.on('map', onMap);
+    this.subs.add(new Disposable(() => (view as any).off('map', onMap)));
 
     // An edit to (or around) a band's anchor line can drop the reserved-space tag and leave the
     // overlay stranded — fatal on an EDITABLE surface (the search/diff multibuffers), where you type
     // on the very rows carrying header/gap bands. Re-reserve + reposition every band after any buffer
     // mutation (coalesced to one frame), so a band's space survives editing. Tag/overlay ops don't
     // fire `changed`, so this never re-enters.
-    this.buffer.on('changed', () => this.scheduleReserve());
+    const onChanged = () => this.scheduleReserve();
+    this.buffer.on('changed', onChanged);
+    this.subs.add(new Disposable(() => this.buffer.off('changed', onChanged)));
   }
 
   /** Reposition whenever the content height changes — a fold collapse/expand, an
@@ -117,7 +126,9 @@ export class BlockDecorations {
     const vadj = (this.view as any).getVadjustment?.();
     if (!vadj) return;
     this.vadjHooked = true;
-    vadj.on('changed', () => this.scheduleReposition());
+    const onVadjChanged = () => this.scheduleReposition();
+    vadj.on('changed', onVadjChanged);
+    this.subs.add(new Disposable(() => vadj.off('changed', onVadjChanged)));
   }
 
   add(options: BlockDecorationOptions): BlockDecorationHandle {
@@ -326,5 +337,22 @@ export class BlockDecorations {
     // Re-pool any slot that's an overlay child of the view (parented), regardless of
     // whether it finished placing; a never-parented fresh slot is just dropped (GC).
     if (block.slot.getParent?.()) this.freeSlots.push(block.slot);
+  }
+
+  /** Tear down on editor disposal: drop every view/buffer/adjustment signal handler (each
+   *  pins this controller → the view → the buffer), cancel any in-flight repositioning tick
+   *  callbacks, and remove every block so its anchor mark + gap tag leave the buffer (which
+   *  the shared document may outlive). Called from `TextEditor.dispose()`. */
+  dispose(): void {
+    this.subs.dispose();
+    if (this.repositionTickId) {
+      this.view.removeTickCallback(this.repositionTickId);
+      this.repositionTickId = 0;
+    }
+    if (this.reserveTickId) {
+      this.view.removeTickCallback(this.reserveTickId);
+      this.reserveTickId = 0;
+    }
+    for (const block of [...this.blocks]) this.removeBlock(block);
   }
 }

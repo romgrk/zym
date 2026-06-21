@@ -62,6 +62,10 @@ export class EditorPopover {
   private readonly chrome: number;
   private showId: ReturnType<typeof setTimeout> | null = null;
   private wantShown = false; // the caller's intent — drives the persistent re-open
+  // The persistent-mode `closed` handler (null when not persistent). node-gtk roots it on the
+  // popover for the popover's lifetime and the popover is never destroyed (only unparented), so
+  // it must be disconnected explicitly in `dispose()` or it pins the card → model → editor.
+  private closedHandler: (() => void) | null = null;
 
   constructor(
     model: EditorModel,
@@ -82,7 +86,10 @@ export class EditorPopover {
     this.popover.setPosition(opts.position === 'bottom' ? Gtk.PositionType.BOTTOM : Gtk.PositionType.TOP);
     if (opts.bare) this.popover.addCssClass('is-bare');
     this.popover.setParent(view);
-    if (opts.persistent) this.popover.on('closed', () => this.wantShown && this.popupSoon());
+    if (opts.persistent) {
+      this.closedHandler = () => this.wantShown && this.popupSoon();
+      this.popover.on('closed', this.closedHandler);
+    }
   }
 
   /** Point the card at buffer `point` and show it, LEFT-aligned: the popover's left edge
@@ -146,6 +153,10 @@ export class EditorPopover {
 
   dispose(): void {
     this.hide();
+    if (this.closedHandler) {
+      this.popover.off('closed', this.closedHandler); // release the Global handle that pins this card
+      this.closedHandler = null;
+    }
     this.popover.unparent(); // a setParent'd popover must be unparented to free it
   }
 }
