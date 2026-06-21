@@ -63,7 +63,12 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
 
 /** Pick a kind from the `agent.implementation` config value (default claude-tui,
  *  the Vte terminal agent; set `agent.implementation` to `claude-sdk` for the
- *  headless, natively-rendered conversation). */
+ *  headless, natively-rendered conversation).
+ *
+ *  The `QUILX_AGENT` env var overrides config when set (to `claude-tui` or
+ *  `claude-sdk`), so the host can be switched per-launch without editing config —
+ *  e.g. `QUILX_AGENT=claude-sdk quilx`. */
 export function resolveAgentKind(implementation: unknown): AgentKind {
-  return implementation === 'claude-sdk' ? 'claude-sdk' : 'claude-tui';
+  const value = process.env.QUILX_AGENT || implementation;
+  return value === 'claude-sdk' ? 'claude-sdk' : 'claude-tui';
 }
