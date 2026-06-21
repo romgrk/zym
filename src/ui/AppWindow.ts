@@ -1245,8 +1245,9 @@ export class AppWindow {
   // Build a fresh center (one person's splittable editor area). Every center
   // shares the same callbacks — they operate on the shared per-widget maps, and
   // only the *active* center fires interactive events (the others are detached).
-  private makeCenter(): PanelGroup {
+  private makeCenter(welcomeEmptyState: boolean): PanelGroup {
     return new PanelGroup({
+      welcomeEmptyState, // the user's central pane shows the cat + cheatsheet when empty
       onActiveChanged: () => this.onActiveTabChanged(),
       onTabCloseRequest: (widget) => {
         // An agent's terminal tab is never closed/destroyed here, whatever its state:
@@ -1314,7 +1315,7 @@ export class AppWindow {
    */
   private buildWorkbench(owner: 'user' | Agent, cwd: string): Workbench<'user' | Agent> {
     const git = acquireGitRepo(cwd);
-    const center = this.makeCenter();
+    const center = this.makeCenter(owner === 'user');
     const fileTree = new FileTree({
       rootPath: cwd,
       onOpenFile: (path) => this.openFile(path),
@@ -1587,11 +1588,13 @@ export class AppWindow {
         background-color: shade(${bg}, 1.6);
         box-shadow: inset 0 -2px ${border};
       }`,
-      // The empty-panel placeholder blends into the app background; its text and
-      // idle face are de-emphasized, and the face brightens to the foreground
-      // color when this is the active panel.
+      // The empty-panel placeholder blends into the app background; its text, face,
+      // cat, cheatsheet and footer are all de-emphasized. The plain face brightens
+      // to the foreground color when this is the active panel; the welcome state
+      // stays muted throughout (the cat is a calm mascot, the rest reference text).
+      // Keycaps derive their chrome from currentColor.
       `#PanelEmptyState { background-color: ${bg}; }`,
-      `#PanelEmptyText, #PanelEmptyEmoticon { color: ${muted}; }`,
+      `#PanelEmptyText, #PanelEmptyEmoticon, #PanelEmptyCat, #PanelEmptyCheatsheet, #PanelEmptyFooter { color: ${muted}; }`,
       `#PanelEmptyText.is-active, #PanelEmptyEmoticon.is-active { color: ${theme.ui.editor.foreground}; }`,
     ];
 

@@ -18,6 +18,8 @@ import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { zym } from '../zym.ts';
 import { NERDFONT } from './nerdfont.ts';
+import { symbolicImage } from './icons.ts';
+import { keycap } from './Keycap.ts';
 
 // Square off the tab buttons (Adwaita rounds them by default) and strip the gaps
 // Adwaita puts around and between them. Structural, not color-derived, so it's
@@ -41,6 +43,22 @@ addStyles(`
     outline: 1px solid var(--t-ui-surface-selected);
     outline-offset: -1px;
   }
+  /* Welcome empty state (the user's central pane): the sleeping cat over a
+     cheatsheet and a charitable callout, styled after nvim's start screen — the
+     whole block monospace and muted (colors come from the theme chrome). These
+     rules are structural (layout + type scale + keycap chrome) only. */
+  /* The cat is a calm, de-emphasized mascot — muted (theme chrome) and a touch
+     translucent so it never competes with the text. */
+  #PanelEmptyCat { opacity: 0.6; }
+  #PanelEmptyCheatsheet,
+  #PanelEmptyFooter {
+    font-family: var(--t-font-monospace-family, monospace);
+  }
+  #PanelEmptyCheatsheet { margin-top: 6px; font-size: 1.1em; }
+  /* (the binding badge itself is the reusable .keycap widget — see Keycap.ts) */
+  /* The charitable callout is a quiet footnote: title a line above the link. */
+  #PanelEmptyFooter { margin-top: 26px; font-size: 1.05em; }
+  #PanelEmptyFooter .cheat-footer-hint { margin-top: 5px; }
 `);
 
 // Nerd Font emoticon for the empty-state face (bundled icon font); always the
@@ -49,6 +67,33 @@ const EMOTICON_NEUTRAL = NERDFONT.STATUS.NEUTRAL;
 
 // Empty-state caption — constant.
 const EMPTY_TEXT = 'This panel is empty.';
+
+// The "welcome" empty state shown when a user workbench's central pane sits empty
+// (see PanelGroup): a sleeping cat over a small cheatsheet. The cat is a bundled
+// symbolic SVG (assets/), recolored to the text color like any symbolic icon.
+const CAT_ICON_FILE = 'cat-sleeping-symbolic.svg';
+const CAT_ICON_SIZE = 52;
+
+// A handful of high-value commands. `keys` is the binding in its canonical form —
+// the exact keystroke string from the default keymap (see keymaps/default.ts) —
+// shown as a single badge (e.g. `space f f`).
+const WELCOME_SHORTCUTS: ReadonlyArray<{ action: string; keys: string }> = [
+  { action: 'Command palette', keys: 'space space' }, // command-palette:toggle
+  { action: 'Find a file', keys: 'space o' }, // file:find
+  { action: 'Search in project', keys: 'space /' }, // project:search
+  { action: 'File tree', keys: 'space f f' }, // file-tree:focus
+  { action: 'Source control', keys: 'space g g' }, // git-panel:focus
+  { action: 'New terminal', keys: 'space t' }, // terminal:new
+  { action: 'New agent', keys: 'space a n' }, // agent:new
+  { action: 'Show all keybindings', keys: 'space ?' }, // keymap:show
+];
+
+// A charitable callout under the cheatsheet, in the spirit of Vim/Nvim's start
+// screen (`:help Kuwasha`). Kuwasha supports the Kibaale Community Centre in
+// Uganda; the link opens its child-sponsorship page.
+const HELP_CHILDREN_TITLE = 'Help children in Uganda';
+const HELP_CHILDREN_URL = 'https://www.kuwasha.net/sponsorship/';
+const HELP_CHILDREN_LINK = 'kuwasha.net';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 
@@ -108,10 +153,15 @@ export class Panel {
   // The tab bar. Its visibility is driven manually (see updateEmptyState) rather
   // than by Adw's autohide, which would wrap it in an animated revealer.
   private readonly bar: InstanceType<typeof Adw.TabBar>;
-  // The empty-state placeholder's face and caption (shown when the panel has no
-  // tabs); their glyph/color and text follow the panel's active state.
-  private emoticon!: InstanceType<typeof Gtk.Label>;
-  private emptyText!: InstanceType<typeof Gtk.Label>;
+  // The centered box inside the empty-state placeholder; its contents are rebuilt
+  // when the variant changes (see setEmptyVariant / renderEmptyContent).
+  private emptyInner!: InstanceType<typeof Gtk.Box>;
+  // Which empty state to render: the plain face (default), or the "welcome" cat +
+  // cheatsheet used for the user's central pane. Set by the host via setEmptyVariant.
+  private emptyVariant: 'minimal' | 'welcome' = 'minimal';
+  // The widgets in the current empty state whose color follows the active state
+  // (the face/cat brighten to the foreground when this is the active panel).
+  private emptyActiveTargets: InstanceType<typeof Gtk.Widget>[] = [];
   // Children added with `requireTabBar` — they need their tab title shown at all
   // times (e.g. an editor), so the tab bar stays visible even for a lone tab
   // rather than going chromeless. Keyed by child widget so it clears on close.
@@ -190,10 +240,10 @@ export class Panel {
     this.registerTabCommands();
   }
 
-  // The placeholder shown when the panel has no tabs: a centered Nerd Font
-  // emoticon above a single muted line. The outer box fills the panel (so its
-  // background covers the whole area), with the content centered inside it. The
-  // face tracks the active state.
+  // The placeholder shown when the panel has no tabs. The outer box fills the
+  // panel (so its background covers the whole area), with the content centered
+  // inside it. The content is the current variant (see renderEmptyContent): the
+  // plain face by default, or the cat + cheatsheet "welcome" state.
   private buildEmptyState(): Widget {
     const outer = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     outer.setName('PanelEmptyState'); // CSS identity (#PanelEmptyState) — paints the fill
@@ -211,35 +261,122 @@ export class Panel {
     outer.addController(click);
 
     // Centered content group: expands to claim the area, then centers within it.
-    const inner = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    inner.setHexpand(true);
-    inner.setVexpand(true);
-    inner.setHalign(Gtk.Align.CENTER);
-    inner.setValign(Gtk.Align.CENTER);
+    this.emptyInner = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    this.emptyInner.setHexpand(true);
+    this.emptyInner.setVexpand(true);
+    this.emptyInner.setHalign(Gtk.Align.CENTER);
+    this.emptyInner.setValign(Gtk.Align.CENTER);
+    this.renderEmptyContent();
 
-    // The emoticon is a Nerd Font glyph rendered in the bundled icon font (like
-    // the file-tree icons); its color is left to CSS so it follows the theme.
+    outer.append(this.emptyInner);
+    return outer;
+  }
+
+  /** Choose which empty-state content to show: the plain face (`minimal`, the
+   *  default for docks and splits) or the cat + cheatsheet (`welcome`, used by a
+   *  user workbench's central pane). Idempotent; rebuilds the content on change. */
+  setEmptyVariant(variant: 'minimal' | 'welcome'): void {
+    if (this.emptyVariant === variant) return;
+    this.emptyVariant = variant;
+    if (this.emptyInner) this.renderEmptyContent();
+  }
+
+  // Rebuild the centered empty-state content for the current variant, refreshing
+  // the set of widgets whose color tracks the active state, then re-apply that
+  // state so the new widgets pick up the right color immediately.
+  private renderEmptyContent(): void {
+    let child = this.emptyInner.getFirstChild();
+    while (child) {
+      const next = child.getNextSibling();
+      this.emptyInner.remove(child);
+      child = next;
+    }
+
+    this.emptyActiveTargets =
+      this.emptyVariant === 'welcome' ? this.buildWelcomeContent() : this.buildMinimalContent();
+
+    this.setActive(this.isActive);
+  }
+
+  // The default empty state: a centered Nerd Font emoticon above a single muted
+  // line. Returns the widgets that should follow the active color.
+  private buildMinimalContent(): Widget[] {
     const faceAttrs = Pango.AttrList.new();
     faceAttrs.insert(
       Pango.attrFontDescNew(Pango.FontDescription.fromString(`${ICON_FONT_FAMILY} 32`)),
     );
-    this.emoticon = new Gtk.Label({ label: EMOTICON_NEUTRAL });
-    this.emoticon.setName('PanelEmptyEmoticon'); // CSS identity (#PanelEmptyEmoticon)
-    this.emoticon.setAttributes(faceAttrs);
-    this.emoticon.setMarginBottom(12);
+    const emoticon = new Gtk.Label({ label: EMOTICON_NEUTRAL });
+    emoticon.setName('PanelEmptyEmoticon'); // CSS identity (#PanelEmptyEmoticon)
+    emoticon.setAttributes(faceAttrs);
+    emoticon.setMarginBottom(12);
 
-    // Bold, slightly enlarged caption; color stays muted via CSS.
     const textAttrs = Pango.AttrList.new();
     textAttrs.insert(Pango.attrWeightNew(Pango.Weight.BOLD));
     textAttrs.insert(Pango.attrScaleNew(1.1));
-    this.emptyText = new Gtk.Label({ label: EMPTY_TEXT });
-    this.emptyText.setName('PanelEmptyText'); // CSS identity (#PanelEmptyText)
-    this.emptyText.setAttributes(textAttrs);
+    const text = new Gtk.Label({ label: EMPTY_TEXT });
+    text.setName('PanelEmptyText'); // CSS identity (#PanelEmptyText)
+    text.setAttributes(textAttrs);
 
-    inner.append(this.emoticon);
-    inner.append(this.emptyText);
-    outer.append(inner);
-    return outer;
+    this.emptyInner.append(emoticon);
+    this.emptyInner.append(text);
+    return [emoticon, text];
+  }
+
+  // The "welcome" empty state, styled after Vim/Nvim's start screen: a sleeping cat
+  // (our "logo") above a centered, monospace cheatsheet — the binding (canonical
+  // form) on the left, the action on the right — and a charitable callout below.
+  // Everything stays muted (the cat is a calm mascot), so nothing here follows the
+  // active color (returns []).
+  private buildWelcomeContent(): Widget[] {
+    const cat = symbolicImage(CAT_ICON_FILE, CAT_ICON_SIZE);
+    cat.setName('PanelEmptyCat'); // CSS identity (#PanelEmptyCat) — recolored like a symbolic icon
+    cat.setMarginBottom(20);
+    this.emptyInner.append(cat);
+
+    // Two columns, like nvim's "type :cmd   description": the binding badge
+    // right-aligned in column 0, the action left-aligned in column 1, so a clean
+    // gutter runs down the middle.
+    const grid = new Gtk.Grid();
+    grid.setName('PanelEmptyCheatsheet'); // CSS identity (#PanelEmptyCheatsheet)
+    grid.setRowSpacing(7);
+    grid.setColumnSpacing(16);
+    grid.setHalign(Gtk.Align.CENTER);
+
+    WELCOME_SHORTCUTS.forEach((shortcut, row) => {
+      const badge = keycap(shortcut.keys); // one unified badge holding the whole binding
+      badge.setHalign(Gtk.Align.END);
+      grid.attach(badge, 0, row, 1, 1);
+
+      const action = new Gtk.Label({ label: shortcut.action });
+      action.addCssClass('cheat-action');
+      action.setHalign(Gtk.Align.START);
+      action.setHexpand(true);
+      grid.attach(action, 1, row, 1, 1);
+    });
+
+    this.emptyInner.append(grid);
+    this.emptyInner.append(this.buildHelpChildren());
+    return [];
+  }
+
+  // The charitable callout (cf. nvim's `:help Kuwasha`): a heading over a line with
+  // a clickable link to Kuwasha's sponsorship page (GtkLabel opens the URI itself).
+  private buildHelpChildren(): InstanceType<typeof Gtk.Box> {
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    box.setName('PanelEmptyFooter'); // CSS identity (#PanelEmptyFooter)
+    box.setHalign(Gtk.Align.CENTER);
+
+    const title = new Gtk.Label({ label: HELP_CHILDREN_TITLE });
+    title.addCssClass('cheat-footer-title');
+    box.append(title);
+
+    const link = new Gtk.Label();
+    link.addCssClass('cheat-footer-hint');
+    link.setUseMarkup(true);
+    link.setMarkup(`visit  <a href="${HELP_CHILDREN_URL}">${HELP_CHILDREN_LINK}</a>  to help`);
+    box.append(link);
+
+    return box;
   }
 
   /** Move keyboard focus onto the panel's own top-level widget (its root), so an
@@ -279,14 +416,14 @@ export class Panel {
     return Panel.activePanel;
   }
 
-  // Reflect whether this is the active panel: the empty-state face and caption sit
-  // in the foreground color when active, muted otherwise (the glyph and text stay
-  // constant). Private — activation goes through `activate` so only one panel is
-  // ever active.
+  // Reflect whether this is the active panel: the empty-state face/cat sits in the
+  // foreground color when active, muted otherwise (the glyph and text stay
+  // constant). Targets vary with the empty-state variant (see renderEmptyContent).
+  // Private — activation goes through `activate` so only one panel is ever active.
   private setActive(active: boolean): void {
-    for (const label of [this.emoticon, this.emptyText]) {
-      if (active) label.addCssClass('is-active');
-      else label.removeCssClass('is-active');
+    for (const widget of this.emptyActiveTargets) {
+      if (active) widget.addCssClass('is-active');
+      else widget.removeCssClass('is-active');
     }
   }
 

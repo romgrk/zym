@@ -175,6 +175,22 @@ Glyphs live in `src/ui/nerdfont.ts` (`NERDFONT`, a curated catalog grouped
 by purpose); `Icons` are named UI roles aliased onto it. File-tree icons are
 the separate `fileIcons.ts` table.
 
+The one real-image exception is a **bundled symbolic SVG**: a monochrome
+`*-symbolic.svg` shipped under `assets/`, turned into a recoloring `Gtk.Image`
+by `symbolicImage(file, size)` (`icons.ts`). It loads as a `Gtk.IconPaintable`,
+so GTK tints it to the widget's `color` like any symbolic icon — it follows the
+theme and state classes (`.is-active`, …). Reserve it for art a glyph can't
+supply (the empty-panel sleeping cat, `cat-sleeping-symbolic.svg`); still never
+pull named icons from the *system* theme (`Gtk.Image(iconName)`).
+
+## Keybinding badges
+
+Render a keybinding as a chip with `keycap(keys)` (`src/ui/Keycap.ts`): a
+monospace `.keycap` pill labelled with the binding in **canonical form** — the
+keymap's keystroke string verbatim (`space f f`, `ctrl-w v`). Its border and
+background derive from `currentColor`, so it adopts whatever text color its
+context sets. Used by the empty-panel welcome cheatsheet.
+
 ## Grouped buttons
 
 Adjacent header controls that form one logical control are joined with the
