@@ -305,6 +305,7 @@ export class AgentTerminal extends Terminal implements Agent {
   serialize(): TabState | null {
     return {
       kind: 'agent',
+      agentKind: 'claude-tui',
       command: this.baseCommand,
       cwd: this.cwd,
       prompt: this.launchPrompt,

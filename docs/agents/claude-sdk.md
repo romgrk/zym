@@ -154,12 +154,37 @@ cropped to one line until expanded. Richer turn surfaces:
 - **Interrupt** on `ctrl-c`.
 - Unknown event types surface as raw-JSON rows, never dropped.
 
+## Resume
+
+A headless session resumes like the terminal agent: `SdkSession.start()` adds
+the shared `resumeFlags` (`--resume <id>` / `--continue` / `--fork-session`,
+`src/agents/resume.ts`) so `claude -p` reloads its context. **`--resume` restores
+the model's context but does NOT replay history as stream events** (verified
+against claude-code 2.1.x — a resumed `-p` run emits only `init` + the new turn).
+So the *visible transcript* is rebuilt separately: `transcript.ts` reads claude's
+own on-disk JSONL (the same file `agentSessions.ts` reads for labels) into
+`ReplayEntry[]`, and `SdkSession.replay` re-emits them as the domain events a live
+turn produces, so `AgentConversation.wireSession`'s row handlers redraw the
+conversation. Replay runs in the constructor (before the workbench subscribes to
+changed-files, so historical edits seed rather than flood-open), guarded by a
+`replaying` flag that draws Agent/Monitor/Question as static rows.
+
+`AgentConversation.serialize()` returns `{kind:'agent', agentKind:'claude-sdk',
+…, sessionId}`; `TabState.agentKind` tells `restoreAgent` which host to relaunch.
+A resume no longer forces `claude-tui` (`openAgent`); in-place resume of a headless
+agent is a restart (its session is wired into views built at construction).
+
+Scope (v1): the main thread restores fully — user turns, assistant text/thinking,
+tool calls + results, the tasks panel. Subagent (`isSidechain`) **inner**
+transcripts are not yet reconstructed; the spawning `Agent` tool still shows as a
+row. Empty thinking blocks (transcript stores signatures, not text) don't render.
+
 ## Remaining / planned
 
-- [ ] **Conversation resume + session serialize for sdk** — `serialize()`
-      returns null, so sdk sessions are not persisted across editor
-      restart yet.
-- [ ] **Cost/context meter row** in the transcript.
+- [ ] **Subagent / monitor inner-transcript restore** — parse `isSidechain`
+      lines into `SubagentInfo` so a resumed subagent's drill-down page fills in.
+- [ ] **Cost/context meter row** in the transcript (and seed the gauge on resume
+      from the transcript's last `usage`).
 - [ ] **Token-level live streaming** via `--include-partial-messages`.
 - Swap `protocol.ts` hand-written types for the SDK's exported types once
   the dep is vendored and export names are verified.

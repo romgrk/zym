@@ -102,6 +102,40 @@ test('does not double-render text that already streamed', () => {
   session.dispose();
 });
 
+test('replay re-emits a past transcript as the same domain events a live turn would', () => {
+  // A resumed session rebuilds its rows by replaying the on-disk transcript through
+  // the same emitter the live stream uses — so the widget's row handlers redraw it.
+  const { session } = makeSession();
+  const log: string[] = [];
+  session.onUserMessage(({ text }) => log.push(`user:${text}`));
+  session.onAssistantStart(() => log.push('assistant-start'));
+  session.onAssistantText(({ delta }) => log.push(`text:${delta}`));
+  session.onAssistantThinking(({ delta }) => log.push(`thinking:${delta}`));
+  session.onToolUse(({ id, name }) => log.push(`tool:${name}:${id}`));
+  session.onToolResult(({ id, isError, text }) => log.push(`result:${id}:${isError}:${text}`));
+
+  session.replay([
+    { kind: 'user', text: 'fix it' },
+    { kind: 'thinking', text: 'mulling' },
+    { kind: 'text', text: 'on it' },
+    { kind: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+    { kind: 'tool_result', id: 't1', isError: false, text: 'a.txt' },
+    { kind: 'text', text: 'done' }, // post-tool text opens its own bubble
+  ]);
+
+  assert.deepEqual(log, [
+    'user:fix it',
+    'thinking:mulling',
+    'assistant-start',
+    'text:on it',
+    'tool:Bash:t1',
+    'result:t1:false:a.txt',
+    'assistant-start',
+    'text:done',
+  ]);
+  session.dispose();
+});
+
 test('interrupt sends a control_request and the resulting error is treated as an intentional stop', () => {
   const { session, fake } = makeSession();
   const events: string[] = [];

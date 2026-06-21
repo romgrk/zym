@@ -39,8 +39,9 @@ import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
 import { highlightToMarkup } from '../syntax/highlightToMarkup.ts';
 import { SdkSession, type PermissionRequest, type QuestionRequest, type TaskProgress } from '../agents/claude-sdk/SdkSession.ts';
+import { readTranscript } from '../agents/claude-sdk/transcript.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import type { Agent, AgentMode, AgentStatus } from '../agents/types.ts';
+import type { Agent, AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 import type { AgentAction } from '../agents/actions.ts';
 import { ActionProcesses } from '../agents/ActionProcesses.ts';
 import type { TabState } from '../SessionManager.ts';
@@ -216,6 +217,9 @@ export interface AgentConversationOptions {
   cwd: string;
   /** Base argv (default `['claude']`). */
   command?: string[];
+  /** Resume a past conversation (`--resume`/`--continue`) instead of starting fresh.
+   *  On a `sessionId` resume the prior transcript is rebuilt into the view. */
+  resume?: AgentResume;
   /** An initial prompt to send once the session starts. */
   prompt?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
@@ -252,6 +256,11 @@ export class AgentConversation implements Agent {
   private readonly statusIcon: { widget: InstanceType<typeof Gtk.Widget>; dispose: () => void };
   private readonly subs = new CompositeDisposable();
   private readonly launchPrompt?: string;
+  // Base argv this agent was launched with (default ['claude']); kept for serialize.
+  private readonly baseCommand?: string[];
+  // True while rebuilding the transcript from a past session (see restoreTranscript):
+  // tool rows render statically and changed-file notifications are suppressed.
+  private replaying = false;
 
   // Tool-use rows keyed by tool_use_id, so the matching result can update the
   // row's status icon + append a preview.
@@ -314,9 +323,10 @@ export class AgentConversation implements Agent {
     this.cwd = options.cwd;
     this._effectiveCwd = options.cwd;
     this.launchPrompt = options.prompt;
+    this.baseCommand = options.command;
     this.onOpenFile = options.onOpenFile;
     this.onRunInTerminal = options.onRunInTerminal;
-    this.session = new SdkSession({ cwd: options.cwd, command: options.command });
+    this.session = new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume });
 
     this.messages = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     this.messages.addCssClass('zym-conversation-transcript');
@@ -462,6 +472,25 @@ export class AgentConversation implements Agent {
     this.installCommands(); // after this.root exists (commands register on it)
     zym.agents.add(this); // join the registry → sidebar lists it
     this.wireSession();
+    // Resuming a specific session: rebuild its visible transcript now (before the
+    // workbench subscribes to onDidChangeFiles, so historical edits seed its
+    // changed-files set rather than flood-opening). `--resume` restores claude's
+    // context but doesn't replay history as events, so we draw it from disk.
+    if (options.resume?.sessionId) this.restoreTranscript(options.cwd, options.resume.sessionId);
+  }
+
+  // Rebuild the conversation rows from a past session's on-disk transcript, by
+  // replaying its domain events through the same row handlers a live turn uses.
+  private restoreTranscript(cwd: string, sessionId: string): void {
+    const entries = readTranscript(cwd, sessionId);
+    if (entries.length === 0) return;
+    this.replaying = true;
+    try {
+      this.session.replay(entries);
+    } finally {
+      this.replaying = false;
+      this.endTurn(); // close the last open bubble so the next live turn starts clean
+    }
   }
 
   // Sync the permission-mode dropdown (selection + color). The status itself is the
@@ -532,8 +561,11 @@ export class AgentConversation implements Agent {
   /** Stop the claude process (keeps the widget listed as `exited`). */
   kill(): void { this.session.stop(); }
 
-  /** Restart support is a later phase; no-op for now. */
-  resume(): void { /* sdk resume — later phase */ }
+  /** No in-place resume: this host's session is wired into views built at
+   *  construction, so it can't hot-swap a fresh process. AppWindow resumes a
+   *  headless agent by restarting it (a fresh widget that rebuilds the transcript
+   *  from disk and resumes via `--resume`); see AppWindow.resumeCurrentAgent. */
+  resume(): void { /* intentionally a no-op — resume is a restart for this kind */ }
 
   focus(): void { this.input.focus(); }
 
@@ -546,7 +578,19 @@ export class AgentConversation implements Agent {
 
   clearUnannouncedWorktree(): void { /* no worktree validator for sdk */ }
 
-  serialize(): TabState | null { return null; } // not persisted across restarts yet
+  /** Session state: base argv + cwd + prompt + session id, tagged `claude-sdk` so a
+   *  restore relaunches this native host (not the terminal agent) and resumes the
+   *  conversation rather than starting over. */
+  serialize(): TabState | null {
+    return {
+      kind: 'agent',
+      agentKind: 'claude-sdk',
+      command: this.baseCommand ?? ['claude'],
+      cwd: this.cwd,
+      prompt: this.launchPrompt,
+      sessionId: this.sessionId ?? undefined,
+    };
+  }
   isModified(): boolean { return !this.exited; }
   getModifiedLabel(): string { return `${this.title} (running)`; }
 
@@ -723,6 +767,10 @@ export class AgentConversation implements Agent {
       }),
       this.session.onToolUse(({ id, name, input }) => {
         if (this.handleTaskTool(id, name, input)) return; // TaskCreate/TaskUpdate → tasks panel, no row
+        // While rebuilding a past transcript, draw every tool as a static row: the
+        // interactive Agent/Monitor/Question widgets drive off a live lifecycle the
+        // replay has no events for. The Agent/Monitor result still attaches by id.
+        if (this.replaying) { this.recordChangedFile(name, input); this.endTurn(); this.addToolRow(id, name, input); return; }
         if (name === 'AskUserQuestion') return; // handled by the interactive question card
         if (name === 'Agent') { this.endTurn(); this.messages.append(this.subagentView.spawn(id, input)); this.scrollToBottom(); return; }
         if (name === 'Monitor') {
@@ -791,6 +839,9 @@ export class AgentConversation implements Agent {
     const path = (input as { file_path?: unknown })?.file_path;
     if (typeof path !== 'string' || this._changedFiles.includes(path)) return;
     this._changedFiles.push(path);
+    // Replaying a past transcript seeds the changed-files list silently — its edits
+    // already happened, so don't notify (which would re-open / re-diff them all).
+    if (this.replaying) return;
     for (const handler of this.fileHandlers) handler();
   }
 
