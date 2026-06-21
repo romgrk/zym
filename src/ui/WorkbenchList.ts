@@ -22,7 +22,6 @@ import { Adw, Gtk, Pango } from '../gi.ts';
 import { quilx } from '../quilx.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
-import { theme } from '../theme/theme.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import { createAgentStatusIcon, agentBranchMarkup } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
@@ -357,8 +356,7 @@ export class WorkbenchList {
   // Run `fn` after `ms` (0 → next tick), tracking the timer so a dispose/rebuild
   // can cancel it before it touches a freed widget.
   private defer(ms: number, fn: () => void): void {
-    let id: NodeJS.Timeout;
-    id = setTimeout(() => {
+    const id = setTimeout(() => {
       this.timers.delete(id);
       fn();
     }, ms > 0 ? ms : 0);

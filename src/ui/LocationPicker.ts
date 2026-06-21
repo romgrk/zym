@@ -123,7 +123,7 @@ function createSourcePreview(): {
       return;
     }
     if (location.path !== currentPath) {
-      let content = '';
+      let content: string;
       try {
         content = Fs.readFileSync(location.path, 'utf8');
       } catch {

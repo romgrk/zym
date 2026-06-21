@@ -19,7 +19,6 @@ import {
 } from '../gi.ts';
 import { fonts } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
-import { theme } from '../theme/theme.ts';
 import { quilx } from '../quilx.ts';
 import type { Key } from '../keymap/Key.ts';
 import type { TabState } from '../SessionManager.ts';

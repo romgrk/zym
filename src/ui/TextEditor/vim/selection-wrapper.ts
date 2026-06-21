@@ -172,14 +172,15 @@ class SelectionWrapper {
       case 'characterwise':
         this.translateSelectionEndAndClip('forward') // equivalent to core selection.selectRight but keep goalColumn
         break
-      case 'linewise':
+      case 'linewise': {
         // Even if end.column is 0, expand over that end.row( don't use selection.getRowRange() )
         const {start, end} = this.getBufferRange()
         const endRow = getFoldEndRowForRow(this.selection.editor, end.row) // cover folded rowRange
         this.setBufferRange(getBufferRangeForRowRange(this.selection.editor, [start.row, endRow]))
         break
+      }
       case 'blockwise':
-        new BlockwiseSelection(this.selection) // eslint-disable-line no-new
+        new BlockwiseSelection(this.selection)  
         break
     }
   }

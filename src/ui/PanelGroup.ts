@@ -453,6 +453,7 @@ export class PanelGroup {
   // Create a leaf whose panel routes its lifecycle signals back into the tree.
   // `leaf` is captured by the closures, which only run after it is assigned.
   private createLeaf(): Leaf {
+    // eslint-disable-next-line prefer-const -- assigned below; the closures above close over it and only run later
     let leaf!: Leaf;
     const panel = new Panel({
       onActiveChanged: (child) => {

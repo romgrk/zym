@@ -17,7 +17,6 @@ import { fileURLToPath } from 'node:url';
 const require_ = createRequire(import.meta.url);
 const gi = require_('node-gtk') as typeof import('node-gtk');
 const GLib = gi.require('GLib', '2.0');
-const Gdk = gi.require('Gdk', '4.0');
 const Gtk = gi.require('Gtk', '4.0');
 const Adw = gi.require('Adw', '1');
 const GtkSource = gi.require('GtkSource', '5');

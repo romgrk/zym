@@ -6,8 +6,6 @@
  * bindings, and follows the system light/dark scheme. The assembled widget is
  * exposed via `root`.
  */
-import * as Fs from 'node:fs';
-import * as Path from 'node:path';
 import { SyntaxController, type RevealedRange, type ProvidedFold } from '../../syntax/syntax-controller.ts';
 import { detectIndentation } from './detectIndentation.ts';
 import { handleAutoPairInsert, handleAutoPairBackspace } from './autoPair.ts';
@@ -342,7 +340,7 @@ export class TextEditor implements DocumentHost {
   /** Connect a node-gtk GObject signal and register its disconnect in `subs`, so
    *  `dispose()` releases the Global handle that would otherwise pin this editor.
    *  Use for EVERY signal whose handler reaches back to `this` (see `subs`). */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- node-gtk GObjects expose `.on`/`.off` via an EventEmitter shim not in their typings.
+   
   private connect(obj: any, signal: string, handler: (...args: any[]) => unknown): void {
     obj.on(signal, handler);
     this.subs.add(new Disposable(() => obj.off(signal, handler)));
@@ -1973,9 +1971,9 @@ export class TextEditor implements DocumentHost {
     this.save();
   }
 
-  /** Subscribe to title changes (the document's file / disk state changing). */
+  /** Subscribe to title changes (the document's file / disk state changing). Returns a disposer. */
   onTitleChange(callback: () => void) {
-    this.document.onTitleChange(callback);
+    return this.document.onTitleChange(callback);
   }
 
   /** Subscribe to modified-state changes (the document's modified flag toggling). Returns a

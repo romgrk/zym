@@ -208,7 +208,7 @@ class DeleteSurround extends SurroundBase {
 class Indent extends TransformString {
   stayByMarker = true
   setToFirstCharacterOnLinewise = true
-  wise: 'linewise' = 'linewise'
+  wise = 'linewise' as const
 
   mutateSelection (selection: Selection): void {
     // Need count times indentation in visual-mode and its repeat(`.`).
@@ -241,7 +241,7 @@ class Outdent extends Indent {
 class AutoIndent extends TransformString {
   stayByMarker = true
   setToFirstCharacterOnLinewise = true
-  wise: 'linewise' = 'linewise'
+  wise = 'linewise' as const
 
   mutateSelection (selection: Selection): void {
     const range = selection.getBufferRange()

@@ -105,11 +105,6 @@ function cpLength(s: string): number {
   return n;
 }
 
-/** `s` sliced by codepoint index (not UTF-16 unit). */
-function cpSlice(s: string, start: number, end?: number): string {
-  return [...s].slice(start, end).join('');
-}
-
 /** Rightmost index `i` with `starts[i] <= value` (the row/fold containing an offset). */
 function lastLE(starts: number[], value: number): number {
   let lo = 0;

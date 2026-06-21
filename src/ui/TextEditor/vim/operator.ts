@@ -5,31 +5,9 @@ import { Range } from '../../../text/Range.ts'
 import { Base } from './base.ts'
 import type { Selection } from '../Selection.ts'
 import type { Point } from '../../../text/Point.ts'
-import type { VimSubmode } from './vim-state.ts'
 
 /** The "wise" of an operation. */
 type Wise = 'characterwise' | 'linewise' | 'blockwise'
-
-/**
- * The operator's `target` is a Motion or TextObject (loosely typed — it is
- * also transiently a string class-name like `'Empty'`/`'MoveRight'` before
- * `initialize()` resolves it via `getInstance`). Only the members touched in
- * this file are declared.
- * TODO(vim-ts): tighten once Motion/TextObject expose a shared interface.
- */
-interface OperatorTarget {
-  isReady (): boolean
-  isMotion (): boolean
-  isTextObject (): boolean
-  instanceof (name: string): boolean
-  execute (): void
-  forceWise (wise: Wise): void
-  toString (): string
-  wise: Wise
-  operator?: Operator
-  name: string
-  selectSucceeded?: boolean
-}
 
 class Operator extends Base {
   static operationKind: string | null = 'operator'

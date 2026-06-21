@@ -41,6 +41,7 @@ function initOptions(dir: string): Record<string, unknown> {
   // there and read its `HEAPU8` live (the view is reassigned when the heap grows).
   let mod: any = null;
   return {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- capture the emscripten Module to read its live HEAPU8
     locateFile(this: any, name: string): string { mod = this; return Path.join(dir, name); },
     // towlower(wint_t): single-code-point Unicode lowercase (WEOF / out-of-range pass through).
     _towlower(wc: number): number {

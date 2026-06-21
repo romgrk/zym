@@ -13,14 +13,12 @@
  * Everything else — the count/repeat machinery and the vimState proxy getters —
  * is preserved so vendored operation subclasses port unchanged.
  */
-import settings from './settings.ts';
 import type VimState from './vim-state.ts';
 import type { VimMode, VimSubmode } from './vim-state.ts';
 import type { EditorModel } from '../EditorModel.ts';
 import type { Cursor } from '../Cursor.ts';
 import type { Selection } from '../Selection.ts';
 import type { Point } from '../../../text/Point.ts';
-import type { Range } from '../../../text/Range.ts';
 import type { Disposable } from '../../../util/eventKit.ts';
 import type { Operator } from './operator.ts';
 
@@ -30,8 +28,6 @@ import type { Operator } from './operator.ts';
  * which strip-only TS widens to `string`), so the field is typed `string | null`
  * to stay override-compatible; `OperationKind` documents the expected values.
  */
-type OperationKind = 'operator' | 'motion' | 'text-object' | 'misc-command'
-
 /** Options accepted by `focusInput` (mirrors `VimState.focusInput`). */
 interface FocusInputOptions {
   onConfirm?: (input: string) => void
@@ -248,7 +244,7 @@ export class Base {
   }
 
   static isCommand (): boolean {
-    return this.hasOwnProperty('command') ? this.command! : true
+    return Object.prototype.hasOwnProperty.call(this, 'command') ? this.command! : true
   }
 
   static getClass (name: string): typeof Base {
@@ -261,7 +257,7 @@ export class Base {
 
   static getInstance (vimState: VimState, klass: string | typeof Base, properties?: Record<string, unknown>): Base {
     const Klass: typeof Base = typeof klass === 'function' ? klass : Base.getClass(klass)
-    const object = new Klass(vimState) // eslint-disable-line new-cap
+    const object = new Klass(vimState)  
     if (properties) Object.assign(object, properties)
     object.initialize()
     return object

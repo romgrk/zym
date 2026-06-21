@@ -3,8 +3,7 @@
 // the derived inner/a- variants) becomes eager registration + default export.
 import { Range } from '../../../text/Range.ts'
 import { Point } from '../../../text/Point.ts'
-import type { VimMode, VimSubmode } from './vim-state.ts'
-import type { EditorModel } from '../EditorModel.ts'
+import type { VimSubmode } from './vim-state.ts'
 import type { Selection } from '../Selection.ts'
 import type { Operator } from './operator.ts'
 
@@ -178,7 +177,7 @@ class TextObject extends Base {
   }
 
   // to override
-  getRange (selection: Selection): Range | null | undefined {
+  getRange (_selection: Selection): Range | null | undefined {
     return undefined
   }
 }
@@ -441,7 +440,7 @@ class Paragraph extends TextObject {
     const fromRowResult = this.editor.isBufferRowBlank(fromRow)
 
     if (this.isInner()) {
-      return (row: number, direction: RowDirection) => this.editor.isBufferRowBlank(row) === fromRowResult
+      return (row: number, _direction: RowDirection) => this.editor.isBufferRowBlank(row) === fromRowResult
     } else {
       const directionToExtend = selection.isReversed() ? 'previous' : 'next'
 
@@ -739,7 +738,7 @@ class Entire extends TextObject {
   wise: Wise = 'linewise'
   selectOnce = true
 
-  getRange (selection: Selection): Range | null | undefined {
+  getRange (_selection: Selection): Range | null | undefined {
     return new Range(Point.ZERO, this.editor.getEofBufferPosition())
   }
 }
@@ -787,7 +786,7 @@ class Empty extends TextObject {
 class LatestChange extends TextObject {
   wise: Wise = null
   selectOnce = true
-  getRange (selection: Selection): Range | null | undefined {
+  getRange (_selection: Selection): Range | null | undefined {
     const start = this.vimState.mark.get('[')
     const end = this.vimState.mark.get(']')
     if (start && end) {
@@ -872,7 +871,7 @@ class PreviousSelection extends TextObject {
   wise: Wise = null
   selectOnce = true
 
-  selectTextObject (selection: Selection): boolean {
+  selectTextObject (_selection: Selection): boolean {
     const {properties, submode} = this.vimState.previousSelection
     if (properties && submode) {
       this.wise = submode
@@ -888,7 +887,7 @@ class PersistentSelection extends TextObject {
   wise: Wise = null
   selectOnce = true
 
-  selectTextObject (selection: Selection): boolean {
+  selectTextObject (_selection: Selection): boolean {
     if (this.vimState.hasPersistentSelections()) {
       this.persistentSelection.setSelectedBufferRanges()
       return true
@@ -916,7 +915,7 @@ class LastPastedRange extends TextObject {
 class VisibleArea extends TextObject {
   selectOnce = true
 
-  getRange (selection: Selection): Range | null | undefined {
+  getRange (_selection: Selection): Range | null | undefined {
     // TODO(vim-ts): tighten — getVisibleRowRange/bufferRangeForScreenRange not yet on EditorModel.
     const [startRow, endRow] = (this.editor as any).getVisibleRowRange()
     return (this.editor as any).bufferRangeForScreenRange([[startRow, 0], [endRow, Infinity]])
@@ -945,7 +944,7 @@ class AssignmentSide extends TextObject {
   }
 
   // overridden by Lhs/Rhs
-  spanFrom (ranges: LhsRhsRanges): Span {
+  spanFrom (_ranges: LhsRhsRanges): Span {
     return null
   }
 }

@@ -392,8 +392,14 @@ export class Document implements TextEditorSource {
   get title(): string {
     return this._currentFile ? Path.basename(this._currentFile) : 'Untitled';
   }
-  onTitleChange(callback: () => void): void {
+  /** Subscribe to title changes; returns a disposer (see `onModifiedChange` — a shared Document
+   *  can outlive a given observer). */
+  onTitleChange(callback: () => void): () => void {
     this.titleHandlers.push(callback);
+    return () => {
+      const i = this.titleHandlers.indexOf(callback);
+      if (i >= 0) this.titleHandlers.splice(i, 1);
+    };
   }
   private emitTitleChange(): void {
     for (const callback of this.titleHandlers) callback();

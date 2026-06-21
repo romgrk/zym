@@ -91,6 +91,7 @@ function inline(text: string, codeFontFamily?: string): string {
   s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
   s = s.replace(/__([^_]+)__/g, '<b>$1</b>');
   s = s.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<i>$2</i>');
+  // eslint-disable-next-line no-control-regex -- \x00 is our own code-span sentinel, inserted above
   s = s.replace(/\x00(\d+)\x00/g, (_, n: string) => wrapCode(codes[Number(n)], codeFontFamily));
   return s;
 }

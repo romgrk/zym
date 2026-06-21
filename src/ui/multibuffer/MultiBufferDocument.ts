@@ -74,7 +74,7 @@ export class MultiBufferDocument implements TextEditorSource {
   isModified(): boolean {
     return false;
   } // the surface tracks per-source modified state itself
-  onTitleChange(): void {}
+  onTitleChange(): () => void { return () => {}; }
   onModifiedChange(): () => void {
     return () => {};
   }

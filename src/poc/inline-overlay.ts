@@ -19,7 +19,7 @@ import { Gtk, Gdk, Adw, GtkSource, GLib, Gio, startLoop } from '../gi.ts';
 import { BlockDecorations, type BlockDecorationHandle } from '../ui/TextEditor/BlockDecorations.ts';
 
 // (createRequire kept available for parity with other POCs; unused here.)
-createRequire(import.meta.url);
+void createRequire(import.meta.url);
 
 const ANCHOR_LINE = 5; // 0-based; the block sits below this line
 const SAMPLE = Array.from({ length: 40 }, (_, i) => `line ${String(i + 1).padStart(2, ' ')}  — some text to scroll past`).join('\n');

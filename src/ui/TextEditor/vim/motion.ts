@@ -6,7 +6,6 @@ import { Point } from '../../../text/Point.ts'
 import { Range } from '../../../text/Range.ts'
 import { Base } from './base.ts'
 import type { Cursor } from '../Cursor.ts'
-import type { Selection } from '../Selection.ts'
 
 /** A buffer wise — how a motion/selection spans the buffer. */
 type Wise = 'characterwise' | 'linewise' | 'blockwise'
@@ -654,7 +653,7 @@ class MoveToNextDiffHunk extends Motion {
 
   getPoint (from: Point): Point | undefined {
     const getHunkRange = (row: number) => this.utils.getHunkRangeAtBufferRow(this.editor, row)
-    let hunkRange = getHunkRange(from.row)
+    const hunkRange = getHunkRange(from.row)
     return this.findInEditor(this.direction, /^[+-]/g, {from}, ({range}: {range: Range}) => {
       if (hunkRange && hunkRange.containsPoint(range.start)) return
 

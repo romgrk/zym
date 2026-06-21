@@ -11,7 +11,6 @@
 import { Gtk } from '../gi.ts';
 import { openPicker, highlightMarkup, type PickerItem } from './Picker.ts';
 import { openUrl } from './openUrl.ts';
-import { quilx } from '../quilx.ts';
 import { repoRoot } from '../git.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { Icons } from './icons.ts';

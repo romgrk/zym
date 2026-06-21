@@ -3,7 +3,6 @@
 // default export, and the one `atom.commands.add` (Replace-mode backspace
 // handling) is neutralized until that key wiring is ported.
 import { Range } from '../../../text/Range.ts'
-import { CompositeDisposable, Disposable } from '../../../util/eventKit.ts'
 import { Operator } from './operator.ts'
 import type { Point } from '../../../text/Point.ts'
 import type { Selection } from '../Selection.ts'
@@ -72,7 +71,7 @@ class ActivateInsertModeBase extends Operator {
 
   // called when repeated
   // [FIXME] to use replayLastChange in repeatInsert overriding subclasss.
-  repeatInsert (selection: Selection, text: string): void {
+  repeatInsert (selection: Selection, _text: string): void {
     this.replayLastChange(selection)
   }
 

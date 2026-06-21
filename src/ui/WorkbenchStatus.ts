@@ -20,7 +20,6 @@ import { Gtk } from '../gi.ts';
 import { DiagnosticSeverity } from 'vscode-languageserver-protocol';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { quilx } from '../quilx.ts';
-import { theme } from '../theme/theme.ts';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import { Icons, iconLabel } from './icons.ts';

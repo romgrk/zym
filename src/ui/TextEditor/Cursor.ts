@@ -9,7 +9,7 @@
  */
 import { Point, type PointLike } from '../../text/Point.ts';
 import { Range } from '../../text/Range.ts';
-import { unwrapIter, clamp } from './iter.ts';
+import { clamp } from './iter.ts';
 import { DEFAULT_NON_WORD_CHARACTERS } from './vim/utils.ts';
 import type { EditorModel } from './EditorModel.ts';
 import type { Selection } from './Selection.ts';

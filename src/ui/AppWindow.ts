@@ -36,11 +36,11 @@ import { WorkbenchList, PROJECT_NAME } from './WorkbenchList.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
 import { GitPanel } from './GitPanel.ts';
 import { fileIconGlyph } from './fileIcons.ts';
-import { Icons, iconLabel } from './icons.ts';
+import { Icons } from './icons.ts';
 import { NERDFONT } from './nerdfont.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
 import { GithubButtons } from './GithubButtons.ts';
-import { acquireGitRepo, releaseGitRepo, type GitRepo, type GitOpResult } from '../git.ts';
+import { acquireGitRepo, releaseGitRepo, type GitOpResult } from '../git.ts';
 import { git, repoRoot, invalidateRepoRoot, commitMsgPath, listWorktrees } from '../git.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { computeDiff } from '../util/DiffModel.ts';
@@ -90,8 +90,8 @@ import type { WorkspaceEdit, CodeAction, Command } from 'vscode-languageserver-p
 import { NotificationToasts } from './NotificationToasts.ts';
 import { loadKeymaps, ensureUserKeymap } from '../keymaps/load.ts';
 import { loadConfig, configPath } from '../config/load.ts';
-import { type Disposable, type DisposableLike } from '../util/eventKit.ts';
-import { styles, addStyles } from '../styles.ts';
+import { CompositeDisposable, Disposable, type DisposableLike } from '../util/eventKit.ts';
+import { styles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 
 // The identifier under the cursor (for prefilling the rename prompt). Codepoint-
@@ -142,6 +142,11 @@ export class AppWindow {
   // Per-editor `quilx.workspace` registration (drives plugin `observeTextEditors`);
   // disposed when the tab closes (see disposeChild).
   private readonly editorRegistrations = new Map<Widget, Disposable>();
+  // Tab-lifetime subscriptions on the editor/terminal source (title + modified
+  // state), disposed in disposeChild so a closed tab leaves no handlers behind.
+  private readonly tabSubs = new Map<Widget, CompositeDisposable>();
+  // Per-agent subscriptions (title/status/worktree/files), disposed in closeAgent.
+  private readonly agentSubs = new Map<AgentTerminal, CompositeDisposable>();
   // Terminal tabs share the center panel with editors; tracked separately so the
   // active child can be resolved back to its Terminal (it has no vim state).
   private readonly terminals = new Map<Widget, Terminal>();
@@ -505,6 +510,11 @@ export class AppWindow {
     this.workbench.gitPanel?.dispose();
     this.workbench.notificationLog.dispose();
     this.workbench.keymapPanel.dispose();
+    // Drain any tab/agent subscriptions whose tabs weren't individually closed.
+    for (const subs of this.tabSubs.values()) subs.dispose();
+    this.tabSubs.clear();
+    for (const subs of this.agentSubs.values()) subs.dispose();
+    this.agentSubs.clear();
     this.onQuit();
     // node-gtk keeps Node's event loop interleaved with GLib's, so quitting the
     // GLib loop + app doesn't unwind `app.run()` and lingering handles (LSP
@@ -664,8 +674,11 @@ export class AppWindow {
           attached.setTitle(this.editorTabTitle(editor));
           this.updateModifiedMarker();
         };
-        editor.onTitleChange(sync);
-        editor.onModifiedChange(sync);
+        this.tabSubs.get(editor.root)?.dispose(); // guard re-attach (tab moved between docks)
+        this.tabSubs.set(editor.root, new CompositeDisposable(
+          new Disposable(editor.onTitleChange(sync)),
+          new Disposable(editor.onModifiedChange(sync)),
+        ));
       },
     };
   }
@@ -718,7 +731,10 @@ export class AppWindow {
       title: terminalTabTitle(terminal),
       onAttached: (attached) => {
         child = attached;
-        terminal.onTitleChange(() => attached.setTitle(terminalTabTitle(terminal)));
+        this.tabSubs.get(terminal.root)?.dispose(); // guard re-attach
+        this.tabSubs.set(terminal.root, new CompositeDisposable(
+          new Disposable(terminal.onTitleChange(() => attached.setTitle(terminalTabTitle(terminal)))),
+        ));
       },
     };
   }
@@ -766,30 +782,32 @@ export class AppWindow {
     // A running agent reports as modified, so it's consulted before exit.
     this.participants.set(agent.root, quilx.session.registerParticipant(agent));
     // The agent's tab carries a status glyph prefix + attention highlight.
-    agent.onTitleChange(() => this.updateAgentTab(agent));
+    const agentSubs = new CompositeDisposable();
+    this.agentSubs.set(agent, agentSubs);
+    agentSubs.add(new Disposable(agent.onTitleChange(() => this.updateAgentTab(agent))));
     // Notify when the agent needs attention while the user isn't looking at it.
     let previousStatus = agent.status;
-    agent.onDidChangeStatus(() => {
+    agentSubs.add(new Disposable(agent.onDidChangeStatus(() => {
       this.updateAgentTab(agent);
       this.notifyAgentAttention(agent, previousStatus, agent.status);
       previousStatus = agent.status;
       // On settle, flag a worktree it created but never announced (validator).
       if (agent.status === 'idle') this.warnUnannouncedWorktree(agent);
-    });
+    })));
     // The agent announced (via the set_worktree bridge tool) that it moved into a
     // different worktree — re-root its workbench to match.
-    agent.onDidChangeWorktree(() => {
+    agentSubs.add(new Disposable(agent.onDidChangeWorktree(() => {
       this.reRootWorkbench(workbench, agent.effectiveCwd);
       // Persist the dynamically-entered worktree (keyed under the launch cwd's
       // transcript dir) so a later resume can send the agent back to it.
       if (agent.sessionId) recordSessionWorktree(cwd, agent.sessionId, agent.effectiveCwd);
-    });
+    })));
     // When the agent edits files, re-check git now instead of waiting for the poll,
     // so its changes surface in Source Control / the branch indicator promptly, and
     // (when enabled) auto-open each newly-edited file in the agent's own workbench.
     // Seed from the current list so resuming an agent doesn't flood-open its history.
     const seenFiles = new Set<string>(agent.changedFiles);
-    agent.onDidChangeFiles(() => {
+    agentSubs.add(new Disposable(agent.onDidChangeFiles(() => {
       workbench.git.refresh(); // the agent's own workbench root, not the active one
       const autoOpen = quilx.config.get('agent.autoOpenChangedFiles') === true;
       for (const path of agent.changedFiles) {
@@ -797,7 +815,7 @@ export class AppWindow {
         seenFiles.add(path);
         if (autoOpen) this.autoOpenChangedFile(agent, path);
       }
-    });
+    })));
     // Track the last-focused agent (the default target for send-to-agent).
     const focus = new Gtk.EventControllerFocus();
     focus.on('enter', () => { this.lastAgent = agent; });
@@ -1175,6 +1193,8 @@ export class AppWindow {
     }
     this.participants.get(agent.root)?.dispose();
     this.participants.delete(agent.root);
+    this.agentSubs.get(agent)?.dispose(); // title/status/worktree/files subscriptions
+    this.agentSubs.delete(agent);
     this.agentChildren.delete(agent.root);
     this.terminals.delete(agent.root);
     this.conversations.get(agent.root)?.dispose(); // headless agent: kill child + IPC watchers
@@ -1234,6 +1254,8 @@ export class AppWindow {
   // registration) and run its close side effects. Shared by the center and the
   // right-dock editor group, which host the same kinds of tab.
   private disposeChild(widget: Widget): void {
+    this.tabSubs.get(widget)?.dispose(); // editor/terminal title + modified-state subscriptions
+    this.tabSubs.delete(widget);
     this.participants.get(widget)?.dispose();
     this.participants.delete(widget);
     this.editorRegistrations.get(widget)?.dispose(); // detach observing plugins

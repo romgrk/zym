@@ -56,6 +56,15 @@ the `eventKit.ts` primitives, the disposal rules, the `TextEditor.dispose()`
 reference, and the CDP leak-hunting recipe. Read before adding a component that owns a
 GObject, handler, timer, or child.
 
+### Developer tooling
+
+See [tooling.md](tooling.md) for linting: `pnpm run lint` (ESLint flat config,
+`@eslint/js` + `typescript-eslint` `recommended`, non-type-checked) — tuned to
+**catch real bugs, not style** (formatting is deferred to a separate tool; no
+stylistic rules enabled). One type-aware exception: the vendored
+`local/no-floating-cleanup` rule flags discarded `eventKit` disposer functions
+(a documented leak class). `pnpm run typecheck` does the type-level checking.
+
 ### Data & storage
 
 App data follows XDG: config in `$XDG_CONFIG_HOME/quilx`, state (sessions, frecency) in `$XDG_STATE_HOME/quilx`, caches (LSP installs, generated GtkSource schemes) in `$XDG_CACHE_HOME/quilx` — never `/tmp`; tests get throwaway dirs via `src/util/testTmp.ts` (`tmpDir(prefix)`), which removes them on process exit so `/tmp/quilx-*` never accumulates.

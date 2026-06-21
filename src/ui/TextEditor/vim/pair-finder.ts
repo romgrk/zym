@@ -170,7 +170,7 @@ class PairFinder {
       case 'open':
         this.spliceStack(stack, eventState)
         return stack.length === 0
-      case 'close':
+      case 'close': {
         const openState = this.spliceStack(stack, eventState)
         if (!openState) return this.inclusive || eventState.range.start.isGreaterThan(from)
 
@@ -180,6 +180,7 @@ class PairFinder {
             ? start.isEqual(from) || (this.allowForwarding && start.row === from.row)
             : start.isLessThan(from) || (this.allowForwarding && start.isGreaterThan(from) && start.row === from.row)
         }
+      }
     }
   }
 

@@ -9,7 +9,6 @@
 import * as Path from 'node:path';
 import { Gtk, Pango } from '../gi.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
-import { theme } from '../theme/theme.ts';
 import { addStyles } from '../styles.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { escapeMarkup } from './proseMarkup.ts';

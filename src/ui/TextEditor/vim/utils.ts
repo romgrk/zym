@@ -46,7 +46,7 @@ function assertWithException (condition: unknown, message: string): void {
   if (!condition) throw new Error(message)
 }
 
-function getKeyBindingForCommand (command: string, {packageName}: {packageName?: string} = {}): null {
+function getKeyBindingForCommand (command: string, {packageName: _packageName}: {packageName?: string} = {}): null {
   // Keybinding hints (used by hover/demo UI) are not ported; no hints for now.
   return null
 }
@@ -126,7 +126,7 @@ function getIndex (index: number, list: ArrayLike<unknown>): number {
 // e.g. Beging called immediately after open file.
 function getVisibleBufferRange (editor: any): Range | undefined {
   // TODO(vim-ts): tighten — getVisibleRowRange/bufferRowForScreenRow visibility not on EditorModel.
-  let [startRow, endRow] = editor.getVisibleRowRange()
+  const [startRow, endRow] = editor.getVisibleRowRange()
 
   // When editor is not attached or imediately after attached timing,
   // `editor.element.getVisibleRowRange()` return NaN.
@@ -202,9 +202,10 @@ function getRows (editor: EditorModel, bufferOrScreen: 'buffer' | 'screen', {sta
   switch (direction) {
     case 'previous':
       return startRow <= 0 ? [] : getList(startRow - 1, 0)
-    case 'next':
+    case 'next': {
       const endRow = bufferOrScreen === 'buffer' ? getVimLastBufferRow(editor) : getVimLastScreenRow(editor)
       return startRow >= endRow ? [] : getList(startRow + 1, endRow)
+    }
   }
 }
 
@@ -441,11 +442,9 @@ function getTokenizedLineForRow (editor: any, row: number): any {
   return editor.tokenizedBuffer.tokenizedLineForRow(row)
 }
 
-function getStartingScopesForTokenizedLine (line: any): string[] {
+function getStartingScopesForTokenizedLine (_line: any): string[] {
   // Positive integers: Represent tokens with that length
   // Negative integers: Indicate open/close tags. Odd = start(number can be conveted to scope name), Even = stop.
-  // Filter negative and odd number which indicates start tag.
-  const startTags = line.tags.filter((tag: number) => tag < 0 && tag % 2 === -1)
   // Grammar scope lookup is not ported; scope-based features stay inert.
   return []
 }
@@ -578,7 +577,7 @@ function smartScrollToBufferPosition (editor: any, point: PointLike): void {
 // seam — matchScopes is only reached for non-empty startInInsertModeScopes).
 // Declared (not defined) to keep runtime behavior identical while typing.
 declare const hasCssClass: (name: string) => boolean
-function matchScopes ({classList}: {classList: any}, scopes: string[] = []): boolean {
+function matchScopes ({classList: _classList}: {classList: any}, scopes: string[] = []): boolean {
   return scopes.some(scope => scope.split('.').every(name => hasCssClass(name)))
 }
 
@@ -653,7 +652,7 @@ function getWordPatternAtBufferPosition (editor: EditorModel, point: PointLike, 
   return new RegExp(pattern, 'g')
 }
 
-function getSubwordPatternAtBufferPosition (editor: EditorModel, point: PointLike, options: WordOptions = {}): RegExp {
+function getSubwordPatternAtBufferPosition (editor: EditorModel, point: PointLike, _options: WordOptions = {}): RegExp {
   return getWordPatternAtBufferPosition(editor, point, {
     wordRegex: editor.getLastCursor().subwordRegExp(),
     boundarizeForWord: false
@@ -703,7 +702,7 @@ function translatePointAndClip (editor: EditorModel, pointArg: PointLike, direct
 
   let dontClip = false
   switch (direction) {
-    case 'forward':
+    case 'forward': {
       point = point.translate([0, +1])
       const eol = editor.bufferRangeForBufferRow(point.row).end
 
@@ -715,6 +714,7 @@ function translatePointAndClip (editor: EditorModel, pointArg: PointLike, direct
       }
       point = Point.min(point, editor.getEofBufferPosition())
       break
+    }
 
     case 'backward':
       point = point.translate([0, -1])
@@ -744,11 +744,11 @@ function getRangeByTranslatePointAndClip (editor: EditorModel, range: Range, whi
   }
 }
 
-function getPackage (name: string): never {
+function getPackage (_name: string): never {
   throw new Error('vim: getPackage not ported (Atom package system)')
 }
 
-function searchByProjectFind (editor: EditorModel, text: string): never {
+function searchByProjectFind (_editor: EditorModel, _text: string): never {
   throw new Error('vim: searchByProjectFind not ported (project-find)')
 }
 
@@ -1095,8 +1095,8 @@ function adjustIndentWithKeepingLayout (editor: EditorModel, range: Range): void
 }
 
 // Check point containment with end position exclusive
-function rangeContainsPointWithEndExclusive (range: Range, point: PointLike): void {
-  range.start.isLessThanOrEqual(point) && range.end.isGreaterThan(point)
+function rangeContainsPointWithEndExclusive (range: Range, point: PointLike): boolean {
+  return range.start.isLessThanOrEqual(point) && range.end.isGreaterThan(point)
 }
 
 function traverseTextFromPoint (point: PointLike, text: string): Point {
@@ -1230,7 +1230,7 @@ function normalizeIndent (text: string, editor: EditorModel, targetRange: RangeL
   return text
 }
 
-function atomVersionSatisfies (condition: string): boolean {
+function atomVersionSatisfies (_condition: string): boolean {
   // No Atom version gate in quilx; treat all version checks as satisfied.
   return true
 }

@@ -117,7 +117,7 @@ test('gg / G jump to the first and last line', () => {
 });
 
 test('a count repeats a motion (3 l)', () => {
-  const { editor, vimState, run, at, pos } = setup('abcdef\n');
+  const { vimState, run, at, pos } = setup('abcdef\n');
   at(0, 0);
   vimState.operationStack.setCount(3);
   run('MoveRight');

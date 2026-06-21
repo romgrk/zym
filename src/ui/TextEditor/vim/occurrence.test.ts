@@ -56,7 +56,7 @@ test('the occurrence is bounded to its target — only `foo` inside the operated
 });
 
 test('preset occurrence: `g o` marks the cursor word everywhere, toggles off on a marked word', () => {
-  const { editor, vimState, run, at } = setup(TEXT);
+  const { vimState, run, at } = setup(TEXT);
   at(0, 0);
   run('TogglePresetOccurrence');
   const om = vimState.occurrenceManager;
@@ -73,7 +73,7 @@ test('preset occurrence: `g o` marks the cursor word everywhere, toggles off on 
 });
 
 test('preset occurrence drives a later operator: `g o` then `d a p` deletes the marked words in the paragraph', () => {
-  const { editor, vimState, run, at } = setup(TEXT);
+  const { editor, run, at } = setup(TEXT);
   at(0, 0);
   run('TogglePresetOccurrence'); // preset markers on every `foo`
   run('Delete');

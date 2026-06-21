@@ -18,7 +18,7 @@
  */
 import { Point, type PointLike } from '../../text/Point.ts';
 import { Range, type RangeLike } from '../../text/Range.ts';
-import { unwrapIter, clamp, type TextIter, type TextMark } from './iter.ts';
+import { unwrapIter, clamp, type TextIter } from './iter.ts';
 import { Selection } from './Selection.ts';
 import { Cursor } from './Cursor.ts';
 import { MarkerLayer } from './MarkerLayer.ts';

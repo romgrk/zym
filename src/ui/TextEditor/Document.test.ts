@@ -44,7 +44,7 @@ test('a native edit in one view propagates to the model and the other views', ()
 });
 
 test('undo/redo run on the model and propagate to every view', () => {
-  const { doc, a, b, synced } = setup('abc\n');
+  const { doc, a, synced } = setup('abc\n');
   insertAt(a, 0, 'Z');
   const afterEdit = doc.getText();
   doc.undo();
@@ -75,7 +75,7 @@ test('removed views stop receiving edits', () => {
 });
 
 test('500 deterministic-random cross-view edits never desync', () => {
-  const { doc, a, b, synced } = setup('the quick brown fox\n');
+  const { a, b, synced } = setup('the quick brown fox\n');
   let ok = true;
   for (let i = 0; i < 500 && ok; i++) {
     const buf = i % 2 === 0 ? a : b;

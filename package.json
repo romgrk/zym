@@ -19,6 +19,7 @@
     "poc:inline": "node src/poc/inline-overlay.ts",
     "poc:peek": "node src/poc/sibling-peek.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "test": "node --test 'src/**/*.test.ts' 'plugins/**/*.test.ts'",
     "generate-types": "node-gtk generate-types Gtk-4.0 Gio-2.0 Adw-1 GtkSource-5 Vte-3.91"
   },
@@ -33,9 +34,14 @@
     "vscode-languageserver-protocol": "^3.18.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.3",
+    "@typescript-eslint/utils": "^8.61.1",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
     "tree-sitter-wasms": "^0.1.13",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1",
     "typescript-language-server": "^5.3.0",
     "web-tree-sitter": "^0.20.8"
   }

@@ -91,7 +91,7 @@ export function collectCaptures(
           startIndex: node.startIndex, endIndex: node.endIndex,
           startPosition: node.startPosition, endPosition: node.endPosition,
         };
-        let injTree: any = null;
+        let injTree: any;
         try {
           injTree = parser.parse(text, undefined, { includedRanges: [included] });
         } catch {

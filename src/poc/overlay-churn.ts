@@ -13,7 +13,7 @@
  *
  * Clean run prints nothing.
  */
-import { Gtk, Gdk, Adw, GtkSource, GLib, Gio, startLoop } from '../gi.ts';
+import { Gtk, Adw, GtkSource, GLib, Gio, startLoop } from '../gi.ts';
 import { BlockDecorations, type BlockDecorationHandle } from '../ui/TextEditor/BlockDecorations.ts';
 
 const SAMPLE = Array.from({ length: 60 }, (_, i) => `line ${String(i + 1).padStart(2, ' ')}  — text to scroll past`).join('\n');

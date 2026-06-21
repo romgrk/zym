@@ -65,6 +65,6 @@ export interface TextEditorSource extends FoldHost, UndoTarget {
   saveAs(path: string): void;
   hasDiskChange(): boolean;
   isModified(): boolean;
-  onTitleChange(callback: () => void): void;
+  onTitleChange(callback: () => void): () => void;
   onModifiedChange(callback: () => void): () => void;
 }
