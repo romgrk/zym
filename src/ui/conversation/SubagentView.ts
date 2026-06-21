@@ -14,6 +14,7 @@ import { iconSpan } from '../icons.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { summarizeInput, truncateLines } from './format.ts';
 import { StickyListPanel } from './StickyListPanel.ts';
+import { ToolRow } from './ToolRow.ts';
 import type { SdkSession } from '../../agents/claude-sdk/SdkSession.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -39,20 +40,22 @@ export class SubagentView {
     this.cwd = cwd;
   }
 
-  /** The `Agent` spawn → an inline button (returned, to append to the transcript)
-   *  plus an entry in the running panel. */
+  /** The `Agent` spawn → an inline ToolRow (returned, to append to the transcript;
+   *  shares the icon/alignment of tool rows) plus an entry in the running panel.
+   *  Clicking the row opens the subagent's transcript page. */
   spawn(id: string, input: unknown): Widget {
     const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
     const type = typeof i.subagent_type === 'string' ? i.subagent_type : 'agent';
     const desc = typeof i.description === 'string' ? i.description : '';
-    const row = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    row.addCssClass('zym-conversation-row');
-    row.append(this.linkButton(id, NERDFONT.TOOL.SUBAGENT, type, desc));
+    const header = new Gtk.Label({ xalign: 0, wrap: true, hexpand: true });
+    header.addCssClass('zym-conversation-toolrow');
+    setMarkupSafe(header, `<b>${escapeMarkup(type)}</b>${desc ? `  ${escapeMarkup(desc)}` : ''}`, `${type} ${desc}`);
+    const toolRow = new ToolRow({ icon: NERDFONT.TOOL.SUBAGENT, header, onActivate: () => this.pushPage(id) });
     // Show it in the running panel right away (driven by the spawn, not the later
     // task_started, so it's robust); hidden again on completion.
     this.running.set(id, { agentType: type, description: desc, status: 'running' });
     this.render();
-    return row;
+    return toolRow.root;
   }
 
   /** Mark a subagent finished (hides it from the running panel). */

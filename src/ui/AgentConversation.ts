@@ -24,14 +24,15 @@ import { worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { TextEditor, createInput } from './TextEditor/TextEditor.ts';
 import { createSlashCommandSource } from './TextEditor/createSlashCommandSource.ts';
 import { MarkdownView } from './markdown/MarkdownView.ts';
-import { toolMarkup, toolDetailMarkup, toolFilePath, describeTool } from './toolDisplay.ts';
+import { toolBodyMarkup, toolFilePath, describeTool } from './toolDisplay.ts';
 import { escapeMarkup, setMarkupSafe } from './proseMarkup.ts';
 import { iconSpan, iconLabel } from './icons.ts';
 import { clipboard } from './TextEditor/vim/clipboard.ts';
 import { truncateLines, summarizeInput, formatCount, progressLine } from './conversation/format.ts';
 import { StickyListPanel } from './conversation/StickyListPanel.ts';
-import { permissionCard } from './conversation/cards.ts';
+import { permissionCard, permissionButtons } from './conversation/cards.ts';
 import { QuestionCard } from './conversation/QuestionCard.ts';
+import { ToolRow } from './conversation/ToolRow.ts';
 import { SubagentView } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
@@ -58,6 +59,32 @@ addStyles(`
      around it — every message (bubbles, tool rows, results) inherits this size. */
   .zym-conversation-transcript { padding: 16px; font-size: 1.05em; }
   .zym-conversation-row { padding: 6px 0; }
+  /* Shared tool rows (tool-use / Bash / unknown event): a leading tool icon next to
+     a toggle (a flat header button over a collapsible detail). The container owns
+     the horizontal padding (matching the input card); only the toggle expands and
+     fades its background to a message bubble's (popover surface) on expand. */
+  .zym-conversation-toolrow-container { padding: 0 calc(2 * var(--spacing)); }
+  /* The leading tool icon. A size group ties its height to the header button's, so
+     the label's own vertical centering keeps the glyph centered on the header row. */
+  .zym-conversation-toolrow-icon { padding-right: 8px; }
+  /* The BUTTON + DETAILS expander: the only part that grows + gains the bubble bg. */
+  .zym-conversation-toolrow-toggle {
+    border-radius: 8px;
+    background: transparent;
+    transition: background 150ms ease;
+  }
+  .zym-conversation-toolrow-expanded { background: var(--t-ui-surface-popover); }
+  /* The header button: flat, left-aligned, no min size. Its own transparent
+     background suppresses the flat hover, so re-add an explicit hover tint
+     (rounded to match the toggle). */
+  .zym-conversation-toolrow-button {
+    padding: 6px 8px; min-height: 0; border-radius: 8px;
+    background: transparent; border: none; box-shadow: none;
+  }
+  .zym-conversation-toolrow-button:hover { background: var(--t-ui-surface-selected); }
+  .zym-conversation-toolrow-detail { padding: 0 8px 6px 8px; }
+  /* Allow/Deny buttons embedded in a tool row's details (a permission prompt). */
+  .zym-conversation-perm-buttons { margin-top: 4px; }
   /* User and assistant share the bubble shape; only the background differs. The
      generous margin gives consecutive turns clear visual separation. The assistant
      prose is capped to a reading measure in code (MarkdownView max-width-chars) —
@@ -72,14 +99,10 @@ addStyles(`
   /* The floating "copy message" button, pinned top-right of the transcript viewport. */
   .zym-conversation-copy { margin: 10px; padding: 2px 6px; min-height: 0; min-width: 0; opacity: 0.5; }
   .zym-conversation-copy:hover { opacity: 1; }
-  .zym-conversation-thinking { opacity: 0.55; font-style: italic; padding-left: 12px; }
+  .zym-conversation-thinking { opacity: 0.55; font-style: italic; padding: 0 calc(2 * var(--spacing)); }
   .zym-conversation-tool { opacity: 0.8; }
   .zym-conversation-toolrow { opacity: 0.85; }
-  /* File tools open their file via a flat button styled as an inline link. */
-  .zym-conversation-toolbutton {
-    padding: 1px 4px; min-height: 0;
-  }
-  .zym-conversation-thinking-row { padding: 6px 12px; }
+  .zym-conversation-thinking-row { padding: 6px calc(2 * var(--spacing)); }
   /* A message queued while the agent is busy — a right-aligned bubble above the spinner. */
   .zym-conversation-pending {
     background: var(--t-ui-surface-selected);
@@ -115,22 +138,19 @@ addStyles(`
   .zym-conversation-subagents { border-top: 1px solid var(--t-ui-border); border-bottom: none; }
   .zym-conversation-system { opacity: 0.6; font-style: italic; }
   .zym-conversation-error { color: var(--t-ui-status-error); }
-  /* An unrecognised stream event, dumped as raw JSON so nothing is silently lost. */
-  .zym-conversation-unknown {
-    border-left: 2px solid var(--t-ui-status-warning);
-    padding-left: 8px;
-    background: var(--t-ui-surface-popover);
-    border-radius: 4px;
-  }
+  /* An unrecognised stream event, dumped as raw JSON so nothing is silently lost.
+     A warning accent on the shared ToolRow (which owns padding + the expand fade). */
+  .zym-conversation-unknown { border-left: 2px solid var(--t-ui-status-warning); }
   .zym-conversation-unknown-body { opacity: 0.75; }
   /* Agent-registered actions: a row of buttons just above the input card. The
      default action reads as the suggested (accent) button. */
   .zym-conversation-actions {
     padding: 6px 8px 0 8px;
   }
-  /* The input + its status strip, as a bordered rounded card with its own bg. */
+  /* The input + its status strip, as a bordered rounded card with its own bg.
+     No top margin — the card sits flush under the transcript (no gap above). */
   .zym-conversation-input-card {
-    margin: var(--spacing);
+    margin: 0 calc(2 * var(--spacing)) calc(2 * var(--spacing)) calc(2 * var(--spacing));
     border: 1px solid var(--t-ui-border);
     border-radius: var(--card-radius);
     background: var(--t-ui-surface-popover);
@@ -256,8 +276,16 @@ export class AgentConversation implements Agent {
   // Tool-use rows keyed by tool_use_id, so the matching result can update the
   // row's status icon + append a preview.
   // Each tool row supplies a handler that fills in its result (per-tool layout:
-  // Bash output toggle, Task markdown card, or a plain preview).
-  private readonly toolRows = new Map<string, { onResult: (isError: boolean, text: string) => void; onProgress?: (p: TaskProgress) => void }>();
+  // Bash output toggle, Task markdown card, or a plain preview). `row`/`name`/`input`
+  // let an incoming permission request find its row (permission has no tool_use_id —
+  // it correlates by tool name + input; see addPermissionCard).
+  private readonly toolRows = new Map<string, {
+    row: ToolRow;
+    name: string;
+    input: unknown;
+    onResult: (isError: boolean, text: string) => void;
+    onProgress?: (p: TaskProgress) => void;
+  }>();
   // The structured task list (TaskCreate/TaskUpdate): a dedicated sticky panel,
   // not message rows. `tasks` is keyed by task id (from the TaskCreate result);
   // `pendingTaskCreates` maps a TaskCreate tool_use_id → subject until its result
@@ -916,91 +944,72 @@ export class AgentConversation implements Agent {
     setMarkupSafe(label, `${iconSpan(NERDFONT.STATUS.STOP)}  Interrupted`, 'Interrupted');
   }
 
-  // An unrecognised stream event: a warning header + the raw JSON (monospace,
-  // selectable) so an unmodeled payload is visible rather than silently dropped.
+  // An unrecognised stream event (shared ToolRow): a warning header that toggles the
+  // raw JSON (monospace, selectable) so an unmodeled payload is visible rather than
+  // silently dropped.
   private addUnknownRow(event: unknown): void {
     const type = event && typeof event === 'object' && typeof (event as { type?: unknown }).type === 'string'
       ? (event as { type: string }).type : 'unknown';
     let json: string;
     try { json = JSON.stringify(event, null, 2); } catch { json = String(event); }
 
-    const row = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
-    row.addCssClass('zym-conversation-row');
-    row.addCssClass('zym-conversation-unknown');
+    const header = new Gtk.Label({ xalign: 0, wrap: true, hexpand: true });
+    setMarkupSafe(header, `unhandled <tt>${escapeMarkup(type)}</tt> event`, `unhandled ${type} event`);
 
-    const header = new Gtk.Label({ xalign: 0, wrap: true });
-    setMarkupSafe(header, `${iconSpan(NERDFONT.STATUS.WARNING, theme.ui.status.warning)}  unhandled <tt>${escapeMarkup(type)}</tt> event`, `unhandled ${type} event`);
+    const toolRow = new ToolRow({ icon: NERDFONT.STATUS.WARNING, iconColor: theme.ui.status.warning, header });
+    toolRow.root.addCssClass('zym-conversation-unknown');
     const body = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
     body.addCssClass('zym-conversation-unknown-body');
     body.setText(json);
+    toolRow.content.append(body);
 
-    row.append(header);
-    row.append(body);
-    this.messages.append(row);
+    this.messages.append(toolRow.root);
     this.scrollToBottom();
   }
 
-  // A tool-use row: a status slot (red ✗ only on failure) + the formatted tool, a
-  // result area filled when the result lands, and the TodoWrite checklist inline.
-  // Bash gets a bespoke row (the command itself is the output toggle).
+  // A tool-use row (shared ToolRow): a status slot (red ✗ only on failure) + the
+  // formatted tool over a collapsible detail section (result + TodoWrite checklist).
+  // File tools open their file on click instead of toggling; Bash gets a bespoke row.
   private addToolRow(id: string, name: string, input: unknown): void {
     if (name === 'Bash') { this.addBashRow(id, input); return; }
 
-    const row = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    row.addCssClass('zym-conversation-row');
-
-    const header = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-    const status = new Gtk.Label({ valign: Gtk.Align.START });
-    header.append(status);
-
     const filePath = toolFilePath(name, input);
-    if (filePath && this.onOpenFile) {
-      // File tools (Read/Write/Edit/…): the icon + name stay a plain label; only
-      // the file path is a flat button that opens the file in the editor.
-      const { icon, title, detail } = describeTool(name, input, this.cwd);
-      const head = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
-      head.addCssClass('zym-conversation-toolrow');
-      setMarkupSafe(head, `${iconSpan(icon)}${title ? `  <b>${escapeMarkup(title)}</b>` : ''}`, title || name);
-      header.append(head);
+    const opensFile = !!(filePath && this.onOpenFile);
 
-      const pathLabel = new Gtk.Label({ xalign: 0, wrap: true });
-      pathLabel.addCssClass('zym-conversation-toolrow');
-      setMarkupSafe(pathLabel, toolDetailMarkup(detail, fonts.monospaceFamily), detail);
-      const button = new Gtk.Button();
-      button.addCssClass('flat');
-      button.addCssClass('zym-conversation-toolbutton');
-      button.setChild(pathLabel);
-      button.on('clicked', () => this.onOpenFile!(filePath));
-      header.append(button);
-    } else {
-      const tool = new Gtk.Label({ xalign: 0, wrap: true, selectable: true, hexpand: true });
-      tool.addCssClass('zym-conversation-toolrow');
-      setMarkupSafe(tool, toolMarkup(name, input, { cwd: this.cwd, monoFamily: fonts.monospaceFamily }), `${name} ${summarizeInput(input)}`);
-      header.append(tool);
-    }
-    row.append(header);
+    // The icon goes in the row's leading slot; the header is just title + detail.
+    // File tools open their file on click (no toggle); the rest toggle their detail.
+    const { icon } = describeTool(name, input, this.cwd);
+    const header = new Gtk.Label({ xalign: 0, wrap: true, hexpand: true });
+    header.addCssClass('zym-conversation-toolrow');
+    setMarkupSafe(header, toolBodyMarkup(name, input, { cwd: this.cwd, monoFamily: fonts.monospaceFamily }), `${name} ${summarizeInput(input)}`);
 
-    const resultBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    resultBox.setMarginStart(22); // align under the tool text, past the status icon
-    row.append(resultBox);
+    const toolRow = new ToolRow({
+      icon,
+      header,
+      onActivate: opensFile ? () => this.onOpenFile!(filePath!) : undefined,
+    });
 
     // TodoWrite carries its checklist in the input — render it now, not on result.
     const todos = (input as { todos?: unknown })?.todos;
-    if (name === 'TodoWrite' && Array.isArray(todos)) resultBox.append(renderTodos(todos));
+    if (name === 'TodoWrite' && Array.isArray(todos)) toolRow.content.append(renderTodos(todos));
 
-    this.messages.append(row);
+    this.messages.append(toolRow.root);
     if (id) {
       // Background-task rows (run_in_background) get a live progress line.
       let progress: InstanceType<typeof Gtk.Label> | null = null;
       this.toolRows.set(id, {
-        onResult: (isError, text) => this.fillToolResult(status, resultBox, name, isError, text),
+        row: toolRow,
+        name,
+        input,
+        onResult: (isError, text) => this.fillToolResult(toolRow, name, isError, text),
         onProgress: (p) => {
           if (!progress) {
             progress = new Gtk.Label({ xalign: 0, wrap: true });
             progress.addCssClass('zym-conversation-system');
-            resultBox.append(progress);
+            toolRow.content.append(progress);
           }
           progress.setText(progressLine(p));
+          toolRow.setExpanded(true); // surface live progress as it streams in
           this.scrollToBottom();
         },
       });
@@ -1009,8 +1018,9 @@ export class AgentConversation implements Agent {
   }
 
 
-  // Bash: no icon — the command (monospace) is itself the toggle that reveals the
-  // output (collapsed by default, expanded on error, where the command also gets a ✗).
+  // Bash (shared ToolRow): no icon — the command (monospace) is the header that
+  // toggles the detail (its output). Collapsed shows the first line; expanded shows
+  // the full command + output. A failure expands the row and adds a ✗ to the status.
   private addBashRow(id: string, input: unknown): void {
     const command = (input as { command?: unknown })?.command;
     const cmd = typeof command === 'string' ? command : summarizeInput(input);
@@ -1025,82 +1035,77 @@ export class AgentConversation implements Agent {
       return monoWrap(inner ?? escapeMarkup(text));
     };
 
-    const expander = new Gtk.Expander();
-    expander.addCssClass('zym-conversation-row');
-    const label = new Gtk.Label({ xalign: 0, selectable: true, hexpand: true });
+    const label = new Gtk.Label({ xalign: 0, hexpand: true });
     label.addCssClass('zym-conversation-toolrow');
-    expander.setLabelWidget(label);
-    const content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    expander.setChild(content);
-
     // Collapsed: the command is cropped to its first line; the full (multiline)
     // command shows only once expanded.
-    let errored = false;
-    const render = () => {
-      const full = expander.getExpanded() || !multiline;
+    const render = (expanded: boolean) => {
+      const full = expanded || !multiline;
       const text = full ? cmd : firstLine;
       label.setWrap(full);
       label.setEllipsize(full ? Pango.EllipsizeMode.NONE : Pango.EllipsizeMode.END);
-      const prefix = errored ? `<span foreground="${theme.ui.status.error}">✗</span> ` : '';
-      setMarkupSafe(label, prefix + highlight(text), text);
+      setMarkupSafe(label, highlight(text), text);
     };
-    render();
-    expander.on('notify::expanded', render);
-    this.messages.append(expander);
+    render(false);
+
+    const toolRow = new ToolRow({ icon: describeTool('Bash', input).icon, header: label, onToggle: render });
+    this.messages.append(toolRow.root);
 
     let progress: InstanceType<typeof Gtk.Label> | null = null;
     if (id) this.toolRows.set(id, {
+      row: toolRow,
+      name: 'Bash',
+      input,
       onResult: (isError, text) => {
         const trimmed = text.trim();
         if (trimmed) {
           const out = new Gtk.Label({ xalign: 0, wrap: true, selectable: true, label: truncateLines(trimmed, 40, 4000) });
           out.addCssClass('zym-conversation-result');
-          content.append(out);
+          toolRow.content.append(out);
         }
         if (isError) {
-          errored = true;
-          expander.setExpanded(true); // also triggers render() via notify::expanded
-          render();
+          toolRow.setIcon(NERDFONT.STATUS.CROSS, theme.ui.status.error); // ✗ replaces the terminal icon
+          toolRow.setExpanded(true);
         }
       },
-      // Background-bash progress (run_in_background); shown in the expander body.
+      // Background-bash progress (run_in_background); shown in the detail body.
       onProgress: (p) => {
         if (!progress) {
           progress = new Gtk.Label({ xalign: 0, wrap: true });
           progress.addCssClass('zym-conversation-system');
-          content.append(progress);
+          toolRow.content.append(progress);
         }
         progress.setText(progressLine(p));
+        toolRow.setExpanded(true);
         this.scrollToBottom();
       },
     });
     this.scrollToBottom();
   }
 
-  // Fill a non-Bash tool row's result: a red ✗ on failure, then a markdown card for
-  // Task (the subagent's report) or a truncated text preview otherwise.
-  private fillToolResult(
-    status: InstanceType<typeof Gtk.Label>,
-    resultBox: InstanceType<typeof Gtk.Box>,
-    name: string,
-    isError: boolean,
-    text: string,
-  ): void {
-    if (isError) setMarkupSafe(status, iconSpan(NERDFONT.STATUS.CROSS, theme.ui.status.error), '✗');
-    // Read: the file is opened on the side via the clickable path — don't dump its
-    // content into the conversation (only a failed Read still shows its error text).
-    if (name === 'Read' && !isError) return;
+  // Fill a non-Bash tool row's result: a red ✗ on failure (which also expands the
+  // row), then a markdown card for Task (the subagent's report) or a truncated text
+  // preview otherwise, into the row's collapsible detail section.
+  private fillToolResult(toolRow: ToolRow, name: string, isError: boolean, text: string): void {
+    if (isError) {
+      toolRow.setIcon(NERDFONT.STATUS.CROSS, theme.ui.status.error); // ✗ replaces the tool icon
+      toolRow.setExpanded(true); // surface the failure without a click
+    }
+    // File tools (Read/Write/Edit/…): the file is opened on the side via the
+    // clickable row, and the result is just a boilerplate "created/updated" notice —
+    // don't dump it into the conversation (only a failure still shows its error text).
+    if ((name === 'Read' || EDIT_TOOLS.has(name)) && !isError) return;
     const trimmed = text.trim();
     if (!trimmed) return;
     if (name === 'Task' || name === 'Agent') {
       const view = new MarkdownView();
       view.root.addCssClass('zym-conversation-task-result');
-      resultBox.append(view.root);
+      toolRow.content.append(view.root);
       view.setMarkdown(trimmed);
     } else {
       const label = new Gtk.Label({ xalign: 0, wrap: true, selectable: true, label: truncateLines(trimmed, 8, 800) });
       label.addCssClass('zym-conversation-result');
-      resultBox.append(label);
+      toolRow.content.append(label);
     }
   }
 
@@ -1112,12 +1117,40 @@ export class AgentConversation implements Agent {
   }
 
   private addPermissionCard(req: PermissionRequest): void {
+    // Prefer to surface the prompt in-place: expand the tool row the request is for
+    // and put the Allow/Deny buttons in its details. The request has no tool_use_id,
+    // so correlate by tool name + input (the most recent match wins).
+    const entry = this.findPermissionRow(req);
+    if (entry) {
+      const buttons = permissionButtons((allow) => {
+        this.session.respondPermission(req.id, { allow });
+        entry.row.content.remove(buttons); // answered — drop the buttons
+      });
+      entry.row.content.append(buttons);
+      entry.row.setExpanded(true);
+      this.scrollToBottom();
+      return;
+    }
+    // Fallback (no matching row — e.g. the request raced ahead of its tool-use row):
+    // a standalone card in the transcript flow.
     const card = permissionCard(req, (allow) => {
       this.session.respondPermission(req.id, { allow });
       this.messages.remove(card); // answered — drop it from the transcript
     });
     this.messages.append(card);
     this.scrollToBottom();
+  }
+
+  // The tool row a permission request belongs to: the most recently added row whose
+  // tool name + input match (permission requests carry no tool_use_id). Returns
+  // undefined when none match (the request predates its row, or has no row).
+  private findPermissionRow(req: PermissionRequest): { row: ToolRow } | undefined {
+    const target = stableJson(req.input);
+    let match: { row: ToolRow } | undefined;
+    for (const entry of this.toolRows.values()) {
+      if (entry.name === req.toolName && stableJson(entry.input) === target) match = entry;
+    }
+    return match;
   }
 
   private addQuestionCard(req: QuestionRequest): void {
@@ -1139,6 +1172,17 @@ export class AgentConversation implements Agent {
 }
 
 /** Remove every child of a box (GTK4 has no clear()). */
+/** A key-stable JSON serialization (object keys sorted at every level) so two inputs
+ *  with the same content but different key order compare equal — used to match a
+ *  permission request to its tool row (the two inputs come from different channels). */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
+      : v,
+  );
+}
+
 /** Push `cb` onto `list` and return an unsubscribe that splices it out. */
 function push(list: Array<() => void>, cb: () => void): () => void {
   list.push(cb);

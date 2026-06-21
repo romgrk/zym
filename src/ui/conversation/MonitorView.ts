@@ -12,6 +12,7 @@ import { iconSpan } from '../icons.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { truncateLines } from './format.ts';
 import { StickyListPanel } from './StickyListPanel.ts';
+import { ToolRow } from './ToolRow.ts';
 import type { SdkSession } from '../../agents/claude-sdk/SdkSession.ts';
 import type { PageNav } from './SubagentView.ts';
 
@@ -28,15 +29,17 @@ export class MonitorView {
     this.nav = nav;
   }
 
-  /** A `Monitor` spawn → an inline button (returned, to append to the transcript)
-   *  plus an entry in the running-monitors panel. */
+  /** A `Monitor` spawn → an inline ToolRow (returned, to append to the transcript;
+   *  shares the icon/alignment of tool rows) plus an entry in the running panel.
+   *  Clicking the row opens the monitor's output page. */
   spawn(id: string, description: string): Widget {
     this.ids.add(id);
-    const row = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    row.addCssClass('zym-conversation-row');
-    row.append(this.openButton(id, description));
+    const header = new Gtk.Label({ xalign: 0, wrap: true, hexpand: true });
+    header.addCssClass('zym-conversation-toolrow');
+    setMarkupSafe(header, `<b>Monitor</b>${description ? `  ${escapeMarkup(description)}` : ''}`, `Monitor ${description}`);
+    const toolRow = new ToolRow({ icon: NERDFONT.TOOL.MONITOR, header, onActivate: () => this.pushPage(id) });
     this.render();
-    return row;
+    return toolRow.root;
   }
 
   /** A monitor's status changed (running → killed/stopped/completed). */
