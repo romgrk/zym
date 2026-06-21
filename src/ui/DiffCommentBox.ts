@@ -22,7 +22,7 @@ addStyles(`
     background: var(--t-ui-surface-popover);
     border: 1px solid var(--t-ui-border);
     border-radius: var(--card-radius);
-    margin: var(--spacing);
+    margin: var(--t-spacing);
     padding: 6px 8px;
   }
   /* Let the card background show through the editor. */
@@ -98,7 +98,7 @@ export function buildCommentCard(text: string): InstanceType<typeof Gtk.Box> {
 
 export class DiffCommentBox {
   readonly root: InstanceType<typeof Gtk.Box>;
-  /** Reserved-gap height for the hosting Peek, in px (card + the `--spacing` margins around it). */
+  /** Reserved-gap height for the hosting Peek, in px (card + the `--t-spacing` margins around it). */
   readonly height = 132;
   private readonly options: DiffCommentBoxOptions;
   private readonly input: TextEditor;

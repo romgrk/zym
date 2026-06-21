@@ -121,7 +121,7 @@ addStyles(`
   }
   /* The input + its status strip, as a bordered rounded card with its own bg. */
   .zym-conversation-input-card {
-    margin: var(--spacing);
+    margin: var(--t-spacing);
     border: 1px solid var(--t-ui-border);
     border-radius: var(--card-radius);
     background: var(--t-ui-surface-popover);

@@ -15,6 +15,7 @@
 import { Gtk, Gdk, Adw } from '../gi.ts';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
+import { theme } from '../theme/theme.ts';
 import { openFloatingCard } from './FloatingCard.ts';
 import { createInput } from './TextEditor/TextEditor.ts';
 import { AGENT_CONFIGS, listAgentKinds, type AgentKind, type LaunchOption } from '../agents/configs.ts';
@@ -22,9 +23,10 @@ import { AGENT_CONFIGS, listAgentKinds, type AgentKind, type LaunchOption } from
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 const CARD_WIDTH = 640;
-// Shared inset (px) for the prompt text and the options row, so the two sections line
-// up on the same left edge.
-const CARD_PADDING = 10;
+// Shared inset for the prompt text and the options row (two spacing units), so the two
+// sections line up on the same left edge. CSS uses `calc(2 * var(--t-spacing))`; this is
+// the matching px value for the prompt editor's (numeric) padding.
+const CARD_PADDING = 2 * theme.spacing;
 
 // An unsent prompt left over from a dismissed launcher, restored (fully selected) on
 // the next open so a cancelled compose isn't lost. Cleared once submitted.
@@ -63,7 +65,7 @@ addStyles(/* css */`
     background-color: var(--window-bg-color);
   }
   #AgentLauncherOptions {
-    padding: ${CARD_PADDING}px;
+    padding: calc(2 * var(--t-spacing));
     /* The card is monospace (for the prompt); the option controls read better in the
        UI (proportional) font. */
     font: var(--t-font-ui);

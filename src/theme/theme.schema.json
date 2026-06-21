@@ -4,97 +4,184 @@
   "title": "zym theme",
   "description": "A zym editor theme. One theme per file; loaded by src/theme/theme.ts. See docs/theming.md.",
   "type": "object",
-  "required": ["name", "appearance"],
+  "required": [
+    "name",
+    "appearance"
+  ],
   "additionalProperties": false,
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
     "name": {
       "type": "string",
-      "description": "Theme id; the file is loaded by this name (e.g. \"zym\" ← zym.json)."
+      "description": "Theme id; the file is loaded by this name (e.g. \"zym\" \u2190 zym.json)."
     },
     "appearance": {
-      "enum": ["light", "dark"],
+      "enum": [
+        "light",
+        "dark"
+      ],
       "description": "Drives the diff tints (dark darkens the status accents, light lightens them) and which system scheme a no-background theme follows."
     },
     "ui": {
       "type": "object",
-      "description": "Concern-grouped UI colors. Every field is optional and deep-merged over the built-in defaults. Read in code at the same path, e.g. ui.editor.background → theme.ui.editor.background.",
+      "description": "Concern-grouped UI colors. Every field is optional and deep-merged over the built-in defaults. Read in code at the same path, e.g. ui.editor.background \u2192 theme.ui.editor.background.",
       "additionalProperties": false,
       "properties": {
         "editor": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "foreground": { "$ref": "#/$defs/color", "description": "Default editor text color." },
-            "background": { "$ref": "#/$defs/color", "description": "Editor background. OMIT to follow the system light/dark scheme." },
-            "lineNumber": { "$ref": "#/$defs/color", "description": "Line-number gutter foreground." }
+            "foreground": {
+              "$ref": "#/$defs/color",
+              "description": "Default editor text color."
+            },
+            "background": {
+              "$ref": "#/$defs/color",
+              "description": "Editor background. OMIT to follow the system light/dark scheme."
+            },
+            "lineNumber": {
+              "$ref": "#/$defs/color",
+              "description": "Line-number gutter foreground."
+            }
           }
         },
         "text": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "muted": { "$ref": "#/$defs/color", "description": "De-emphasized text (subtitles, detail columns)." },
-            "accent": { "$ref": "#/$defs/color", "description": "Accent foreground (picker matched-character highlight)." }
+            "muted": {
+              "$ref": "#/$defs/color",
+              "description": "De-emphasized text (subtitles, detail columns)."
+            },
+            "accent": {
+              "$ref": "#/$defs/color",
+              "description": "Accent foreground (picker matched-character highlight)."
+            }
           }
         },
-        "border": { "$ref": "#/$defs/color", "description": "Separator/border for chrome." },
-        "shadow": { "$ref": "#/$defs/color", "description": "Drop shadow for floating surfaces." },
+        "border": {
+          "$ref": "#/$defs/color",
+          "description": "Separator/border for chrome."
+        },
+        "shadow": {
+          "$ref": "#/$defs/color",
+          "description": "Drop shadow for floating surfaces."
+        },
         "surface": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "popover": { "$ref": "#/$defs/color", "description": "Background of elevated surfaces: pickers, popovers, menus." },
-            "selected": { "$ref": "#/$defs/color", "description": "Background of a selected list/tree row." }
+            "popover": {
+              "$ref": "#/$defs/color",
+              "description": "Background of elevated surfaces: pickers, popovers, menus."
+            },
+            "selected": {
+              "$ref": "#/$defs/color",
+              "description": "Background of a selected list/tree row."
+            }
           }
         },
         "status": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "success": { "$ref": "#/$defs/color", "description": "Success text; also the source hue for the diff.added tints." },
-            "warning": { "$ref": "#/$defs/color" },
-            "error": { "$ref": "#/$defs/color", "description": "Error text; also the source hue for the diff.removed tints." },
-            "info": { "$ref": "#/$defs/color" },
-            "hint": { "$ref": "#/$defs/color" }
+            "success": {
+              "$ref": "#/$defs/color",
+              "description": "Success text; also the source hue for the diff.added tints."
+            },
+            "warning": {
+              "$ref": "#/$defs/color"
+            },
+            "error": {
+              "$ref": "#/$defs/color",
+              "description": "Error text; also the source hue for the diff.removed tints."
+            },
+            "info": {
+              "$ref": "#/$defs/color"
+            },
+            "hint": {
+              "$ref": "#/$defs/color"
+            }
           }
         },
         "search": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "match": { "$ref": "#/$defs/color", "description": "Background tint for every search match (use #rrggbbaa so it composes over text)." },
-            "matchCurrent": { "$ref": "#/$defs/color", "description": "The current match; falls back to search.match." }
+            "match": {
+              "$ref": "#/$defs/color",
+              "description": "Background tint for every search match (use #rrggbbaa so it composes over text)."
+            },
+            "matchCurrent": {
+              "$ref": "#/$defs/color",
+              "description": "The current match; falls back to search.match."
+            }
           }
         },
         "diff": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "added": { "$ref": "#/$defs/color", "description": "Added-line background. Omit to derive from status.success per appearance." },
-            "addedWord": { "$ref": "#/$defs/color", "description": "Changed words within an added line; falls back to diff.added." },
-            "removed": { "$ref": "#/$defs/color", "description": "Removed-line background. Omit to derive from status.error per appearance." },
-            "removedWord": { "$ref": "#/$defs/color", "description": "Changed words within a removed line; falls back to diff.removed." },
-            "filler": { "$ref": "#/$defs/color", "description": "Neutral pad for an aligned-but-empty side-by-side row." },
-            "fold": { "$ref": "#/$defs/color", "description": "Neutral band for a collapsed-context placeholder row." }
+            "added": {
+              "$ref": "#/$defs/color",
+              "description": "Added-line background. Omit to derive from status.success per appearance."
+            },
+            "addedWord": {
+              "$ref": "#/$defs/color",
+              "description": "Changed words within an added line; falls back to diff.added."
+            },
+            "removed": {
+              "$ref": "#/$defs/color",
+              "description": "Removed-line background. Omit to derive from status.error per appearance."
+            },
+            "removedWord": {
+              "$ref": "#/$defs/color",
+              "description": "Changed words within a removed line; falls back to diff.removed."
+            },
+            "filler": {
+              "$ref": "#/$defs/color",
+              "description": "Neutral pad for an aligned-but-empty side-by-side row."
+            },
+            "fold": {
+              "$ref": "#/$defs/color",
+              "description": "Neutral band for a collapsed-context placeholder row."
+            }
           }
         },
-        "flash": { "$ref": "#/$defs/color", "description": "Brief tint over an operated/yanked range (vim)." },
+        "flash": {
+          "$ref": "#/$defs/color",
+          "description": "Brief tint over an operated/yanked range (vim)."
+        },
         "pr": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "open": { "$ref": "#/$defs/color", "description": "GitHub pull-request state colors." },
-            "merged": { "$ref": "#/$defs/color" },
-            "closed": { "$ref": "#/$defs/color" }
+            "open": {
+              "$ref": "#/$defs/color",
+              "description": "GitHub pull-request state colors."
+            },
+            "merged": {
+              "$ref": "#/$defs/color"
+            },
+            "closed": {
+              "$ref": "#/$defs/color"
+            }
           }
         }
       }
     },
     "syntax": {
       "type": "object",
-      "description": "Tree-sitter capture name → color + optional font style. KEY ORDER MATTERS: a tag is created per entry in this order and later tags win, so more-specific categories come last (escapes after string; tag before type; property before function). Dotted captures inherit by longest-prefix (keyword.control → keyword).",
-      "additionalProperties": { "$ref": "#/$defs/syntaxToken" }
+      "description": "Tree-sitter capture name \u2192 color + optional font style. KEY ORDER MATTERS: a tag is created per entry in this order and later tags win, so more-specific categories come last (escapes after string; tag before type; property before function). Dotted captures inherit by longest-prefix (keyword.control \u2192 keyword).",
+      "additionalProperties": {
+        "$ref": "#/$defs/syntaxToken"
+      }
+    },
+    "spacing": {
+      "type": "number",
+      "description": "Base spacing unit in px (margins/gaps). Defaults to 8."
     }
   },
   "$defs": {
@@ -107,14 +194,34 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "color": { "$ref": "#/$defs/color", "description": "Foreground color." },
-        "bold": { "type": "boolean" },
-        "italic": { "type": "boolean" },
-        "underline": { "type": "boolean" },
-        "strikethrough": { "type": "boolean" },
-        "scale": { "type": "number", "description": "Relative font size (1 = normal); e.g. 1.5 for an h1 heading." },
-        "background": { "$ref": "#/$defs/color", "description": "Text-only background (inline code)." },
-        "lineBackground": { "$ref": "#/$defs/color", "description": "Full-line/paragraph background (block code)." }
+        "color": {
+          "$ref": "#/$defs/color",
+          "description": "Foreground color."
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        },
+        "scale": {
+          "type": "number",
+          "description": "Relative font size (1 = normal); e.g. 1.5 for an h1 heading."
+        },
+        "background": {
+          "$ref": "#/$defs/color",
+          "description": "Text-only background (inline code)."
+        },
+        "lineBackground": {
+          "$ref": "#/$defs/color",
+          "description": "Full-line/paragraph background (block code)."
+        }
       }
     }
   }

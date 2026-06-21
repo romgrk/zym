@@ -152,8 +152,8 @@ export function installStyles(): void {
 // content area (the agent input card, the diff comment box) — softer than a
 // floating popover.
 //
-// `--spacing` is the base spacing unit (margins / gaps between content chrome).
-// Hardcoded for now; promote to a scale (×0.5/×2) if more steps are needed.
+// The base spacing unit (margins / gaps between content chrome) is the theme's
+// `spacing` token, emitted as `--t-spacing` on `#AppWindow` below.
 //
 // `--font-size-small` is the one secondary-text size — metadata and counts that
 // sit beside full-size text (sidebar/diagnostics counts, list detail columns).
@@ -163,7 +163,6 @@ addStyles(`
     --popover-radius: 15px;
     --popover-radius-small: 6px;
     --card-radius: 12px;
-    --spacing: 8px;
     --font-size-small: 0.85em;
   }
 `);
@@ -177,6 +176,7 @@ addStyles(`
 // theme-switching lands this becomes a keyed sheet re-set on theme change.
 addStyles(`
   #AppWindow {
+    --t-spacing: ${theme.spacing}px;
     ${themeUiCssVariables(theme).replace(/\n/g, '\n    ')}
   }
 `);

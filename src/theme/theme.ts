@@ -144,6 +144,8 @@ export interface Theme {
    * is still filled (with `surface.popover`) so color consumers always have a value.
    */
   followSystemScheme: boolean;
+  /** Base spacing unit in px (margins / gaps between content chrome); `--t-spacing`. */
+  spacing: number;
   ui: ThemeUi;
   syntax: SyntaxColors;
   /** Per-capture font styling (bold/italic/scale/background/…). */
@@ -179,6 +181,7 @@ interface ThemeSyntaxToken {
 interface ThemeFromFile {
   name: string;
   appearance: 'light' | 'dark';
+  spacing?: number;
   ui?: ThemeFromFileUi;
   syntax?: Record<string, ThemeSyntaxToken>;
 }
@@ -213,6 +216,7 @@ export const DEFAULT_THEME: Theme = {
   name: 'default',
   appearance: 'dark',
   followSystemScheme: false,
+  spacing: 8,
   ui: {
     editor: { foreground: '#ffffff', background: '#1e1e1e', lineNumber: '#888888' },
     text: { muted: '#9a9996', accent: '#c678dd' },
@@ -326,7 +330,7 @@ export function adaptTheme(file: ThemeFromFile): Theme {
   }
 
   applyMarkupDefaults(syntax, syntaxStyle, ui);
-  return { name: file.name, appearance: file.appearance, followSystemScheme, ui, syntax, syntaxStyle };
+  return { name: file.name, appearance: file.appearance, followSystemScheme, spacing: file.spacing ?? DEFAULT_THEME.spacing, ui, syntax, syntaxStyle };
 }
 
 /**
