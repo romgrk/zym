@@ -7,6 +7,19 @@ mirror the header structure (`git/index.md` for the git section,
 `text-editor/lsp-integration.md` for LSP, etc.); a header with more than one
 subheader becomes a directory with an `index.md`.
 
+## Tasks
+
+Most important tasks:
+
+- git (for reviewing agent work): 
+  - Diff something else than HEAD
+  - Commit viewer
+  - Improve diff viewer interface
+- autocomplete: fix reposition bug and style (+signature/hover)
+- pickers: improve UI/UX, attach to panel when applicable
+- vim:
+  - gb
+
 ## Architecture
 
 - Prefer idiomatic Node.js, only use GObject libraries when required.
