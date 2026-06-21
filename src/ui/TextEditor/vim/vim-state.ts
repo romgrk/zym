@@ -131,7 +131,7 @@ export default class VimState {
   static clear (): void { return __vimStatesByEditor.clear() } // prettier-ignore
 
   flash (...args: Parameters<FlashManager['flash']>): void { this.flashManager.flash(...args) } // prettier-ignore
-  clearFlash (): void { this.__flashManager && this.flashManager.clearAllMarkers() } // prettier-ignore
+  clearFlash (): void { if (this.__flashManager) this.flashManager.clearAllMarkers() } // prettier-ignore
   updateStatusBar (): void { this.statusBarManager.update(this.mode, this.submode) } // prettier-ignore
   setOperatorModifier (...args: any[]): void { this.operationStack.setOperatorModifier(...args) } // prettier-ignore
   subscribe (handler: any): any { return this.operationStack.subscribe(handler) } // prettier-ignore
@@ -146,7 +146,7 @@ export default class VimState {
   load (file: keyof typeof MANAGER_REGISTRY | string, instantiate = true): any {
     const lib = MANAGER_REGISTRY[file as keyof typeof MANAGER_REGISTRY]
     if (!lib) throw new Error(`vim: manager not yet ported: ${file}`)
-    return instantiate ? new (lib as any)(this) : lib // eslint-disable-line new-cap
+    return instantiate ? new (lib as any)(this) : lib  
   }
   get mark (): MarkManager { return this.__mark || (this.__mark = this.load('./mark-manager')) } // prettier-ignore
   get register (): RegisterManager { return this.__register || (this.__register = this.load('./register-manager')) } // prettier-ignore
@@ -464,11 +464,11 @@ export default class VimState {
 
   reset (): void {
     // Reset each props only if it's already populated.
-    this.__register && this.register.reset()
-    this.__searchHistory && this.searchHistory.reset()
-    this.__hover && this.hover.reset()
-    this.__mutationManager && this.mutationManager.reset()
-    this.__operationStack && this.operationStack.reset()
+    if (this.__register) this.register.reset()
+    if (this.__searchHistory) this.searchHistory.reset()
+    if (this.__hover) this.hover.reset()
+    if (this.__mutationManager) this.mutationManager.reset()
+    if (this.__operationStack) this.operationStack.reset()
   }
 
   isVisible (): boolean {

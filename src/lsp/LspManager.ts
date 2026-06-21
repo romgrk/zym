@@ -1027,7 +1027,7 @@ export function locationToTarget(
   doc: LspDocument,
 ): ReferenceLocation {
   const path = uriToPath(uri);
-  let lineText = '';
+  let lineText: string;
   if (doc.getPath() === path) {
     lineText = doc.lineTextForRow(position.line);
   } else {

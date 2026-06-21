@@ -341,7 +341,7 @@ export class TextEditor implements DocumentHost {
   /** Connect a node-gtk GObject signal and register its disconnect in `subs`, so
    *  `dispose()` releases the Global handle that would otherwise pin this editor.
    *  Use for EVERY signal whose handler reaches back to `this` (see `subs`). */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- node-gtk GObjects expose `.on`/`.off` via an EventEmitter shim not in their typings.
+   
   private connect(obj: any, signal: string, handler: (...args: any[]) => unknown): void {
     obj.on(signal, handler);
     this.subs.add(new Disposable(() => obj.off(signal, handler)));

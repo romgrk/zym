@@ -212,7 +212,7 @@ class Quilx {
 export const quilx = new Quilx();
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var quilx: Quilx;
 }
 

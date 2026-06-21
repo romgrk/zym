@@ -82,7 +82,7 @@ function ensureChild(): boolean {
 function teardown(): void {
   if (child) {
     child.stdout?.removeAllListeners();
-    try { child.kill(); } catch {}
+    try { child.kill(); } catch { /* already exited */ }
     child = null;
   }
 }

@@ -248,7 +248,7 @@ export class Base {
   }
 
   static isCommand (): boolean {
-    return this.hasOwnProperty('command') ? this.command! : true
+    return Object.prototype.hasOwnProperty.call(this, 'command') ? this.command! : true
   }
 
   static getClass (name: string): typeof Base {
@@ -261,7 +261,7 @@ export class Base {
 
   static getInstance (vimState: VimState, klass: string | typeof Base, properties?: Record<string, unknown>): Base {
     const Klass: typeof Base = typeof klass === 'function' ? klass : Base.getClass(klass)
-    const object = new Klass(vimState) // eslint-disable-line new-cap
+    const object = new Klass(vimState)  
     if (properties) Object.assign(object, properties)
     object.initialize()
     return object

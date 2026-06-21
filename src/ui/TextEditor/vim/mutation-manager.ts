@@ -56,13 +56,13 @@ export default class MutationManager {
   }
 
   setCheckpoint (checkpoint: Checkpoint) {
-    for (let selection of this.editor.getSelections()) {
+    for (const selection of this.editor.getSelections()) {
       this.setCheckpointForSelection(selection, checkpoint)
     }
   }
 
   setCheckpointForSelection (selection: Selection, checkpoint: Checkpoint) {
-    let resetMarker = false
+    let resetMarker: boolean
 
     if (this.mutationsBySelection.has(selection)) {
       // Current non-empty selection is prioritized over existing marker's range.

@@ -126,7 +126,7 @@ function getIndex (index: number, list: ArrayLike<unknown>): number {
 // e.g. Beging called immediately after open file.
 function getVisibleBufferRange (editor: any): Range | undefined {
   // TODO(vim-ts): tighten — getVisibleRowRange/bufferRowForScreenRow visibility not on EditorModel.
-  let [startRow, endRow] = editor.getVisibleRowRange()
+  const [startRow, endRow] = editor.getVisibleRowRange()
 
   // When editor is not attached or imediately after attached timing,
   // `editor.element.getVisibleRowRange()` return NaN.
@@ -202,9 +202,10 @@ function getRows (editor: EditorModel, bufferOrScreen: 'buffer' | 'screen', {sta
   switch (direction) {
     case 'previous':
       return startRow <= 0 ? [] : getList(startRow - 1, 0)
-    case 'next':
+    case 'next': {
       const endRow = bufferOrScreen === 'buffer' ? getVimLastBufferRow(editor) : getVimLastScreenRow(editor)
       return startRow >= endRow ? [] : getList(startRow + 1, endRow)
+    }
   }
 }
 
@@ -703,7 +704,7 @@ function translatePointAndClip (editor: EditorModel, pointArg: PointLike, direct
 
   let dontClip = false
   switch (direction) {
-    case 'forward':
+    case 'forward': {
       point = point.translate([0, +1])
       const eol = editor.bufferRangeForBufferRow(point.row).end
 
@@ -715,6 +716,7 @@ function translatePointAndClip (editor: EditorModel, pointArg: PointLike, direct
       }
       point = Point.min(point, editor.getEofBufferPosition())
       break
+    }
 
     case 'backward':
       point = point.translate([0, -1])
@@ -1095,8 +1097,8 @@ function adjustIndentWithKeepingLayout (editor: EditorModel, range: Range): void
 }
 
 // Check point containment with end position exclusive
-function rangeContainsPointWithEndExclusive (range: Range, point: PointLike): void {
-  range.start.isLessThanOrEqual(point) && range.end.isGreaterThan(point)
+function rangeContainsPointWithEndExclusive (range: Range, point: PointLike): boolean {
+  return range.start.isLessThanOrEqual(point) && range.end.isGreaterThan(point)
 }
 
 function traverseTextFromPoint (point: PointLike, text: string): Point {

@@ -23,6 +23,7 @@ export default tseslint.config(
       'node_modules/**',
       'assets/**',
       'img/**',
+      'eslint-rules/**', // vendored upstream rule, kept verbatim
     ],
   },
 
@@ -42,6 +43,24 @@ export default tseslint.config(
       // TypeScript already resolves identifiers; `no-undef` only produces
       // false positives on type-only globals here.
       'no-undef': 'off',
+
+      // A documented `// @ts-nocheck` is allowed (e.g. verbatim ported data
+      // tables with intentional duplicate keys); ts-ignore/expect-error still
+      // require a description.
+      '@typescript-eslint/ban-ts-comment': ['error', {
+        'ts-nocheck': 'allow-with-description',
+        'ts-ignore': 'allow-with-description',
+        'ts-expect-error': 'allow-with-description',
+      }],
+
+      // Irregular whitespace in code is a real bug; in comments it's sometimes
+      // deliberate (e.g. a zero-width space breaking up `*/` inside a glob doc).
+      'no-irregular-whitespace': ['error', { skipComments: true }],
+
+      // Only nudge to `const` when *every* binding in a declaration can be —
+      // mixed destructuring like `let {start, end}` where one half is
+      // reassigned can't, and isn't worth splitting.
+      'prefer-const': ['error', { destructuring: 'all' }],
 
       // node-gtk's bindings are pervasively typed `any` (GObject, GIR, vfunc
       // signatures). Flagging it is pure noise, not a real-issue signal.

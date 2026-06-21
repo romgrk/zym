@@ -20,7 +20,7 @@ import { Gdk, GObject } from '../../../gi.ts';
 // node-gtk's generated types omit a few GTK4 clipboard members that exist at
 // runtime (Display.getClipboard / getPrimaryClipboard, GObject.TYPE_STRING) —
 // reach them through `any`, the same escape hatch the rest of the codebase uses.
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 export interface Clipboard {
   read(): string;

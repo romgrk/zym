@@ -157,4 +157,4 @@ emit(`    saved              : ${saved.toFixed(1)} µs/frame (${pct.toFixed(0)}%
 emit(`\n  @60Hz frame budget = 16667 µs; gutter layout is ${(cur.cpuUsPerFrame / 16667 * 100).toFixed(2)}% today,`);
 emit(`  ${(prop.cpuUsPerFrame / 16667 * 100).toFixed(2)}% after the collapse (per ${VISIBLE_LINES}-line viewport).`);
 emit('');
-try { Fs.writeFileSync('/tmp/gutter-bench.txt', out); } catch {}
+try { Fs.writeFileSync('/tmp/gutter-bench.txt', out); } catch { /* best-effort */ }

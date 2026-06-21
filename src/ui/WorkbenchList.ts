@@ -357,8 +357,7 @@ export class WorkbenchList {
   // Run `fn` after `ms` (0 → next tick), tracking the timer so a dispose/rebuild
   // can cancel it before it touches a freed widget.
   private defer(ms: number, fn: () => void): void {
-    let id: NodeJS.Timeout;
-    id = setTimeout(() => {
+    const id = setTimeout(() => {
       this.timers.delete(id);
       fn();
     }, ms > 0 ? ms : 0);
