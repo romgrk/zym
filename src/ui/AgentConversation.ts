@@ -33,6 +33,7 @@ import { permissionCard } from './conversation/cards.ts';
 import { QuestionCard } from './conversation/QuestionCard.ts';
 import { SubagentView } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
+import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
 import { highlightToMarkup } from '../syntax/highlightToMarkup.ts';
@@ -129,8 +130,12 @@ addStyles(`
     padding: 6px 12px;
     border-top: 1px solid var(--t-ui-border); /* divider between the input and the status strip */
   }
-  /* The footer metadata (model · context · cost) reads as muted secondary text. */
+  /* The footer metadata (model name · context tokens) reads as muted secondary text. */
   .quilx-conversation-footer-label { color: var(--t-ui-text-muted); }
+  /* The detail popover: a compact two-column key/value grid. */
+  .quilx-context-popover { padding: 6px 4px; }
+  .quilx-context-popover-heading { font-weight: bold; margin-bottom: 2px; }
+  .quilx-context-popover-caption { color: var(--t-ui-text-muted); }
   /* The permission-mode dropdown, colored per mode (like Claude Code). */
   .quilx-conversation-mode { min-height: 0; }
   .quilx-cmode-default { color: var(--t-ui-text-muted); }
@@ -216,7 +221,8 @@ export class AgentConversation implements Agent {
   private readonly input: TextEditor;
   private readonly promptContainer: InstanceType<typeof Gtk.Box>;
   private readonly footer: InstanceType<typeof Gtk.Box>;
-  private readonly footerLabel: InstanceType<typeof Gtk.Label>;
+  // Footer model name + context-window gauge + token/cost popover (owns its state).
+  private readonly modelContext = new ModelContext();
   private readonly modeDropdown: InstanceType<typeof Gtk.DropDown>;
   private applyingMode = false; // guards the dropdown's notify::selected feedback loop
   private readonly statusIcon: { widget: InstanceType<typeof Gtk.Widget>; dispose: () => void };
@@ -239,10 +245,6 @@ export class AgentConversation implements Agent {
   private readonly subagentView: SubagentView;
   // Shell monitors (the `Monitor` tool): inline button + running panel + page + cancel.
   private readonly monitorView: MonitorView;
-  private _costUsd: number | null = null;
-  private _contextTokens: number | null = null;
-  private _contextWindow = 1_000_000; // refined from result.modelUsage[model].contextWindow
-  private _model: string | null = null;
   private _slashCommands: string[] = []; // from init; offered by the slash completion source
   private readonly onOpenFile?: (path: string) => void;
 
@@ -319,7 +321,7 @@ export class AgentConversation implements Agent {
     this.promptContainer.append(this.input.root);
 
     // A thin footer: the agent status icon (same as the sidebar) + a permission-mode
-    // dropdown (colored per mode) + cost / context.
+    // dropdown (colored per mode) + the model/context gauge (ModelContext).
     this.statusIcon = createAgentStatusIcon(this);
     this.modeDropdown = Gtk.DropDown.newFromStrings(PERMISSION_CYCLE);
     this.modeDropdown.addCssClass('flat');
@@ -329,13 +331,11 @@ export class AgentConversation implements Agent {
       const mode = PERMISSION_CYCLE[this.modeDropdown.getSelected()];
       if (mode) this.session.setPermissionMode(mode);
     });
-    this.footerLabel = new Gtk.Label({ xalign: 0, hexpand: true });
-    this.footerLabel.addCssClass('quilx-conversation-footer-label');
     this.footer = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 14 });
     this.footer.addCssClass('quilx-conversation-footer');
     this.footer.append(this.statusIcon.widget);
     this.footer.append(this.modeDropdown);
-    this.footer.append(this.footerLabel);
+    this.footer.append(this.modelContext.widget);
     this.updateFooter();
 
     // The input and its status strip live together in a bordered, rounded card.
@@ -373,8 +373,8 @@ export class AgentConversation implements Agent {
     this.wireSession();
   }
 
-  // Sync the mode dropdown (selection + color) and the cost/context label. The
-  // status itself is the icon to the left (self-updating).
+  // Sync the permission-mode dropdown (selection + color). The status itself is the
+  // icon to the left (self-updating); model/context live in ModelContext.
   private updateFooter(): void {
     const index = PERMISSION_CYCLE.indexOf(this._permissionMode);
     if (index >= 0 && this.modeDropdown.getSelected() !== index) {
@@ -384,15 +384,6 @@ export class AgentConversation implements Agent {
     }
     for (const m of PERMISSION_CYCLE) this.modeDropdown.removeCssClass(`quilx-cmode-${m}`);
     this.modeDropdown.addCssClass(`quilx-cmode-${this._permissionMode}`);
-
-    const parts: string[] = [];
-    if (this._model) parts.push(this._model.replace(/^claude-/, ''));
-    if (this._contextTokens != null) {
-      const pct = Math.round((this._contextTokens / this._contextWindow) * 100);
-      parts.push(`${(this._contextTokens / 1000).toFixed(0)}k (${pct}%)`);
-    }
-    if (this._costUsd != null) parts.push(`$${this._costUsd.toFixed(2)}`);
-    this.footerLabel.setText(parts.join('   ·   '));
   }
 
   /** Spawn claude and send the launch prompt (if any). */
@@ -582,12 +573,11 @@ export class AgentConversation implements Agent {
         if (this.handleTaskResult(id, text)) return; // TaskCreate result → record the new task id
         this.updateToolResult(id, isError, text);
       }),
-      this.session.onInit(({ model, slashCommands }) => { this._model = model; this._slashCommands = slashCommands; this.updateFooter(); }),
-      this.session.onContext(({ tokens }) => { this._contextTokens = tokens; this.updateFooter(); }),
+      this.session.onInit(({ model, slashCommands }) => { this.modelContext.setModel(model); this._slashCommands = slashCommands; }),
+      this.session.onContext((usage) => this.modelContext.setUsage(usage)),
       this.session.onResult(({ costUsd, contextWindow }) => {
-        if (costUsd != null) this._costUsd = costUsd;
-        if (contextWindow) this._contextWindow = contextWindow;
-        this.updateFooter();
+        if (costUsd != null) this.modelContext.setCost(costUsd);
+        if (contextWindow) this.modelContext.setWindow(contextWindow);
       }),
       this.session.onError(({ message }) => this.addErrorRow(message)),
       this.session.onInterrupted(() => this.addInterruptedRow()),

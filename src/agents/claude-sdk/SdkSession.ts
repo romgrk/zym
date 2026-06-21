@@ -116,6 +116,19 @@ export interface TaskProgress {
   done: boolean;
 }
 
+/**
+ * Per-message context occupancy: `tokens` is the running window total (input +
+ * both cache tiers), broken out into its parts. `output` is the turn's generated
+ * tokens (not part of the window total) — surfaced for the detail popover.
+ */
+export interface ContextUsage {
+  tokens: number;
+  input: number;
+  cacheRead: number;
+  cacheCreation: number;
+  output: number;
+}
+
 export interface SdkSessionOptions {
   /** Base argv (default `['claude']`); the stream-json/permission flags are added. */
   command?: string[];
@@ -292,7 +305,7 @@ export class SdkSession {
   onToolUse(cb: (m: { id: string; name: string; input: unknown }) => void): Disposable { return this.emitter.on('tool-use', cb as (v?: unknown) => void); }
   onToolResult(cb: (m: { id: string; isError: boolean; text: string }) => void): Disposable { return this.emitter.on('tool-result', cb as (v?: unknown) => void); }
   onResult(cb: (m: { costUsd?: number; contextWindow?: number }) => void): Disposable { return this.emitter.on('result', cb as (v?: unknown) => void); }
-  onContext(cb: (m: { tokens: number }) => void): Disposable { return this.emitter.on('context', cb as (v?: unknown) => void); }
+  onContext(cb: (m: ContextUsage) => void): Disposable { return this.emitter.on('context', cb as (v?: unknown) => void); }
   onInit(cb: (m: { model: string; slashCommands: string[] }) => void): Disposable { return this.emitter.on('init', cb as (v?: unknown) => void); }
   onError(cb: (m: { message: string }) => void): Disposable { return this.emitter.on('error', cb as (v?: unknown) => void); }
   onInterrupted(cb: () => void): Disposable { return this.emitter.on('interrupted', cb as (v?: unknown) => void); }
@@ -506,8 +519,12 @@ export class SdkSession {
   // so it over-counts. Ignore the synthetic 0-token messages.
   private onUsage(usage: TokenUsage | undefined): void {
     if (!usage) return;
-    const tokens = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
-    if (tokens > 0) this.emitter.emit('context', { tokens });
+    const input = usage.input_tokens ?? 0;
+    const cacheRead = usage.cache_read_input_tokens ?? 0;
+    const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+    const output = usage.output_tokens ?? 0;
+    const tokens = input + cacheRead + cacheCreation;
+    if (tokens > 0) this.emitter.emit('context', { tokens, input, cacheRead, cacheCreation, output });
   }
 
   // A turn's result: cost + the model's context window (for the % gauge), and an
