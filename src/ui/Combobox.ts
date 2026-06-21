@@ -33,24 +33,15 @@ export interface ComboboxConfig {
   mutedLabels?: string[];
 }
 
+// The trigger is a plain Gtk.Button and the open state a plain Gtk.Entry, so both pick up
+// native Adwaita styling. The popover keeps its native frame; only minimal tweaks here:
+// the chevron icon, an edge-to-edge list, and the special/muted label accents (opacity,
+// not a theme color var, so they also resolve on the popup surface).
 addStyles(/* css */`
-  #ComboboxDisplay {
-    padding: 0.25em 0.4em;
-    border-radius: var(--popover-radius-small);
-  }
-  #ComboboxDisplay:hover { background: alpha(currentColor, 0.07); }
-  #ComboboxDisplay > .combobox-chevron { opacity: 0.6; margin-left: 0.4em; }
-  #ComboboxEntry { padding: 0.25em 0.4em; }
-  #ComboboxPopover > contents {
-    padding: 0;
-    background-color: var(--window-bg-color);
-    border: 1px solid var(--border-color);
-    border-radius: var(--popover-radius-small);
-  }
+  .combobox-chevron { opacity: 0.7; margin-left: 0.5em; }
+  #ComboboxPopover > contents { padding: 0; }
   #ComboboxList { background: transparent; }
-  #ComboboxList > row { padding: 0; }
-  #ComboboxItem { padding: 0.35em 0.6em; }
-  /* opacity (not a theme color var) so it also resolves in the popup surface */
+  #ComboboxItem { padding: 0.4em 0.7em; }
   .combobox-special { color: var(--accent-color); font-weight: bold; }
   .combobox-muted { opacity: 0.55; }
 `);
@@ -85,19 +76,19 @@ export class Combobox {
     this.muted = new Set(config.mutedLabels ?? []);
     this.ingest(config.options);
 
-    // Closed trigger: label + chevron, clickable and keyboard-openable.
+    // Closed trigger: a regular Gtk.Button (native Adwaita button styling) holding the
+    // label + a dropdown chevron. Click / Enter / Space activate it via the native button.
     this.displayLabel = new Gtk.Label({ xalign: 0, hexpand: true });
     this.displayLabel.setEllipsize(Pango.EllipsizeMode.END);
     const chevron = new Gtk.Image({ iconName: 'pan-down-symbolic' });
     chevron.addCssClass('combobox-chevron');
-    const display = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+    const displayBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+    displayBox.append(this.displayLabel);
+    displayBox.append(chevron);
+    const display = new Gtk.Button();
     display.setName('ComboboxDisplay');
-    display.append(this.displayLabel);
-    display.append(chevron);
-    display.setFocusable(true);
-    const click = new Gtk.GestureClick();
-    click.on('released', () => this.openPopup());
-    display.addController(click);
+    display.setChild(displayBox);
+    display.on('clicked', () => this.openPopup());
     const displayKeys = new Gtk.EventControllerKey();
     displayKeys.on('key-pressed', (keyval: number, _kc: number, state: number) => this.onDisplayKey(keyval, state));
     display.addController(displayKeys);
@@ -306,15 +297,16 @@ export class Combobox {
     }
   }
 
-  // On the closed trigger: Down/Enter open; a printable key opens seeded with it.
+  // On the closed trigger: Down opens; a printable key opens seeded with it. Enter/Space
+  // fall through to the native button's own activation (→ clicked → openPopup).
   private onDisplayKey(keyval: number, state: number): boolean {
-    if (keyval === Gdk.KEY_Down || keyval === Gdk.KEY_KP_Down || keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter) {
+    if (keyval === Gdk.KEY_Down || keyval === Gdk.KEY_KP_Down) {
       this.openPopup();
       return true;
     }
     if (state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK)) return false;
     const ch = Gdk.keyvalToUnicode(keyval);
-    if (ch < 32 || ch === 127) return false;
+    if (ch <= 32 || ch === 127) return false; // space/Enter activate the button natively
     this.openPopup(String.fromCharCode(ch));
     return true;
   }
