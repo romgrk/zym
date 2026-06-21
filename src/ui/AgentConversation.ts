@@ -115,6 +115,8 @@ addStyles(`
   /* The running-subagents panel sits below the input card → divider on top, not bottom. */
   .zym-conversation-subagents { border-top: 1px solid var(--t-ui-border); border-bottom: none; }
   .zym-conversation-system { opacity: 0.6; font-style: italic; }
+  /* The resume boundary divider: centered, muted, italic. */
+  .zym-conversation-resume { color: ${theme.ui.text.muted}; font-style: italic; }
   .zym-conversation-error { color: var(--t-ui-status-error); }
   /* An unrecognised stream event, dumped as raw JSON so nothing is silently lost. */
   .zym-conversation-unknown {
@@ -496,7 +498,10 @@ export class AgentConversation implements Agent {
       // A permanent divider marking the boundary between the restored history and
       // the live continuation: "session disconnected …" until the first turn, then
       // "session resumed" (a dim hollow dot reflects the not-yet-live state too).
-      this.resumeNoteRow = this.addRow('zym-conversation-system');
+      const divider = this.addRow('zym-conversation-resume');
+      divider.setXalign(0.5);
+      divider.setHalign(Gtk.Align.CENTER);
+      this.resumeNoteRow = divider;
       this.refreshResumeNote();
       if (this.deferredStart) this.setStatus('disconnected');
     }
