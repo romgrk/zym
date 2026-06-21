@@ -26,7 +26,8 @@ import { createSlashCommandSource } from './TextEditor/createSlashCommandSource.
 import { MarkdownView } from './markdown/MarkdownView.ts';
 import { toolMarkup, toolDetailMarkup, toolFilePath, describeTool } from './toolDisplay.ts';
 import { escapeMarkup, setMarkupSafe } from './proseMarkup.ts';
-import { iconSpan } from './icons.ts';
+import { iconSpan, iconLabel } from './icons.ts';
+import { clipboard } from './TextEditor/vim/clipboard.ts';
 import { truncateLines, summarizeInput, formatCount, progressLine } from './conversation/format.ts';
 import { StickyListPanel } from './conversation/StickyListPanel.ts';
 import { permissionCard } from './conversation/cards.ts';
@@ -53,16 +54,24 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 // the font store's --t-font-monospace-family. See docs/styling.md + theming.md.
 addStyles(`
   .zym-conversation { background: var(--t-ui-editor-background); color: var(--t-ui-editor-foreground); }
-  .zym-conversation-transcript { padding: 12px; }
+  /* The transcript reads as prose, so it sits a touch larger than the dense chrome
+     around it — every message (bubbles, tool rows, results) inherits this size. */
+  .zym-conversation-transcript { padding: 16px; font-size: 1.05em; }
   .zym-conversation-row { padding: 6px 0; }
-  /* User and assistant share the bubble shape; only the background differs. */
+  /* User and assistant share the bubble shape; only the background differs. The
+     generous margin gives consecutive turns clear visual separation. The assistant
+     prose is capped to a reading measure in code (MarkdownView max-width-chars) —
+     GTK CSS has no max-width. */
   .zym-conversation-user, .zym-conversation-assistant {
     padding: 14px 18px;
-    margin: 8px 0;
+    margin: 10px 0;
     border-radius: 10px;
   }
   .zym-conversation-user { background: var(--t-ui-surface-selected); }
   .zym-conversation-assistant { background: var(--t-ui-surface-popover); }
+  /* The floating "copy message" button, pinned top-right of the transcript viewport. */
+  .zym-conversation-copy { margin: 10px; padding: 2px 6px; min-height: 0; min-width: 0; opacity: 0.5; }
+  .zym-conversation-copy:hover { opacity: 1; }
   .zym-conversation-thinking { opacity: 0.55; font-style: italic; padding-left: 12px; }
   .zym-conversation-tool { opacity: 0.8; }
   .zym-conversation-toolrow { opacity: 0.85; }
@@ -221,6 +230,12 @@ export class AgentConversation implements Agent {
   private readonly cwd: string;
   private readonly messages: InstanceType<typeof Gtk.Box>;
   private readonly scroller: InstanceType<typeof Gtk.ScrolledWindow>;
+  // A "copy message" button floated over the transcript viewport (so it stays sticky
+  // while scrolling a long message); revealed when the pointer is over a message,
+  // copying that message's markdown source.
+  private readonly copyButton: InstanceType<typeof Gtk.Button>;
+  private copyTargetView: MarkdownView | null = null;
+  private readonly bubbleViews = new Map<InstanceType<typeof Gtk.Widget>, MarkdownView>();
   private readonly thinkingReveal: InstanceType<typeof Gtk.Revealer>; // spinner + pending message above the prompt
   private readonly thinkingLabel: InstanceType<typeof Gtk.Label>; // "Thinking…" + live token count
   private readonly thinkingRow: InstanceType<typeof Gtk.Box>; // the spinner row (shown while working)
@@ -305,8 +320,43 @@ export class AgentConversation implements Agent {
 
     this.messages = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     this.messages.addCssClass('zym-conversation-transcript');
+    // Cap the transcript to a readable column (GTK CSS has no max-width). Adw.Clamp
+    // limits the messages box to `maximumSize`, so every bubble's width is bounded
+    // while user/assistant turns still right/left-align within the column. halign
+    // START pins the column to the left (Clamp centres by default); the threshold
+    // matches the maximum for a hard cap (no gradual tightening).
+    const transcriptClamp = new Adw.Clamp();
+    transcriptClamp.setMaximumSize(820);
+    transcriptClamp.setTighteningThreshold(820);
+    transcriptClamp.setHalign(Gtk.Align.START);
+    transcriptClamp.setChild(this.messages);
     this.scroller = new Gtk.ScrolledWindow({ vexpand: true });
-    this.scroller.setChild(this.messages);
+    this.scroller.setChild(transcriptClamp);
+
+    // The copy button lives in an overlay OVER the scroller, so it's positioned
+    // relative to the viewport — it stays pinned top-right while the message scrolls.
+    this.copyButton = new Gtk.Button();
+    this.copyButton.addCssClass('flat');
+    this.copyButton.addCssClass('zym-conversation-copy');
+    this.copyButton.setChild(iconLabel(NERDFONT.ACTION.COPY));
+    this.copyButton.setTooltipText('Copy message');
+    this.copyButton.setHalign(Gtk.Align.END);
+    this.copyButton.setValign(Gtk.Align.START);
+    this.copyButton.setVisible(false);
+    this.copyButton.on('clicked', () => {
+      if (!this.copyTargetView) return;
+      clipboard.write(this.copyTargetView.getMarkdown());
+      this.copyButton.setTooltipText('Copied');
+    });
+    const transcriptOverlay = new Gtk.Overlay();
+    transcriptOverlay.setChild(this.scroller);
+    transcriptOverlay.addOverlay(this.copyButton);
+    // Track the message under the pointer to target + reveal the button. The
+    // controller is on the overlay so moving onto the (overlaid) button isn't a leave.
+    const copyMotion = new Gtk.EventControllerMotion();
+    copyMotion.on('motion', (x: number, y: number) => this.updateCopyButton(transcriptOverlay, x, y));
+    copyMotion.on('leave', () => this.copyButton.setVisible(false));
+    transcriptOverlay.addController(copyMotion);
 
     // Above the prompt, in a slide Revealer: an optional right-aligned "pending"
     // message (a turn the user queued while the agent was busy) over a "Thinking…"
@@ -397,7 +447,7 @@ export class AgentConversation implements Agent {
     const mainBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
     mainBox.addCssClass('zym-conversation');
     mainBox.append(this.tasksPanel.root);
-    mainBox.append(this.scroller);
+    mainBox.append(transcriptOverlay); // the scroller, with the floating copy button over it
     mainBox.append(this.thinkingReveal); // the thinking spinner sits just above the prompt
     mainBox.append(this.actionsBar);
     mainBox.append(inputCard);
@@ -820,8 +870,28 @@ export class AgentConversation implements Agent {
     bubble.setHalign(align);
     bubble.append(view.root);
     this.messages.append(bubble);
+    // Register the bubble as a copy target (skip thinking — it's an ephemeral note).
+    if (cssClass !== 'zym-conversation-thinking') this.bubbleViews.set(bubble, view);
     this.scrollToBottom();
     return view;
+  }
+
+  // Point the floating copy button at the message under the pointer, revealing it
+  // over that message (or hide it when the pointer isn't over a copyable message).
+  private updateCopyButton(overlay: InstanceType<typeof Gtk.Overlay>, x: number, y: number): void {
+    let w: InstanceType<typeof Gtk.Widget> | null = overlay.pick(x, y, Gtk.PickFlags.DEFAULT);
+    while (w) {
+      if (w === this.copyButton) return; // over the button itself — leave it shown
+      const view = this.bubbleViews.get(w);
+      if (view) {
+        this.copyTargetView = view;
+        this.copyButton.setTooltipText('Copy message');
+        this.copyButton.setVisible(true);
+        return;
+      }
+      w = w.getParent();
+    }
+    this.copyButton.setVisible(false);
   }
 
   // A single wrapped, left-aligned row (thinking / tool / system).
