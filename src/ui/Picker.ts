@@ -17,6 +17,7 @@ import { fuzzyMatch } from './fuzzyMatch.ts';
 import { theme } from '../theme/theme.ts';
 import { frecency } from '../util/Frecency.ts';
 import { enableReadline } from './readline.ts';
+import { escapeMarkup } from './proseMarkup.ts';
 
 
 const PICKER_WIDTH = 640;
@@ -982,13 +983,6 @@ export function highlightMarkup(text: string, positions: number[]): string {
   return out;
 }
 
-/**
- * Escape the Pango-markup metacharacters in `text`. Handles whole strings (callers
- * pass row labels / path segments), not just single characters — `highlightMarkup`
- * relies on the per-char case while the location pickers pass multi-char slices
- * that may contain `<`/`>` (e.g. a matched `<div>`), which must be escaped or Pango
- * rejects the markup and the row renders blank.
- */
-export function escapeMarkup(text: string): string {
-  return text.replace(/[&<>]/g, (ch) => (ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : '&gt;'));
-}
+// `escapeMarkup` (Pango metachar escaping) lives in proseMarkup; re-exported here for the
+// callers that import it alongside the picker markup helpers.
+export { escapeMarkup };

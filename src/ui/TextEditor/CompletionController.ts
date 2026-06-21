@@ -14,7 +14,7 @@
  * Tab/Shift-Tab cycle the candidates (re-filling), Enter commits, Esc is left to
  * vim (it exits insert mode); the host dismisses on any leave-insert.
  */
-import { Gdk, Gtk } from '../../gi.ts';
+import { Gdk, Gtk, type SourceView } from '../../gi.ts';
 import { Point } from '../../text/Point.ts';
 import { Range } from '../../text/Range.ts';
 import type { EditorModel } from './EditorModel.ts';
@@ -22,7 +22,6 @@ import { fuzzyMatch } from '../fuzzyMatch.ts';
 import { CompletionPopup } from './CompletionPopup.ts';
 import type { CompletionContext, CompletionItem, CompletionSource, CompletionTrigger, RankedCompletion } from './CompletionSource.ts';
 
-type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 const DEBOUNCE_MS = 60;
 const MIN_PREFIX = 1; // word chars typed before auto-opening
@@ -67,15 +66,21 @@ export class CompletionController {
 
   constructor(
     editor: EditorModel,
-    host: Overlay,
+    view: SourceView,
     isInsertMode: () => boolean,
     highlightCode?: (code: string, lang: string | undefined) => string | null,
   ) {
     this.editor = editor;
     this.isInsertMode = isInsertMode;
-    this.popup = new CompletionPopup(host, highlightCode);
+    this.popup = new CompletionPopup(editor, view, highlightCode);
     editor.onDidChangeText(() => this.onBufferChanged());
     this.installKeys();
+  }
+
+  /** Tear down the popup (unparents its popover from the view). */
+  dispose(): void {
+    if (this.debounceId) clearTimeout(this.debounceId);
+    this.popup.dispose();
   }
 
   /** Register a candidate source (placeholder, buffer words, LSP, Copilot, …). */
@@ -192,7 +197,7 @@ export class CompletionController {
     this.baseRange = new Range(new Point(prefixStart.row, startCol), end);
     this.baseText = this.editor.getTextInBufferRange(this.baseRange);
     this.previewRange = this.baseRange;
-    this.popup.showAt(ranked, rect.x, rect.y + rect.height);
+    this.popup.showAt(ranked, context.replaceRange.start);
   }
 
   /** The word being typed before the cursor and the range it occupies. */

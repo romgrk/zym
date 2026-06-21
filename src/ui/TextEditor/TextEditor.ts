@@ -24,7 +24,7 @@ import { attachVim } from './vim/index.ts';
 import { zym } from '../../zym.ts';
 import { CompositeDisposable, Disposable } from '../../util/eventKit.ts';
 import { DiagnosticsView } from '../../lsp/diagnostics/DiagnosticsView.ts';
-import { markdownToPango } from '../markdownMarkup.ts';
+import { MarkupCard } from './MarkupCard.ts';
 import { fonts } from '../../fonts.ts';
 import { highlightToMarkup } from '../../syntax/highlightToMarkup.ts';
 import { langIdForPath } from '../../syntax/grammar.ts';
@@ -97,14 +97,6 @@ addStyles(`
     font: var(--t-font-monospace);
     color: var(--t-ui-text-muted);
     opacity: 0.6;
-  }
-  /* LSP hover + signature help (EditorPopover): theme the popover's contents node to the
-     editor surface so highlighted code sits on the editor background; the popover's own
-     border-radius / shadow come from the platform theme. */
-  .zym-hover-popover > contents {
-    background-color: var(--t-ui-surface-popover);
-    color: var(--t-ui-editor-foreground);
-    padding: 6px 8px;
   }
   /* Info banner pinned above the editor content. Color tint is mostly muted into
      the UI background so it isn't garish; text/buttons keep the normal foreground.
@@ -411,15 +403,15 @@ export class TextEditor implements DocumentHost {
   private readonly foldsChangedHandlers = new Set<() => void>();
   // Git change bar in the gutter; only present in file mode when a repo is given.
   private gitGutter: GitGutter | null = null;
-  // The LSP hover card: an EditorPopover anchored at the cursor cell (also reused for the
-  // git-blame commit message via `showHoverMarkup`). Built in buildEditorArea.
-  private readonly hoverLabel = new Gtk.Label({ useMarkup: true, wrap: true, xalign: 0 });
+  // The LSP hover card: a MarkupCard in an EditorPopover anchored at the cursor cell (also
+  // reused for the git-blame commit message via `showHoverMarkup`). Built in buildEditorArea.
+  private hoverCard!: MarkupCard;
   private hoverPopover!: EditorPopover;
   private contentOverlay!: InstanceType<typeof Gtk.Overlay>; // hosts the floating cards
   private inlinePeek!: Peek; // focusable inline peek (see-definition); built in buildEditorArea
   // The signature-help card: shown live while typing a call's arguments. Same
-  // EditorPopover card as hover; `signatureSeq` drops stale async responses.
-  private readonly signatureLabel = new Gtk.Label({ useMarkup: true, wrap: true, xalign: 0 });
+  // MarkupCard/EditorPopover as hover; `signatureSeq` drops stale async responses.
+  private signatureCard!: MarkupCard;
   private signaturePopover!: EditorPopover;
   private signatureSeq = 0;
   private signatureTimer: NodeJS.Timeout | null = null;
@@ -813,6 +805,7 @@ export class TextEditor implements DocumentHost {
     this.dismissSignature();
     this.hoverPopover.dispose(); // hide + unparent (a setParent'd popover must be unparented)
     this.signaturePopover.dispose();
+    this.completion?.dispose(); // unparents the completion popover from the view
     this.decorationMaterializeSub?.(); // drop the materialize re-projection subscription
     this.decorationMaterializeSub = null;
     this.syntax.dispose(); // detach buffer/view signal handlers + free the tree-sitter tree
@@ -875,7 +868,7 @@ export class TextEditor implements DocumentHost {
     if (!sig) return;
     const activeParam = sig.activeParameter ?? help.activeParameter ?? undefined;
     const lang = this._currentFile ? langIdForPath(this._currentFile) ?? undefined : undefined;
-    this.signatureLabel.setMarkup(
+    this.signatureCard.setMarkup(
       `<span face="${fonts.monospaceFamily}">${signatureMarkup(sig.label, sig.parameters, activeParam, lang)}</span>`,
     );
     if (!this.signatureAnchored) {
@@ -1027,20 +1020,19 @@ export class TextEditor implements DocumentHost {
     const markdown = await zym.lsp.hover(this.lspDocument);
     this.dismissHover();
     if (!markdown) return;
-    // Code spans use the editor's monospace font (prose stays proportional) and
-    // are tree-sitter highlighted; unlabeled fences fall back to this file's
-    // language so same-language signatures still get colors.
-    const fallbackLang = this._currentFile ? langIdForPath(this._currentFile) ?? undefined : undefined;
-    this.showHoverMarkup(
-      markdownToPango(markdown, {
-        codeFontFamily: fonts.monospaceFamily,
-        highlightCode: (code, lang) => highlightToMarkup(code, lang ?? fallbackLang),
-      }),
-    );
+    this.hoverCard.setMarkdown(markdown);
+    this.hoverPopover.showAt(this.editorModel.getCursorBufferPosition());
   }
 
   private dismissHover() {
     this.hoverPopover.hide();
+  }
+
+  /** Syntax-highlight a card's fenced code block (hover / signature / completion doc): the
+   *  fence's language, falling back to this file's so same-language code still gets colors. */
+  private cardHighlight(code: string, lang: string | undefined): string | null {
+    const fallback = this._currentFile ? langIdForPath(this._currentFile) ?? undefined : undefined;
+    return highlightToMarkup(code, lang ?? fallback);
   }
 
   /** The canonical `TextEditorSource` text (the whole file, or the multibuffer's text) —
@@ -1054,7 +1046,7 @@ export class TextEditor implements DocumentHost {
   /** Show arbitrary Pango markup in the hover popover, left-aligned at the cursor (the LSP
    *  hover card, reused for non-LSP popups like the git-blame commit message). */
   showHoverMarkup(markup: string): void {
-    this.hoverLabel.setMarkup(markup);
+    this.hoverCard.setMarkup(markup);
     this.hoverPopover.showAt(this.editorModel.getCursorBufferPosition());
   }
 
@@ -1332,7 +1324,7 @@ export class TextEditor implements DocumentHost {
     // multi-cursor carets.
     this.completion = new CompletionController(
       this.editorModel,
-      overlay,
+      this.view,
       () => this.vimState.mode === 'insert',
       // Tree-sitter highlight code blocks in completion docs, like the hover card;
       // unlabeled fences fall back to this file's language.
@@ -1349,14 +1341,14 @@ export class TextEditor implements DocumentHost {
       if (mode !== 'insert') this.completion.dismiss();
     });
 
-    // LSP hover + signature help: EditorPopover cards pointed at the cursor cell. Prose
-    // stays in the proportional UI font; only code spans are monospace (<tt>). The label
-    // has a fixed min width and wraps to it; the card left-aligns (see showHoverMarkup).
-    this.hoverLabel.setSizeRequest(HOVER_WIDTH_PX, -1);
-    this.hoverPopover = new EditorPopover(this.editorModel, this.view, this.hoverLabel, { cssClass: 'zym-hover-popover', chrome: CARD_CONTENT_INSET_PX });
+    // LSP hover + signature help: MarkupCards in EditorPopovers pointed at the cursor cell.
+    // Prose stays in the proportional UI font; only code spans are monospace; the card has a
+    // fixed min width and left-aligns (see showHoverMarkup).
+    this.hoverCard = new MarkupCard({ widthPx: HOVER_WIDTH_PX, highlight: (c, l) => this.cardHighlight(c, l) });
+    this.hoverPopover = new EditorPopover(this.editorModel, this.view, this.hoverCard.label, { chrome: CARD_CONTENT_INSET_PX });
 
-    this.signatureLabel.setSizeRequest(HOVER_WIDTH_PX, -1);
-    this.signaturePopover = new EditorPopover(this.editorModel, this.view, this.signatureLabel, { cssClass: 'zym-hover-popover', chrome: CARD_CONTENT_INSET_PX });
+    this.signatureCard = new MarkupCard({ widthPx: HOVER_WIDTH_PX, highlight: (c, l) => this.cardHighlight(c, l) });
+    this.signaturePopover = new EditorPopover(this.editorModel, this.view, this.signatureCard.label, { chrome: CARD_CONTENT_INSET_PX });
 
     // Buffer-only mode: a greyed placeholder over the empty buffer, and no minimap.
     if (this.bufferMode?.placeholder) {

@@ -9,7 +9,7 @@
  * to agent).
  */
 import { Gtk } from '../gi.ts';
-import { HIGHLIGHT_COLOR } from './Picker.ts';
+import { theme } from '../theme/theme.ts';
 import { fonts } from '../fonts.ts';
 
 // Leading factor for picker prose rows; the inline-monospace runs sit taller than
@@ -35,7 +35,7 @@ export function proseMarkup(text: string, positions: number[] = [], muted = fals
     if (mono) attrs.push(`face="${fonts.monospaceFamily}"`);
     // Matched chars carry the accent colour; restore full opacity so the
     // highlight reads even when the row is muted.
-    if (matched.has(i)) attrs.push(`foreground="${HIGHLIGHT_COLOR}" weight="bold"${muted ? ' alpha="100%"' : ''}`);
+    if (matched.has(i)) attrs.push(`foreground="${theme.ui.text.accent}" weight="bold"${muted ? ' alpha="100%"' : ''}`);
     const esc = escapeMarkup(ch);
     out += attrs.length ? `<span ${attrs.join(' ')}>${esc}</span>` : esc;
   }

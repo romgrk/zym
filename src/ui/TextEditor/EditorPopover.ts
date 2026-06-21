@@ -18,17 +18,41 @@
  * never steal focus from the editor.
  */
 import { Gdk, Gtk, type SourceView } from '../../gi.ts';
+import { addStyles } from '../../styles.ts';
 import type { EditorModel } from './EditorModel.ts';
+
+// The popover is a themed surface card by default (hover, signature); `.is-bare` strips its
+// chrome to a transparent positioner for content that draws its own card (the completion
+// list). The platform theme supplies the border-radius / shadow.
+addStyles(`
+  #EditorPopover > contents {
+    background-color: var(--t-ui-surface-popover);
+    color: var(--t-ui-editor-foreground);
+    padding: 6px 8px;
+  }
+  #EditorPopover.is-bare > contents {
+    background: none;
+    box-shadow: none;
+    border: none;
+    padding: 0;
+    min-width: 0;
+  }
+`);
 
 export interface EditorPopoverOptions {
   /** Place the card above ('top', the default) or below ('bottom') the anchor. */
   position?: 'top' | 'bottom';
-  /** CSS class applied to the popover. */
-  cssClass?: string;
+  /** Strip the popover's own surface chrome — for content that draws its own card. */
+  bare?: boolean;
   /** The popover's horizontal chrome (border + contents padding) in px — what sits between
    *  the popover edge and the child. The card shifts left by it so the child's edge, not the
    *  popover's, lands at the anchor; it's also added to the card width. Default 0. */
   chrome?: number;
+  /** Keep the card open across edits/selection inside it: GtkPopover pops itself down when
+   *  the view scrolls/relays under it (a completion preview, a list selection), so re-open it
+   *  while it's meant to be shown — the net effect that keeps the signature card alive as the
+   *  cursor moves. Transient cards (hover, signature) leave this off; they re-show on demand. */
+  persistent?: boolean;
 }
 
 export class EditorPopover {
@@ -37,6 +61,7 @@ export class EditorPopover {
   private readonly child: InstanceType<typeof Gtk.Widget>;
   private readonly chrome: number;
   private showId: ReturnType<typeof setTimeout> | null = null;
+  private wantShown = false; // the caller's intent — drives the persistent re-open
 
   constructor(
     model: EditorModel,
@@ -48,14 +73,16 @@ export class EditorPopover {
     this.child = child;
     this.chrome = opts.chrome ?? 0;
     this.popover = new Gtk.Popover();
+    this.popover.setName('EditorPopover'); // styling hook: #EditorPopover (see styling.md)
     this.popover.setChild(child);
     this.popover.setAutohide(false); // don't grab — dismissal is driven by the editor
     this.popover.setCanFocus(false); // never move focus off the view (keeps keys flowing)
     this.popover.setFocusable(false);
     this.popover.setHasArrow(false);
     this.popover.setPosition(opts.position === 'bottom' ? Gtk.PositionType.BOTTOM : Gtk.PositionType.TOP);
-    if (opts.cssClass) this.popover.addCssClass(opts.cssClass);
+    if (opts.bare) this.popover.addCssClass('is-bare');
     this.popover.setParent(view);
+    if (opts.persistent) this.popover.on('closed', () => this.wantShown && this.popupSoon());
   }
 
   /** Point the card at buffer `point` and show it, LEFT-aligned: the popover's left edge
@@ -65,6 +92,7 @@ export class EditorPopover {
    *  the card's measured width to land that left edge. Returns false if off-screen. */
   showAt(point: { row: number; column: number }, contentInset = 0): boolean {
     if (!this.model.pixelRectForBufferPosition(point)) return false; // off-screen → caller may retry
+    this.wantShown = true;
     // Everything below touches GTK layout (measure() forces a size pass; popup() makes a
     // surface) — run it on a libuv tick, never inside the promise-continuation microtask
     // node-gtk drains under the GLib loop (callers like LSP hover/completion reach here
@@ -89,14 +117,12 @@ export class EditorPopover {
 
   /** Re-show at the last anchor (content changed in place, anchor unchanged). */
   show(): void {
-    if (this.showId) clearTimeout(this.showId);
-    this.showId = setTimeout(() => {
-      this.showId = null;
-      this.popover.popup();
-    }, 0);
+    this.wantShown = true;
+    this.popupSoon();
   }
 
   hide(): void {
+    this.wantShown = false; // set before popdown so a `closed` handler doesn't re-open it
     if (this.showId) {
       clearTimeout(this.showId);
       this.showId = null;
@@ -106,6 +132,16 @@ export class EditorPopover {
 
   get visible(): boolean {
     return this.popover.getVisible();
+  }
+
+  // popup() on a libuv tick (see showAt); a no-op if it's already up, so a redundant
+  // persistent re-open doesn't flicker.
+  private popupSoon(): void {
+    if (this.showId) clearTimeout(this.showId);
+    this.showId = setTimeout(() => {
+      this.showId = null;
+      this.popover.popup();
+    }, 0);
   }
 
   dispose(): void {
