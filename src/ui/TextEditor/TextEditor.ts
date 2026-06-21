@@ -2005,6 +2005,12 @@ export class TextEditor implements DocumentHost {
     this.vimState.activate('insert');
   }
 
+  /** Select the whole buffer (e.g. a restored draft, ready to keep or overtype). */
+  selectAll() {
+    const [start, end] = this.buffer.getBounds();
+    this.buffer.selectRange(start, end);
+  }
+
   // --- Session integration ---------------------------------------------------
 
   /** Session state for this tab, or `null` for an unsaved/empty editor. */

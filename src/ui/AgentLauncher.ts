@@ -23,6 +23,10 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 const CARD_WIDTH = 640;
 
+// An unsent prompt left over from a dismissed launcher, restored (fully selected) on
+// the next open so a cancelled compose isn't lost. Cleared once submitted.
+let savedDraft = '';
+
 export interface AgentLaunchRequest {
   /** The (trimmed) prompt text, or '' if left empty. */
   prompt: string;
@@ -93,6 +97,12 @@ function registerLauncherKeymapOnce(): void {
       enter: 'launcher:submit',
       'alt-enter': 'launcher:newline',
     },
+    // From NORMAL mode, q or escape dismiss the launcher (in insert mode escape is
+    // vim's insert→normal, so it doesn't reach this). Mirrors DiffCommentBox.
+    '#AgentLauncherPrompt #TextEditor.normal-mode': {
+      q: 'launcher:close',
+      escape: 'launcher:close',
+    },
   });
 }
 
@@ -100,20 +110,23 @@ function registerLauncherKeymapOnce(): void {
 export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions): void {
   const { cwd, defaultKind, onLaunch } = options;
 
+  const draft = savedDraft; // an unsent prompt from a previous dismissal, if any
+
   let commandsSub: { dispose(): void } | null = null;
   const card = openFloatingCard({
     host,
     name: 'AgentLauncher',
     marginTop: 110, // sit lower than the Picker's default — it's a taller compose card
-    onClose: () => commandsSub?.dispose(),
+    // Remember the (possibly unsent) prompt on any dismissal; submit clears it below.
+    onClose: () => { savedDraft = input.getText(); commandsSub?.dispose(); },
   });
   const panel = card.panel;
   panel.setSizeRequest(CARD_WIDTH, -1);
 
   // The prompt — a buffer-only editor (full vim editing) that auto-grows with its
   // content up to 5 lines (then scrolls), wrapped in a named container so the
-  // enter/alt-enter keymap scopes to it.
-  const input = createInput({ placeholder: 'Prompt for the agent…', grow: true, maxLines: 5 });
+  // enter/alt-enter keymap scopes to it. Seeded with any restored draft.
+  const input = createInput({ placeholder: 'Prompt for the agent…', initialText: draft, grow: true, maxLines: 5 });
   const promptContainer = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   promptContainer.setName('AgentLauncherPrompt');
   promptContainer.append(input.root);
@@ -163,7 +176,8 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
       permissionMode: permissionDropdown.getValue(),
     });
     const prompt = input.getText().trim();
-    card.close(false); // the host focuses the new agent
+    card.close(false); // onClose stashes the text…
+    savedDraft = ''; // …but it was submitted, so don't restore it next time
     onLaunch({ prompt, command, cwd, kind, newWorktree: newButton.getActive() });
   };
 
@@ -171,6 +185,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   commandsSub = zym.commands.add(panel, {
     'launcher:submit': { didDispatch: () => submit(), description: 'Launch the agent' },
     'launcher:newline': { didDispatch: () => input.insertText('\n'), description: 'Insert a newline in the prompt' },
+    'launcher:close': { didDispatch: () => card.close(), description: 'Close the launcher' },
   });
 
   // Escape closes the card — handled here in the bubble phase so a combobox's own
@@ -185,6 +200,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   panel.addController(keys);
 
   input.focusInsert(); // ready to type the prompt immediately
+  if (draft) input.selectAll(); // a restored draft starts fully selected (keep or overtype)
 }
 
 // A Gtk.DropDown over a list of LaunchOptions: shows each option's label, maps the
