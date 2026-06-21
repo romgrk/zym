@@ -17,7 +17,7 @@ import { addStyles } from '../styles.ts';
 import { rank, highlightMarkup } from './Picker.ts';
 
 const POPOVER_MAX_HEIGHT = 320;
-const DEFAULT_WIDTH = 170;
+const DEFAULT_WIDTH = 140;
 
 export interface ComboOption {
   /** Returned by `getValue()` and passed to `onChange` when chosen. */
@@ -45,11 +45,16 @@ addStyles(/* css */`
     background: transparent;
     box-shadow: none;
   }
-  #ComboboxList > row {
+  /* Compact the Adwaita entry row: drop its tall default min-height and trim the
+     header's vertical padding so the floating label + value fit in less height. */
+  #ComboboxList > row,
+  #ComboboxRow {
     min-height: 0;
   }
-  #ComboboxRow {
-    /* the chevron suffix sits flush to the right edge */
+  #ComboboxRow > .header {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    min-height: 0;
   }
   #ComboboxPopover > contents {
     padding: 0;

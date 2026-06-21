@@ -58,10 +58,19 @@ addStyles(/* css */`
   }
   #AgentLauncherOptions {
     padding: 0.6em;
-    border-top: 1px solid var(--border-color);
     background-color: var(--t-ui-editor-background);
     border-bottom-left-radius: var(--popover-radius);
     border-bottom-right-radius: var(--popover-radius);
+  }
+  /* Each option sits on its own raised chip — a different theme background than the
+     footer behind them. */
+  #AgentLauncherOptions #ComboboxList,
+  #AgentLauncherOptions #AgentLauncherField {
+    background-color: var(--t-ui-surface-selected);
+    border-radius: var(--popover-radius-small);
+  }
+  #AgentLauncherField {
+    padding: 4px 8px;
   }
   #AgentLauncherField > .field-caption {
     font-size: var(--font-size-small);
@@ -117,19 +126,19 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     title: 'model',
     options: kindOptions.models,
     value: kindOptions.defaultModel,
-    width: 180,
+    width: 140,
   });
   const permissionCombo = new Combobox({
     title: 'permission',
     options: kindOptions.permissionModes,
     value: kindOptions.defaultPermissionMode,
-    width: 190,
+    width: 155,
   });
   const kindCombo = new Combobox({
     title: 'agent',
     options: listAgentKinds(),
     value: defaultKind,
-    width: 170,
+    width: 130,
     onChange: (value) => {
       const opts = AGENT_CONFIGS[value as AgentKind].options;
       modelCombo.setOptions(opts.models, opts.defaultModel);
@@ -143,7 +152,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     title: 'effort',
     options: [{ value: 'auto', label: 'auto' }],
     value: 'auto',
-    width: 170,
+    width: 120,
   });
   effortCombo.setSensitive(false);
   effortCombo.root.setTooltipText('Effort — coming soon');
