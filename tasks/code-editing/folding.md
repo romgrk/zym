@@ -80,8 +80,8 @@ live fold that round-trips through unfold).
 - `regionAtCursor` is **offset-precise** off `activeFolds`, so several folds on one
   line each toggle independently; the gutter chevron is line-granular (picks one).
 - Line-number gutter renders `modelLineFor(viewLine)` (file lines, with the collapsed
-  ones skipped). `za`/`zo`/`zc` return a `RevealedRange` so the editor can select the
-  text a `zo`-on-marker revealed.
+  ones skipped). An open (`zo`/`za`) returns a `RevealedRange` (the restored body span)
+  so the editor drops the caret on its first non-blank character — no selection.
 
 ## Consumer 2 — the cursor/edit/search model (`EditorModel.ts`, `FoldAccess`)
 

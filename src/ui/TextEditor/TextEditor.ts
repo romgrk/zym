@@ -1512,8 +1512,8 @@ export class TextEditor implements DocumentHost {
     // (tree-sitter folds, or a diff pane's unchanged-run folds). Registered per-view
     // so a keystroke folds the focused editor.
     quilx.commands.add(this.view, {
-      'fold:toggle': { didDispatch: () => this.selectRevealedFold(this.syntax.toggleFoldAtCursor()), description: 'Toggle the fold at the cursor' },
-      'fold:open': { didDispatch: () => this.selectRevealedFold(this.syntax.setFoldAtCursor(false)), description: 'Open the fold at the cursor' },
+      'fold:toggle': { didDispatch: () => this.placeCaretInRevealedFold(this.syntax.toggleFoldAtCursor()), description: 'Toggle the fold at the cursor' },
+      'fold:open': { didDispatch: () => this.placeCaretInRevealedFold(this.syntax.setFoldAtCursor(false)), description: 'Open the fold at the cursor' },
       'fold:close': { didDispatch: () => this.syntax.setFoldAtCursor(true), description: 'Close the fold at the cursor' },
       'fold:open-all': { didDispatch: () => this.syntax.unfoldAll(), description: 'Open all folds' },
       'fold:close-all': { didDispatch: () => this.syntax.foldAll(), description: 'Close all folds' },
@@ -1550,10 +1550,20 @@ export class TextEditor implements DocumentHost {
     return this.document.viewPointFromModel(this.buffer, new Point(line, 0)).row;
   }
 
-  /** Highlight the text a fold revealed (when the caret was on its marker) — `zo`
-   *  shows what was unfolded, as if the marker-cursor expanded onto the body. */
-  private selectRevealedFold(range: RevealedRange | null): void {
-    if (range) this.editorModel.setSelectedBufferRange(range);
+  /** After `zo`/`za` opens a fold, drop the caret (no selection) on the first non-blank
+   *  character of the region it revealed — Vim leaves you at the top of what was unfolded. */
+  private placeCaretInRevealedFold(range: RevealedRange | null): void {
+    if (!range) return;
+    const [[startRow, startCol], [endRow, endCol]] = range;
+    for (let row = startRow; row <= endRow; row++) {
+      const text = this.editorModel.lineTextForBufferRow(row);
+      const from = row === startRow ? startCol : 0;
+      const to = row === endRow ? endCol : text.length;
+      const rel = text.slice(from, to).search(/\S/);
+      if (rel >= 0) return this.editorModel.setCursorBufferPosition(new Point(row, from + rel));
+    }
+    // Wholly-blank revealed region (shouldn't happen for code): rest at its start.
+    this.editorModel.setCursorBufferPosition(new Point(startRow, startCol));
   }
 
   // --- Auto-close brackets / quotes (insert mode) ----------------------------

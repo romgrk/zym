@@ -832,8 +832,8 @@ export class SyntaxController {
 
   // --- folding operations ----------------------------------------------------
 
-  /** Toggle `region`. Returns the view range revealed by an expand when the caret was
-   *  directly on the marker (so the caller can highlight it), else null. */
+  /** Toggle `region`. Returns the view range an expand revealed (the restored body), so a
+   *  fold-open command can drop the caret on its first non-blank character; null on collapse. */
   private toggleFold(region: FoldRegion): RevealedRange | null {
     const buffer = this.buffer as any;
     const cursorOff = asIter(buffer.getIterAtMark(buffer.getInsert())).getOffset();
@@ -843,14 +843,13 @@ export class SyntaxController {
     const modelStart = codeFold ? this.modelRow(region.startLine) : -1;
     let revealed: RevealedRange | null = null;
     if (region.folded && region.handle) {
-      // Expand: restore the body text from the model. If the caret was on the marker,
-      // report the restored range so the caller highlights it.
+      // Expand: restore the body text from the model and report the restored range so a
+      // fold-open command can place the caret at its first non-blank char.
       const [ps, pe] = this.foldHost!.foldPlaceholderRange(this.buffer, region.handle);
-      const onMarker = cursorOff >= ps && cursorOff <= pe;
       const sm = buffer.createMark(null, asIter(buffer.getIterAtOffset(ps)), true);
       const em = buffer.createMark(null, asIter(buffer.getIterAtOffset(pe)), false);
       this.foldHost!.unfoldView(this.buffer, region.handle);
-      if (onMarker) revealed = [this.pointAtOffset(this.markOffset(sm)), this.pointAtOffset(this.markOffset(em))];
+      revealed = [this.pointAtOffset(this.markOffset(sm)), this.pointAtOffset(this.markOffset(em))];
       buffer.deleteMark(sm);
       buffer.deleteMark(em);
       const i = this.activeFolds.indexOf(region.handle);

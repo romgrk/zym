@@ -132,6 +132,18 @@ test('closing a fold from inside the body lands the caret before the marker, not
   assert.equal(cur.getChar(), '{', "caret sits on the `{` before the marker, not on the `[N]`");
 });
 
+test('opening a fold reports its revealed body range (so the caret can land inside it)', () => {
+  if (!hasJs) return;
+  const { syntax, buffer, text } = setup('function foo() {\n  const x = 1;\n  return x;\n}\n');
+  buffer.placeCursor(asIter(buffer.getIterAtLine(1)));
+  syntax.setFoldAtCursor(true);
+  const range = syntax.setFoldAtCursor(false); // open
+  assert.ok(range, 'open returns the revealed range (not null), regardless of caret-on-marker');
+  assert.deepEqual(range[0], [0, 16], 'range starts just after the header `{`');
+  assert.equal(range[1][0], 3, 'range ends on the footer line — the body in between is what was revealed');
+  assert.equal(text(), 'function foo() {\n  const x = 1;\n  return x;\n}\n', 'text restored on open');
+});
+
 test('editing + undo with folds collapsed writes through and stays consistent', () => {
   if (!hasJs) return;
   const src = 'export class Doc {\n  m1() {\n    return 1;\n  }\n}\n';
