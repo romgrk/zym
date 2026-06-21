@@ -1,17 +1,25 @@
 # Agents
 
-Architecture plan for the Agents section. The basics (run an agent CLI in a tab,
-list/switch them, live status) are done; the open work is depth:
+Run coding agents (Claude today, other tools later) inside quilx. **Two rendering
+implementations** share one workbench / list / lifecycle / worktree spine — they
+differ only in how a turn is displayed:
 
-1. **Agent profiles & customization** — named, configurable agent types (command,
-   model, tools, prompt…), and first-class support for tools other than `claude`.
-2. **Management UX** — close/kill/restart, attention notifications, richer list
-   and picker, keybindings.
-3. **Git worktree integration** — run an agent in its own worktree, and re-root
-   the editor to that worktree when viewing it.
+- **`claude-tui`** *(shipped default)* — the agent's own terminal UI hosted in a
+  `Vte.Terminal` tab. Mature; live status via Claude Code hooks.
+  `src/ui/AgentTerminal.ts` + `src/agents/claude-tui/session.ts`.
+- **`claude-sdk`** *(opt-in via `agent.implementation: "claude-sdk"`)* — drives a
+  persistent `claude -p` stream-json process headlessly and renders the
+  conversation in **native GTK widgets** (no terminal, no Ink/Vte repaint cost).
+  Deep dive: **[agents/claude-sdk.md](agents/claude-sdk.md)**.
 
-This page covers the architecture; per-feature pages can split out later
-(`agents/profiles.md`, `agents/worktrees.md`) if they grow.
+`src/agents/configs.ts` is the kind registry — `resolveAgentKind()` picks the kind
+from the config flag (default `claude-tui`); a single `AppWindow.openAgent()`
+launch path serves both, each agent getting its own workbench.
+
+The open work is **depth, cross-kind**: agent profiles/customization (incl. tools
+other than claude), richer management UX, git-worktree integration, and reviewing
+an agent's diff — detailed below. Per-feature pages split out as they grow
+(`agents/claude-sdk.md` already has).
 
 ## Current state
 
@@ -43,8 +51,11 @@ What already exists and is reused, not rebuilt:
   pooled `GitRepo` (see *git worktree integration* below); session restore of agent
   workbenches (each serialized as a `WorkspaceState`, relaunched resumed — work-area
   file-tab layout still deferred).
-- **`src/ui/AgentTerminal.ts`** — a `Terminal` subclass that spawns the agent CLI
-  (`agent.command` config, default `['claude']`). Notable behaviour:
+- **`src/ui/AgentTerminal.ts`** *(the `claude-tui` kind)* — a `Terminal` subclass
+  that spawns the agent CLI (`agent.command` config, default `['claude']`); the
+  Claude integration lives in `src/agents/claude-tui/session.ts` (`ClaudeSession`,
+  arg/`--settings` injection + the status/edited-files/rename watchers). Notable
+  behaviour:
   - initial title = the agent's program basename until the CLI reports its own
     (OSC) title; `prompt` option appends a launch prompt to argv;
   - on process exit the widget is **not** torn down and the agent/workbench is **not**
@@ -58,6 +69,29 @@ What already exists and is reused, not rebuilt:
     watches with a `Gio.FileMonitor`. Reporter: `assets/hooks/agent-status.sh`.
     `UserPromptSubmit`/`PreToolUse`→working, `Notification`→waiting/idle,
     `Stop`/`SessionStart`→idle.
+- **`src/agents/claude-sdk/` + `src/ui/AgentConversation.ts`** *(the `claude-sdk`
+  kind)* — drives a persistent `claude -p` stream-json process and renders the
+  turn natively. Full doc: **[agents/claude-sdk.md](agents/claude-sdk.md)**. Shape:
+  - `transport.ts` (spawn + NDJSON line framing) → `SdkSession.ts` (turn queue,
+    event→domain mapping, status/changedFiles/sessionId/cost, control protocol) →
+    `AgentConversation.ts` (the native transcript host). `SdkSession` exposes the
+    **same observable surface** `AgentTerminal` does, so the manager/sidebar/picker
+    stay tool-agnostic.
+  - **Built & verified live:** turn loop; thinking + token meter; tool rows with
+    nerdfont icons (Bash highlighted + one-line crop); permission gating via the
+    bundled stdio MCP `assets/mcp/quilxPermission.mjs` (`--permission-prompt-tool`,
+    atomic file IPC) → native allow/deny card; **interrupt** (control_request, on
+    `ctrl-c`); **subagents** (captured per-`Agent`-tool transcript, inline button +
+    sticky panel + pushed `Adw.NavigationView` page, kept out of the main thread);
+    **shell monitors** (sticky panel + inspect page + cancel via `stop_task`);
+    **AskUserQuestion** as an `Adw.ViewSwitcher` card (j/k/h/l + notes; answered over
+    the only working channel, the permission deny-message); **message queueing** while
+    busy (right-aligned "Pending" bubble); unknown events surfaced as raw-JSON rows.
+  - UI is split under `src/ui/conversation/`: `format.ts` (pure helpers, tested),
+    `StickyListPanel.ts` (Tasks/Subagents/Monitors), `cards.ts` (permission),
+    `QuestionCard.ts`, `SubagentView.ts`, `MonitorView.ts`.
+  - **Deferred:** conversation resume + session serialize for sdk (`serialize()`
+    returns null → not persisted across editor restart); token-level live streaming.
 - **`src/AgentManager.ts` — `quilx.agents`** — the registry: `add`/`remove`/
   `getAgents` (launch order) + `onDidAddAgent`/`onDidRemoveAgent`.
   The agent list / sidebar is `WorkbenchList` (not a separate `AgentList`).
@@ -83,20 +117,6 @@ What already exists and is reused, not rebuilt:
   `agentChildren` (agent → center tab), `agent:new` / `agent:picker` commands,
   focus→`selectAgent`, and retiring an agent from the registry when its **exited**
   tab is closed.
-
-## Constraints carried from the codebase
-
-- **No node I/O on the main path.** Node's `child_process`/promises are starved by
-  the GLib main loop; agent processes run in VTE, and any out-of-band git/tooling
-  goes through `GitRepo.run`/`runOutput` (`Gio.Subprocess`) or `Gio.FileMonitor`.
-- **Strip-only TS** (project memory): no enums, no parameter properties, no
-  namespaces.
-- **One main component per file** under `src/ui`, camel-cased after the component.
-- **Config** via `quilx.config` (scoped, typed, observable, backed by
-  `config.json`) — e.g. FileTree's `scope('FileTree').register({...})`.
-- **Status is best-effort & claude-specific.** Hooks give working/waiting/idle/
-  exited; there is *no* true "thinking" introspection. Non-claude tools get only
-  alive/exited unless an adapter is written.
 
 ## Feature: agent profiles & customization
 
@@ -418,6 +438,11 @@ container that steals focus from the Vte; see index.md).
 
 ## Phasing
 
+- [x] **claude-sdk kind** — headless `claude -p` driven natively (transport +
+      SdkSession + AgentConversation), shared `Agent` surface, kind registry
+      (`configs.ts`, default `claude-tui`). Turn loop, permissions, interrupt,
+      subagents, monitors, AskUserQuestion, queueing all built & verified live.
+      Resume/serialize for sdk still deferred. See *agents/claude-sdk.md*.
 - [ ] Profiles: `AgentProfile` config schema + resolver; back-compat with
       `agent.command`; `kind`-gated status integration
 - [ ] Claude arg builder (model / tools / permission-mode / system-prompt) merged

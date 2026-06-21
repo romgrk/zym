@@ -61,8 +61,9 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   },
 };
 
-/** Pick a kind from the `agent.implementation` config value (default claude-sdk;
- *  set `agent.implementation` to `claude-tui` for the Vte terminal agent). */
+/** Pick a kind from the `agent.implementation` config value (default claude-tui,
+ *  the Vte terminal agent; set `agent.implementation` to `claude-sdk` for the
+ *  headless, natively-rendered conversation). */
 export function resolveAgentKind(implementation: unknown): AgentKind {
-  return implementation === 'claude-tui' ? 'claude-tui' : 'claude-sdk';
+  return implementation === 'claude-sdk' ? 'claude-sdk' : 'claude-tui';
 }

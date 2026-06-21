@@ -132,10 +132,19 @@ observable surface, so they don't branch on kind.
       queue, event→domain mapping (status + granular transcript events), injectable
       transport, abort/dispose. Unit-tested (fake transport) + a real end-to-end
       smoke test (claude returned `PONG`, working→idle, real session id).
-- [x] **Native transcript UI** — `src/ui/AgentConversation.ts`: a purpose-made
-      message-list (scrollable transcript of user/assistant/thinking/tool rows +
-      permission card + input entry). *Not* run-tested in the GUI yet — built to
-      quilx conventions; needs a visual pass.
+- [x] **Native transcript UI** — `src/ui/AgentConversation.ts` (orchestrator) +
+      `src/ui/conversation/*` (split: `format`, `StickyListPanel`, `cards`,
+      `QuestionCard`, `SubagentView`, `MonitorView`). Scrollable transcript of
+      user/assistant/thinking/tool rows; tool rows carry nerdfont icons, Bash is
+      syntax-highlighted + cropped to one line until expanded. Run in the GUI.
+- [x] **Richer turn surfaces** — thinking spinner + token meter; **subagents**
+      (per-`Agent`-tool transcript captured off the main thread; inline button +
+      sticky "Subagents" panel + pushed `Adw.NavigationView` page); **shell
+      monitors** (sticky panel + inspect page + cancel); **AskUserQuestion** as an
+      `Adw.ViewSwitcher` card (j/k/h/l + notes); **message queueing** while busy
+      (right-aligned "Pending" bubble); **interrupt** on `ctrl-c`; unknown events as
+      raw-JSON rows. Control vocabulary (interrupt / stop_task / …) captured in
+      *Control surfaces* below.
 - [x] **Permissions** — `--permission-prompt-tool` wired to `assets/mcp/quilxPermission.mjs`
       (stdio MCP server) over an atomic request/response file pair; SdkSession
       surfaces the request (`waiting`) and `respondPermission` answers. Server
@@ -155,8 +164,9 @@ observable surface, so they don't branch on kind.
       `create()` factory builds the host — one launch path, no `openSdkAgent`.
       **Still deferred:** conversation resume + session serialize for sdk
       (serialize returns null → not persisted across editor restart yet).
-- [ ] **Extras (free now)** — cost/context meter; token-level streaming
-      (`--include-partial-messages`); live transcript.
+- [ ] **Deferred** — conversation resume + session serialize for sdk (`serialize()`
+      returns null → not persisted across editor restart); cost/context meter row;
+      token-level live streaming (`--include-partial-messages`).
 
 ## Constraints carried in
 
