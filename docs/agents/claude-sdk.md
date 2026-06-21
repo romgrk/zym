@@ -169,6 +169,13 @@ conversation. Replay runs in the constructor (before the workbench subscribes to
 changed-files, so historical edits seed rather than flood-open), guarded by a
 `replaying` flag that draws Agent/Monitor/Question as static rows.
 
+**Lazy reconnect:** a resume with no launch prompt rebuilds the transcript but does
+NOT spawn `claude -p --resume` until the user's first turn (`ensureConnected`, off
+`deferredStart`) — so restoring N agents on launch doesn't fire N claude processes
+up front. `serialize()` falls back to the resume id when the deferred process hasn't
+reported its own init session id yet, so a never-resumed agent still round-trips its
+id. A resume that carries a prompt (e.g. the worktree re-announce) starts eagerly.
+
 `AgentConversation.serialize()` returns `{kind:'agent', agentKind:'claude-sdk',
 …, sessionId}`; `TabState.agentKind` tells `restoreAgent` which host to relaunch.
 A resume no longer forces `claude-tui` (`openAgent`); in-place resume of a headless

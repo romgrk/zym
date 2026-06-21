@@ -258,6 +258,12 @@ export class AgentConversation implements Agent {
   private readonly launchPrompt?: string;
   // Base argv this agent was launched with (default ['claude']); kept for serialize.
   private readonly baseCommand?: string[];
+  // The session id this agent resumes, if any — kept so serialize() preserves it
+  // even before the (deferred) live process has reported its own init session id.
+  private readonly resumeSessionId?: string;
+  // A resumed agent defers spawning `claude -p --resume` until the user's first
+  // turn (its transcript is rebuilt from disk meanwhile); flipped false on connect.
+  private deferredStart = false;
   // True while rebuilding the transcript from a past session (see restoreTranscript):
   // tool rows render statically and changed-file notifications are suppressed.
   private replaying = false;
@@ -324,6 +330,7 @@ export class AgentConversation implements Agent {
     this._effectiveCwd = options.cwd;
     this.launchPrompt = options.prompt;
     this.baseCommand = options.command;
+    this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
     this.onRunInTerminal = options.onRunInTerminal;
     this.session = new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume });
@@ -477,6 +484,11 @@ export class AgentConversation implements Agent {
     // changed-files set rather than flood-opening). `--resume` restores claude's
     // context but doesn't replay history as events, so we draw it from disk.
     if (options.resume?.sessionId) this.restoreTranscript(options.cwd, options.resume.sessionId);
+    // A resume with no launch prompt reconnects lazily: the transcript is rebuilt
+    // above, but `claude -p --resume` isn't spawned until the user's first turn (so
+    // restoring N agents doesn't fire N claude processes up front). A resume that
+    // carries a prompt — e.g. the worktree re-announce — still starts eagerly.
+    this.deferredStart = !!options.resume && !options.prompt;
   }
 
   // Rebuild the conversation rows from a past session's on-disk transcript, by
@@ -506,11 +518,22 @@ export class AgentConversation implements Agent {
     this.modeDropdown.addCssClass(`zym-cmode-${this._permissionMode}`);
   }
 
-  /** Spawn claude and send the launch prompt (if any). */
+  /** Spawn claude and send the launch prompt (if any). A lazily-resumed agent
+   *  skips the spawn here — `ensureConnected` runs it on the first turn instead. */
   start(): void {
-    this.session.start();
-    if (this.launchPrompt) this.session.prompt(this.launchPrompt);
+    if (!this.deferredStart) {
+      this.session.start();
+      if (this.launchPrompt) this.session.prompt(this.launchPrompt);
+    }
     this.input.focusInsert(); // ready to type immediately, not vim normal mode
+  }
+
+  // Spawn the (deferred) claude process on demand — the first time a resumed agent
+  // is actually given a turn. No-op once connected or for an eagerly-started agent.
+  private ensureConnected(): void {
+    if (!this.deferredStart) return;
+    this.deferredStart = false;
+    this.session.start();
   }
 
   // --- Agent surface ----------------------------------------------------------
@@ -588,7 +611,10 @@ export class AgentConversation implements Agent {
       command: this.baseCommand ?? ['claude'],
       cwd: this.cwd,
       prompt: this.launchPrompt,
-      sessionId: this.sessionId ?? undefined,
+      // Fall back to the resume id: a lazily-resumed agent that the user hasn't
+      // sent a turn to yet has no live (init-reported) session id, but must still
+      // serialize the id it resumes so a later restart can resume it again.
+      sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
     };
   }
   isModified(): boolean { return !this.exited; }
@@ -710,6 +736,7 @@ export class AgentConversation implements Agent {
     const text = this.input.getText().trim();
     if (!text) return;
     this.input.setText('');
+    this.ensureConnected(); // a lazily-resumed agent spawns claude on its first turn
     if (this._status === 'idle') { this.session.prompt(text); return; }
     // The agent is busy — queue (accumulate) the message; it's sent on next idle.
     this.pendingText = this.pendingText ? `${this.pendingText}\n\n${text}` : text;
