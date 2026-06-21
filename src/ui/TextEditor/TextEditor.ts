@@ -1259,15 +1259,16 @@ export class TextEditor implements DocumentHost {
           : this.growMaxHeight;
       // GtkScrolledWindow's propagate-natural-height can report 0 before the view's first
       // layout, so an unedited input collapsed to "0 lines" until its first edit. Drive a
-      // min content height from the actual line count instead (line height resolves to a
-      // default until the view is mapped, then refines), capped, and refresh it on map and
-      // on every edit so the input shows its true height immediately and grows/shrinks.
+      // min content height instead, from the view's *measured* natural height — the same
+      // value propagate-natural-height settles on, so the height doesn't jump by a few px
+      // on the first edit. Measured height-for-width at the current width (or unconstrained
+      // before it's allocated), refreshed on map and on every edit.
       const applyHeight = () => {
         const cap = capHeight();
         if (cap !== undefined) scrolled.setMaxContentHeight(cap);
-        const lines = Math.max(1, this.editorModel.getLineCount());
-        const content = Math.round(lines * this.editorModel.getLineHeightInPixels() + 2 * padding);
-        scrolled.setMinContentHeight(cap !== undefined ? Math.min(content, cap) : content);
+        const width = this.view.getWidth();
+        const natural = this.view.measure(Gtk.Orientation.VERTICAL, width > 0 ? width : -1)[1];
+        scrolled.setMinContentHeight(cap !== undefined ? Math.min(natural, cap) : natural);
       };
       applyHeight();
       this.connect(this.view, 'map', applyHeight);

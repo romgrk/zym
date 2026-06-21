@@ -179,14 +179,16 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     },
   });
 
-  // Worktree: a dropdown whose first value, "Create", starts the work in a fresh
+  // Worktree: a dropdown whose first value, "create", starts the work in a fresh
   // worktree (the agent creates it); the rest are the repo's branches, to work on a
-  // chosen branch in its own worktree. "Create" is the empty-string sentinel (a branch
-  // name can never be empty) and is rendered specially. Branches load asynchronously.
+  // chosen branch in its own worktree. "create" is the empty-string sentinel (a branch
+  // name can never be empty), rendered specially, and the list is searchable. Branches
+  // load asynchronously.
   const worktreeDropdown = new OptionDropdown({
-    options: [{ value: '', label: 'Create' }],
+    options: [{ value: '', label: 'create' }],
     value: '',
-    specialLabel: 'Create',
+    search: true,
+    specialLabel: 'create',
   });
   const worktreeField = field('worktree', worktreeDropdown.widget);
   const repo = repoRoot(cwd);
@@ -194,7 +196,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     listBranches(repo, (branches) => {
       if (card.isClosed()) return;
       worktreeDropdown.setOptions(
-        [{ value: '', label: 'Create' }, ...branches.map((b) => ({ value: b, label: b }))],
+        [{ value: '', label: 'create' }, ...branches.map((b) => ({ value: b, label: b }))],
         '',
       );
     });
@@ -250,22 +252,44 @@ interface OptionDropdownConfig {
   options: LaunchOption[];
   value: string;
   onChange?: (value: string) => void;
-  /** A label rendered with emphasis (the `.combobox-special` accent), e.g. "Create". */
+  /** Show a search entry in the popup and filter the list by it. */
+  search?: boolean;
+  /** A label rendered with emphasis (the `.combobox-special` accent), e.g. "create". */
   specialLabel?: string;
 }
 
 // A Gtk.DropDown over a list of LaunchOptions: shows each option's label, maps the
 // selection back to its value (by the selected item's string, so it's robust to search
 // filtering), and can be re-populated (when the kind changes the available models, or
-// branches load in). Opt-in type-ahead search and a special-styled label.
+// branches load in). Opt-in search and a special-styled label.
+//
+// Search is wired *without* a GtkExpression (node-gtk mishandles GtkExpression, which
+// isn't a GObject): the model is wrapped in a FilterListModel + CustomFilter, and the
+// dropdown's own search entry drives the filter via its `search-changed` signal — the
+// approach from https://discourse.gnome.org/t/.../12748.
 class OptionDropdown {
   readonly widget: InstanceType<typeof Gtk.DropDown>;
   private values: string[] = [];
   private labelToValue = new Map<string, string>();
   private applying = false; // suppress onChange while re-populating
+  private base: InstanceType<typeof Gtk.StringList>;
+  private readonly filtered: InstanceType<typeof Gtk.FilterListModel> | null = null;
+  private query = '';
 
   constructor(config: OptionDropdownConfig) {
-    this.widget = Gtk.DropDown.newFromStrings(config.options.map((o) => o.label));
+    this.base = Gtk.StringList.new(config.options.map((o) => o.label));
+    if (config.search) {
+      this.filtered = Gtk.FilterListModel.new(this.base, null);
+      const filter = Gtk.CustomFilter.new((item: any) =>
+        this.query === '' || String(item.getString()).toLowerCase().includes(this.query),
+      );
+      this.filtered.setFilter(filter);
+      this.widget = Gtk.DropDown.new(this.filtered, null);
+      this.widget.setEnableSearch(true);
+      this.wireSearch(filter);
+    } else {
+      this.widget = Gtk.DropDown.new(this.base, null);
+    }
     this.widget.addCssClass('flat');
     this.ingest(config.options);
 
@@ -301,10 +325,25 @@ class OptionDropdown {
 
   setOptions(options: LaunchOption[], value: string): void {
     this.applying = true;
-    this.widget.setModel(Gtk.StringList.new(options.map((o) => o.label)));
+    this.base = Gtk.StringList.new(options.map((o) => o.label));
+    if (this.filtered) this.filtered.setModel(this.base);
+    else this.widget.setModel(this.base);
     this.ingest(options);
     this.selectValue(value);
     this.applying = false;
+  }
+
+  // Drive `filter` from the dropdown's built-in search entry (found by walking the
+  // popup), re-filtering on each keystroke.
+  private wireSearch(filter: InstanceType<typeof Gtk.CustomFilter>): void {
+    const entry = findDescendant(this.widget, (w) => w instanceof Gtk.SearchEntry) as
+      | InstanceType<typeof Gtk.SearchEntry>
+      | null;
+    if (!entry) return;
+    entry.on('search-changed', () => {
+      this.query = (entry.getText() ?? '').toLowerCase();
+      filter.changed(Gtk.FilterChange.DIFFERENT);
+    });
   }
 
   private ingest(options: LaunchOption[]): void {
@@ -316,6 +355,20 @@ class OptionDropdown {
     const i = this.values.indexOf(value);
     this.widget.setSelected(i >= 0 ? i : 0);
   }
+}
+
+// Depth-first search of a widget's descendants (including popups, which are children in
+// GTK4) for the first one matching `pred`.
+function findDescendant(
+  root: InstanceType<typeof Gtk.Widget>,
+  pred: (w: InstanceType<typeof Gtk.Widget>) => boolean,
+): InstanceType<typeof Gtk.Widget> | null {
+  if (pred(root)) return root;
+  for (let c = root.getFirstChild(); c; c = c.getNextSibling()) {
+    const found = findDescendant(c, pred);
+    if (found) return found;
+  }
+  return null;
 }
 
 // A captioned field: a small muted label on top of `control`. Used for the dropdowns
