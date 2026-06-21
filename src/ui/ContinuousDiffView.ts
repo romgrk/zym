@@ -451,7 +451,16 @@ export class ContinuousDiffView {
         key: ContinuousDiffView.headerKey(h),
         anchor: { viewRow: h.viewRow },
         placement: 'above',
-        build: () => buildHeaderWidget(h.label, h.path, () => this.onActivate?.({ path: h.path, row: 0 }), h.subtitle),
+        build: () =>
+          buildHeaderWidget(
+            h.label,
+            h.path,
+            () => this.onActivate?.({ path: h.path, row: 0 }),
+            h.subtitle,
+            // A leading gap reveals TOWARD the content below it (extend the window up from its
+            // bottom), like clicking any other gap.
+            h.leadingRevealRows?.length ? () => this.revealChunk(h.leadingRevealRows!, false) : undefined,
+          ),
       }),
     );
     dmb.gapAnchors.forEach((g, i) =>

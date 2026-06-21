@@ -21,25 +21,31 @@ addStyles(`
   .mb-header-icon { color: var(--t-ui-text-muted); }
   .mb-header-label { color: var(--t-ui-editor-foreground); }
   .mb-gap { color: var(--t-ui-text-muted); padding: 1px 8px 1px 6px; }
-  /* The standalone fold-marker band gets a grey fill (distinct from the header's color); the
-     leading-gap line inside the header keeps the header background (only the muted text color). */
+  /* Every fold marker reads the same: a grey fill (distinct from the header's selected
+     background), whether it's a standalone between-windows gap or the leading gap that sits
+     directly under a header. */
   .mb-gap-band { background-color: rgba(128, 128, 128, 0.15); }
   .mb-gap-clickable:hover { color: var(--t-ui-text-accent); }
 `);
 
 /** The header widget for one excerpt: `label` is the display path (dir dimmed, basename bold),
  *  `path` selects the file-type icon, `onActivate` fires on click (jump to the file). `subtitle`
- *  (a diff's leading `⋯` gap) renders a dim line beneath the filename. */
+ *  (a diff's leading `⋯` gap) renders a fold-marker band directly beneath the filename — styled
+ *  exactly like every other gap band (not as part of the header), with `onExpand` revealing more
+ *  context on click. */
 export function buildHeaderWidget(
   label: string,
   path: string,
   onActivate: () => void,
   subtitle?: string,
+  onExpand?: () => void,
 ): InstanceType<typeof Gtk.Widget> {
+  // The outer container is transparent: the header's selected background lives on the filename
+  // row only, so a leading gap stacked below it keeps its own fold-marker style.
   const outer = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-  outer.addCssClass('mb-header');
 
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
+  row.addCssClass('mb-header');
   const icon = new Gtk.Label({ label: fileIconGlyph(Path.basename(path), false) });
   const attrs = Pango.AttrList.new();
   attrs.insert(Pango.attrFontDescNew(Pango.FontDescription.fromString(ICON_FONT_FAMILY)));
@@ -54,26 +60,25 @@ export function buildHeaderWidget(
   name.setMarkup(`${dirMarkup}<b>${escapeMarkup(base)}</b>`);
   name.addCssClass('mb-header-label');
   row.append(name);
-  outer.append(row);
 
-  if (subtitle) {
-    const sub = new Gtk.Label({ label: subtitle, xalign: 0 });
-    sub.addCssClass('mb-gap'); // same muted color as the trailing/between gap bands
-    outer.append(sub);
-  }
-
+  // Click the filename row → jump to the file (scoped to the row so the leading gap's own click
+  // expands context instead of jumping).
   const click = new Gtk.GestureClick();
   click.on('released', () => onActivate());
-  outer.addController(click);
+  row.addController(click);
+  outer.append(row);
+
+  if (subtitle) outer.append(buildGapWidget(subtitle, onExpand));
   return outer;
 }
 
-/** A `⋯ N unchanged lines` gap band — a dim label (not a navigable buffer row), anchored between
- *  two diff windows via `BlockDecorations`. `onActivate` (click) expands more context. */
+/** A `⋯ N unchanged lines` gap band — a dim fold marker (not a navigable buffer row), anchored
+ *  between two diff windows via `BlockDecorations`, or stacked under a header for a leading gap.
+ *  `onActivate` (click) expands more context. */
 export function buildGapWidget(label: string, onActivate?: () => void): InstanceType<typeof Gtk.Widget> {
   const widget = new Gtk.Label({ label, xalign: 0 });
   widget.addCssClass('mb-gap');
-  widget.addCssClass('mb-gap-band'); // grey fill (the standalone band, vs the in-header subtitle)
+  widget.addCssClass('mb-gap-band'); // grey fill — the shared fold-marker style
   if (onActivate) {
     widget.addCssClass('mb-gap-clickable');
     const click = new Gtk.GestureClick();
