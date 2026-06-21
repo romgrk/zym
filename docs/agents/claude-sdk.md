@@ -197,15 +197,19 @@ spawns the real subagent button + drill-down page (not a static row) and is mark
 done. Monitor **inner** state is still not reconstructed (drawn as a static row).
 
 Scope: the main thread restores fully — user turns, assistant text/thinking, tool
-calls + results, the tasks panel, and spawned subagents' inner transcripts. Empty
-thinking blocks (transcript stores signatures, not text) don't render.
+calls + results, the tasks panel, and spawned subagents' inner transcripts. The
+footer's model + context gauge is seeded from the transcript's latest assistant
+`usage` (`readContextSeed`), so a resumed agent shows its real context occupancy
+before the first turn; cost and the exact context-window size aren't in the
+transcript, so they settle on the first live `result`. Empty thinking blocks
+(transcript stores signatures, not text) don't render.
 
 ## Remaining / planned
 
 - [ ] **Monitor inner-state restore** — the `Monitor` tool draws as a static row
       on resume; its live panel/output isn't reconstructed.
-- [ ] **Cost/context meter row** in the transcript (and seed the gauge on resume
-      from the transcript's last `usage`).
+- [ ] **Cost on resume** — the context gauge is seeded from the transcript, but
+      cost isn't recorded there; the footer cost shows `—` until the first turn.
 - [ ] **Token-level live streaming** via `--include-partial-messages`.
 - Swap `protocol.ts` hand-written types for the SDK's exported types once
   the dep is vendored and export names are verified.

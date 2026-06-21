@@ -39,7 +39,7 @@ import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
 import { highlightToMarkup } from '../syntax/highlightToMarkup.ts';
 import { SdkSession, type PermissionRequest, type QuestionRequest, type TaskProgress } from '../agents/claude-sdk/SdkSession.ts';
-import { readTranscript } from '../agents/claude-sdk/transcript.ts';
+import { readTranscript, readContextSeed } from '../agents/claude-sdk/transcript.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import type { Agent, AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 import type { AgentAction } from '../agents/actions.ts';
@@ -551,6 +551,12 @@ export class AgentConversation implements Agent {
       this.replaying = false;
       this.endTurn(); // close the last open bubble so the next live turn starts clean
     }
+    // Seed the footer's model + context gauge from the transcript's latest usage, so
+    // a resumed agent shows its real context occupancy before the first live turn
+    // (cost + exact window arrive with the first live `result`).
+    const seed = readContextSeed(cwd, sessionId);
+    if (seed.model) this.modelContext.setModel(seed.model);
+    if (seed.usage) this.modelContext.setUsage(seed.usage);
   }
 
   // Sync the permission-mode dropdown (selection + color). The status itself is the

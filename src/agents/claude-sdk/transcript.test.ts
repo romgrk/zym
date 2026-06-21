@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as Fs from 'node:fs';
 import * as Os from 'node:os';
 import * as Path from 'node:path';
-import { readTranscript } from './transcript.ts';
+import { readTranscript, readContextSeed } from './transcript.ts';
 import { transcriptDir } from '../../agentSessions.ts';
 
 // Write `lines` (objects, one per JSONL line) as the transcript for `sessionId`
@@ -120,6 +120,31 @@ test('reconstructs a subagent transcript and attaches it to its Agent tool call'
       ],
     }],
   );
+});
+
+test('seeds model + context occupancy from the latest assistant usage', () => {
+  withTranscript([
+    { type: 'user', promptSource: 'sdk', message: { role: 'user', content: 'hi' } },
+    { type: 'assistant', message: { role: 'assistant', model: 'claude-opus-4-8', content: [{ type: 'text', text: 'a' }],
+      usage: { input_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200, output_tokens: 50 } } },
+    // The latest assistant usage wins (most recent context occupancy).
+    { type: 'assistant', message: { role: 'assistant', model: 'claude-opus-4-8', content: [{ type: 'text', text: 'b' }],
+      usage: { input_tokens: 3, cache_read_input_tokens: 1500, cache_creation_input_tokens: 100, output_tokens: 20 } } },
+  ], (cwd, id) => {
+    assert.deepEqual(readContextSeed(cwd, id), {
+      model: 'claude-opus-4-8',
+      usage: { tokens: 1603, input: 3, cacheRead: 1500, cacheCreation: 100, output: 20 },
+    });
+  });
+});
+
+test('context seed is null/empty when the transcript has no usage or is missing', () => {
+  withTranscript([
+    { type: 'user', promptSource: 'sdk', message: { role: 'user', content: 'hi' } },
+  ], (cwd, id) => {
+    assert.deepEqual(readContextSeed(cwd, id), { model: null, usage: null });
+    assert.deepEqual(readContextSeed(cwd, 'no-such-session'), { model: null, usage: null });
+  });
 });
 
 test('flattens array-form tool_result content and returns [] for a missing transcript', () => {

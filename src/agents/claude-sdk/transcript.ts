@@ -20,7 +20,7 @@
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { transcriptDir } from '../../agentSessions.ts';
-import type { SubagentInfo, SubagentMessage } from './SdkSession.ts';
+import type { SubagentInfo, SubagentMessage, ContextUsage } from './SdkSession.ts';
 
 /** A single replayable step, mirroring one of `SdkSession`'s domain emissions. A
  *  tool_use that spawned a subagent (the `Agent` tool) carries its reconstructed
@@ -74,6 +74,47 @@ export function readTranscript(cwd: string, sessionId: string): ReplayEntry[] {
     }
   }
   return entries;
+}
+
+/** The footer's model + context occupancy, read from the transcript's latest
+ *  assistant `usage`, so a resumed agent shows its real context gauge before the
+ *  first live turn. Cost and the exact context-window size aren't in the transcript
+ *  (they come from the live `result` event), so they're left to settle on resume. */
+export function readContextSeed(cwd: string, sessionId: string): { model: string | null; usage: ContextUsage | null } {
+  const file = Path.join(transcriptDir(cwd), `${sessionId}.jsonl`);
+  let raw: string;
+  try {
+    raw = Fs.readFileSync(file, 'utf8');
+  } catch {
+    return { model: null, usage: null };
+  }
+  let model: string | null = null;
+  let usage: ContextUsage | null = null;
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: TranscriptLine;
+    try {
+      parsed = JSON.parse(trimmed) as TranscriptLine;
+    } catch {
+      continue;
+    }
+    if (parsed.isSidechain || parsed.type !== 'assistant') continue;
+    const message = parsed.message as { model?: unknown; usage?: Record<string, unknown> } | undefined;
+    if (!message) continue;
+    if (typeof message.model === 'string') model = message.model; // keep the most recent
+    const u = message.usage;
+    if (u && typeof u === 'object') {
+      const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+      const input = num(u.input_tokens);
+      const cacheRead = num(u.cache_read_input_tokens);
+      const cacheCreation = num(u.cache_creation_input_tokens);
+      const output = num(u.output_tokens);
+      // tokens = the window-occupying total (matches SdkSession.onUsage).
+      usage = { tokens: input + cacheRead + cacheCreation, input, cacheRead, cacheCreation, output };
+    }
+  }
+  return { model, usage };
 }
 
 // Claude stores each subagent's conversation as `<sid>/subagents/agent-<n>.jsonl`
