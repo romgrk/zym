@@ -77,7 +77,7 @@ their name; that's the model layer):
   *Diagnostics / LSP across excerpts = Phase 4.*
 - **G5 — Continuous multi-file editable diff.** ✅ surface built + GUI-verified (write-through,
   phantom rejection, live re-diff with no flash/caret-jump, gutter alignment, expand-context
-  `zo`/`zR`/`zm`). **Hunk staging ✅** (`feat/multibuffer-staging`): each file's index blob (`git
+  `zo`/`zr`/`zm`). **Hunk staging ✅** (`feat/multibuffer-staging`): each file's index blob (`git
   show :p`) is read and every changed row classified staged/unstaged (the same model `GitGutter`
   uses — staged = HEAD↔index, unstaged = index↔worktree); a gutter marker bar shows it (info/blue =
   staged, warning/amber = unstaged). `space h s`/`space h u` (scoped to `#TextEditor.continuous-diff`

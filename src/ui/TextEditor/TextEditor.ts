@@ -1504,7 +1504,7 @@ export class TextEditor implements DocumentHost {
     });
   }
 
-  // --- Folding commands (vim za/zo/zc/zR/zM, via the keymap's z-prefix) -------
+  // --- Folding commands (vim za/zo/zc/zr/zm, via the keymap's z-prefix) -------
 
   private installFoldCommands() {
     // The fold keys live in the vim keymap (normal-mode, z-prefix); they dispatch

@@ -346,7 +346,7 @@ composes line number + fold chevron + git bar + diagnostic glyph into **one mark
 its deferred-install / width-priming machinery; `GitGutter` and `DiagnosticsView` no longer
 own renderers, they feed a per-line cell through the `GutterCellSink` (`setGitCell` /
 `setDiagCell` + `redrawGutter`). The gutter is now **display-only**: the chevron still shows
-▾/▸ but no longer takes clicks (folding stays keyboard-driven — `za`/`zo`/`zc`/`zR`/`zM`).
+▾/▸ but no longer takes clicks (folding stays keyboard-driven — `za`/`zo`/`zc`/`zr`/`zm`).
 Dropping per-renderer click targeting was the only thing forcing the chevron to be its own
 renderer, so this went past the originally-planned 4→2 straight to **4→1**.
 

@@ -7,7 +7,7 @@
  * Unchanged runs collapse by handing the editor their ranges as *provided folds*
  * — the same fold projection + chevron gutter as code folding, with a
  * `⋯ N unchanged lines` placeholder (see SyntaxController.setProvidedFolds). The
- * vim z-fold commands (zo/zc/za/zR/zM) drive them through the default fold controller.
+ * vim z-fold commands (zo/zc/za/zr/zm) drive them through the default fold controller.
  *
  * It reuses the buffer-only `TextEditor` (read-only), so it gets vim navigation,
  * search, and the decoration/gutter plumbing for free. Construct at runtime (the

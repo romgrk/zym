@@ -18,7 +18,7 @@
  *
  * Folding is driven by the public `toggleFoldAtCursor`/`setFoldAtCursor`/
  * `foldAll`/`unfoldAll` methods; the editor wires them to `fold:*` commands that
- * the vim keymap's `z`-prefix (za/zo/zc/zR/zM) dispatches.
+ * the vim keymap's `z`-prefix (za/zo/zc/zr/zm) dispatches.
  */
 import { Gtk, Pango, type SourceBuffer, type SourceView } from '../gi.ts';
 import { Point } from '../text/Point.ts';
@@ -161,6 +161,13 @@ export class SyntaxController {
   private foldHost: FoldHost | null = null;
   // Active fold handles, one per collapsed region (bodies live only in the model).
   private readonly activeFolds: any[] = [];
+  // Folds the user wants closed, keyed by MODEL start row (stable across folding — folds
+  // never touch the model). Only the OUTERMOST closed fold of a nest is physically collapsed
+  // (an inner fold inside a placeholder has no view text), so a child's closed state lives
+  // only here. Re-applied on expand so opening a parent re-collapses its closed children —
+  // Vim's `zm`/`zc` nested-fold behavior. Cleared by `unfoldAll`. Code (shared-model) folds
+  // only; provided/diff folds are flat and don't use it.
+  private readonly desiredClosed = new Set<number>();
   // Notified after any fold open/close so the editor re-places fold-dependent
   // decorations (diagnostics squiggles, inlay hints) at the shifted view lines.
   private readonly foldsChangedHandlers: Array<() => void> = [];
@@ -830,6 +837,10 @@ export class SyntaxController {
   private toggleFold(region: FoldRegion): RevealedRange | null {
     const buffer = this.buffer as any;
     const cursorOff = asIter(buffer.getIterAtMark(buffer.getInsert())).getOffset();
+    // Track this code fold's desired open/closed state by its MODEL start row (provided/diff
+    // folds excluded — they're flat). Captured before the expand splices the body back.
+    const codeFold = !this.providedFolds && !!this.foldHost;
+    const modelStart = codeFold ? this.modelRow(region.startLine) : -1;
     let revealed: RevealedRange | null = null;
     if (region.folded && region.handle) {
       // Expand: restore the body text from the model. If the caret was on the marker,
@@ -846,6 +857,11 @@ export class SyntaxController {
       if (i >= 0) this.activeFolds.splice(i, 1);
       region.folded = false;
       region.handle = undefined;
+      if (codeFold) {
+        this.desiredClosed.delete(modelStart);
+        // Re-collapse any children the user left closed, now that their text is back.
+        this.reapplyDesiredChildFolds(modelStart);
+      }
     } else if (!region.folded && this.foldHost) {
       // Collapse: physically replace the body with a placeholder in the VIEW buffer —
       // the model keeps the full text. Only move the caret if it was *inside* the
@@ -879,6 +895,7 @@ export class SyntaxController {
         this.activeFolds.push(handle);
         region.folded = true;
         region.handle = handle;
+        if (codeFold) this.desiredClosed.add(modelStart);
         const [ps, pe] = this.foldHost.foldPlaceholderRange(this.buffer, handle);
         const tag = region.whole ? this.bandedPlaceholderTag : this.foldPlaceholderTag;
         buffer.applyTag(tag, asIter(buffer.getIterAtOffset(ps)), asIter(buffer.getIterAtOffset(pe)));
@@ -917,6 +934,42 @@ export class SyntaxController {
   // True while foldAll collapses many regions: toggleFold then skips its per-fold re-key /
   // repaint / emit, which foldAll does once at the end (O(folds) instead of O(folds²)).
   private foldBatch = false;
+
+  /** After a code fold at MODEL row `modelStart` expands, re-collapse the folds inside it the
+   *  user left closed (their model start row is in `desiredClosed`) — Vim's nested-fold
+   *  behavior: opening a parent reveals its closed children rather than expanding everything.
+   *  Outermost-first, skipping a child subsumed by an already-recollapsed one (its own
+   *  children stay in `desiredClosed`, re-applied when it later opens). Batched so the
+   *  enclosing `toggleFold` does the one re-key/repaint. */
+  private reapplyDesiredChildFolds(modelStart: number): void {
+    if (this.desiredClosed.size === 0 || !this.foldHost) return;
+    const ranges = this.docSyntax.foldRanges();
+    const parent = ranges.find((r) => r.startRow === modelStart);
+    if (!parent) return;
+    const children = ranges
+      .filter((r) => r.startRow > parent.startRow && r.endRow <= parent.endRow && this.desiredClosed.has(r.startRow))
+      .sort((a, b) => a.startRow - b.startRow || b.endRow - a.endRow);
+    if (children.length === 0) return;
+    const collapsed: Array<{ s: number; e: number }> = [];
+    const wasBatch = this.foldBatch;
+    this.foldBatch = true;
+    try {
+      for (const r of children) {
+        if (collapsed.some((c) => r.startRow >= c.s && r.endRow <= c.e)) continue; // nested → subsumed
+        const child: FoldRegion = {
+          startLine: this.viewRow(r.startRow),
+          endLine: this.viewRow(r.endRow),
+          folded: false,
+          joinFooter: r.joinFooter,
+        };
+        if (child.endLine <= child.startLine) continue;
+        this.toggleFold(child);
+        collapsed.push({ s: r.startRow, e: r.endRow });
+      }
+    } finally {
+      this.foldBatch = wasBatch;
+    }
+  }
 
   // --- provided folds (external fold ranges) ---------------------------------
 
@@ -1177,6 +1230,20 @@ export class SyntaxController {
     return best;
   }
 
+  /** The innermost EXPANDED foldable region that strictly contains view `line` (its body,
+   *  not its header) — i.e. the parent fold of whatever sits on `line`. Used by `zc` on an
+   *  already-closed fold to close the next level out. */
+  private enclosingExpandedRegion(line: number): FoldRegion | null {
+    let best: FoldRegion | null = null;
+    for (const region of this.foldsByHeaderLine.values()) {
+      if (region.folded) continue;
+      if (region.startLine < line && line <= region.endLine) {
+        if (!best || region.startLine > best.startLine) best = region; // innermost
+      }
+    }
+    return best;
+  }
+
   /**
    * Open any fold(s) hiding `line` so a cursor that moved into a folded body (via
    * `w`, `/`, `G`, a click, …) becomes visible again — Vim's `foldopen` behavior.
@@ -1190,7 +1257,14 @@ export class SyntaxController {
 
   setFoldAtCursor(folded: boolean): RevealedRange | null {
     const region = this.regionAtCursor();
-    return region && region.folded !== folded ? this.toggleFold(region) : null;
+    if (region && region.folded !== folded) return this.toggleFold(region);
+    // `zc` on an already-closed fold closes the enclosing (parent) fold — Vim closes folds
+    // outward level by level on repeated `zc`.
+    if (folded && region?.folded) {
+      const parent = this.enclosingExpandedRegion(region.startLine);
+      if (parent) return this.toggleFold(parent);
+    }
+    return null;
   }
 
   toggleFoldAtCursor(): RevealedRange | null {
@@ -1219,6 +1293,9 @@ export class SyntaxController {
       .foldRanges()
       .slice()
       .sort((a, b) => a.startRow - b.startRow || b.endRow - a.endRow);
+    // Mark EVERY foldable range closed — not just the outermost we physically collapse here —
+    // so opening a parent re-collapses its (closed) children: `zm` closes all levels.
+    for (const r of ranges) this.desiredClosed.add(r.startRow);
     const collapsed: Array<{ s: number; e: number }> = [];
     this.foldBatch = true;
     try {
@@ -1244,6 +1321,7 @@ export class SyntaxController {
   }
 
   unfoldAll(): void {
+    this.desiredClosed.clear(); // `zr` opens every level and forgets all closed state.
     if (this.activeFolds.length === 0 && !this.providedFolds?.some((r) => r.folded)) return;
     for (const handle of [...this.activeFolds]) this.foldHost?.unfoldView(this.buffer, handle);
     this.activeFolds.length = 0;

@@ -11,7 +11,7 @@
  * Measured: collapsing 4 layouts/line → 1 cuts the gutter's per-frame Pango cost
  * ~4x (see src/poc/gutter-bench.ts). The trade-off is that the gutter is now
  * DISPLAY-ONLY — the fold chevron still shows ▾/▸ but no longer responds to clicks
- * (folding stays fully keyboard-driven: za/zo/zc/zR/zM). Per-renderer click
+ * (folding stays fully keyboard-driven: za/zo/zc/zr/zm). Per-renderer click
  * targeting was the only thing that forced the chevron to be its own renderer.
  *
  * SyntaxController owns line-number + chevron data directly (it's a `GutterHost`);

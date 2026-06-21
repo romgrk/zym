@@ -155,7 +155,7 @@ const SCROLL_BINDINGS: Record<string, string> = {
 };
 
 // `z`-prefix: cursor-line redraw (zz/zt/zb — vim operations). The fold keys
-// (za/zo/zc/zR/zM) share the prefix but dispatch to the editor's `fold:*`
+// (za/zo/zc/zr/zm) share the prefix but dispatch to the editor's `fold:*`
 // commands (registered by TextEditor over the SyntaxController), not vim
 // operations — see FOLD_KEYMAP, kept out of NORMAL_OPERATIONS.
 const Z_SCROLL_BINDINGS: Record<string, string> = {
@@ -167,8 +167,8 @@ const FOLD_KEYMAP: Record<string, string> = {
   'z a': 'fold:toggle',
   'z o': 'fold:open',
   'z c': 'fold:close',
-  'z R': 'fold:open-all',
-  'z M': 'fold:close-all',
+  'z r': 'fold:open-all',
+  'z m': 'fold:close-all',
 };
 
 // Find-char motions. These `requireInput`: the operation reads the next
