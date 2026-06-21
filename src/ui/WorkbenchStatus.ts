@@ -57,7 +57,7 @@ addStyles(`
   #WorkbenchStatus button { min-width: 0; padding-left: 6px; padding-right: 6px; }
   #WorkbenchStatus .zym-lsp-ready { color: var(--t-ui-text-muted); }
   #WorkbenchStatus .zym-lsp-failed { color: var(--t-ui-status-error); }
-  #WorkbenchStatus .zym-status-count { font-size: var(--font-size-small); }
+  #WorkbenchStatus .zym-status-count { font-size: var(--t-font-ui-size-small); }
 `);
 
 export interface WorkbenchStatusOptions {

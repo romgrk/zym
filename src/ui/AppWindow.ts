@@ -785,7 +785,10 @@ export class AppWindow {
   private openAgent(
     options: { kind?: AgentKind; prompt?: string; resume?: AgentResume; title?: string; cwd?: string; command?: string[]; background?: boolean } = {},
   ): Agent {
-    const kind = options.kind ?? (options.resume ? 'claude-tui' : resolveAgentKind(zym.config.get('agent.implementation')));
+    // Both kinds can resume now (claude-sdk rebuilds its transcript from disk), so a
+    // resume no longer forces the terminal agent — it respects the configured kind
+    // unless a caller pins one (e.g. restoreAgent passes the saved agent's kind).
+    const kind = options.kind ?? resolveAgentKind(zym.config.get('agent.implementation'));
     const cwd = options.cwd ?? process.cwd();
     const agent = AGENT_CONFIGS[kind].create({
       cwd, command: options.command, prompt: options.prompt, resume: options.resume, title: options.title,
@@ -971,13 +974,16 @@ export class AppWindow {
     if (!a) return;
     // Don't duplicate an agent that's already open (explicit restore over a live session).
     if (a.sessionId && zym.agents.getAgents().some((ag) => ag.sessionId === a.sessionId)) return;
+    // Restore as the kind that was saved (older sessions have no tag → claude-tui).
+    const kind: AgentKind = a.agentKind ?? 'claude-tui';
     let agent: Agent;
     if (a.sessionId) {
       const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);
-      agent = session ? this.openAgent(this.resumeOptions(session)) : this.openAgent({ cwd: a.cwd, resume: { sessionId: a.sessionId } });
+      agent = session
+        ? this.openAgent({ ...this.resumeOptions(session), kind })
+        : this.openAgent({ kind, cwd: a.cwd, resume: { sessionId: a.sessionId } });
     } else {
-      // Restored agents are always claude-tui (the headless kind doesn't serialize).
-      agent = this.openAgent({ kind: 'claude-tui', cwd: a.cwd, prompt: a.prompt });
+      agent = this.openAgent({ kind, cwd: a.cwd, prompt: a.prompt });
     }
     // Reopen the files that were in this agent's work area (its reviewed files). The
     // agent leaf itself is recreated by openAgent; the work-area split geometry
@@ -1103,6 +1109,11 @@ export class AppWindow {
   private resumeCurrentAgent(): void {
     const agent = this.currentAgent();
     if (!agent || !agent.exited) return;
+    // The terminal agent revives its child in the same pane (reusing scrollback). The
+    // headless agent's session is wired into views built at construction, so it can't
+    // hot-swap a fresh process in place — restart it (a new widget that rebuilds the
+    // transcript from disk and resumes the conversation by session id).
+    if (agent instanceof AgentConversation) { this.restartAgent(agent); return; }
     agent.resume();
     this.showAgent(agent);
   }
@@ -1125,7 +1136,11 @@ export class AppWindow {
       zym.notifications.addWarning('No conversation to branch yet');
       return;
     }
+    // Branch into the same kind as the source agent, rooted where it ran (so
+    // `--resume` resolves the transcript and the workbench roots correctly).
     this.openAgent({
+      kind: agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui',
+      cwd: agent.effectiveCwd,
       resume: { sessionId, fork: true },
       title: `${agent.title} (branch)`,
     });
@@ -1186,8 +1201,10 @@ export class AppWindow {
   private restartAgent(agent: Agent): void {
     const kind: AgentKind = agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui';
     const title = agent.renamed ? agent.title : undefined;
-    // Resume is claude-tui only; a headless agent restarts fresh in its own cwd.
-    const resume = kind === 'claude-tui' && agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
+    // Both kinds resume by session id now; fork a copy if the agent is still live so
+    // the original keeps running. A headless agent restarts in its own (possibly
+    // moved) cwd, which is also where --resume resolves its transcript.
+    const resume = agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
     const cwd = kind === 'claude-sdk' ? agent.effectiveCwd : undefined;
     this.closeAgent(agent);
     this.openAgent({ kind, resume, title, cwd });
@@ -1248,8 +1265,9 @@ export class AppWindow {
   // Build a fresh center (one person's splittable editor area). Every center
   // shares the same callbacks — they operate on the shared per-widget maps, and
   // only the *active* center fires interactive events (the others are detached).
-  private makeCenter(): PanelGroup {
+  private makeCenter(welcomeEmptyState: boolean): PanelGroup {
     return new PanelGroup({
+      welcomeEmptyState, // the user's central pane shows the cat + cheatsheet when empty
       onActiveChanged: () => this.onActiveTabChanged(),
       onTabCloseRequest: (widget) => {
         // An agent's terminal tab is never closed/destroyed here, whatever its state:
@@ -1317,7 +1335,7 @@ export class AppWindow {
    */
   private buildWorkbench(owner: 'user' | Agent, cwd: string): Workbench<'user' | Agent> {
     const git = acquireGitRepo(cwd);
-    const center = this.makeCenter();
+    const center = this.makeCenter(owner === 'user');
     const fileTree = new FileTree({
       rootPath: cwd,
       onOpenFile: (path) => this.openFile(path),
@@ -1590,11 +1608,13 @@ export class AppWindow {
         background-color: shade(${bg}, 1.6);
         box-shadow: inset 0 -2px ${border};
       }`,
-      // The empty-panel placeholder blends into the app background; its text and
-      // idle face are de-emphasized, and the face brightens to the foreground
-      // color when this is the active panel.
+      // The empty-panel placeholder blends into the app background; its text, face,
+      // cat, cheatsheet and footer are all de-emphasized. The plain face brightens
+      // to the foreground color when this is the active panel; the welcome state
+      // stays muted throughout (the cat is a calm mascot, the rest reference text).
+      // Keycaps derive their chrome from currentColor.
       `#PanelEmptyState { background-color: ${bg}; }`,
-      `#PanelEmptyText, #PanelEmptyEmoticon { color: ${muted}; }`,
+      `#PanelEmptyText, #PanelEmptyEmoticon, #PanelEmptyCat, #PanelEmptyCheatsheet, #PanelEmptyFooter { color: ${muted}; }`,
       `#PanelEmptyText.is-active, #PanelEmptyEmoticon.is-active { color: ${theme.ui.editor.foreground}; }`,
     ];
 

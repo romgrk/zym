@@ -107,7 +107,7 @@ addStyles(/* css */`
     border-bottom-right-radius: var(--popover-radius);
   }
   #AgentLauncherField > .field-caption {
-    font-size: var(--font-size-small);
+    font-size: var(--t-font-ui-size-small);
     color: var(--t-ui-text-muted);
     padding-left: 6px;
   }

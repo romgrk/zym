@@ -187,6 +187,15 @@ export function toolMarkup(name: string, input: unknown, opts: { cwd?: string; m
   return detailMarkup ? `${head}  ${detailMarkup}` : head;
 }
 
+/** Pango markup for a tool-row body: bold title + mono detail, WITHOUT the icon —
+ *  for rows that render the icon in a dedicated leading slot (see ToolRow). */
+export function toolBodyMarkup(name: string, input: unknown, opts: { cwd?: string; monoFamily: string }): string {
+  const { title, detail } = describeTool(name, input, opts.cwd);
+  const titleMarkup = title ? `<b>${escapeMarkup(title)}</b>` : '';
+  const detailMarkup = toolDetailMarkup(detail, opts.monoFamily);
+  return titleMarkup && detailMarkup ? `${titleMarkup}  ${detailMarkup}` : titleMarkup || detailMarkup;
+}
+
 // --- helpers -----------------------------------------------------------------
 
 // A path relative to `cwd` when under it, else with the home dir collapsed to `~`.

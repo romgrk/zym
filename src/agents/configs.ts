@@ -57,7 +57,8 @@ export interface AgentLaunch {
   command?: string[];
   /** An initial prompt to launch with. */
   prompt?: string;
-  /** Resume a past conversation (claude-tui only; sdk ignores it for now). */
+  /** Resume a past conversation. Both kinds honour it: claude-tui via `--resume`,
+   *  claude-sdk via `--resume` plus rebuilding the transcript from disk. */
   resume?: AgentResume;
   /** Initial title override. */
   title?: string;
@@ -95,7 +96,7 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   'claude-sdk': {
     kind: 'claude-sdk',
     options: claudeSdkLaunchOptions,
-    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, onOpenFile: l.onOpenFile, onRunInTerminal: l.onRunInTerminal }),
+    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, resume: l.resume, onOpenFile: l.onOpenFile, onRunInTerminal: l.onRunInTerminal }),
   },
 };
 

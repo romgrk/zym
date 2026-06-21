@@ -20,6 +20,7 @@ import type { AgentStatus, WorktreeInfo } from './AgentTerminal.ts';
 import type { Agent } from '../agents/types.ts';
 
 export const STATUS_DOT = '●';
+export const DISCONNECTED_DOT = '○'; // hollow: resumed but not reconnected
 export const WORKING_GLYPH = NERDFONT.STATUS.SYNC;
 
 // Status → indicator color: working (muted cog), waiting on the user (warning/
@@ -29,9 +30,11 @@ const STATUS_COLOR: Record<AgentStatus, string> = {
   waiting: theme.ui.status.warning,
   idle: theme.ui.status.success,
   exited: theme.ui.text.muted,
+  // Resumed but not yet reconnected — a hollow/dim dot, distinct from live green.
+  disconnected: theme.ui.text.muted,
 };
 
-const DOT_CLASSES = ['zym-agent-working', 'zym-agent-waiting', 'zym-agent-idle', 'zym-agent-exited'];
+const DOT_CLASSES = ['zym-agent-working', 'zym-agent-waiting', 'zym-agent-idle', 'zym-agent-exited', 'zym-agent-disconnected'];
 // Slow fade in/out applied while an agent needs attention (waiting on the user, or
 // finished but unseen) — see Agent.needsAttention.
 const BLINK_CLASS = 'zym-agent-blink';
@@ -40,6 +43,7 @@ addStyles(`
   .zym-agent-waiting { color: ${STATUS_COLOR.waiting}; }
   .zym-agent-idle    { color: ${STATUS_COLOR.idle}; }
   .zym-agent-exited  { color: ${STATUS_COLOR.exited}; }
+  .zym-agent-disconnected { color: ${STATUS_COLOR.disconnected}; }
   /* Hold full visibility ~0.6s (88%→12% across the wrap), fade down, hold fully
      invisible ~0.2s (46%→54%), fade back up — all linear, over 2.4s. */
   @keyframes zym-agent-blink-kf {
@@ -77,7 +81,7 @@ export function applyAgentStatus(label: InstanceType<typeof Gtk.Label>, status: 
     label.setText(WORKING_GLYPH);
     label.setAttributes(iconFontAttrs());
   } else {
-    label.setText(STATUS_DOT);
+    label.setText(status === 'disconnected' ? DISCONNECTED_DOT : STATUS_DOT);
     label.setAttributes(null);
   }
 }
@@ -119,7 +123,7 @@ export function agentStatusMarkup(status: AgentStatus): string {
   if (status === 'working') {
     return `<span foreground="${color}" font_family="${ICON_FONT_FAMILY}">${WORKING_GLYPH}</span>`;
   }
-  return `<span foreground="${color}">${STATUS_DOT}</span>`;
+  return `<span foreground="${color}">${status === 'disconnected' ? DISCONNECTED_DOT : STATUS_DOT}</span>`;
 }
 
 // --- Worktree ---------------------------------------------------------------

@@ -10,6 +10,10 @@
  * Options:
  *  - `codeFontFamily`: monospace family for code spans (e.g. the editor font);
  *    omitted → Pango's generic monospace (`<tt>`).
+ *  - `codeColor`: foreground color for code spans (a Pango color, e.g. a hex);
+ *    omitted → inherit the surrounding text color.
+ *  - `codeAlpha`: foreground alpha for code spans (a Pango alpha, e.g. `70%`), to
+ *    dim them relative to the prose; omitted → full opacity.
  *  - `highlightCode(code, lang)`: syntax-highlight a fenced block to Pango markup
  *    (returns null to fall back to plain escaped code). `lang` is the fence's
  *    info string.
@@ -18,6 +22,8 @@ import { escapeMarkup } from './proseMarkup.ts';
 
 export interface MarkdownOptions {
   codeFontFamily?: string;
+  codeColor?: string;
+  codeAlpha?: string;
   highlightCode?: (code: string, lang: string | undefined) => string | null;
 }
 
@@ -41,13 +47,13 @@ export function markdownToPango(md: string, opts: MarkdownOptions = {}): string 
       i++; // skip the closing fence
       const code = raw.join('\n');
       const inner = opts.highlightCode?.(code, lang) ?? escapeMarkup(code);
-      out.push(wrapCode(inner, opts.codeFontFamily));
+      out.push(wrapCode(inner, opts.codeFontFamily, opts.codeColor, opts.codeAlpha));
       continue;
     }
 
     const heading = line.match(/^#{1,6}\s+(.*)$/);
     if (heading) {
-      out.push(`<b>${inline(heading[1], opts.codeFontFamily)}</b>`);
+      out.push(`<b>${inline(heading[1], opts.codeFontFamily, opts.codeColor, opts.codeAlpha)}</b>`);
       i++;
       continue;
     }
@@ -60,12 +66,12 @@ export function markdownToPango(md: string, opts: MarkdownOptions = {}): string 
 
     const item = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (item) {
-      out.push(`${item[1]}• ${inline(item[2], opts.codeFontFamily)}`);
+      out.push(`${item[1]}• ${inline(item[2], opts.codeFontFamily, opts.codeColor, opts.codeAlpha)}`);
       i++;
       continue;
     }
 
-    out.push(inline(line, opts.codeFontFamily));
+    out.push(inline(line, opts.codeFontFamily, opts.codeColor, opts.codeAlpha));
     i++;
   }
 
@@ -74,13 +80,18 @@ export function markdownToPango(md: string, opts: MarkdownOptions = {}): string 
 
 // Wrap markup-ready code content (already escaped/highlighted) in a monospace
 // run: a specific family when given (matching the editor), else generic monospace.
-function wrapCode(content: string, family?: string): string {
-  return family ? `<span face="${attrEscape(family)}">${content}</span>` : `<tt>${content}</tt>`;
+// An optional foreground color and/or alpha set the code spans apart from the prose.
+function wrapCode(content: string, family?: string, color?: string, alpha?: string): string {
+  const attrs: string[] = [];
+  if (family) attrs.push(`face="${attrEscape(family)}"`);
+  if (color) attrs.push(`foreground="${attrEscape(color)}"`);
+  if (alpha) attrs.push(`alpha="${attrEscape(alpha)}"`);
+  return attrs.length ? `<span ${attrs.join(' ')}>${content}</span>` : `<tt>${content}</tt>`;
 }
 
 // Inline spans within a single line. Code is extracted to placeholders first so
 // its contents aren't re-processed as bold/italic, then restored last.
-function inline(text: string, codeFontFamily?: string): string {
+function inline(text: string, codeFontFamily?: string, codeColor?: string, codeAlpha?: string): string {
   const codes: string[] = [];
   let s = escapeMarkup(text);
   s = s.replace(/`([^`]+)`/g, (_, c: string) => {
@@ -92,7 +103,7 @@ function inline(text: string, codeFontFamily?: string): string {
   s = s.replace(/__([^_]+)__/g, '<b>$1</b>');
   s = s.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<i>$2</i>');
   // eslint-disable-next-line no-control-regex -- \x00 is our own code-span sentinel, inserted above
-  s = s.replace(/\x00(\d+)\x00/g, (_, n: string) => wrapCode(codes[Number(n)], codeFontFamily));
+  s = s.replace(/\x00(\d+)\x00/g, (_, n: string) => wrapCode(codes[Number(n)], codeFontFamily, codeColor, codeAlpha));
   return s;
 }
 

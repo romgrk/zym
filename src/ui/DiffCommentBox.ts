@@ -42,7 +42,7 @@ addStyles(`
     border: 1px solid var(--t-ui-text-muted);
     border-radius: 999px;
     padding: 0 6px;
-    font-size: var(--font-size-small);
+    font-size: var(--t-font-ui-size-small);
   }
 `);
 

@@ -82,6 +82,14 @@ export interface PanelGroupOptions {
   /** Fired when any tab is closed, so the host can drop its bookkeeping. */
   onClosed?: (child: Widget) => void;
   /**
+   * Show the "welcome" empty state (a sleeping cat over a keybinding cheatsheet,
+   * see Panel) on the layout's first leaf whenever it sits empty — the central
+   * pane, kept as the welcome surface even once the layout splits (other empty
+   * panes get the plain placeholder). Used by the user workbench; agent centers
+   * leave it off.
+   */
+  welcomeEmptyState?: boolean;
+  /**
    * Asked before a tab closes; return false to veto (keep the page intact). Installed
    * on every leaf, so it covers whichever split the tab lives in. Omit to let tabs
    * close normally.
@@ -116,6 +124,19 @@ export class PanelGroup {
     this.active = leaf;
     leaf.panel.activate();
     this.root.append(leaf.widget);
+    this.updateWelcomeState();
+  }
+
+  // Apply the central pane's "welcome" empty state (opt-in via options): the
+  // layout's first leaf carries it, every other leaf gets the plain placeholder —
+  // so the welcome surface stays put on the first pane even after splits (and even
+  // when several panes sit empty). A no-op when not enabled. Called after every
+  // structural change (split / collapse / restore).
+  private updateWelcomeState(): void {
+    if (!this.options.welcomeEmptyState) return;
+    const first = firstLeaf(this.rootNode);
+    for (const leaf of this.leaves())
+      leaf.panel.setEmptyVariant(leaf === first ? 'welcome' : 'minimal');
   }
 
   // --- Active leaf / tab access ---------------------------------------------
@@ -226,6 +247,7 @@ export class PanelGroup {
     if (size > 0) paned.setPosition(Math.floor(size / 2));
 
     this.setActive(newLeaf);
+    this.updateWelcomeState();
     return newLeaf;
   }
 
@@ -275,6 +297,7 @@ export class PanelGroup {
     this.attach(sibling, grand, parentWasStart);
 
     if (this.active === leaf) this.setActive(firstLeaf(sibling));
+    this.updateWelcomeState();
   }
 
   // --- Session serialization -------------------------------------------------
@@ -329,6 +352,7 @@ export class PanelGroup {
     this.active = first;
     first.panel.activate(); // onActivate early-returns (active already set); sync below
     this.options.onActiveChanged?.(first.panel.activeChild);
+    this.updateWelcomeState();
   }
 
   private buildNode(node: PanelNode, buildChild: (state: TabState) => RestoredChild | null): Node {

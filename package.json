@@ -18,9 +18,11 @@
     "poc": "node src/poc/fold-highlight.ts",
     "poc:inline": "node src/poc/inline-overlay.ts",
     "poc:peek": "node src/poc/sibling-peek.ts",
+    "poc:md": "node src/poc/markdown-render.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --test 'src/**/*.test.ts' 'plugins/**/*.test.ts'",
+    "test:sdk": "node --test 'src/agents/claude-sdk/*.test.ts'",
     "generate-types": "node-gtk generate-types Gtk-4.0 Gio-2.0 Adw-1 GtkSource-5 Vte-3.91"
   },
   "dependencies": {

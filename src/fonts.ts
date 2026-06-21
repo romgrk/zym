@@ -83,6 +83,14 @@ function familyOf(description: string, fallback: string): string {
  */
 const FONT_SIZE_SCALE = { small: 0.85, large: 1.2 } as const;
 
+/**
+ * Point size used when a font description carries no size of its own (an
+ * absolute/device-pixel description). Keeps the size variables always published so
+ * consumers like `var(--t-font-ui-size-small)` never resolve to nothing. Roughly
+ * the GNOME interface default.
+ */
+const DEFAULT_FONT_SIZE_PT = 10;
+
 const roundHalf = (pt: number): number => Math.round(pt * 2) / 2;
 
 /**
@@ -107,8 +115,9 @@ const roundHalf = (pt: number): number => Math.round(pt * 2) / 2;
  *    `--t-font-<role>-size-large` — and the matching `font` shorthands
  *    `--t-font-<role>-small`, `--t-font-<role>` (medium), `--t-font-<role>-large`.
  * The picked font supplies the medium size; small/large are derived (see
- * `FONT_SIZE_SCALE`). The size vars and shorthands are omitted when the font carries
- * no point size (an absolute/device-pixel description), since `font` needs a size.
+ * `FONT_SIZE_SCALE`). A description with no point size of its own (an absolute/
+ * device-pixel description) falls back to `DEFAULT_FONT_SIZE_PT`, so the size vars
+ * and shorthands are always published.
  *
  * The picked font is the `core.uiFont` / `core.monospaceFont` config value when set,
  * else the live GNOME interface font; the store follows both, so changing either
@@ -199,29 +208,29 @@ class FontStore {
   }
 
   /** The full set of `--t-font-<role>-*` declarations for one font: the shared
-   *  family/weight/style, plus — when the font carries a point size — the three
-   *  sizes (`small`/medium/`large`, medium being the picked size) as both a
-   *  `*-size`/`*-size-{small,large}` and the matching `font` shorthand
-   *  (`--t-font-<role>` / `--t-font-<role>-{small,large}`). The size vars and
-   *  shorthands are omitted for an absolute (device-pixel) description, since a
-   *  `font` shorthand needs a point size. */
+   *  family/weight/style, plus the three sizes (`small`/medium/`large`, medium being
+   *  the picked size) as both a `*-size`/`*-size-{small,large}` and the matching
+   *  `font` shorthand (`--t-font-<role>` / `--t-font-<role>-{small,large}`). An
+   *  absolute (device-pixel) description carries no point size, so it falls back to
+   *  `DEFAULT_FONT_SIZE_PT` — the size vars are always emitted. */
   private fontVars(role: 'ui' | 'monospace', f: FontCss): string[] {
     const lines = [
       `--t-font-${role}-family: ${f.family};`,
       `--t-font-${role}-weight: ${f.weight};`,
       `--t-font-${role}-style: ${f.style};`,
     ];
-    if (f.sizePt) {
-      const sizes = {
-        small: roundHalf(f.sizePt * FONT_SIZE_SCALE.small),
-        medium: f.sizePt,
-        large: roundHalf(f.sizePt * FONT_SIZE_SCALE.large),
-      };
-      for (const [name, sizePt] of Object.entries(sizes)) {
-        const suffix = name === 'medium' ? '' : `-${name}`;
-        lines.push(`--t-font-${role}-size${suffix}: ${sizePt}pt;`);
-        lines.push(`--t-font-${role}${suffix}: ${f.style} ${f.weight} ${sizePt}pt ${f.family};`);
-      }
+    // Fall back to a default when the description carries no point size, so the
+    // size vars/shorthands are always emitted (see DEFAULT_FONT_SIZE_PT).
+    const basePt = f.sizePt ?? DEFAULT_FONT_SIZE_PT;
+    const sizes = {
+      small: roundHalf(basePt * FONT_SIZE_SCALE.small),
+      medium: basePt,
+      large: roundHalf(basePt * FONT_SIZE_SCALE.large),
+    };
+    for (const [name, sizePt] of Object.entries(sizes)) {
+      const suffix = name === 'medium' ? '' : `-${name}`;
+      lines.push(`--t-font-${role}-size${suffix}: ${sizePt}pt;`);
+      lines.push(`--t-font-${role}${suffix}: ${f.style} ${f.weight} ${sizePt}pt ${f.family};`);
     }
     return lines;
   }

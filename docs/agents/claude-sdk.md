@@ -154,12 +154,62 @@ cropped to one line until expanded. Richer turn surfaces:
 - **Interrupt** on `ctrl-c`.
 - Unknown event types surface as raw-JSON rows, never dropped.
 
+## Resume
+
+A headless session resumes like the terminal agent: `SdkSession.start()` adds
+the shared `resumeFlags` (`--resume <id>` / `--continue` / `--fork-session`,
+`src/agents/resume.ts`) so `claude -p` reloads its context. **`--resume` restores
+the model's context but does NOT replay history as stream events** (verified
+against claude-code 2.1.x — a resumed `-p` run emits only `init` + the new turn).
+So the *visible transcript* is rebuilt separately: `transcript.ts` reads claude's
+own on-disk JSONL (the same file `agentSessions.ts` reads for labels) into
+`ReplayEntry[]`, and `SdkSession.replay` re-emits them as the domain events a live
+turn produces, so `AgentConversation.wireSession`'s row handlers redraw the
+conversation. Replay runs in the constructor (before the workbench subscribes to
+changed-files, so historical edits seed rather than flood-open), guarded by a
+`replaying` flag that draws Agent/Monitor/Question as static rows.
+
+**Lazy reconnect:** a resume with no launch prompt rebuilds the transcript but does
+NOT spawn `claude -p --resume` until the user's first turn (`ensureConnected`, off
+`deferredStart`) — so restoring N agents on launch doesn't fire N claude processes
+up front. `serialize()` falls back to the resume id when the deferred process hasn't
+reported its own init session id yet, so a never-resumed agent still round-trips its
+id. A resume that carries a prompt (e.g. the worktree re-announce) starts eagerly.
+
+A resumed transcript ends with a permanent divider marking the boundary between
+restored history and the live continuation. While not yet reconnected the agent
+reports the `disconnected` status (a dim hollow dot, not live green — see
+`agentStatusIcon`) and the divider reads `── session disconnected · send a message
+to resume ──`; `ensureConnected` rewrites it to `── session resumed ──` (and clears
+the disconnected status) on the first turn — the divider row itself stays.
+
+`AgentConversation.serialize()` returns `{kind:'agent', agentKind:'claude-sdk',
+…, sessionId}`; `TabState.agentKind` tells `restoreAgent` which host to relaunch.
+A resume no longer forces `claude-tui` (`openAgent`); in-place resume of a headless
+agent is a restart (its session is wired into views built at construction).
+
+**Subagent restore:** Claude stores each subagent's conversation as
+`<sid>/subagents/agent-<n>.jsonl` + a `.meta.json` ({agentType, description,
+toolUseId}). `readSubagents` rebuilds each into a `SubagentInfo` keyed by its
+spawning `Agent` tool id and attaches it to that tool's `ReplayEntry`; `replay`
+seeds it into the session before the row is drawn, so the restored `Agent` tool
+spawns the real subagent button + drill-down page (not a static row) and is marked
+done. Monitor **inner** state is still not reconstructed (drawn as a static row).
+
+Scope: the main thread restores fully — user turns, assistant text/thinking, tool
+calls + results, the tasks panel, and spawned subagents' inner transcripts. The
+footer's model + context gauge is seeded from the transcript's latest assistant
+`usage` (`readContextSeed`), so a resumed agent shows its real context occupancy
+before the first turn; cost and the exact context-window size aren't in the
+transcript, so they settle on the first live `result`. Empty thinking blocks
+(transcript stores signatures, not text) don't render.
+
 ## Remaining / planned
 
-- [ ] **Conversation resume + session serialize for sdk** — `serialize()`
-      returns null, so sdk sessions are not persisted across editor
-      restart yet.
-- [ ] **Cost/context meter row** in the transcript.
+- [ ] **Monitor inner-state restore** — the `Monitor` tool draws as a static row
+      on resume; its live panel/output isn't reconstructed.
+- [ ] **Cost on resume** — the context gauge is seeded from the transcript, but
+      cost isn't recorded there; the footer cost shows `—` until the first turn.
 - [ ] **Token-level live streaming** via `--include-partial-messages`.
 - Swap `protocol.ts` hand-written types for the SDK's exported types once
   the dep is vendored and export names are verified.

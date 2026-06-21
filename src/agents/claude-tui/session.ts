@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Gio } from '../../gi.ts';
 import type { AgentDriver, AgentHost, AgentMode, AgentResume } from '../types.ts';
+import { resumeFlags } from '../resume.ts';
 import { parseActions } from '../actions.ts';
 import { AGENT_SYSTEM_PROMPT } from '../prompts.ts';
 
@@ -364,17 +365,6 @@ function claudeSessionFile(pid: number): string {
 }
 
 /** The claude resume flags for a resume request (empty when starting fresh). */
-function resumeFlags(resume?: AgentResume): string[] {
-  if (!resume) return [];
-  const base = resume.continue
-    ? ['--continue']
-    : resume.sessionId
-      ? ['--resume', resume.sessionId]
-      : [];
-  if (base.length && resume.fork) base.push('--fork-session');
-  return base;
-}
-
 /** Single-quote a string for embedding in a POSIX shell command. */
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;

@@ -46,7 +46,7 @@ Always use modern CSS variables. Four families, all `var(--…)`:
 - **libadwaita's** ([full
   catalog](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1-latest/css-variables.html)) —
   `--accent-bg-color`, `--window-bg-color`, `--border-color`, …
-- **our shared chrome props** — `--popover-radius`, `--font-size-small`, …
+- **our shared chrome props** — `--popover-radius`, `--popover-radius-small`, …
   (below).
 - **our theme color tokens** — `--t-ui-<dashed-path>`, one per `theme.ui.*`
   token (`--t-ui-editor-background`, `--t-ui-status-error`, …). See
@@ -68,7 +68,8 @@ widget. Prefer these over hard-coded literals so a change lands everywhere:
 | ------------------------- | --------- | ---------------------------------------------------------- |
 | `--popover-radius`        | `15px`    | Corner radius for floating chrome (pickers, which-key, search bar). Stays rounded when maximised, unlike libadwaita's `--window-radius`. |
 | `--popover-radius-small`  | `6px`     | Tighter radius for compact in-text chrome (completion popup). |
-| `--font-size-small`       | `0.85em`  | Secondary text that sits beside full-size text — metadata, counts, list detail columns. |
+
+Font sizes are **not** here — they come from the font store (see [Fonts](#fonts-families)).
 
 ## Fonts (families)
 
@@ -112,21 +113,19 @@ they pull the *system* monospace directly, bypassing the store.
 
 ## Font sizes
 
-There is **one** secondary-text size. Source it consistently:
+Sizes come from the font store (`src/fonts.ts`) as a small / medium / large
+step per role — there is no separate size token. Reuse the role variables in
+a **CSS-styled widget** (its own label/box):
 
-- **CSS-styled widget** (its own label/box): apply a class with
-  `font-size: var(--font-size-small)`. Example: the diagnostics counts in
-  `WorkbenchStatus` (`.zym-status-count`) and the per-row file count in
-  `WorkbenchList`.
-- **Inline sub-span** inside a larger markup label: use Pango
-  `size="smaller"` (≈ 0.83×, the closest markup equivalent — markup can't
-  read CSS variables). Example: the `+N/-M/↑/↓` counts in `GitBranchButton`,
-  picker detail columns.
+- `font-size: var(--t-font-ui-size-small)` (or `-large`;
+  `--t-font-monospace-size-*` for mono surfaces). Examples: the diagnostics
+  counts in `WorkbenchStatus` (`.zym-status-count`) and the per-row file count
+  in `WorkbenchList`.
 
-Both render at essentially the same size; the split exists only because the
-two mechanisms can't share a literal. Don't introduce new ad-hoc sizes
-(`0.9em`, `size="85%"`, …) — extend the table above with a named variable
-instead.
+The store always publishes these (a font description with no size of its own
+falls back to a default point size — see `DEFAULT_FONT_SIZE_PT`), so they
+resolve unconditionally. Don't introduce ad-hoc sizes — add a step to
+`FONT_SIZE_SCALE` in `fonts.ts` if you need one.
 
 ## Colors
 
@@ -175,6 +174,22 @@ one exception — the glyph is embedded in the tab title text.)
 Glyphs live in `src/ui/nerdfont.ts` (`NERDFONT`, a curated catalog grouped
 by purpose); `Icons` are named UI roles aliased onto it. File-tree icons are
 the separate `fileIcons.ts` table.
+
+The one real-image exception is a **bundled symbolic SVG**: a monochrome
+`*-symbolic.svg` shipped under `assets/`, turned into a recoloring `Gtk.Image`
+by `symbolicImage(file, size)` (`icons.ts`). It loads as a `Gtk.IconPaintable`,
+so GTK tints it to the widget's `color` like any symbolic icon — it follows the
+theme and state classes (`.is-active`, …). Reserve it for art a glyph can't
+supply (the empty-panel sleeping cat, `cat-sleeping-symbolic.svg`); still never
+pull named icons from the *system* theme (`Gtk.Image(iconName)`).
+
+## Keybinding badges
+
+Render a keybinding as a chip with `keycap(keys)` (`src/ui/Keycap.ts`): a
+monospace `.keycap` pill labelled with the binding in **canonical form** — the
+keymap's keystroke string verbatim (`space f f`, `ctrl-w v`). Its border and
+background derive from `currentColor`, so it adopts whatever text color its
+context sets. Used by the empty-panel welcome cheatsheet.
 
 ## Grouped buttons
 

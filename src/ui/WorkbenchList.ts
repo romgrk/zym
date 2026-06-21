@@ -76,13 +76,13 @@ addStyles(`
   #WorkbenchRow .workbenchrow-files label {
     color: var(--t-ui-editor-foreground);
     opacity: 0.75;
-    font-size: var(--font-size-small);
+    font-size: var(--t-font-ui-size-small);
   }
   #WorkbenchRow .workbenchrow-files:hover label { opacity: 1; }
   #WorkbenchRow .workbenchrow-branch {
     color: var(--t-ui-editor-foreground);
     opacity: 0.75;
-    font-size: var(--font-size-small);
+    font-size: var(--t-font-ui-size-small);
   }
 `);
 

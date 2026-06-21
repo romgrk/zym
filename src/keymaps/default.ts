@@ -287,6 +287,12 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     space: 'plugin-manager:toggle-switch',
   },
 
+  // AskUserQuestion card: release the `space` leader while it's open so space
+  // reaches the focused control natively — toggling the focused check/radio and
+  // typing literal spaces in a note entry. (Matches via the card root class on any
+  // focused descendant; the class is dropped once the question is answered.)
+  '.zym-conversation-question': { space: 'unset!' },
+
   // Any widget that takes literal text input carries the `.has-text-input` class
   // (text entries, the terminal / agent terminal, the editor in insert mode).
   // Releasing `space` there with `unset!` lets it type a literal space instead of
