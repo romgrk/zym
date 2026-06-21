@@ -202,6 +202,10 @@ Open, cross-kind: agent profiles/customization, richer management UX, reviewing 
 agent's diff (needs the editor Diff renderer first), and worktree lifecycle
 (keep/merge/discard).
 
+## TypeScript
+
+- Parameter properties (`constructor(private foo: T)`) are forbidden — declare fields explicitly.
+
 ## Notes
 
 ### Inspiration
