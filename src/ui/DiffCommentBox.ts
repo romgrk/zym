@@ -25,6 +25,7 @@ addStyles(`
     margin: var(--t-spacing);
     padding: 6px 8px;
   }
+  #DiffCommentInput { margin: var(--t-spacing) calc(2 * var(--t-spacing)); }
   /* Let the card background show through the editor. */
   #DiffCommentInput textview,
   #DiffCommentInput textview text { background: transparent; }
