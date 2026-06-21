@@ -58,10 +58,21 @@ For more type-aware bug rules (`no-floating-promises` itself is the obvious next
 one), swap the base `recommended` → `recommendedTypeChecked`; the project
 service is already wired up in the type-aware block.
 
-### Known intentional findings
+### Intentional inline disables
 
-Some flagged spots are deliberate and want an inline `// eslint-disable-next-line`
-rather than a config change, e.g. the `\x00` sentinel regex in
-`src/ui/markdownMarkup.ts` (`no-control-regex`), and the `createRequire(...)`
-call in `src/poc/inline-overlay.ts` (`local/no-floating-cleanup` — a callable
-return that isn't actually a cleanup function).
+A handful of deliberate spots carry an inline `// eslint-disable` rather than a
+config change: the `\x00` sentinel regex in `src/ui/markdownMarkup.ts`
+(`no-control-regex`), the `debugger` statements in `src/util/assert.ts`, the
+emscripten-Module `this` capture in `src/syntax/grammar.ts` (`no-this-alias`),
+the forward-referenced `leaf` in `src/ui/PanelGroup.ts` (`prefer-const`), and the
+ported-but-unwired mouse handlers in `VimState.observeMouse` (vim-mode-plus #830).
+
+### Outstanding (not auto-fixed)
+
+`local/no-floating-cleanup` reports 6 discarded `eventKit` disposers in
+`src/ui/AppWindow.ts` (editor `onModifiedChange`; agent `onTitleChange` /
+`onDidChangeStatus` / `onDidChangeWorktree` / `onDidChangeFiles`). These are real
+discarded subscriptions; whether they leak depends on whether the editor/agent
+emitter is torn down on tab close. Pending a decision: capture them into a
+per-tab `CompositeDisposable` disposed in the close path, or `void` the ones
+whose publisher disposal already frees them.
