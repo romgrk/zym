@@ -1,0 +1,26 @@
+# Logs / OS cruft
+*.log
+.DS_Store
+
+# Dev tooling & config
+.claude/
+.prettierignore
+eslint.config.js
+eslint-rules/
+tsconfig.json
+AGENTS.md
+
+# Docs & media (not needed at runtime)
+docs/
+img/
+scripts/
+
+# Tests
+**/*.test.ts
+
+# Proof-of-concept experiments
+src/poc/
+
+# Lockfiles / workspace (consumers resolve their own)
+pnpm-lock.yaml
+pnpm-workspace.yaml
