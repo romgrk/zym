@@ -1248,36 +1248,31 @@ export class TextEditor implements DocumentHost {
     // past the cap the ScrolledWindow keeps that height and scrolls internally. The outer box
     // opts out of vexpand below so the natural height propagates up to the editor root.
     if (this.growToContent) {
+      // propagate-natural-height makes the ScrolledWindow size to the view's content, so
+      // the input grows/shrinks with its text (cap below). That handles edits natively and
+      // exactly — no manual height math.
       scrolled.setPropagateNaturalHeight(true);
       const padding = this.paddingOverride ?? INPUT_PADDING;
-      // The growth cap in px, if any: N text lines (line-heights + the top+bottom padding
-      // the natural height also includes, so the cap counts visible text rows regardless
-      // of padding), or a raw max height. Undefined → unbounded.
-      const capHeight = (): number | undefined =>
-        this.growMaxLines !== undefined
-          ? Math.round(this.growMaxLines * this.editorModel.getLineHeightInPixels() + 2 * padding)
-          : this.growMaxHeight;
-      // GtkScrolledWindow's propagate-natural-height can report 0 before the view's first
-      // layout, so an unedited input collapsed to "0 lines" until its first edit. Drive a
-      // min content height from the view's measured natural height instead — but measure on
-      // a one-shot frame-clock tick, *after* GTK's layout pass, so it reflects the just-
-      // applied edit/allocation. Measuring inline reads the pre-relayout size (stale: the
-      // initial collapse, and a lag on shrink) and is also a few px off the settled height.
-      let pendingMeasure = false;
-      const applyHeight = () => {
-        const cap = capHeight();
+      // Cap at N *text* lines (line-heights + the top+bottom padding the natural height
+      // also includes) or a raw max height; past it the ScrolledWindow scrolls. The line
+      // height needs the resolved font, so (re)apply on map once it's known.
+      const applyCap = () => {
+        const cap =
+          this.growMaxLines !== undefined
+            ? Math.round(this.growMaxLines * this.editorModel.getLineHeightInPixels() + 2 * padding)
+            : this.growMaxHeight;
         if (cap !== undefined) scrolled.setMaxContentHeight(cap);
-        const width = this.view.getWidth();
-        const natural = this.view.measure(Gtk.Orientation.VERTICAL, width > 0 ? width : -1)[1];
-        if (natural > 0) scrolled.setMinContentHeight(cap !== undefined ? Math.min(natural, cap) : natural);
       };
-      const scheduleMeasure = () => {
-        if (pendingMeasure || !this.view.getRealized()) return; // map (below) covers the unrealized case
-        pendingMeasure = true;
-        (this.view as any).addTickCallback(() => { pendingMeasure = false; applyHeight(); return false; });
-      };
-      this.connect(this.view, 'map', scheduleMeasure);
-      this.editorModel.onDidChangeText(scheduleMeasure);
+      applyCap();
+      // The view's *first* natural-height allocation comes out stale (collapsed) — the
+      // input stayed short until its first edit forced a relayout. Force that relayout
+      // ourselves on the next frame-clock tick after map (when it's realized + allocated),
+      // so it adopts its true height straight away.
+      this.connect(this.view, 'map', () => {
+        applyCap();
+        let frames = 0;
+        (this.view as any).addTickCallback(() => { this.view.queueResize(); return ++frames < 2; });
+      });
     }
 
     // Scroll-past-end (`editor.scrollPastEnd`): GtkSourceView has no native option,
