@@ -1684,6 +1684,19 @@ export class EditorModel {
     this.view.getVadjustment()?.setValue(top);
   }
 
+  /**
+   * Pin `row` to the very top of the viewport by setting the scroll adjustment
+   * directly to that line's document-pixel offset — an instant jump, unlike
+   * `scrollToBufferPosition` (`scroll_to_iter`), which on a not-yet-laid-out view
+   * animates toward an estimate and can undershoot. Needs a realized, laid-out view
+   * (the caller defers until `getHeight() > 0`); a no-op otherwise.
+   */
+  setTopBufferRow(row: number): void {
+    if (!this.view.getRealized()) return;
+    const loc = (this.view as any).getIterLocation(this.iterAtPoint({ row, column: 0 })) as PixelRect;
+    this.setScrollTop(loc.y);
+  }
+
   /** The viewport height in pixels (0 when not realized). */
   getHeight(): number {
     return (this.view as any).getHeight();

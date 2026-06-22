@@ -1887,17 +1887,23 @@ export class TextEditor implements DocumentHost {
     if (this.document.isLoaded) this.attachToLoadedDocument();
     else this.document.ensureLoaded();
     // Restored unsaved content first (it replaces the buffer + resets the cursor),
-    // then the saved cursor, then the saved scroll (overrides cursor-centering).
+    // then the saved cursor, then the saved scroll. With a saved scroll we place the
+    // cursor WITHOUT revealing it and pin the viewport to the saved top row directly:
+    // the cursor was on-screen within that saved viewport already, so a reveal would
+    // only fight the scroll restore (and `scroll_to_mark`'s deferred reveal could land
+    // after it, re-centering the cursor and undoing the restore).
     if (this.pendingUnsaved !== null) {
       this.document.restoreUnsaved(this.pendingUnsaved);
       this.pendingUnsaved = null;
     }
     if (this.pendingCursor) {
-      this.restoreCursor(this.pendingCursor);
+      const [row, column] = this.pendingCursor;
+      this.editorModel.setCursorBufferPosition({ row, column });
+      if (this.pendingScroll === null) this.editorModel.scrollCursorOnscreen(); // no saved scroll → reveal it
       this.pendingCursor = null;
     }
     if (this.pendingScroll !== null) {
-      this.editorModel.scrollToBufferPosition({ row: this.pendingScroll, column: 0 });
+      this.applyRestoredScroll(this.pendingScroll);
       this.pendingScroll = null;
     }
     this.onActivate?.();
@@ -2096,7 +2102,27 @@ export class TextEditor implements DocumentHost {
       this.pendingScroll = row;
       return;
     }
-    this.editorModel.scrollToBufferPosition({ row, column: 0 });
+    this.applyRestoredScroll(row);
+  }
+
+  /** Pin `row` to the top of the viewport with a direct, instant scroll (no animation
+   *  toward the cursor). When a restored tab is first shown the view often has no
+   *  geometry yet (`getHeight()` 0), so `setTopBufferRow` would no-op — retry on tick
+   *  callbacks until it's laid out, then set it once and stop. `activate` runs from the
+   *  view's `map`, so it is already mapped here and tick callbacks fire; if ever called
+   *  before map, arm on map instead (a tick added while unmapped wouldn't run). */
+  private applyRestoredScroll(row: number): void {
+    let frames = 0;
+    const apply = () => {
+      if (this.view.getRealized() && this.view.getHeight() > 0) {
+        this.editorModel.setTopBufferRow(row);
+        return false; // G_SOURCE_REMOVE
+      }
+      return ++frames < 120; // keep trying ~2s then give up
+    };
+    if (!apply()) return; // already laid out → set once, done
+    if ((this.view as any).getMapped()) (this.view as any).addTickCallback(apply);
+    else this.connect(this.view, 'map', () => (this.view as any).addTickCallback(apply));
   }
 
   /** Restore unsaved content (session restore): replace the buffer and keep it
