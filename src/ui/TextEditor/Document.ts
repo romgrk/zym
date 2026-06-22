@@ -32,6 +32,7 @@ import { ProjectionView } from './ProjectionView.ts';
 import type { Item } from './ViewProjection.ts';
 import type { SyntaxProjection } from '../../syntax/SyntaxProjection.ts';
 import type { TextEditorSource } from './TextEditorSource.ts';
+import type { TextIter } from './iter.ts';
 
 // The stable source key for this document's model in each view's ProjectionView. A normal
 // file is single-source, so the key is arbitrary but must match the projection's segment.
@@ -39,10 +40,11 @@ const SOURCE_KEY = 'model';
 
 // node-gtk quirk: Gio.File instance methods are undefined on the concrete instance,
 // so reach them through the prototype (see config/load.ts).
-const GioFileProto = (Gio.File as any).prototype;
+const GioFileProto = (Gio.File as unknown as { prototype: ReturnType<typeof Gio.File.newForPath> }).prototype;
 // node-gtk returns out-param iters directly or as [ok, iter]; normalize.
-const asIter = (res: any): any => (Array.isArray(res) ? res[res.length - 1] : res);
-const iterAtOffset = (buf: any, off: number): any => asIter(buf.getIterAtOffset(off));
+const asIter = (res: TextIter | [boolean, TextIter]): TextIter =>
+  (Array.isArray(res) ? res[res.length - 1] : res) as TextIter;
+const iterAtOffset = (buf: SourceBuffer, off: number): TextIter => asIter(buf.getIterAtOffset(off));
 
 /** The view-side reactions a Document routes to the active (focused) view: cursor
  *  restore + focus on load, modal dialogs, banners, and the cursor for LSP requests. */
@@ -131,19 +133,19 @@ export class Document implements TextEditorSource {
   constructor() {
     this.model = new GtkSource.Buffer();
     this.model.setEnableUndo(true);
-    (this.model as any).on('modified-changed', () => {
+    this.model.on('modified-changed', () => {
       for (const callback of this.modifiedHandlers) callback();
     });
     // A model change (a view's write-through, or undo/redo) → tell the LSP (document-level:
     // one didChange off the model). Each view's ProjectionView mirrors the change into its
     // own view buffer itself (reverse-sync), so there's no manual propagate here. Signals
     // fire pre-mutation, so the offset / deleted text describe the pre-edit state.
-    (this.model as any).on('insert-text', (iter: any, text: string) => {
+    this.model.on('insert-text', (iter: TextIter, text: string) => {
       this.lspDidChange([{ start: this.pointAt(iter.getOffset()), oldText: '', newText: text }]);
     });
-    (this.model as any).on('delete-range', (start: any, end: any) => {
+    this.model.on('delete-range', (start: TextIter, end: TextIter) => {
       const so = start.getOffset();
-      const oldText = (this.model as any).getText(start, end, true);
+      const oldText = this.model.getText(start, end, true);
       this.lspDidChange([{ start: this.pointAt(so), oldText, newText: '' }]);
     });
   }
@@ -152,16 +154,16 @@ export class Document implements TextEditorSource {
 
   /** The canonical document text. */
   getText(): string {
-    return (this.model as any).getText(this.model.getStartIter(), this.model.getEndIter(), true);
+    return this.model.getText(this.model.getStartIter(), this.model.getEndIter(), true);
   }
 
   /** Text of model row `row` (no trailing newline). For the LSP line cache. */
   private lineText(row: number): string {
-    const start = asIter((this.model as any).getIterAtLine(row));
+    const start = asIter(this.model.getIterAtLine(row));
     if (!start) return '';
     const end = start.copy();
     if (!end.endsLine()) end.forwardToLineEnd();
-    return (this.model as any).getText(start, end, true);
+    return this.model.getText(start, end, true);
   }
 
   private pointAt(offset: number): Point {
