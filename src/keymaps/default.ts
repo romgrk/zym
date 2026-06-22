@@ -215,7 +215,9 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'z M': 'search:collapse-all',
     'z R': 'search:expand-all',
   },
-  '#TextEditor.continuous-diff': {
+  // Scoped to `.normal-mode` so the `z`/`g` prefixes don't shadow typing those characters while
+  // inserting (this surface is editable) — same reason `K: lsp:hover` is normal-mode only.
+  '#TextEditor.continuous-diff.normal-mode': {
     'z o': 'diff:expand-context', // reveal more unchanged lines at the nearest gap
     'z R': 'diff:expand-all', // reveal all unchanged lines (show the full files)
     'z m': 'diff:collapse-context', // re-collapse expanded context
