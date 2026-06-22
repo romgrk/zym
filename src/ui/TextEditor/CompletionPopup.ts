@@ -26,6 +26,10 @@ const SELECTED_BG = theme.ui.surface.selected;
 const DETAIL_COLOR = theme.ui.text.muted;
 const LIST_WIDTH_PX = 420;
 const DOC_WIDTH_PX = 440;
+const DIVIDER_PX = 1; // the vertical separator between the list and the doc pane
+// The horizontal space the doc pane adds to the panel. When the pane opens on the
+// *left* of the list, the list's anchor inset grows by this so its column stays put.
+const DOC_PANEL_PX = DOC_WIDTH_PX + DIVIDER_PX;
 const MAX_HEIGHT_PX = 240;
 // A row's left structure: card border + row padding + the fixed-width kind-icon
 // column + the icon's right margin. `showAt` shifts the popup left by this so the
@@ -34,7 +38,10 @@ const BORDER_PX = 1;
 const ROW_PADDING_PX = 8;
 const ICON_WIDTH_PX = 18;
 const ICON_MARGIN_PX = 8;
-const LABEL_INSET_PX = BORDER_PX + ROW_PADDING_PX + ICON_WIDTH_PX + ICON_MARGIN_PX;
+// Optical correction: the structural inset lands the label ~3px left of the word, so trim
+// the inset by 3 (shifts the whole popup right 3px) to line the text up precisely.
+const LABEL_ALIGN_FIX_PX = 3;
+const LABEL_INSET_PX = BORDER_PX + ROW_PADDING_PX + ICON_WIDTH_PX + ICON_MARGIN_PX - LABEL_ALIGN_FIX_PX;
 
 addStyles(`
   #CompletionPopup {
@@ -69,18 +76,26 @@ export class CompletionPopup {
   private readonly docScroller: InstanceType<typeof Gtk.ScrolledWindow>;
   private readonly docCard: MarkupCard; // the doc pane's content — same card as LSP hover
   private readonly popover: EditorPopover;
+  private readonly model: EditorModel;
+  private readonly view: SourceView;
   private entries: RankedCompletion[] = [];
   private shown = false;
   private anchor: { row: number; column: number } | null = null; // word-start, for re-anchoring
   // Once any entry's docs have been shown, the doc pane stays open (empty for
   // doc-less entries) so cycling doesn't flicker it open/closed. Reset per show.
   private docPaneSticky = false;
+  // Which side of the list the doc pane opens on. It goes right by default, but flips
+  // left when there isn't room on the right — so the widened popover never has to slide
+  // back on-screen (which would drag the list off its anchored column). See `chooseDocSide`.
+  private docOnLeft = false;
 
   constructor(
     model: EditorModel,
     view: SourceView,
     highlightCode?: (code: string, lang: string | undefined) => string | null,
   ) {
+    this.model = model;
+    this.view = view;
     this.docCard = new MarkupCard({ highlight: highlightCode });
     this.listBox = new Gtk.ListBox();
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
@@ -145,11 +160,60 @@ export class CompletionPopup {
 
   /** Re-anchor at the stored point: EditorPopover left-aligns by the panel's *current*
    *  measured width, so calling this after the doc pane opens keeps the list's left edge put
-   *  (the doc pane grows rightward) instead of the popover sliding to re-centre. Goes through
-   *  the deferred `showAt` — `updateDoc` can run inside the async doc-resolve continuation,
-   *  where synchronous GTK layout (measure) would freeze node-gtk. */
+   *  (the doc pane grows away from it — right, or left when there's no room on the right)
+   *  instead of the popover sliding to re-centre. Goes through the deferred `showAt` —
+   *  `updateDoc` can run inside the async doc-resolve continuation, where synchronous GTK
+   *  layout (measure) would freeze node-gtk. */
   private reanchor(): void {
-    if (this.shown && this.anchor) this.popover.showAt(this.anchor, LABEL_INSET_PX);
+    if (!this.shown || !this.anchor) return;
+    // The list label always lands on the word's column. When the doc pane sits on the
+    // left, the list is no longer the panel's first child, so the inset grows by the doc
+    // pane's width to keep that column fixed (the pane extends leftward, the list stays).
+    const inset = LABEL_INSET_PX + (this.docPaneSticky && this.docOnLeft ? DOC_PANEL_PX : 0);
+    this.popover.showAt(this.anchor, inset);
+  }
+
+  /** Decide which side the doc pane should open on, keeping the list pinned to the cursor
+   *  column either way. Prefer the right (keeps the common case stable); flip left when the
+   *  right can't fit the pane but the left can — so the widened popover doesn't have to slide
+   *  back on-screen (the slide is what drags the list off its column). When *neither* side has
+   *  room (the panel is wider than the window can hold at this column), the pane overflows no
+   *  matter what, so open it on the side with more room — the least overflow, and the least
+   *  the popover can be shifted off-screen. Geometry is in toplevel-surface pixels, the box
+   *  GTK positions the popover within. */
+  private chooseDocSide(): boolean {
+    if (!this.anchor) return false;
+    const rect = this.model.pixelRectForBufferPosition(this.anchor);
+    if (!rect) return false;
+    try {
+      const root = (this.view as any).getRoot?.();
+      const surfaceWidth = root?.getWidth?.() ?? 0;
+      if (!surfaceWidth) return false;
+      const res: any = (this.view as any).computeBounds(root);
+      const bounds = Array.isArray(res) ? res[1] : res;
+      const originX = bounds ? bounds.getX() : 0;
+      const listLeftX = originX + rect.x - LABEL_INSET_PX; // the list's left edge, toplevel-relative
+      const leftRoom = listLeftX; // free space from the surface's left edge to the list
+      const rightRoom = surfaceWidth - (listLeftX + LIST_WIDTH_PX); // …to its right edge
+      if (rightRoom >= DOC_PANEL_PX) return false; // right fits → right
+      if (leftRoom >= DOC_PANEL_PX) return true; // only left fits → left
+      return leftRoom > rightRoom; // neither fits → the roomier side overflows less
+    } catch {
+      return false; // geometry unavailable → keep the default right side
+    }
+  }
+
+  /** Order the panel's children to match `docOnLeft` (doc · divider · list, or the reverse). */
+  private applyDocOrder(): void {
+    if (this.docOnLeft) {
+      this.panel.reorderChildAfter(this.docScroller, null);
+      this.panel.reorderChildAfter(this.divider, this.docScroller);
+      this.panel.reorderChildAfter(this.listScroller, this.divider);
+    } else {
+      this.panel.reorderChildAfter(this.listScroller, null);
+      this.panel.reorderChildAfter(this.divider, this.listScroller);
+      this.panel.reorderChildAfter(this.docScroller, this.divider);
+    }
   }
 
   hide(): void {
@@ -248,8 +312,16 @@ export class CompletionPopup {
     else this.docCard.clear();
     this.divider.setVisible(this.docPaneSticky);
     this.docScroller.setVisible(this.docPaneSticky);
-    // The pane just opened → the panel widened; re-anchor so the list's left edge stays put.
-    if (this.docPaneSticky !== wasOpen) this.reanchor();
+    // The pane just opened → the panel widened. Pick the side with room (so GTK never has to
+    // slide the popover back on-screen), order the children to match, then re-anchor so the
+    // list's column stays put while the pane grows away from it.
+    if (this.docPaneSticky !== wasOpen) {
+      if (this.docPaneSticky) {
+        this.docOnLeft = this.chooseDocSide();
+        this.applyDocOrder();
+      }
+      this.reanchor();
+    }
   }
 
   private buildRow({ item, positions }: RankedCompletion): InstanceType<typeof Gtk.ListBoxRow> {
