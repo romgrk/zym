@@ -4,21 +4,26 @@
  * Backed by the `git` CLI (`./git/cli.ts`) — the same layer the Source Control
  * panel and mutations already use. We previously read via libgit2/Ggit, but
  * node-gtk never frees the GObjects GI hands back from `<Type>.new()` /
- * transfer-full returns (romgrk/node-gtk#446), so the 1.5s poll's per-tick
+ * transfer-full returns (romgrk/node-gtk#446), so the old per-refresh
  * Repository/Diff/Tree/Ref churn grew the heap without bound and GC pauses became
  * increasingly long UI hangs. The CLI has zero GObject churn, and git is the
  * source of truth (it honours the user's hooks/config).
  *
  * The `GitRepo` reads are synchronous by contract — command `when:` predicates and
  * the status widgets read them on the render path and cannot await. We satisfy
- * that with an async background poll that updates cached state and fires
+ * that with async background refreshes that update cached state and fire
  * `onChange`; the getters then return those cached fields with no I/O. The cache
  * is warmed up asynchronously at construction (empty until the first status
  * lands), so construction never blocks the UI thread.
  *
- * `onChange` fires when the branch / ahead-behind / working-tree signature moves.
- * A branch switch is caught instantly via a chokidar watch on `HEAD`; everything
- * else is the low-priority poll.
+ * Refreshes are mostly event-driven: a chokidar watch on the git dir's `HEAD` +
+ * `index` catches branch switches, commits, staging, resets, and merges the
+ * instant they land, and the editor calls `refresh()` directly after the edits
+ * and mutations it drives (text edits, hunk staging, agent file writes). The one
+ * thing those miss is an *external* tool editing a tracked file without staging it
+ * (no `index`/`HEAD` move, no editor event); a slow 60s heartbeat poll backstops
+ * that case, so it self-corrects within a minute even with nothing else watching
+ * the working tree's content. At ~1 git status/min the heartbeat is negligible.
  */
 import * as Path from 'node:path';
 import * as Fs from 'node:fs';
@@ -42,7 +47,10 @@ export { Result } from './core/Result.ts';
  */
 export type GitOpResult = Result<void>;
 
-const POLL_INTERVAL_MS = 1500;
+// Slow heartbeat backstop for changes no watch/`refresh()` catches — an external
+// tool editing a tracked file without staging it. Long enough to be negligible
+// (~1 git status/min), short enough that such edits self-correct within a minute.
+const HEARTBEAT_INTERVAL_MS = 60_000;
 
 /** Working-tree line delta vs HEAD (tracked changes, `git diff --numstat HEAD`). */
 export interface GitStatus {
@@ -142,8 +150,9 @@ export interface GitRepo {
   checkoutPullRequest(number: number): Promise<GitOpResult>;
   /** Subscribe to branch / working-tree / busy changes. Returns an unsubscribe fn. */
   onChange(callback: () => void): () => void;
-  /** Re-check the working tree now (and fire `onChange` if it moved) instead of
-   *  waiting for the next poll — e.g. right after an agent edits files. */
+  /** Re-check the working tree now (and fire `onChange` if it moved) — e.g. right
+   *  after an agent or the editor edits files, instead of waiting up to 60s for the
+   *  heartbeat poll to notice content changes. */
   refresh(): void;
   /** Stop watching and release resources. */
   dispose(): void;
@@ -158,9 +167,9 @@ export function openGitRepo(cwd: string): GitRepo {
 
 // Ref-counted GitRepo pool keyed by repository root. Workbenches sharing a root
 // (the common N agents : 1 worktree case, and every agent that stays in the main
-// checkout) share one polling CliGitRepo instead of each running its own 1.5s
-// poll + HEAD monitor. A linked worktree has its *own* top-level, so it keys
-// separately from the main checkout — exactly the per-worktree git we want.
+// checkout) share one CliGitRepo instead of each running its own HEAD/index watch.
+// A linked worktree has its *own* top-level, so it keys separately from the main
+// checkout — exactly the per-worktree git we want.
 interface RepoEntry {
   repo: GitRepo;
   count: number;
@@ -233,11 +242,15 @@ class CliGitRepo implements GitRepo {
 
   private readonly listeners = new Set<() => void>();
   private watcher: FSWatcher | null = null;
-  private pollId: NodeJS.Timeout | null = null;
+  private pollId: NodeJS.Timeout | null = null; // 60s heartbeat backstop
   private watching = false;
-  private reading = false; // a poll's git calls are in flight — don't overlap
+  private reading = false; // a refresh's git calls are in flight — don't overlap
+  private pendingPoll = false; // an event arrived mid-read — re-run once it finishes
   private busyCount = 0;
-  private disposed = false; // drop async warm-up/poll callbacks that land post-dispose
+  private disposed = false; // drop async warm-up/refresh callbacks that land post-dispose
+  // Untracked line-count memo, keyed by path → (mtime, size, lines). Skips re-reading
+  // unchanged untracked files on every refresh (see `countNewLinesCached`).
+  private readonly untrackedCache = new Map<string, { mtimeMs: number; size: number; lines: number }>();
 
   constructor(cwd: string) {
     this.cwd = cwd;
@@ -330,7 +343,7 @@ class CliGitRepo implements GitRepo {
   }
 
   refresh(): void {
-    void this.pollOnce();
+    this.requestPoll();
   }
 
   dispose(): void {
@@ -346,9 +359,9 @@ class CliGitRepo implements GitRepo {
 
   // --- internals -------------------------------------------------------------
 
-  /** Async warm-up: resolve the git dir (for the HEAD monitor) and prime the
+  /** Async warm-up: resolve the git dir (for the file watch) and prime the
    *  cached state, both off the UI thread, so constructing a repo never blocks.
-   *  Until they land the getters return the empty state; the warm-up poll's
+   *  Until they land the getters return the empty state; the warm-up refresh's
    *  notify fills the UI in (subscribers are added on the same tick as the
    *  acquire, so they're registered before the async status returns). */
   private warmUp(): void {
@@ -358,38 +371,57 @@ class CliGitRepo implements GitRepo {
     void this.pollOnce(); // initial status/numstat/ls-files → populates state + notifies
   }
 
-  /** Resolve the absolute git dir (for the HEAD monitor) off the UI thread. */
+  /** Resolve the absolute git dir (for the file watch) off the UI thread. */
   private async resolveGitDir(): Promise<void> {
     const result = await runGit(this.root!, ['rev-parse', '--absolute-git-dir']);
     if (this.disposed || result.isErr()) return;
     this.gitDir = result.unwrap().trim() || null;
-    if (this.watching) this.startHeadWatch(); // subscribed before the git dir landed
+    if (this.watching) this.startWatch(); // subscribed before the git dir landed
   }
 
   private ensureWatching(): void {
     if (this.watching || !this.root) return;
     this.watching = true;
-    this.startHeadWatch(); // no-op until the async warm-up resolves the git dir
+    this.startWatch(); // no-op until the async warm-up resolves the git dir
 
-    // Working-tree edits have no single file to watch; poll and diff the
-    // signature so listeners only fire when the visible numbers actually move.
-    this.pollId = setInterval(() => {
-      void this.pollOnce();
-    }, POLL_INTERVAL_MS);
+    // Slow heartbeat: backstops external working-tree edits the HEAD/index watch
+    // and `refresh()` don't see. `requestPoll` coalesces with in-flight reads, and
+    // `pollOnce` no-ops when the signature hasn't moved, so an idle tick is one
+    // `git status`/`diff` and no repaint.
+    this.pollId = setInterval(() => this.requestPoll(), HEARTBEAT_INTERVAL_MS);
+    this.pollId.unref?.();
   }
 
-  // Branch switches / commits rewrite HEAD — watch it (via chokidar, which handles
-  // the atomic rename git does) for an instant refresh rather than waiting on the
-  // poll. The git dir is resolved asynchronously by the warm-up, so this is safe to
-  // call before then (no-op) — the warm-up calls it once the dir lands.
-  private startHeadWatch(): void {
+  // Watch the git dir's `HEAD` + `index` (via chokidar, which handles the atomic
+  // renames git does) so branch switches, commits, staging, resets, and merges
+  // refresh the instant they land, rather than waiting up to 60s for the heartbeat.
+  // The git dir is resolved asynchronously by the warm-up, so this is safe to call
+  // before then (no-op) — the warm-up calls it once the dir lands.
+  private startWatch(): void {
     if (this.disposed || this.watcher || !this.gitDir) return;
-    this.watcher = chokidarWatch(Path.join(this.gitDir, 'HEAD'), { ignoreInitial: true });
+    // `HEAD`: branch/commit moves. `index`: staging, reset, merge/conflict state,
+    // and external `git add`. Watching the files (not the dir) skips `index.lock`
+    // churn; chokidar follows git's atomic replace of each.
+    this.watcher = chokidarWatch(
+      [Path.join(this.gitDir, 'HEAD'), Path.join(this.gitDir, 'index')],
+      { ignoreInitial: true },
+    );
     this.watcher.on('all', () => {
-      this.lastSignature = ''; // HEAD moved — branch/ahead-behind may differ
-      void this.pollOnce();
+      this.lastSignature = ''; // HEAD/index moved — branch/ahead-behind/staging may differ
+      this.requestPoll();
     });
-    this.watcher.on('error', () => {}); // transient FS error — fall back to the poll
+    this.watcher.on('error', () => {}); // transient FS error — recovered by the next refresh()
+  }
+
+  /** Request a refresh, coalescing with any in-flight one. With no periodic timer,
+   *  an event that lands while a read is running must not be dropped — record it
+   *  and re-run once the current read finishes (see `pollOnce`'s `finally`). */
+  private requestPoll(): void {
+    if (this.reading) {
+      this.pendingPoll = true;
+      return;
+    }
+    void this.pollOnce();
   }
 
   /** Async refresh: status + numstat; on a signature change, also refresh the
@@ -406,7 +438,8 @@ class CliGitRepo implements GitRepo {
       if (this.disposed) return;
       const parsed = parseStatus(status.unwrap());
       const numstat = numstatResult.isOk() ? parseNumstat(numstatResult.unwrap()) : new Map<string, LineDelta>();
-      const untrackedAdded = this.untrackedInsertions(parsed);
+      const untrackedAdded = await this.untrackedInsertions(parsed);
+      if (this.disposed) return;
       const sig = signature(parsed, numstat, untrackedAdded);
       if (sig === this.lastSignature) return; // nothing moved
 
@@ -423,6 +456,11 @@ class CliGitRepo implements GitRepo {
       this.notify();
     } finally {
       this.reading = false;
+      // An event that arrived mid-read was deferred — service it now.
+      if (this.pendingPoll && !this.disposed) {
+        this.pendingPoll = false;
+        this.requestPoll();
+      }
     }
   }
 
@@ -470,16 +508,43 @@ class CliGitRepo implements GitRepo {
   }
 
   /** Total insertions contributed by untracked files (counted as all-new lines,
-   *  like `git diff` with SHOW_UNTRACKED_CONTENT). Read once per poll and fed to
+   *  like `git diff` with SHOW_UNTRACKED_CONTENT). Read once per refresh and fed to
    *  both the change-signature and the state, so editing an untracked file still
    *  ticks the branch indicator's `+` count. Binary files and very large files
-   *  count as zero. */
-  private untrackedInsertions(parsed: ParsedStatus): number {
+   *  count as zero. Reads are async (off the UI thread) and memoized by
+   *  (path, mtime, size), so an unchanged untracked file is never re-read. */
+  private async untrackedInsertions(parsed: ParsedStatus): Promise<number> {
     let total = 0;
+    const live = new Set<string>();
     for (const e of parsed.entries) {
-      if (e.untracked) total += countNewLines(Path.join(this.root!, e.relPath));
+      if (!e.untracked) continue;
+      const abs = Path.join(this.root!, e.relPath);
+      live.add(abs);
+      total += await this.countNewLinesCached(abs);
+    }
+    // Drop memo entries for files that are no longer untracked (staged, removed,
+    // or committed) so the cache tracks the live untracked set, not all-time.
+    for (const key of this.untrackedCache.keys()) {
+      if (!live.has(key)) this.untrackedCache.delete(key);
     }
     return total;
+  }
+
+  /** `countNewLines` behind an (mtime, size) memo: a cache hit skips the read+scan
+   *  entirely, so re-counting only happens when the file actually changed. */
+  private async countNewLinesCached(abs: string): Promise<number> {
+    let st: Fs.Stats;
+    try {
+      st = await Fs.promises.stat(abs);
+    } catch {
+      this.untrackedCache.delete(abs);
+      return 0; // vanished between `git status` and the stat
+    }
+    const hit = this.untrackedCache.get(abs);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.lines;
+    const lines = await countNewLines(abs, st);
+    this.untrackedCache.set(abs, { mtimeMs: st.mtimeMs, size: st.size, lines });
+    return lines;
   }
 
   // Coordinate a repo-mutating operation: mark busy (spinner on), run the actual
@@ -511,7 +576,7 @@ class CliGitRepo implements GitRepo {
       if (ended) return;
       ended = true;
       this.lastSignature = ''; // the op may have moved anything — force a rebuild
-      void this.pollOnce();
+      this.requestPoll();
       this.leaveBusy();
     };
   }
@@ -571,17 +636,17 @@ function signature(parsed: ParsedStatus, numstat: Map<string, LineDelta>, untrac
   return [parsed.branch, parsed.commit, parsed.ahead, parsed.behind, parsed.conflicts, added, removed, untrackedAdded, files].join('|');
 }
 
-// Cap per-file untracked reads so a huge new file can't stall the poll; larger
+// Cap per-file untracked reads so a huge new file can't stall a refresh; larger
 // files (and binaries) contribute 0 — git would treat binaries as 0 lines too.
 const UNTRACKED_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Count an untracked file's lines (insertions), matching `git diff`: a final
- *  line without a trailing newline still counts; binary files count as 0. */
-function countNewLines(abs: string): number {
+ *  line without a trailing newline still counts; binary files count as 0. Async
+ *  (off the UI thread); the caller passes the `stat` it already took. */
+async function countNewLines(abs: string, st: Fs.Stats): Promise<number> {
   try {
-    const st = Fs.statSync(abs);
     if (!st.isFile() || st.size === 0 || st.size > UNTRACKED_MAX_BYTES) return 0;
-    const buf = Fs.readFileSync(abs);
+    const buf = await Fs.promises.readFile(abs);
     const scan = Math.min(buf.length, 8000);
     for (let i = 0; i < scan; i++) if (buf[i] === 0) return 0; // NUL → binary
     let n = 0;

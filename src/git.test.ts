@@ -32,6 +32,25 @@ function settled(repo: GitRepo): Promise<void> {
   });
 }
 
+/** Trigger a refresh and resolve once `pred` holds (or a safety timeout). Used to
+ *  drive the event-driven repo from a test without relying on FS-watch timing. */
+function waitFor(repo: GitRepo, pred: () => boolean): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (pred()) return resolve();
+    const un = repo.onChange(() => {
+      if (pred()) {
+        un();
+        resolve();
+      }
+    });
+    repo.refresh();
+    setTimeout(() => {
+      un();
+      resolve();
+    }, 5000).unref?.();
+  });
+}
+
 let dir: string;
 let bare: string;
 let repo: GitRepo;
@@ -117,6 +136,33 @@ test('untracked insertions: text counted (incl. no trailing newline), binary →
     await settled(r);
     // 3 from multi.txt, 0 from the binary file
     assert.deepEqual(r.getStatus(), { added: 3, removed: 0 });
+    r.dispose();
+  } finally {
+    Fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('untracked insertions re-count when the file changes (memo keyed on mtime+size)', async () => {
+  const d = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-git-memo-'));
+  try {
+    execFileSync('git', ['init', '-b', 'main'], { cwd: d });
+    Fs.writeFileSync(Path.join(d, 'note.txt'), 'a\nb\n'); // 2 lines, untracked
+    const r = openGitRepo(d);
+    await settled(r);
+    assert.deepEqual(r.getStatus(), { added: 2, removed: 0 });
+
+    // Grow the file: its size moved, so the (mtime, size) memo is invalidated and
+    // refresh() must re-read it rather than serve the cached count.
+    Fs.writeFileSync(Path.join(d, 'note.txt'), 'a\nb\nc\nd\n'); // 4 lines
+    await waitFor(r, () => r.getStatus()?.added === 4);
+    assert.deepEqual(r.getStatus(), { added: 4, removed: 0 });
+
+    // Staging it drops it from the untracked set → no longer counted as insertions
+    // here (and the memo entry is pruned).
+    execFileSync('git', ['add', 'note.txt'], { cwd: d });
+    await waitFor(r, () => r.getFileStatuses().size === 1 &&
+      [...r.getFileStatuses().values()].every((s) => s.kind !== 'untracked'));
+    assert.equal([...r.getFileStatuses().values()].some((s) => s.kind === 'untracked'), false);
     r.dispose();
   } finally {
     Fs.rmSync(d, { recursive: true, force: true });
