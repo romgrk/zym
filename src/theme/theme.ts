@@ -18,6 +18,10 @@ import * as Os from 'node:os';
 import * as Path from 'node:path';
 import { alpha as withAlpha, darken, formatHEXA, lighten, parse } from 'color-bits';
 
+/** Light/dark color scheme — a theme's `appearance`, and the key into the
+ *  Adwaita / app color tables (APP_COLORS, FALLBACK). */
+export type Scheme = 'light' | 'dark';
+
 // --- Internal (consumed) shape ---------------------------------------------
 
 /**
@@ -137,7 +141,7 @@ export type SyntaxStyles = Record<string, SyntaxStyle>;
 
 export interface Theme {
   name: string;
-  appearance: 'light' | 'dark';
+  appearance: Scheme;
   /**
    * True when the theme file omitted `ui.editor.background`: the editor follows the
    * system light/dark Adwaita scheme instead of a theme-owned GtkSourceView scheme
@@ -181,7 +185,7 @@ interface ThemeSyntaxToken {
  */
 interface ThemeFromFile {
   name: string;
-  appearance: 'light' | 'dark';
+  appearance: Scheme;
   spacing?: number;
   ui?: ThemeFromFileUi;
   syntax?: Record<string, ThemeSyntaxToken>;
@@ -234,6 +238,53 @@ export const DEFAULT_THEME: Theme = {
   syntaxStyle: {},
 };
 
+// --- Adwaita design-language colors ----------------------------------------
+//
+// Concrete color knowledge for the layers that can't read CSS — kept here with the
+// rest of the design tokens. `src/theme/cssColor.ts` is the *mechanism* that maps a
+// CSS-variable name to a value, reading these two tables; CSS itself reads the
+// variables natively and needs neither.
+
+/**
+ * App-owned semantic colors with no libadwaita equivalent — `info` and `hint`
+ * (used by diagnostics: info-circle, lightbulb). Reified as first-class tokens
+ * shaped like Adwaita's semantic sets: a `-color` (standalone, on neutral bg),
+ * `-bg-color` (fill), and `-fg-color` (text on the fill). Keyed by CSS-variable
+ * name so the same map drives `lookupCSSColor` and the emitted CSS variables
+ * (see `appColorVariables`). Values track the Adwaita palette per scheme — the
+ * standalone color lightens on dark / darkens on light, like Adwaita's own.
+ */
+export const APP_COLORS: Record<string, Record<Scheme, string>> = {
+  '--info-color': { dark: '#78aeff', light: '#1565c0' },
+  '--info-bg-color': { dark: '#3584e4', light: '#3584e4' },
+  '--info-fg-color': { dark: '#ffffff', light: '#ffffff' },
+  '--hint-color': { dark: '#7bdff4', light: '#00788c' },
+  '--hint-bg-color': { dark: '#218998', light: '#0d96a8' },
+  '--hint-fg-color': { dark: '#ffffff', light: '#ffffff' },
+};
+
+/**
+ * Last-resort concrete values for the libadwaita colors our chrome maps onto, so a
+ * no-display run (tests, offscreen snapshots) still gets a sane color when
+ * `lookup_color` can't resolve. Captured from live libadwaita (poc/adwaita-probe).
+ * Not exhaustive — only the names we actually resolve through the bridge.
+ */
+export const FALLBACK_COLORS: Record<string, Record<Scheme, string>> = {
+  '--window-bg-color': { dark: '#222226', light: '#fafafb' },
+  '--window-fg-color': { dark: '#ffffff', light: '#000006' },
+  '--view-bg-color': { dark: '#1d1d20', light: '#ffffff' },
+  '--view-fg-color': { dark: '#ffffff', light: '#000006' },
+  '--accent-color': { dark: '#81d0ff', light: '#0461be' },
+  '--accent-bg-color': { dark: '#3584e4', light: '#3584e4' },
+  '--accent-fg-color': { dark: '#ffffff', light: '#ffffff' },
+  '--popover-bg-color': { dark: '#36363a', light: '#ffffff' },
+  '--card-bg-color': { dark: '#36363a', light: '#ffffff' },
+  '--success-color': { dark: '#78e9ab', light: '#007c3d' },
+  '--warning-color': { dark: '#ffc252', light: '#905400' },
+  '--error-color': { dark: '#ff938c', light: '#c30000' },
+  '--shade-color': { dark: '#00000640', light: '#00000612' },
+};
+
 /** Load the owned theme `<name>.json` from next to this module. */
 export function loadTheme(name: string): Theme {
   const file = Path.join(import.meta.dirname, `${name}.json`);
@@ -251,7 +302,7 @@ export function loadTheme(name: string): Theme {
 function diffTones(
   success: string,
   error: string,
-  appearance: 'light' | 'dark',
+  appearance: Scheme,
 ): Pick<ThemeUi['diff'], 'added' | 'addedWord' | 'removed' | 'removedWord'> {
   const mute = appearance === 'dark' ? darken : lighten;
   const line = (c: string): string => formatHEXA(withAlpha(mute(parse(c), 0.25), 0.18));
@@ -450,6 +501,18 @@ export function themeUiCssVariables(t: Theme): string {
   };
   walk(t.ui as unknown as Record<string, unknown>, []);
   return lines.join('\n');
+}
+
+/**
+ * The app-color registry (APP_COLORS) as CSS custom-property declarations for the
+ * given scheme — one line per entry (`--info-color: #…;`). Emitted on `#AppWindow`
+ * (see src/styles.ts) so CSS consumers read `var(--info-color)` natively, kept in
+ * lockstep with what `lookupCSSColor` returns for the non-CSS side. Newline-joined.
+ */
+export function appColorVariables(scheme: Scheme): string {
+  return Object.entries(APP_COLORS)
+    .map(([name, byScheme]) => `${name}: ${byScheme[scheme]};`)
+    .join('\n');
 }
 
 /**

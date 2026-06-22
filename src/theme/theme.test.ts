@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activeThemeName, adaptTheme, availableThemes, DEFAULT_THEME_NAME, loadTheme } from './theme.ts';
+import { activeThemeName, adaptTheme, APP_COLORS, appColorVariables, availableThemes, DEFAULT_THEME_NAME, loadTheme } from './theme.ts';
 
 /** A minimal dark theme; pass `ui`/`syntax` overrides in per-test. */
 const base = (over: { ui?: unknown; syntax?: unknown } = {}) =>
@@ -98,4 +98,12 @@ test('syntax token splits into color + style; preserves key order', () => {
 
 test('invalid appearance throws', () => {
   assert.throws(() => adaptTheme({ name: 'x', appearance: 'twilight' as never }), /appearance must be/);
+});
+
+test('appColorVariables emits one declaration per APP_COLORS entry for the scheme', () => {
+  const css = appColorVariables('dark');
+  const lines = css.split('\n');
+  assert.equal(lines.length, Object.keys(APP_COLORS).length);
+  assert.ok(lines.includes('--info-color: #78aeff;'));
+  assert.ok(css.includes('--hint-fg-color: #ffffff;'));
 });
