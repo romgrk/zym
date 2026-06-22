@@ -15,8 +15,9 @@
 import { spawn } from 'node:child_process';
 import * as Path from 'node:path';
 import { Buffer } from 'node:buffer';
-import { escapeMarkup, HIGHLIGHT_COLOR, type PickerItem, type FormattedRow } from './Picker.ts';
+import { escapeMarkup, HIGHLIGHT_COLOR, type PickerItem } from './Picker.ts';
 import { openLocationPicker } from './LocationPicker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { Gtk } from '../gi.ts';
 import { Icons } from './icons.ts';
 
@@ -51,7 +52,7 @@ export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTar
     localFilter: false,
     // Render the matched line with the matched span accented, and the `path:line`
     // location as a muted right-aligned detail.
-    formatMain: (item): FormattedRow => {
+    renderRow: (item) => {
       const it = item as SearchItem;
       const t = it.text;
       const main =
@@ -61,7 +62,7 @@ export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTar
         '</span>' +
         escapeMarkup(t.slice(it.matchEnd));
       // Smaller, croppable `path:line`: it yields to the matched line when space is tight.
-      return { main, detail: `<span size="smaller">${escapeMarkup(it.detailText)}</span>`, cropDetail: true };
+      return renderRowSingleLine({ main, detail: `<span size="smaller">${escapeMarkup(it.detailText)}</span>`, cropDetail: true });
     },
     fetch: (query, onResult, onError) => {
       const q = query.trim();

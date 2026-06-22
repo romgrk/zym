@@ -10,12 +10,11 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, highlightMarkup, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { openUrl } from './openUrl.ts';
 import { repoRoot } from '../git.ts';
-import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { Icons } from './icons.ts';
 import { NERDFONT } from './nerdfont.ts';
-import { escapeMarkup } from './proseMarkup.ts';
 import { fetchChecks, type CiCheck, type CheckState } from '../github.ts';
 import { theme } from '../theme/theme.ts';
 
@@ -32,12 +31,7 @@ const CHECK_STYLE: Record<CheckState, { glyph: string; color: string }> = {
 // Sort/weight key: failed first, then pending, then passed.
 const STATE_RANK: Record<CheckState, number> = { fail: 2, pending: 1, pass: 0 };
 
-function stateGlyphMarkup(state: CheckState): string {
-  const { glyph, color } = CHECK_STYLE[state];
-  return `<span face="${ICON_FONT_FAMILY}" foreground="${color}">${escapeMarkup(glyph)}</span> `;
-}
-
-// A picker row carrying its check, so weight/formatMain read it off the item.
+// A picker row carrying its check, so weight/renderRow read it off the item.
 interface CiCheckItem extends PickerItem {
   check: CiCheck;
 }
@@ -65,8 +59,15 @@ export function openGithubCIChecksPicker(host: Overlay, cwd: string): void {
     // Float failed runs to the top (then pending), and bias them up once a
     // query is typed too.
     weight: (item) => STATE_RANK[(item as CiCheckItem).check.state],
-    formatMain: (item, positions) =>
-      stateGlyphMarkup((item as CiCheckItem).check.state) + highlightMarkup(item.text, positions),
+    // A colour-coded state glyph (failed ✗ / pending ● / passed ✓) leads each row.
+    renderRow: (item, positions) => {
+      const { glyph, color } = CHECK_STYLE[(item as CiCheckItem).check.state];
+      return renderRowSingleLine({
+        icon: glyph,
+        iconColor: color,
+        main: highlightMarkup(item.text, positions),
+      });
+    },
     onSelect: (url) => openUrl(url),
   });
   fetchChecks(root, (checks) => {

@@ -4,7 +4,7 @@
  * location-style picker wants: a horizontal-split source preview of the selected
  * row (the file, syntax-highlighted, scrolled to the target line) and a uniform
  * "choose → jump" path. Callers supply the candidate source (`items`/`fetch`),
- * the row rendering (`formatMain`), and two small adapters:
+ * the row rendering (`renderRow`), and two small adapters:
  *
  *   - `locate(item)` → the file `PickerLocation` a row points at (used both for
  *     the preview and the jump), or null if the row has none.
@@ -15,7 +15,7 @@
 import * as Fs from 'node:fs';
 import { Gtk } from '../gi.ts';
 import { addStyles } from '../styles.ts';
-import { openPicker, type PickerItem, type PickerOptions } from './Picker.ts';
+import { openPicker, type PickerItem, type PickerOptions, type RowRenderer } from './Picker.ts';
 import { TextEditor } from './TextEditor/TextEditor.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -49,7 +49,7 @@ export interface LocationPickerOptions {
   preview?: boolean;
   items?: Array<string | PickerItem>;
   fetch?: PickerOptions['fetch'];
-  formatMain?: PickerOptions['formatMain'];
+  renderRow?: RowRenderer;
   /** The file location a row points at — drives both the preview and the jump. */
   locate: (item: PickerItem) => PickerLocation | null;
   /** Open/reveal the chosen location (e.g. open the file and move the cursor). */
@@ -74,7 +74,7 @@ export function openLocationPicker(options: LocationPickerOptions): void {
     frecency: options.frecency,
     items: options.items,
     fetch: options.fetch,
-    formatMain: options.formatMain,
+    renderRow: options.renderRow,
     preview: preview
       ? {
           widget: preview.root,

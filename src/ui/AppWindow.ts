@@ -74,7 +74,8 @@ import {
 } from './BranchPicker.ts';
 import { openStashPicker } from './StashPicker.ts';
 import { openGithubCIChecksPicker } from './GithubCIChecksPicker.ts';
-import { openPicker } from './Picker.ts';
+import { openPicker, highlightSegment } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
 import { zym } from '../zym.ts';
@@ -1018,14 +1019,14 @@ export class AppWindow {
       // sessions (labelled by their first message) are dimmed to set the named
       // ones apart.
       items: sessions.map((s) => ({ value: s.id, text: s.label })),
-      formatMain: (item, positions) => {
+      renderRow: (item, positions) => {
         const session = byId.get(item.value);
         const ranElsewhere = session?.cwd && session.cwd !== process.cwd();
         const where = ranElsewhere ? `${escapeMarkup(Path.basename(session!.cwd!))} · ` : '';
-        return {
+        return renderRowSingleLine({
           main: proseMarkup(item.text, positions, !session?.titled),
           detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${where}${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
-        };
+        });
       },
       onSelect: (id) => {
         const session = byId.get(id);
@@ -1798,13 +1799,20 @@ export class AppWindow {
       return {
         value: s.name,
         text,
-        display: { main: [0, s.name.length] as [number, number], detail: [s.name.length + 2, text.length] as [number, number] },
+        data: s.name.length,
       };
     });
     openPicker({
       host: this.overlay,
       placeholder: 'Install language server',
       items,
+      renderRow: (item, positions) => {
+        const split = item.data as number;
+        return renderRowSingleLine({
+          main: highlightSegment(item.text, 0, split, positions),
+          detail: highlightSegment(item.text, split + 2, item.text.length, positions),
+        });
+      },
       onSelect: (name) => void zym.lsp.installByName(name),
     });
   }

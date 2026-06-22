@@ -15,6 +15,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import * as Path from 'node:path';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
@@ -44,16 +45,14 @@ type Entry =
   | { kind: 'session'; session: AgentSession };
 
 export function openAgentPicker(host: Overlay, options: AgentPickerOptions): void {
-  const byValue = new Map<string, Entry>();
   const items: PickerItem[] = [];
 
   // Open agents first, in launch order. Track their session ids so a resumable
-  // conversation that's already open isn't also listed below.
+  // conversation that's already open isn't also listed below. Each item carries
+  // its `Entry` on `data`, so the row and selection read it straight off the item.
   const liveSessions = new Set<string>();
   zym.agents.getAgents().forEach((agent, i) => {
-    const value = `agent:${i}`;
-    byValue.set(value, { kind: 'agent', agent });
-    items.push({ value, text: agent.title });
+    items.push({ value: `agent:${i}`, text: agent.title, data: { kind: 'agent', agent } satisfies Entry });
     if (agent.sessionId) liveSessions.add(agent.sessionId);
   });
 
@@ -61,9 +60,7 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
   if (options.onResume) {
     for (const session of listResumableSessions(options.sessionRoots ?? [process.cwd()])) {
       if (liveSessions.has(session.id)) continue;
-      const value = `session:${session.id}`;
-      byValue.set(value, { kind: 'session', session });
-      items.push({ value, text: session.label });
+      items.push({ value: `session:${session.id}`, text: session.label, data: { kind: 'session', session } satisfies Entry });
     }
   }
 
@@ -72,33 +69,32 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
     placeholder: options.placeholder ?? 'Open agent or conversation…',
     proseEntry: true, // titles/labels are prose, not paths/identifiers
     items,
-    formatMain: (item, positions) => {
-      const entry = byValue.get(item.value);
-      if (entry?.kind === 'agent') {
+    renderRow: (item, positions) => {
+      const entry = item.data as Entry;
+      if (entry.kind === 'agent') {
         // The shared status indicator before the title; the title can carry
         // `backtick` spans (claude reports them), rendered as prose. A linked-
         // worktree badge, when present, is shown right-aligned as the detail.
         const worktree = agentWorktreeMarkup(entry.agent.worktree);
         const lead = agentStatusMarkup(entry.agent.status);
-        return {
+        return renderRowSingleLine({
           main: `${lead} ${proseMarkup(item.text, positions)}`,
-          ...(worktree ? { detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${worktree}</span>` } : {}),
-        };
+          detail: worktree ? `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${worktree}</span>` : undefined,
+        });
       }
       // A past conversation: prose label (untitled ones dimmed) + a muted, right-
       // aligned "time ago", prefixed with the worktree name when the conversation
       // ran outside the main project cwd (so it resumes there — branch/worktree).
-      const session = entry?.session;
-      const ranElsewhere = session?.cwd && session.cwd !== process.cwd();
-      const where = ranElsewhere ? `${escapeMarkup(Path.basename(session!.cwd!))} · ` : '';
-      return {
-        main: proseMarkup(item.text, positions, !session?.titled),
-        detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${where}${escapeMarkup(relativeTime(session?.modified ?? 0))}</span>`,
-      };
+      const session = entry.session;
+      const ranElsewhere = session.cwd && session.cwd !== process.cwd();
+      const where = ranElsewhere ? `${escapeMarkup(Path.basename(session.cwd!))} · ` : '';
+      return renderRowSingleLine({
+        main: proseMarkup(item.text, positions, !session.titled),
+        detail: `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${where}${escapeMarkup(relativeTime(session.modified ?? 0))}</span>`,
+      });
     },
-    onSelect: (value) => {
-      const entry = byValue.get(value);
-      if (!entry) return;
+    onSelect: (_value, item) => {
+      const entry = item.data as Entry;
       if (entry.kind === 'agent') options.onActivate(entry.agent);
       else options.onResume?.(entry.session);
     },

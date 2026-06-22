@@ -9,7 +9,7 @@
  * the candidate strings and an `onSelect` callback. Items may arrive
  * asynchronously via the returned handle's `setItems`.
  */
-import { Gtk, Pango } from '../gi.ts';
+import { Gtk } from '../gi.ts';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
 import { iconLabel } from './icons.ts';
@@ -18,7 +18,12 @@ import { theme } from '../theme/theme.ts';
 import { frecency } from '../util/Frecency.ts';
 import { enableReadline } from './readline.ts';
 import { openFloatingCard } from './FloatingCard.ts';
-import { escapeMarkup } from './proseMarkup.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
+import { highlightMarkup } from './pickerHighlight.ts';
+
+// The Pango-markup highlight helpers live in a leaf module now; re-exported here
+// for the many callers that import them alongside the picker types.
+export { highlightSegment, highlightMarkup, escapeMarkup } from './pickerHighlight.ts';
 
 
 const PICKER_WIDTH = 640;
@@ -112,12 +117,6 @@ addStyles(/* css */`
   #Picker.has-prompt #PickerRow {
     padding-left: ${PROMPT_INSET + PROMPT_SLOT + PROMPT_GAP}px;
   }
-  /* Two-column rows (e.g. the file picker): filename on the left, its directory
-     right-aligned and muted. Highlights still show through the dimming. */
-  #PickerRow > .picker-detail {
-    margin-left: 1em;
-    opacity: 0.5;
-  }
   #PickerEmpty {
     padding: 0.5em 1em;
     opacity: 0.55;
@@ -158,7 +157,8 @@ export interface PickerAction {
  * A candidate richer than a bare string. Plain strings are still accepted and
  * normalised to `{ value, text }`; objects let a caller separate the value
  * returned on selection from the text matched against, boost matches in a
- * sub-range (e.g. a filename), and split the display into two columns.
+ * sub-range (e.g. a filename), and carry the caller's original object so its
+ * `renderRow` can read it without a side lookup table.
  */
 export interface PickerItem {
   /** Passed to `onSelect` when this item is chosen. */
@@ -170,16 +170,25 @@ export interface PickerItem {
    * points this at the filename so filename matches outrank directory matches.
    */
   boostFrom?: number;
-  /** Optional two-column display (main left, detail right-aligned and muted). */
-  display?: PickerItemDisplay;
+  /**
+   * The caller's original object, carried along so `renderRow` (and `onSelect`)
+   * can read it directly rather than recovering it from `value` via a Map. Opaque
+   * to the picker; the caller casts it back to its own type.
+   */
+  data?: unknown;
 }
 
-export interface PickerItemDisplay {
-  /** Substring range `[start, end)` of `text` shown on the left, highlighted. */
-  main: [number, number];
-  /** Substring range `[start, end)` shown right-aligned and muted, highlighted. */
-  detail: [number, number];
-}
+/**
+ * Turns a matched item into its row widget. The picker stays layout-agnostic: it
+ * computes the fuzzy-match `positions` (offsets into `item.text`) and hands them
+ * here. Callers usually build markup with `highlightMarkup`/`highlightSegment`
+ * and pass it to `renderRowSingleLine` (the default) or `renderRowStacked` from
+ * PickerRow. Defaults to a single highlighted label.
+ */
+export type RowRenderer = (item: PickerItem, positions: number[]) => InstanceType<typeof Gtk.Widget>;
+
+const defaultRowRenderer: RowRenderer = (item, positions) =>
+  renderRowSingleLine({ main: highlightMarkup(item.text, positions) });
 
 export interface PickerOptions {
   host: Overlay;
@@ -262,14 +271,12 @@ export interface PickerOptions {
    */
   searchDelay?: number;
   /**
-   * Override the markup of a (non-`display`) row, given the item and its
-   * matched-char positions (into `item.text`). Return either a single markup
-   * string (the row's only label) or `{ main, detail }` to add a right-aligned,
-   * muted detail column. Lets a caller restyle the row — e.g. the command picker
-   * mutes a command's `prefix:`, inserts a space, and right-aligns its
-   * description. Positions still drive the match highlight.
+   * Build each row's widget from the item and its matched-char positions (into
+   * `item.text`). Defaults to a single highlighted label; pass a renderer (built
+   * on `renderRowSingleLine`/`renderRowStacked` from PickerRow) to add a detail
+   * column, an icon, or a second line. Positions still drive the match highlight.
    */
-  formatMain?: (item: PickerItem, positions: number[]) => string | FormattedRow;
+  renderRow?: RowRenderer;
   /**
    * Enable frecency ("frequency × recency") ordering under this namespace (e.g.
    * `"file"`). When set, chosen items are recorded on selection, and a modest
@@ -297,7 +304,7 @@ export interface PickerOptions {
   /**
    * Suppress the `has-prompt` class on the card (and thus the row indent that
    * aligns row text with the icon-offset entry text). Use when a `promptIcon` is
-   * present for the entry but the rows render their own icons via `formatMain` and
+   * present for the entry but the rows render their own icons via `renderRow` and
    * should keep the standard row padding instead.
    */
   disableIconPadding?: boolean;
@@ -311,33 +318,6 @@ export interface PickerPreview {
   update: (item: PickerItem | null) => void;
   /** Preview-pane width in px (default `PREVIEW_PANE_WIDTH`). */
   width?: number;
-}
-
-/** Markup for a row's main label plus an optional right-aligned detail. */
-export interface FormattedRow {
-  main: string;
-  detail?: string;
-  /**
-   * Whether the detail is dimmed (the muted `.picker-detail` look). Default true;
-   * set false when the caller controls emphasis in the markup itself (e.g. the
-   * command palette's bold keybinding column).
-   */
-  detailMuted?: boolean;
-  /**
-   * Dim the whole row (e.g. a command the palette shows but that isn't currently
-   * applicable). Visual only — the row stays selectable; the caller's `onSelect`
-   * decides what choosing it does.
-   */
-  dim?: boolean;
-  /**
-   * Make the detail the column that crops, not the main. By default the main label
-   * shrinks/ellipsizes and the detail keeps its natural width — right for a short
-   * detail (a timestamp, an author). Set this when the detail is a long file path
-   * that should yield to the main content (a match line / symbol name): the detail
-   * is then width-capped and ellipsized from the *start* (keeping the filename:line
-   * tail visible), while the main keeps priority on the row's width.
-   */
-  cropDetail?: boolean;
 }
 
 export interface PickerHandle {
@@ -493,7 +473,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   // Mirror the entry's `has-prompt` onto the card so the rows inset to align with
   // the (icon-offset) entry text — see the `#Picker.has-prompt #PickerRow` rule.
   // Skipped when `disableIconPadding` is set: the caller renders its own per-row
-  // icons via `formatMain` and wants standard row padding, not the extra indent.
+  // icons via `renderRow` and wants standard row padding, not the extra indent.
   if (entry.hasCssClass('has-prompt') && !options.disableIconPadding) panel.addCssClass('has-prompt');
   panel.append(entryHost);
   if (options.preview) {
@@ -588,9 +568,10 @@ export function openPicker(options: PickerOptions): PickerHandle {
   // their child widget), append new ones as the list grows, and remove the
   // surplus when it shrinks. Hovering a row selects it (so mouse and keyboard
   // selection agree); the hover handler is wired once when a row is created.
+  const renderRow = options.renderRow ?? defaultRowRenderer;
   const syncMatchRows = (ranked: RankedItem[]) => {
     for (let i = 0; i < ranked.length; i++) {
-      const child = renderRow(ranked[i].item, ranked[i].positions, options.formatMain);
+      const child = renderRow(ranked[i].item, ranked[i].positions);
       if (i < matchRows.length) {
         matchRows[i].setChild(child);
       } else {
@@ -837,120 +818,3 @@ export function rank(
   scored.sort((a, b) => b.score - a.score);
   return scored;
 }
-
-/**
- * Build a row's widget for `item`, highlighting the matched `positions`. A plain
- * item renders as a single highlighted label; a two-column item (e.g. a file)
- * renders its `main` segment on the left and its `detail` segment right-aligned
- * and muted, with highlights mapped into each segment.
- */
-function renderRow(
-  item: PickerItem,
-  positions: number[],
-  formatMain?: (item: PickerItem, positions: number[]) => string | FormattedRow,
-): InstanceType<typeof Gtk.Widget> {
-  if (!item.display) {
-    const formatted = formatMain?.(item, positions);
-    const mainMarkup =
-      (typeof formatted === 'string' ? formatted : formatted?.main) ??
-      highlightMarkup(item.text, positions);
-    const detailMarkup = typeof formatted === 'object' ? formatted.detail : undefined;
-
-    const dim = typeof formatted === 'object' && formatted.dim === true;
-
-    if (!detailMarkup) {
-      const label = new Gtk.Label({ xalign: 0, useMarkup: true });
-      label.setMarkup(mainMarkup);
-      label.setName('PickerRow');
-      // Crop a long label to the card width rather than widening the row.
-      label.setHexpand(true);
-      label.setEllipsize(Pango.EllipsizeMode.END);
-      if (dim) label.setOpacity(0.4);
-      return label;
-    }
-
-    // Main label on the left, a right-aligned muted detail on the right (reusing
-    // the two-column `.picker-detail` styling). The main label expands and
-    // ellipsizes so a long label crops to the picker width rather than pushing
-    // the detail (e.g. a "5m ago" timestamp) off the edge; the detail keeps its
-    // natural width so it always shows in full.
-    const cropDetail = typeof formatted === 'object' && formatted.cropDetail === true;
-
-    const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 });
-    box.setName('PickerRow');
-    const main = new Gtk.Label({ xalign: 0, useMarkup: true });
-    main.setMarkup(mainMarkup);
-    main.setHexpand(true);
-    main.setEllipsize(Pango.EllipsizeMode.END);
-    box.append(main);
-    const detail = new Gtk.Label({ xalign: 1, useMarkup: true });
-    detail.setMarkup(detailMarkup);
-    if (cropDetail) {
-      // Let the detail shrink so it — not the main — yields when the row is tight:
-      // ellipsizing from the start keeps the path's `filename:line` tail visible.
-      // (Without an ellipsize the detail can't shrink, so the deficit fell entirely
-      // on the main, cropping the match line — exactly backwards.)
-      detail.setEllipsize(Pango.EllipsizeMode.START);
-    }
-    // Dimmed by default; an un-muted detail keeps the spacing but not the opacity
-    // (the caller's markup sets its own emphasis).
-    if (typeof formatted === 'object' && formatted.detailMuted === false) detail.setMarginStart(16);
-    else detail.addCssClass('picker-detail');
-    box.append(detail);
-    if (dim) box.setOpacity(0.4);
-    return box;
-  }
-
-  const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 });
-  box.setName('PickerRow');
-
-  // Main segment (e.g. filename) expands and ellipsizes so a long value crops to
-  // the card width rather than pushing the detail off the edge; the detail keeps
-  // its natural width and so always shows in full.
-  const [ms, me] = item.display.main;
-  const main = new Gtk.Label({ xalign: 0, useMarkup: true });
-  main.setMarkup(highlightSegment(item.text, ms, me, positions));
-  main.setHexpand(true);
-  main.setEllipsize(Pango.EllipsizeMode.END);
-  box.append(main);
-
-  const [ds, de] = item.display.detail;
-  if (de > ds) {
-    const detail = new Gtk.Label({ xalign: 1, useMarkup: true });
-    detail.setMarkup(highlightSegment(item.text, ds, de, positions));
-    detail.setEllipsize(Pango.EllipsizeMode.END);
-    detail.addCssClass('picker-detail');
-    box.append(detail);
-  }
-  return box;
-}
-
-/** Highlight the `[start, end)` slice of `text`, with positions in `text` coords. */
-export function highlightSegment(text: string, start: number, end: number, positions: number[]): string {
-  const local = positions.filter((p) => p >= start && p < end).map((p) => p - start);
-  return highlightMarkup(text.slice(start, end), local);
-}
-
-/** Render `text` as Pango markup with the matched characters highlighted red. */
-export function highlightMarkup(text: string, positions: number[]): string {
-  const matched = new Set(positions);
-  let out = '';
-  let highlit = false;
-  for (let i = 0; i < text.length; i++) {
-    const isMatch = matched.has(i);
-    if (isMatch && !highlit) {
-      out += `<span foreground="${HIGHLIGHT_COLOR}" weight="bold">`;
-      highlit = true;
-    } else if (!isMatch && highlit) {
-      out += '</span>';
-      highlit = false;
-    }
-    out += escapeMarkup(text[i]);
-  }
-  if (highlit) out += '</span>';
-  return out;
-}
-
-// `escapeMarkup` (Pango metachar escaping) lives in proseMarkup; re-exported here for the
-// callers that import it alongside the picker markup helpers.
-export { escapeMarkup };

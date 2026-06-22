@@ -7,6 +7,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup } from './proseMarkup.ts';
 import { openUrl } from './openUrl.ts';
 import { zym } from '../zym.ts';
@@ -26,19 +27,19 @@ export function openGithubIssuePicker(host: Overlay, cwd: string): void {
       zym.notifications.addInfo('No open issues');
       return;
     }
-    const authorByUrl = new Map<string, string>();
-    const items = issues.map((issue) => {
-      authorByUrl.set(issue.url, issue.author);
-      return { value: issue.url, text: `#${issue.number} ${issue.title}` };
-    });
+    const items = issues.map((issue) => ({
+      value: issue.url,
+      text: `#${issue.number} ${issue.title}`,
+      data: issue.author,
+    }));
     openPicker({
       host,
       placeholder: 'Open issue…',
       items,
-      formatMain: (item, positions) => {
+      renderRow: (item, positions) => {
         const main = proseMarkup(item.text, positions);
-        const author = authorByUrl.get(item.value);
-        return author ? { main, detail: `@${author}` } : main;
+        const author = item.data as string | undefined;
+        return renderRowSingleLine(author ? { main, detail: `@${author}` } : { main });
       },
       onSelect: (url) => openUrl(url),
     });

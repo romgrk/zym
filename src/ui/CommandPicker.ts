@@ -15,6 +15,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, escapeMarkup, HIGHLIGHT_COLOR, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { fonts } from '../fonts.ts';
 import { getActiveElements } from '../util/getActiveElements.ts';
 import { zym } from '../zym.ts';
@@ -80,7 +81,7 @@ export function openCommandPicker(host: Overlay): void {
     host,
     placeholder: 'Run command…',
     items,
-    formatMain: (item, positions) => {
+    renderRow: (item, positions) => {
       const name = item.value;
       const description = byName.get(name)?.description;
       // Positions index into `text` (`<description> <name>`). Split them into the
@@ -88,7 +89,7 @@ export function openCommandPicker(host: Overlay): void {
       const nameStart = item.text.length - name.length;
       const namePositions = positions.filter((p) => p >= nameStart).map((p) => p - nameStart);
       const descPositions = description ? positions.filter((p) => p < description.length) : [];
-      return {
+      return renderRowSingleLine({
         main: formatCommandName(name, namePositions),
         // Right-aligned detail: the muted description (smaller, proportional, with
         // its own matches highlighted) followed by the keybinding flush-right —
@@ -99,7 +100,7 @@ export function openCommandPicker(host: Overlay): void {
         // Commands whose `when` is currently false are shown but dimmed; choosing
         // one is a no-op (see onSelect).
         dim: byName.get(name)?.enabled === false,
-      };
+      });
     },
     onSelect: (name) => {
       const command = byName.get(name);

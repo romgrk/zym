@@ -9,6 +9,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, highlightMarkup } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { Icons } from './icons.ts';
 import { listWorktrees } from '../git.ts';
 
@@ -27,21 +28,23 @@ export function openWorktreePicker(host: Overlay, cwd: string, onChoose: (path: 
     });
     return;
   }
-  const byPath = new Map(worktrees.map((w) => [w.path, w]));
+  type Worktree = (typeof worktrees)[number];
 
   openPicker({
     host,
     placeholder: 'Start agent in worktree…',
     promptIcon: Icons.git,
-    items: worktrees.map((w) => ({ value: w.path, text: w.name })),
+    // Carry each worktree on its item so the row reads it off `data` directly.
+    items: worktrees.map((w) => ({ value: w.path, text: w.name, data: w })),
     // Highlight the fuzzy match on the worktree name; tag the branch in the detail
     // column, and mark the main checkout so it's distinguishable from linked ones.
-    formatMain: (item, positions) => {
-      const w = byPath.get(item.value);
-      const main = highlightMarkup(item.text, positions);
-      if (!w) return main;
+    renderRow: (item, positions) => {
+      const w = item.data as Worktree;
       const branch = w.branch ?? 'detached';
-      return { main, detail: w.linked ? branch : `${branch} · main` };
+      return renderRowSingleLine({
+        main: highlightMarkup(item.text, positions),
+        detail: w.linked ? branch : `${branch} · main`,
+      });
     },
     onSelect: (path) => onChoose(path),
   });

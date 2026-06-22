@@ -11,6 +11,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup, escapeMarkup } from './proseMarkup.ts';
 import { zym } from '../zym.ts';
 import { repoRoot } from '../git.ts';
@@ -36,7 +37,7 @@ export function stateGlyphMarkup(state: PrState): string {
   return `<span face="${ICON_FONT_FAMILY}" foreground="${color}">${escapeMarkup(glyph)}</span> `;
 }
 
-// A picker row carrying its PR (so `formatMain`/`onSelect` read it straight off
+// A picker row carrying its PR (so `renderRow`/`onSelect` read it straight off
 // the item — no shared map that a stale async response could clobber).
 interface PrPickerItem extends PickerItem {
   pr: GithubListItem;
@@ -79,10 +80,18 @@ export function switchToGithubPrPicker(host: Overlay, cwd: string, git: GitRepo)
         (message) => onError(`Could not list pull requests: ${message}`),
       );
     },
-    formatMain: (item, positions) => {
+    // A colour-coded state glyph leads each row; the title is prose, the author a
+    // muted detail. (`stateGlyphMarkup` is kept for GithubButtons; the row uses
+    // the renderer's icon slot.)
+    renderRow: (item, positions) => {
       const { pr } = item as PrPickerItem;
-      const main = (pr ? stateGlyphMarkup(pr.state) : '') + proseMarkup(item.text, positions);
-      return pr && pr.author ? { main, detail: `@${pr.author}` } : { main };
+      const style = pr ? STATE_STYLE[pr.state] : undefined;
+      return renderRowSingleLine({
+        icon: style?.glyph,
+        iconColor: style?.color,
+        main: proseMarkup(item.text, positions),
+        detail: pr?.author ? `@${pr.author}` : undefined,
+      });
     },
     onSelect: (_value, item) => {
       const { pr } = item as PrPickerItem;

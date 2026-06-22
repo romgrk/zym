@@ -16,6 +16,7 @@
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { openPicker, highlightSegment, escapeMarkup, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { LsColors, type LsColorStyle } from '../util/lsColors.ts';
 import { zym } from '../zym.ts';
@@ -41,7 +42,7 @@ export function openFileOpener(host: Overlay, dir: string, onChoose: (path: stri
     host,
     placeholder: 'Open file…',
     promptIcon: fileIconGlyph('', true), // the folder glyph, matching the directory rows
-    disableIconPadding: true, // rows render their own icons via formatMain; skip the prompt-indent
+    disableIconPadding: true, // rows render their own icons via renderRow; skip the prompt-indent
     // The prompt holds a full path; seed it with the starting directory (trailing
     // slash → list its contents, with an empty filter).
     query: withTrailingSlash(dir),
@@ -52,7 +53,11 @@ export function openFileOpener(host: Overlay, dir: string, onChoose: (path: stri
     // Show just the entry's name (with a file/folder glyph and a trailing slash on
     // folders); the shared directory prefix is already in the prompt, so a muted
     // detail column would only repeat it on every row.
-    formatMain: (item, positions) => {
+    // Show just the entry's name with a file/folder glyph and (folders) a trailing
+    // slash. The glyph is tinted with the name by LS_COLORS and needs a blank cell
+    // for files so names align — so it stays inline in the markup rather than using
+    // the renderer's icon slot.
+    renderRow: (item, positions) => {
       const f = item as FileItem;
       const base = Path.basename(item.text);
       const start = item.text.length - base.length;
@@ -63,7 +68,7 @@ export function openFileOpener(host: Overlay, dir: string, onChoose: (path: stri
       const row = `${icon}  ${name}${f.isDir ? '/' : ''}`;
       // Tint the whole row (glyph + name) with the LS_COLORS style; the inner
       // match-highlight spans still override the matched characters.
-      return colorize(row, lsColors?.styleFor(base, { isDir: f.isDir }));
+      return renderRowSingleLine({ main: colorize(row, lsColors?.styleFor(base, { isDir: f.isDir })) });
     },
     frecency: 'file',
     onSelect: (value, item) => {

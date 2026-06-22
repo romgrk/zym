@@ -11,7 +11,8 @@
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
-import { openPicker, type PickerItem } from './Picker.ts';
+import { openPicker, highlightSegment, type PickerItem } from './Picker.ts';
+import { renderRowStacked } from './PickerRow.ts';
 import { Gtk } from '../gi.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -20,7 +21,7 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 const IGNORED_DIRS = new Set([
   '.git', '.hg', '.svn', 'node_modules', 'dist', 'build', '.cache',
 ]);
-const MAX_FILES = 20000;
+const MAX_FILES = 20_000;
 const DIRS_PER_TICK = 24; // directories scanned per idle iteration
 
 export function openFilePicker(host: Overlay, cwd: string, onSelect: (path: string) => void): void {
@@ -32,6 +33,19 @@ export function openFilePicker(host: Overlay, cwd: string, onSelect: (path: stri
     // Surface recently/frequently opened files first, and nudge them up the
     // ranking once a query is typed.
     frecency: 'file',
+    // Two-line rows: the filename on top, its directory muted below. Both index
+    // into the relative path (`item.text`) so the match highlight spans them.
+    renderRow: (item, positions) => {
+      const rel = item.text;
+      const dirEnd = rel.length - Path.basename(rel).length; // where the filename starts
+      // Directory (trailing slash dropped); a root-level file has no directory, so
+      // show `.` rather than a blank second line.
+      const dir = highlightSegment(rel, 0, Math.max(0, dirEnd - 1), positions);
+      return renderRowStacked({
+        main: highlightSegment(rel, dirEnd, rel.length, positions),
+        detail: dir || '.',
+      });
+    },
     onSelect,
   });
   collectFiles(cwd, (files) => picker.setItems(files.map((rel) => fileItem(cwd, rel))));
@@ -40,8 +54,8 @@ export function openFilePicker(host: Overlay, cwd: string, onSelect: (path: stri
 /**
  * Build a picker item for a file at `rel` (relative to `cwd`). Matching runs
  * against the whole relative path, but the filename portion is boosted so it
- * outranks directory-only matches, and the display splits filename (left) from
- * directory (right, muted).
+ * outranks directory-only matches; the row's two-line split (filename over
+ * directory) is done in the picker's `renderRow`.
  */
 function fileItem(cwd: string, rel: string): PickerItem {
   const base = Path.basename(rel);
@@ -50,12 +64,6 @@ function fileItem(cwd: string, rel: string): PickerItem {
     value: Path.join(cwd, rel),
     text: rel,
     boostFrom: dirEnd,
-    display: {
-      main: [dirEnd, rel.length],
-      // Drop the trailing slash from the directory segment ([0, dirEnd-1)); for
-      // a root-level file dirEnd is 0, leaving an empty (hidden) detail.
-      detail: [0, Math.max(0, dirEnd - 1)],
-    },
   };
 }
 

@@ -14,6 +14,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openLocationPicker } from './LocationPicker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { escapeMarkup, type PickerItem } from './Picker.ts';
 import { symbolKindGlyph, Icons } from './icons.ts';
 import { zym } from '../zym.ts';
@@ -53,9 +54,9 @@ export async function openDocumentSymbolPicker(
     // only duplicate it. Selection jumps the live editor instead.
     preview: false,
     items,
-    formatMain: (item) => {
+    renderRow: (item) => {
       const sym = byValue.get(item.value);
-      if (!sym) return escapeMarkup(item.text);
+      if (!sym) return renderRowSingleLine({ main: escapeMarkup(item.text) });
       // Indent by nesting depth so the outline's hierarchy stays legible.
       const indent = '  '.repeat(sym.depth);
       // The kind glyph is a quiet visual cue, so dim it; the name carries the row.
@@ -64,7 +65,7 @@ export async function openDocumentSymbolPicker(
       const detail = sym.containerName
         ? `${sym.containerName}  :${sym.point.row + 1}`
         : `:${sym.point.row + 1}`;
-      return { main, detail: `<span size="smaller">${escapeMarkup(detail)}</span>`, cropDetail: true };
+      return renderRowSingleLine({ main, detail: `<span size="smaller">${escapeMarkup(detail)}</span>`, cropDetail: true });
     },
     locate: (item) => {
       const sym = byValue.get(item.value);

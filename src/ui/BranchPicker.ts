@@ -10,6 +10,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { openPicker, highlightMarkup } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { Icons } from './icons.ts';
 import { zym } from '../zym.ts';
 import { repoRoot, listBranches, type GitRepo, type GitOpResult } from '../git.ts';
@@ -39,9 +40,9 @@ export function openBranchPicker(host: Overlay, cwd: string, git: GitRepo): void
       // Highlight the fuzzy match; tag the current branch with a muted "current".
       // Branch names are identifiers — render them in the picker's (app) monospace
       // font rather than the prose/sans face.
-      formatMain: (item, positions) => {
+      renderRow: (item, positions) => {
         const main = highlightMarkup(item.text, positions);
-        return item.value === current ? { main, detail: 'current' } : main;
+        return renderRowSingleLine({ main, detail: item.value === current ? 'current' : undefined });
       },
       onSelect: (branch) => {
         if (branch === current) return; // already here — nothing to do

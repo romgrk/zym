@@ -13,7 +13,8 @@
 import * as Path from 'node:path';
 import { Gtk } from '../gi.ts';
 import { openLocationPicker } from './LocationPicker.ts';
-import { escapeMarkup, type FormattedRow, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
+import { escapeMarkup, type PickerItem } from './Picker.ts';
 import { Icons } from './icons.ts';
 import type { ReferenceLocation } from '../lsp/LspManager.ts';
 
@@ -54,13 +55,13 @@ export function openReferencesPicker(
     items,
     // Render the matched line on the left, the `path:line` location as a muted,
     // croppable detail on the right (yields to the line text when space is tight).
-    formatMain: (item): FormattedRow => {
+    renderRow: (item) => {
       const it = item as ReferenceItem;
-      return {
+      return renderRowSingleLine({
         main: escapeMarkup(it.text),
         detail: `<span size="smaller">${escapeMarkup(it.detailText)}</span>`,
         cropDetail: true,
-      };
+      });
     },
     locate: (item) => {
       const it = item as ReferenceItem;

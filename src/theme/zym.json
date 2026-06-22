@@ -10,11 +10,11 @@
     },
     "text": {
       "muted": "#5b6268",
-      "accent": "#c678dd"
+      "accent": "#71a8ec"
     },
     "border": "#434346",
     "surface": {
-      "popover": "#383838",
+      "popover": "#323232",
       "selected": "#3f4b5b"
     },
     "status": {

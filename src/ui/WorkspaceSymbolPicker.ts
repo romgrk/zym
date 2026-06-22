@@ -13,6 +13,7 @@
 import * as Path from 'node:path';
 import { Gtk } from '../gi.ts';
 import { openLocationPicker } from './LocationPicker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { escapeMarkup, type PickerItem } from './Picker.ts';
 import { symbolKindGlyph, Icons } from './icons.ts';
 import { zym } from '../zym.ts';
@@ -51,16 +52,16 @@ export function openWorkspaceSymbolPicker(
         })
         .catch((err) => onError(err instanceof Error ? err.message : String(err)));
     },
-    formatMain: (item) => {
+    renderRow: (item) => {
       const sym = byValue.get(item.value);
-      if (!sym) return escapeMarkup(item.text);
+      if (!sym) return renderRowSingleLine({ main: escapeMarkup(item.text) });
       // The kind glyph is a quiet visual cue, so dim it; the name carries the row.
       const glyph = `<span alpha="55%">${escapeMarkup(symbolKindGlyph(sym.kind))}</span>`;
       const main = `${glyph} ${escapeMarkup(sym.name)}`;
       const rel = Path.relative(cwd, sym.path);
       const detail = sym.containerName ? `${sym.containerName}  ${rel}` : rel;
       // Smaller, croppable path: it yields to the symbol name when space is tight.
-      return { main, detail: `<span size="smaller">${escapeMarkup(detail)}</span>`, cropDetail: true };
+      return renderRowSingleLine({ main, detail: `<span size="smaller">${escapeMarkup(detail)}</span>`, cropDetail: true });
     },
     locate: (item) => {
       const sym = byValue.get(item.value);

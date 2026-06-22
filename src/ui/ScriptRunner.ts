@@ -13,7 +13,8 @@
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
-import { openPicker, type PickerItem } from './Picker.ts';
+import { openPicker, highlightSegment, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { Icons } from './icons.ts';
 import { Gtk } from '../gi.ts';
 
@@ -45,15 +46,13 @@ export function openScriptRunner(host: Overlay, dir: string, onRun: (name: strin
 
   // Each script is a two-column row: the name (matched + highlighted on the
   // left) and its command (muted, right-aligned). `text` packs both so the query
-  // matches either, with `display` carving them into the two columns.
-  const items: PickerItem[] = scripts.map(({ name, command }) => {
-    const text = `${name}  ${command}`;
-    return {
-      value: name,
-      text,
-      display: { main: [0, name.length], detail: [name.length + 2, text.length] },
-    };
-  });
+  // matches either; `data` carries the name length so the row can carve them
+  // apart (the name can't be recovered from `text` by searching for the gap).
+  const items: PickerItem[] = scripts.map(({ name, command }) => ({
+    value: name,
+    text: `${name}  ${command}`,
+    data: name.length,
+  }));
 
   openPicker({
     host,
@@ -61,6 +60,13 @@ export function openScriptRunner(host: Overlay, dir: string, onRun: (name: strin
     promptIcon: Icons.terminal,
     items,
     error: error ?? undefined,
+    renderRow: (item, positions) => {
+      const split = item.data as number;
+      return renderRowSingleLine({
+        main: highlightSegment(item.text, 0, split, positions),
+        detail: highlightSegment(item.text, split + 2, item.text.length, positions),
+      });
+    },
     onSelect: (name) => onRun(name),
   });
 }

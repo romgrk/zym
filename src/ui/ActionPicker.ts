@@ -5,7 +5,8 @@
  * back to the caller, which runs it in a terminal tab. The default action sorts
  * first and is tagged so it reads as the recommended choice.
  */
-import { openPicker, type PickerItem } from './Picker.ts';
+import { openPicker, highlightSegment, type PickerItem } from './Picker.ts';
+import { renderRowSingleLine } from './PickerRow.ts';
 import { Icons } from './icons.ts';
 import { Gtk } from '../gi.ts';
 import { defaultAction, type AgentAction } from '../agents/actions.ts';
@@ -25,11 +26,10 @@ export function openActionRunner(host: Overlay, actions: AgentAction[], onRun: (
   const items: PickerItem[] = ordered.map((action) => {
     const label = action === fallback ? `${action.label}  (default)` : action.label;
     const text = `${label}  ${action.command}`;
-    return {
-      value: action.id,
-      text,
-      display: { main: [0, label.length], detail: [label.length + 2, text.length] },
-    };
+    // Carry the label length so the row can split label (left) from command
+    // (right) — the label may itself contain a double space, so it can't be
+    // recovered from `text` by searching for the separator.
+    return { value: action.id, text, data: label.length };
   });
 
   openPicker({
@@ -38,6 +38,14 @@ export function openActionRunner(host: Overlay, actions: AgentAction[], onRun: (
     promptIcon: Icons.terminal,
     items,
     error: items.length === 0 ? 'This agent has registered no actions' : undefined,
+    // Label on the left, its shell command muted on the right.
+    renderRow: (item, positions) => {
+      const split = item.data as number;
+      return renderRowSingleLine({
+        main: highlightSegment(item.text, 0, split, positions),
+        detail: highlightSegment(item.text, split + 2, item.text.length, positions),
+      });
+    },
     onSelect: (id) => {
       const action = byId.get(id);
       if (action) onRun(action);
