@@ -122,7 +122,7 @@ addStyles(`
 const TAB_WIDTH = 4;
 const RIGHT_MARGIN = 80;
 // Inner padding (px) around the text of an embedded/input editor
-const INPUT_PADDING = 8;
+export const INPUT_PADDING = 8;
 
 // A line this many characters or longer makes GtkTextView's per-paragraph PangoLayout
 // pathological (minified/generated files, big one-line JSON, base64 blobs). When a file
