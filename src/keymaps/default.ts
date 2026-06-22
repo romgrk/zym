@@ -65,7 +65,10 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space g f': 'git:fetch',
   'space g l': 'git:pull', // git "l"oad / pull from upstream
   'space g p': 'git:push',
-  'space g d': 'git:continuous-diff', // "d"iff view: the continuous diff / staging surface
+  // Diff views (space g d …): the current changes, a past commit, or this branch vs master/main.
+  'space g d d': 'git:diff-current-changes', // "d"iff the current changes (continuous multibuffer / staging surface)
+  'space g d c': 'git:diff-commit', // diff the last "c"ommit (HEAD, against its parent)
+  'space g d b': 'git:diff-branch', // diff this "b"ranch vs master/main (PR-style)
   'space g D': 'git:diff-current', // "D"iff just the current file (working tree vs HEAD)
   'space g c': 'git:start-commit', // "c"ommit staged changes (edit the message in a tab)
   'space g C': 'git:commit-amend', // "C"ommit --amend the last commit (prefilled message)
@@ -201,7 +204,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'c c': 'git:commit', // commit: edit the message in a tab, save+close to commit
   },
 
-  // Editable diff multibuffer (git:continuous-diff): fold-style keys expand the elided `⋯`
+  // Editable diff multibuffer (git:diff-current-changes): fold-style keys expand the elided `⋯`
   // unchanged lines. More specific than the vim `#TextEditor` bindings, so these win; `z z`/
   // `z t`/`z b` (scroll) aren't bound here and still fall through to vim.
   // Project-search results multibuffer: per-file (excerpt) collapse. `z a` toggles the file under

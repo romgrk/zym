@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseStatus, parseNumstat, parseLsFiles } from './status.ts';
+import { parseStatus, parseNumstat, parseLsFiles, parseNameStatusZ, parseCommitLog } from './status.ts';
 
 // Porcelain v2 -z uses NUL terminators on every record (headers included).
 const Z = (...records: string[]) => records.map((r) => r + '\0').join('');
@@ -118,4 +118,50 @@ test('parseNumstat: empty input', () => {
 test('parseLsFiles: paths with spaces, trailing NUL', () => {
   assert.deepEqual(parseLsFiles('a.ts\0dir/b c.ts\0'), ['a.ts', 'dir/b c.ts']);
   assert.deepEqual(parseLsFiles(''), []);
+});
+
+// --- parseNameStatusZ: `git diff --name-status -z` -------------------------
+
+test('parseNameStatusZ: simple add/modify/delete', () => {
+  const files = parseNameStatusZ('A\0src/new.ts\0M\0src/edit.ts\0D\0src/gone.ts\0');
+  assert.deepEqual(files, [
+    { status: 'A', relPath: 'src/new.ts' },
+    { status: 'M', relPath: 'src/edit.ts' },
+    { status: 'D', relPath: 'src/gone.ts' },
+  ]);
+});
+
+test('parseNameStatusZ: rename and copy carry old + new path tokens', () => {
+  const files = parseNameStatusZ('R100\0old/a.ts\0new/a.ts\0C75\0src/base.ts\0src/copy.ts\0');
+  assert.deepEqual(files, [
+    { status: 'R', relPath: 'new/a.ts', oldRelPath: 'old/a.ts' },
+    { status: 'C', relPath: 'src/copy.ts', oldRelPath: 'src/base.ts' },
+  ]);
+});
+
+test('parseNameStatusZ: paths with spaces; empty input', () => {
+  assert.deepEqual(parseNameStatusZ('M\0dir/a b.ts\0'), [{ status: 'M', relPath: 'dir/a b.ts' }]);
+  assert.deepEqual(parseNameStatusZ(''), []);
+});
+
+// --- parseCommitLog: unit-separated `git log --format` records -------------
+
+test('parseCommitLog: fields split on the unit separator', () => {
+  const US = '\x1f';
+  const out =
+    ['abc123full', 'abc123', 'fix: the thing', 'Ada', '3 days ago'].join(US) +
+    '\n' +
+    ['def456full', 'def456', 'feat: a thing', 'Bob', '5 days ago'].join(US) +
+    '\n';
+  assert.deepEqual(parseCommitLog(out), [
+    { sha: 'abc123full', shortSha: 'abc123', subject: 'fix: the thing', author: 'Ada', date: '3 days ago' },
+    { sha: 'def456full', shortSha: 'def456', subject: 'feat: a thing', author: 'Bob', date: '5 days ago' },
+  ]);
+});
+
+test('parseCommitLog: subject keeps spaces; empty input', () => {
+  const US = '\x1f';
+  const [c] = parseCommitLog(['h', 'h', 'a subject with spaces', 'X', 'now'].join(US));
+  assert.equal(c.subject, 'a subject with spaces');
+  assert.deepEqual(parseCommitLog(''), []);
 });

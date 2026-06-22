@@ -108,6 +108,17 @@ interface SourceEntry {
 }
 
 export class ContinuousDiffView {
+  // Live views keyed by their root widget, so the host can route the diff
+  // fold/stage/review commands to the focused diff (`forRoot`) without tracking
+  // views itself — works regardless of how the tab was opened. A WeakMap so a
+  // closed view's entry is collected even if `dispose` somehow doesn't run.
+  private static readonly byRoot = new WeakMap<InstanceType<typeof Gtk.Widget>, ContinuousDiffView>();
+
+  /** The diff view hosting `widget` as its root, or null. */
+  static forRoot(widget: InstanceType<typeof Gtk.Widget>): ContinuousDiffView | null {
+    return ContinuousDiffView.byRoot.get(widget) ?? null;
+  }
+
   readonly root: InstanceType<typeof Gtk.Widget>;
   readonly editor: TextEditor;
   private readonly files: DiffFile[];
@@ -191,6 +202,7 @@ export class ContinuousDiffView {
     if (!this.editable) this.editor.model.setReadOnly(true);
     this.bands = this.editor.blockDecorations();
     this.root = this.editor.root;
+    ContinuousDiffView.byRoot.set(this.root, this); // discoverable via `forRoot` for command routing
     // Scope the expand-context keymap to this surface: `#TextEditor.continuous-diff` is more
     // specific than vim's `#TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
     // still fall through to vim.
@@ -959,6 +971,7 @@ export class ContinuousDiffView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    ContinuousDiffView.byRoot.delete(this.root);
     this.commentBox?.dispose(); // close the inline comment box if open (idempotent)
     this.commentBox = null;
     if (this.reDiffTimer) clearTimeout(this.reDiffTimer);

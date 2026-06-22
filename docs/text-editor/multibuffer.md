@@ -73,12 +73,6 @@ shared parse). Buffer-only mode (commit message, diff panes, picker) is a
 file-less `Document` + `BufferEditorOptions` presentation knobs, pinned by
 `src/ui/TextEditor/BufferEditor.test.ts`.
 
-**Naming rule:** UI carries no `MultiBuffer`
-(`SearchResultsView`/`ContinuousDiffView`/`SourceLineNumberGutter`/
-`HeaderBands`; commands `project:search-results`/`git:continuous-diff`);
-the model keeps it (`MultiBufferModel`, `MultiBufferDocument`,
-`buildDiffMultiBuffer`, `ViewProjection`/`ProjectionView`).
-
 ## What ships today
 
 Single-file editing plus both multibuffer surfaces run on the

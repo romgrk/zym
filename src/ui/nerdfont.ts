@@ -33,6 +33,7 @@ export const NERDFONT = {
   },
   GIT: {
     BRANCH:       '', // U+F418 nf-oct-git_branch
+    COMMIT:       '', // nf-oct-git_commit
     MERGE:        '', // U+F419 nf-oct-git_merge
     PULL_REQUEST: '', // U+F407 nf-oct-git_pull_request
     STASH:        '', // U+F187 nf-fa-archive

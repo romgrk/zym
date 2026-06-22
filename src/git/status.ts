@@ -156,3 +156,66 @@ export function parseNumstat(out: string): Map<string, LineDelta> {
 export function parseLsFiles(out: string): string[] {
   return out.split('\0').filter(Boolean);
 }
+
+/** A path changed between two trees (commit/range diff), with its status. */
+export interface ChangedFile {
+  /** Single-letter status: A(dded) M(odified) D(eleted) R(enamed) C(opied) T(ype) U(nmerged). */
+  status: 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U';
+  /** Repo-relative path (the new path for renames/copies). */
+  relPath: string;
+  /** The original path for renames/copies (absent otherwise). */
+  oldRelPath?: string;
+}
+
+/** Parse `git diff --name-status -z` (and `git diff-tree … --name-status -z`).
+ *  Records are NUL-separated: `<status>\0<path>` normally, and
+ *  `R<score>\0<old>\0<new>` / `C<score>\0<old>\0<new>` for renames/copies. */
+export function parseNameStatusZ(out: string): ChangedFile[] {
+  const files: ChangedFile[] = [];
+  const tokens = out.split('\0');
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!tok) continue;
+    const status = tok[0] as ChangedFile['status'];
+    // R/C carry a similarity score and two following path tokens (old, new).
+    if (status === 'R' || status === 'C') {
+      const oldRelPath = tokens[++i] ?? '';
+      const relPath = tokens[++i] ?? '';
+      if (relPath) files.push({ status, relPath, oldRelPath });
+    } else {
+      const relPath = tokens[++i] ?? '';
+      if (relPath) files.push({ status, relPath });
+    }
+  }
+  return files;
+}
+
+/** One commit summary for pickers / log views. */
+export interface CommitSummary {
+  /** Full commit OID. */
+  sha: string;
+  /** Abbreviated OID (as git chose it). */
+  shortSha: string;
+  /** First line of the commit message. */
+  subject: string;
+  /** Author name. */
+  author: string;
+  /** Author date, as formatted by `git log --date` (we ask for relative). */
+  date: string;
+}
+
+const LOG_FIELD_SEP = '\x1f'; // ASCII unit separator — never appears in commit fields we read
+
+/** The format string to pass to `git log --format=` so `parseCommitLog` can read it. */
+export const COMMIT_LOG_FORMAT = ['%H', '%h', '%s', '%an', '%ad'].join(LOG_FIELD_SEP);
+
+/** Parse `git log --format=COMMIT_LOG_FORMAT` (one unit-separated record per line). */
+export function parseCommitLog(out: string): CommitSummary[] {
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [sha = '', shortSha = '', subject = '', author = '', date = ''] = line.split(LOG_FIELD_SEP);
+      return { sha, shortSha, subject, author, date };
+    });
+}

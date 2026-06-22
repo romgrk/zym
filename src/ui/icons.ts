@@ -46,6 +46,8 @@ export const Icons = {
   trace: NERDFONT.STATUS.BUG,
   close: NERDFONT.ACTION.CLOSE,
   git: NERDFONT.GIT.BRANCH, // matches the header GitBranchButton
+  gitCommit: NERDFONT.GIT.COMMIT, // single-commit diff view
+  gitPullRequest: NERDFONT.GIT.PULL_REQUEST, // branch-vs-base (PR-style) diff view
   gitMerge: NERDFONT.GIT.MERGE,
   github: NERDFONT.SOCIAL.GITHUB,
   modified: NERDFONT.STATUS.DOT, // unsaved/modified marker

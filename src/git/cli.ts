@@ -16,6 +16,15 @@
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { type ProcResult, runProcess } from '../process/runner.ts';
+import {
+  COMMIT_LOG_FORMAT,
+  parseCommitLog,
+  parseNameStatusZ,
+  type ChangedFile,
+  type CommitSummary,
+} from './status.ts';
+
+export type { ChangedFile, CommitSummary } from './status.ts';
 
 export type GitFileState =
   | 'new'
@@ -439,6 +448,77 @@ export function stashApply(root: string, ref: string, onDone: GitDone): void {
 /** Discard a stash. */
 export function stashDrop(root: string, ref: string, onDone: GitDone): void {
   git(root, ['stash', 'drop', ref], onDone);
+}
+
+// --- history & diffs ----------------------------------------------------------
+// Read-only helpers backing the commit and branch (PR-style) diff views: list
+// commits for the picker, enumerate the files a commit/range touched, and read a
+// blob at an arbitrary revision so the diff view can show old-vs-new content.
+
+/** Recent commits reachable from `rev` (HEAD by default), newest first. Async. */
+export function listCommits(
+  root: string,
+  rev: string,
+  limit: number,
+  onDone: (commits: CommitSummary[]) => void,
+): void {
+  git(
+    root,
+    ['log', `--max-count=${limit}`, '--date=relative', `--format=${COMMIT_LOG_FORMAT}`, rev, '--'],
+    (ok, stdout) => onDone(ok ? parseCommitLog(stdout) : []),
+  );
+}
+
+/** The base branch for a PR-style diff: `master` if it exists locally, else `main`, else null.
+ *  One call — `git branch --list` returns only whichever of the patterns actually exist. Async. */
+export function defaultBaseBranch(root: string, onDone: (branch: string | null) => void): void {
+  git(root, ['branch', '--list', '--format=%(refname:short)', 'master', 'main'], (ok, stdout) => {
+    if (!ok) return onDone(null);
+    const names = new Set(stdout.split('\n').map((s) => s.trim()).filter(Boolean));
+    onDone(names.has('master') ? 'master' : names.has('main') ? 'main' : null);
+  });
+}
+
+/** Resolve a revision to its full OID, or null when it doesn't exist. Async. */
+export function resolveRef(root: string, ref: string, onDone: (oid: string | null) => void): void {
+  git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], (ok, stdout) =>
+    onDone(ok ? stdout.trim() || null : null),
+  );
+}
+
+/** The merge base (common ancestor) of two revisions, or null when unrelated. Async. */
+export function mergeBase(root: string, a: string, b: string, onDone: (base: string | null) => void): void {
+  git(root, ['merge-base', a, b], (ok, stdout) => onDone(ok ? stdout.trim() || null : null));
+}
+
+/** Read a file's contents at a given revision, or null when absent there. Async. */
+export function readFileAtRef(
+  root: string,
+  ref: string,
+  relPath: string,
+  onDone: (text: string | null) => void,
+): void {
+  git(root, ['show', `${ref}:${relPath}`], (ok, stdout) => onDone(ok ? stdout : null));
+}
+
+/** Files a commit changed vs its first parent (the root commit → vs the empty tree). Async. */
+export function commitChangedFiles(root: string, commit: string, onDone: (files: ChangedFile[]) => void): void {
+  // diff-tree against the first parent; --root makes the root commit diff vs the empty tree.
+  // -M/-C detect renames/copies so the view pairs old and new paths. `-m --first-parent`
+  // is what makes a *merge* commit report its first-parent diff (plain diff-tree emits
+  // nothing for merges) — matching the `<sha>^` old side the diff view reads content from.
+  git(
+    root,
+    ['diff-tree', '--no-commit-id', '--name-status', '-r', '-M', '-C', '-m', '--first-parent', '-z', '--root', commit],
+    (ok, stdout) => onDone(ok ? parseNameStatusZ(stdout) : []),
+  );
+}
+
+/** Files changed between two revisions `a → b` (the PR-style three-dot view passes the merge base as `a`). Async. */
+export function diffChangedFiles(root: string, a: string, b: string, onDone: (files: ChangedFile[]) => void): void {
+  git(root, ['diff', '--name-status', '-M', '-C', '-z', a, b], (ok, stdout) =>
+    onDone(ok ? parseNameStatusZ(stdout) : []),
+  );
 }
 
 // --- internals ---------------------------------------------------------------

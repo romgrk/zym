@@ -46,6 +46,7 @@ import { GithubButtons } from './GithubButtons.ts';
 import { acquireGitRepo, releaseGitRepo, type GitOpResult } from '../git.ts';
 import { git, repoRoot, invalidateRepoRoot, commitMsgPath, listWorktrees, lastCommitMessage } from '../git.ts';
 import { stage, unstage, stageAll, unstageAll, type GitDone } from '../git.ts';
+import { openCommitDiff, openBranchDiff } from './diffViews.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { registerGithubCommands } from './githubCommands.ts';
 import { computeDiff } from '../util/DiffModel.ts';
@@ -78,6 +79,7 @@ import { openPicker } from './Picker.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
 import { zym } from '../zym.ts';
+import { type OpenTabOptions } from '../Workspace.ts';
 import { type SessionParticipant, type TabState, type WorkspaceState, type SessionState, type PanelNode } from '../SessionManager.ts';
 import { SessionController } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
@@ -172,8 +174,11 @@ export class AppWindow {
   // Tab-hosted multibuffers (project:search-results), keyed by root widget so the view
   // is disposed (freeing its per-source DocumentSyntax parses) when its tab closes.
   private readonly searchResultsViews = new Map<Widget, SearchResultsView>();
-  // Tab-hosted continuous multi-file diff views (git:continuous-diff), same lifecycle.
-  private readonly continuousDiffViews = new Map<Widget, ContinuousDiffView>();
+  // Teardown for a center tab, keyed by its root widget — run (and cleared) when the
+  // tab closes (see disposeChild). The generic seam behind `zym.workspace.openTab`'s
+  // `onClose`; the continuous-diff views (editable + read-only commit/branch) use it
+  // to dispose on close. ContinuousDiffView.forRoot routes commands to the focused one.
+  private readonly tabCloseHandlers = new Map<Widget, () => void>();
   // Session modified-status registrations (editors, running agents), keyed by the
   // tab's root widget so the registration is disposed when the tab closes.
   private readonly participants = new Map<Widget, DisposableLike>();
@@ -399,6 +404,8 @@ export class AppWindow {
       if (options?.cursor) editor.restoreCursor(options.cursor);
     });
     zym.workspace.setActiveEditorProvider(() => this.activeEditor);
+    zym.workspace.setActiveWorkbenchProvider(() => this.workbench);
+    zym.workspace.setTabHost((widget, options) => this.openCenterTab(widget, options));
     zym.keymaps.initialize();
     // which-key hint: shows the continuations after a queued prefix (e.g. Space).
     this.whichKey = new WhichKey(this.contentOverlay);
@@ -1308,8 +1315,8 @@ export class AppWindow {
     this.editors.delete(widget);
     this.searchResultsViews.get(widget)?.dispose(); // free its per-source parses
     this.searchResultsViews.delete(widget);
-    this.continuousDiffViews.get(widget)?.dispose();
-    this.continuousDiffViews.delete(widget);
+    this.tabCloseHandlers.get(widget)?.(); // generic tab teardown (e.g. dispose a hosted diff view)
+    this.tabCloseHandlers.delete(widget);
     this.editorOwners.delete(widget);
     this.editorChildren.delete(widget);
     this.terminals.delete(widget);
@@ -2216,9 +2223,19 @@ export class AppWindow {
         description: 'Search the selected text across the project, shown as a multibuffer',
         when: () => this.activeEditor !== null,
       },
-      'git:continuous-diff': {
+      'git:diff-current-changes': {
         didDispatch: () => void this.openContinuousDiff(),
         description: 'Show every changed file as one continuous diff (multibuffer)',
+      },
+      'git:diff-commit': {
+        didDispatch: () => void openCommitDiff(),
+        description: 'Diff the last commit (HEAD, against its parent)',
+        when: () => this.workbench.git.getHead() !== null,
+      },
+      'git:diff-branch': {
+        didDispatch: () => void openBranchDiff(),
+        description: 'Diff this branch against master/main (PR-style)',
+        when: () => this.workbench.git.getHead() !== null,
       },
       'diff:expand-context': {
         didDispatch: () => this.activeContinuousDiff()?.expandContextAtCursor(),
@@ -2398,6 +2415,15 @@ export class AppWindow {
     });
   }
 
+  /** Host `widget` as a center tab: select, focus, and register its `onClose` teardown
+   *  (disposeChild runs it on close). Backs `zym.workspace.openTab` for any component. */
+  private openCenterTab(widget: Widget, options: OpenTabOptions): void {
+    const child = this.workbench.center.add(widget, { title: options.title, requireTabBar: options.requireTabBar });
+    if (options.onClose) this.tabCloseHandlers.set(widget, options.onClose);
+    child.select();
+    widget.grabFocus();
+  }
+
   /** Show every changed file (working tree vs HEAD) as ONE continuous diff in a tab — the
    *  multibuffer diff surface (read-only for now; docs/text-editor/multibuffer.md, G5). */
   private async openContinuousDiff(): Promise<void> {
@@ -2456,7 +2482,7 @@ export class AppWindow {
       title: title(),
       requireTabBar: true,
     });
-    this.continuousDiffViews.set(view.root, view); // disposeChild tears it down on close
+    this.tabCloseHandlers.set(view.root, () => view.dispose()); // disposeChild tears it down on close
     // Consult the diff on window close (unsaved edits OR unsent review comments). disposeChild
     // disposes this registration with the tab.
     this.participants.set(view.root, zym.session.registerParticipant(view));
@@ -3126,13 +3152,13 @@ export class AppWindow {
   private activeSavableSurface(): { save(): void } | null {
     const widget = this.activeChildWidget();
     if (!widget) return null;
-    return this.searchResultsViews.get(widget) ?? this.continuousDiffViews.get(widget) ?? null;
+    return this.searchResultsViews.get(widget) ?? ContinuousDiffView.forRoot(widget) ?? null;
   }
 
   /** The diff multibuffer hosted by the active child, if any (for the expand-context commands). */
   private activeContinuousDiff(): ContinuousDiffView | null {
     const widget = this.activeChildWidget();
-    return widget ? this.continuousDiffViews.get(widget) ?? null : null;
+    return widget ? ContinuousDiffView.forRoot(widget) : null;
   }
 
   /** The search-results multibuffer hosted by the active child, if any (for the collapse commands). */

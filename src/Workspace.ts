@@ -11,15 +11,30 @@
  */
 
 import { Disposable, type DisposableLike } from './util/eventKit.ts';
+import type { Gtk } from './gi.ts';
 import type { TextEditor } from './ui/TextEditor/index.ts';
+import type { Workbench } from './ui/Workbench.ts';
 
 export interface OpenFileOptions {
   /** Place the cursor at this `[row, column]` after opening/revealing. */
   cursor?: [number, number];
 }
 
+export interface OpenTabOptions {
+  /** Tab title (may include a leading icon glyph). */
+  title: string;
+  /** Keep the tab bar visible even as a lone tab. */
+  requireTabBar?: boolean;
+  /** Run when the tab is closed — e.g. dispose the hosted view. */
+  onClose?: () => void;
+}
+
+type Widget = InstanceType<typeof Gtk.Widget>;
 type Opener = (path: string, options?: OpenFileOptions) => void;
 type ActiveEditorProvider = () => TextEditor | null;
+type ActiveWorkbenchProvider = () => Workbench | null;
+/** Hosts a widget as a center tab — selected, focused, torn down on close (AppWindow owns the tree). */
+type TabHost = (widget: Widget, options: OpenTabOptions) => void;
 
 /** A subscriber registered through `observeTextEditors`, plus the per-editor
  *  Disposables its callback returned (torn down on editor close / unobserve). */
@@ -31,6 +46,8 @@ interface EditorObserver {
 export class Workspace {
   private opener: Opener | null = null;
   private activeEditorProvider: ActiveEditorProvider | null = null;
+  private activeWorkbenchProvider: ActiveWorkbenchProvider | null = null;
+  private tabHost: TabHost | null = null;
   private readonly editors = new Set<TextEditor>();
   private readonly observers = new Set<EditorObserver>();
 
@@ -49,6 +66,33 @@ export class Workspace {
    *  wired the provider). The app-wide counterpart to AppWindow's private `activeEditor`. */
   getActiveTextEditor(): TextEditor | null {
     return this.activeEditorProvider?.() ?? null;
+  }
+
+  /** Wire the active-workbench provider (the AppWindow injects this, like `setOpener`). */
+  setActiveWorkbenchProvider(provider: ActiveWorkbenchProvider): void {
+    this.activeWorkbenchProvider = provider;
+  }
+
+  /** The active workbench, or null before the AppWindow has wired the provider. Lets
+   *  app-wide components read its cwd / git without threading it through call sites. */
+  getActiveWorkbench(): Workbench | null {
+    return this.activeWorkbenchProvider?.() ?? null;
+  }
+
+  /** Wire the center-tab host (the AppWindow injects this, like `setOpener`). */
+  setTabHost(host: TabHost): void {
+    this.tabHost = host;
+  }
+
+  /** Open `widget` as a center tab — selected, focused, and (if `onClose` is given)
+   *  torn down when the tab closes. The seam any component uses to host a tab without
+   *  threading the workbench through. No-op (with a warning) before a host is wired. */
+  openTab(widget: Widget, options: OpenTabOptions): void {
+    if (!this.tabHost) {
+      console.warn('zym.workspace.openTab called before a host was registered');
+      return;
+    }
+    this.tabHost(widget, options);
   }
 
   // --- text-editor registry --------------------------------------------------
