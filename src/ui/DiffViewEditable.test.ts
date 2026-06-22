@@ -1,6 +1,6 @@
 /*
  * Editable diff multibuffer — SURFACE proof (Phase 3b / G5, docs/text-editor/multibuffer.md).
- * `ContinuousDiffView({ editable: true })` backs the NEW side with a live `Document`: editing a
+ * `DiffView({ editable: true })` backs the NEW side with a live `Document`: editing a
  * context/added row writes through to the file's model, removed (phantom) rows reject edits, and
  * after the edit settles the diff is RE-COMPUTED and re-flowed via `ProjectionView.retarget` —
  * phantom rows appear/disappear with a minimal splice (no whole-buffer re-materialize). Pins the
@@ -14,7 +14,7 @@ import { Gtk, Gdk, GLib } from '../gi.ts';
 import { tmpDir as makeTmpDir } from '../util/testTmp.ts';
 import { zym } from '../zym.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
-import { ContinuousDiffView } from './ContinuousDiffView.ts';
+import { DiffView } from './DiffView.ts';
 import { Range } from '../text/Range.ts';
 import { Point } from '../text/Point.ts';
 
@@ -39,7 +39,7 @@ function tmpFile(content: string): string {
 }
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
-const linesOf = (mbv: ContinuousDiffView) => mbv.editor.getText().split('\n');
+const linesOf = (mbv: DiffView) => mbv.editor.getText().split('\n');
 const flushReDiff = () => new Promise((r) => setTimeout(r, 200)); // > REDIFF_DEBOUNCE_MS
 
 /** new (working/disk) differs from old (HEAD) at line 2: "line2" → "CHANGED". */
@@ -48,7 +48,7 @@ function setup() {
   const newText = 'line1\nCHANGED\nline3\n';
   const path = tmpFile(newText); // the live Document loads the NEW content from disk
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
   return { path, registry, mbv };
 }
 
@@ -74,7 +74,7 @@ test('editable diff: a re-diff that re-flows rows keeps the caret on its SOURCE 
   const oldText = 'a\nB1\nB2\nc\n';
   const path = tmpFile('a\nc\n');
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText: 'a\nc\n' }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText: 'a\nc\n' }] });
   const aRow = linesOf(mbv).indexOf('a');
   // 'o'-like: open a line after `a`, caret on the new blank.
   mbv.editor.model.setTextInBufferRange(new Range(new Point(aRow, 1), new Point(aRow, 1)), '\n');
@@ -143,7 +143,7 @@ test('editable diff: undo of an insert before removed lines splices (no whole-bu
   const oldText = 'a\nB1\nB2\nc\n';
   const path = tmpFile('a\nc\n'); // new side: B1,B2 removed
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText: 'a\nc\n' }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText: 'a\nc\n' }] });
   const buf = (mbv.editor.sourceView as any).getBuffer();
 
   const aRow = linesOf(mbv).indexOf('a');
@@ -174,7 +174,7 @@ test('editable diff: expand-context reveals elided lines; expand-all / collapse 
   const newText = `t0\nAAA\nt2\n${mid}\nb0\nBBB\nb2\n`;
   const path = tmpFile(newText);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
   const windowed = linesOf(mbv).length;
   assert.ok(!linesOf(mbv).includes('u10'), 'the middle is elided initially');
 
@@ -205,7 +205,7 @@ test('editable diff: undo of an `o` just before a trailing fold reverts the view
   const newText = 'a0\na1\na2\ny\na4\na5\na6\nb0\nb1\nb2\nb3\nb4\n';
   const path = tmpFile(newText);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
   const before = linesOf(mbv);
   // Open a line after the last shown content row (just before the trailing fold).
   const last = before.length - 1;
@@ -235,7 +235,7 @@ test('editable diff: `O` on an excerpt-first line re-diffs under the GLib loop (
   const newText = '\naaaa\naaaa\naaaa\n\nyyyy\nyyyy\nyyyy\n\nbbbb\nbbbb\nbbbb\n';
   const path = tmpFile(newText);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
 
   const win = new Gtk.Window({ defaultWidth: 600, defaultHeight: 400 });
   win.setChild(mbv.root);
@@ -268,7 +268,7 @@ test('editable diff: re-diff reconciles the header/gap bands in place (no teardo
   const newText = '\naaaa\naaaa\naaaa\n\nyyyy\nyyyy\nyyyy\n\nbbbb\nbbbb\nbbbb\n';
   const path = tmpFile(newText);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
 
   const win = new Gtk.Window({ defaultWidth: 600, defaultHeight: 400 });
   win.setChild(mbv.root);
@@ -307,7 +307,7 @@ test('editable diff: the gutter bottom-aligns an excerpt-first row, top-aligns t
   const newText = '\naaaa\naaaa\naaaa\n\nyyyy\nyyyy\nyyyy\n\nbbbb\nbbbb\nbbbb\n';
   const path = tmpFile(newText);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
   const win = new Gtk.Window({ defaultWidth: 600, defaultHeight: 400 });
   win.setChild(mbv.root);
   zym.window = win as never;

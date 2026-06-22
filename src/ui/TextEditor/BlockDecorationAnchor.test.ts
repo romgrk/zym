@@ -23,7 +23,7 @@ import { plugins, registerBuiltinPlugins } from '../../plugin/index.ts';
 import { preloadGrammars } from '../../syntax/grammar.ts';
 import { DocumentRegistry } from './DocumentRegistry.ts';
 import { SearchResultsView } from '../SearchResultsView.ts';
-import { ContinuousDiffView } from '../ContinuousDiffView.ts';
+import { DiffView } from '../DiffView.ts';
 import { Range } from '../../text/Range.ts';
 import { Point } from '../../text/Point.ts';
 
@@ -104,7 +104,7 @@ test('anchor survives the diff retarget splice (re-diff) — minimal splice keep
   const newText = 'line1\nCHANGED\nline3\n';
   const path = tmpFile('f.ts', newText);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
+  const mbv = new DiffView({ editable: true, documents: registry, files: [{ path, oldText, newText }] });
   const buffer = (mbv.editor.model as any).buffer;
   // Anchor the stable context line "line3" — it stays present across the re-diff.
   const lines: string[] = mbv.editor.getText().split('\n');

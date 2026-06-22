@@ -97,7 +97,7 @@ only on a new narrow `ProjectionView.onDidMaterialize` (initial build /
   `(sourceKey, segmentEndRow)`. The gap is anchored ABOVE the next region's
   first row (a start-anchor) so `o` on the previous region's last line rides
   it.
-- **Continuous diff** (`ContinuousDiffView`): on construct + each re-diff
+- **Continuous diff** (`DiffView`): on construct + each re-diff
   (its set genuinely changes — elision gaps appear/disappear). Uses
   `{viewRow}` anchors (its first row may be a phantom; it re-`set()`s per
   reDiff anyway).

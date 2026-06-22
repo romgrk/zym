@@ -2,7 +2,7 @@
  * diffViews.ts — read-only diff views over two git revisions: a single commit
  * (vs its first parent) and this branch vs its base (PR-style, like a GitHub PR).
  *
- * Both reuse ContinuousDiffView — the same windowed multibuffer as
+ * Both reuse DiffView — the same windowed multibuffer as
  * `git:diff-current-changes` — but with no editing / staging / review, since the
  * content is historical (old + new sides are both git blobs, not live documents).
  *
@@ -13,7 +13,7 @@
 import * as Path from 'node:path';
 import { zym } from '../zym.ts';
 import { Icons } from './icons.ts';
-import { ContinuousDiffView } from './ContinuousDiffView.ts';
+import { DiffView } from './DiffView.ts';
 import { type DiffFile } from './multibuffer/diffMultiBuffer.ts';
 import {
   repoRoot,
@@ -115,7 +115,7 @@ async function buildRefDiffFiles(
  *  Hosted like the built-in continuous diff — selected, focused, disposed on close,
  *  and driven by the same `zo`/`zR`/`zm` fold commands. */
 function presentReadonlyDiff(files: DiffFile[], icon: string, titleText: string, cwd: string): void {
-  const view = new ContinuousDiffView({
+  const view = new DiffView({
     files,
     cwd,
     editable: false, // historical content — both sides are git blobs, not live documents

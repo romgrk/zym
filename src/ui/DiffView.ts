@@ -1,5 +1,5 @@
 /*
- * ContinuousDiffView — a CONTINUOUS multi-file diff in one scrollable editor
+ * DiffView — a CONTINUOUS multi-file diff in one scrollable editor
  * (docs/text-editor/multibuffer.md, Phase 3b / G5). Each changed file is a filename header
  * then its diff windowed like a real diff (changed hunks + context, long unchanged runs elided
  * to a `⋯` gap; see `buildDiffMultiBuffer`): context + added rows over the NEW side, removed
@@ -52,7 +52,7 @@ export interface DiffComment {
   comment: string;
 }
 
-export interface ContinuousDiffOptions {
+export interface DiffViewOptions {
   /** Changed files: base (old/HEAD) + current (new/working) content. */
   files: DiffFile[];
   cwd?: string;
@@ -107,16 +107,16 @@ interface SourceEntry {
   document?: Document;
 }
 
-export class ContinuousDiffView {
+export class DiffView {
   // Live views keyed by their root widget, so the host can route the diff
   // fold/stage/review commands to the focused diff (`forRoot`) without tracking
   // views itself — works regardless of how the tab was opened. A WeakMap so a
   // closed view's entry is collected even if `dispose` somehow doesn't run.
-  private static readonly byRoot = new WeakMap<InstanceType<typeof Gtk.Widget>, ContinuousDiffView>();
+  private static readonly byRoot = new WeakMap<InstanceType<typeof Gtk.Widget>, DiffView>();
 
   /** The diff view hosting `widget` as its root, or null. */
-  static forRoot(widget: InstanceType<typeof Gtk.Widget>): ContinuousDiffView | null {
-    return ContinuousDiffView.byRoot.get(widget) ?? null;
+  static forRoot(widget: InstanceType<typeof Gtk.Widget>): DiffView | null {
+    return DiffView.byRoot.get(widget) ?? null;
   }
 
   readonly root: InstanceType<typeof Gtk.Widget>;
@@ -171,7 +171,7 @@ export class ContinuousDiffView {
     return this.projectionView.view;
   }
 
-  constructor(options: ContinuousDiffOptions) {
+  constructor(options: DiffViewOptions) {
     this.onActivate = options.onActivate;
     this.onSend = options.onSend;
     this.files = options.files;
@@ -181,7 +181,7 @@ export class ContinuousDiffView {
     this.gitRepo = options.git;
     this.repo = options.cwd ? repoRoot(options.cwd) : null;
     if (this.editable && !this.registry) {
-      throw new Error('ContinuousDiffView: editable mode requires a DocumentRegistry');
+      throw new Error('DiffView: editable mode requires a DocumentRegistry');
     }
 
     // Resolve each side's source ONCE (live Document for the new side when editable, else a
@@ -202,7 +202,7 @@ export class ContinuousDiffView {
     if (!this.editable) this.editor.model.setReadOnly(true);
     this.bands = this.editor.blockDecorations();
     this.root = this.editor.root;
-    ContinuousDiffView.byRoot.set(this.root, this); // discoverable via `forRoot` for command routing
+    DiffView.byRoot.set(this.root, this); // discoverable via `forRoot` for command routing
     // Scope the expand-context keymap to this surface: `#TextEditor.continuous-diff` is more
     // specific than vim's `#TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
     // still fall through to vim.
@@ -281,7 +281,7 @@ export class ContinuousDiffView {
    *  common case); else extends the window below (a leading gap). Re-diffs to re-flow. */
   private revealChunk(rows: number[], fromTop: boolean): void {
     if (!rows.length) return;
-    const chunk = fromTop ? rows.slice(0, ContinuousDiffView.CHUNK) : rows.slice(-ContinuousDiffView.CHUNK);
+    const chunk = fromTop ? rows.slice(0, DiffView.CHUNK) : rows.slice(-DiffView.CHUNK);
     for (const r of chunk) this.revealedNewRows.add(r);
     this.reDiff();
   }
@@ -460,7 +460,7 @@ export class ContinuousDiffView {
     dmb.headerAnchors.forEach((h, i) =>
       specs.push({
         id: `header:${i}`, // reconcile by ordinal: count changes by delta, content-key rebuilds the widget
-        key: ContinuousDiffView.headerKey(h),
+        key: DiffView.headerKey(h),
         anchor: { viewRow: h.viewRow },
         placement: 'above',
         build: () => buildHeaderWidget(h.label, h.path, () => this.onActivate?.({ path: h.path, row: 0 }), h.subtitle),
@@ -469,7 +469,7 @@ export class ContinuousDiffView {
     dmb.gapAnchors.forEach((g, i) =>
       specs.push({
         id: `gap:${i}`,
-        key: ContinuousDiffView.gapKey(g),
+        key: DiffView.gapKey(g),
         anchor: { viewRow: g.viewRow },
         placement: 'below',
         // Clicking the gap reveals a chunk of its elided lines (extends the window above it).
@@ -902,8 +902,8 @@ export class ContinuousDiffView {
     }
     // Pad with context, clamped to the contiguous shown block.
     let s = cs, e = ce;
-    for (let k = 0; k < ContinuousDiffView.COMMENT_CONTEXT && isReal(s - 1); k++) s--;
-    for (let k = 0; k < ContinuousDiffView.COMMENT_CONTEXT && isReal(e + 1); k++) e++;
+    for (let k = 0; k < DiffView.COMMENT_CONTEXT && isReal(s - 1); k++) s--;
+    for (let k = 0; k < DiffView.COMMENT_CONTEXT && isReal(e + 1); k++) e++;
     return [s, e];
   }
 
@@ -971,7 +971,7 @@ export class ContinuousDiffView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    ContinuousDiffView.byRoot.delete(this.root);
+    DiffView.byRoot.delete(this.root);
     this.commentBox?.dispose(); // close the inline comment box if open (idempotent)
     this.commentBox = null;
     if (this.reDiffTimer) clearTimeout(this.reDiffTimer);

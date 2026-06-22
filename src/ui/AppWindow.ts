@@ -49,8 +49,6 @@ import { stage, unstage, stageAll, unstageAll, type GitDone } from '../git.ts';
 import { openCommitDiff, openBranchDiff } from './diffViews.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { registerGithubCommands } from './githubCommands.ts';
-import { computeDiff } from '../util/DiffModel.ts';
-import { DiffViewer } from './TextEditor/DiffViewer.ts';
 import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
 import { openFileOpener } from './FileOpener.ts';
@@ -59,7 +57,7 @@ import { openWorkspaceSymbolPicker } from './WorkspaceSymbolPicker.ts';
 import { openDocumentSymbolPicker } from './DocumentSymbolPicker.ts';
 import { openSearchPicker } from './SearchPicker.ts';
 import { SearchResultsView } from './SearchResultsView.ts';
-import { ContinuousDiffView } from './ContinuousDiffView.ts';
+import { DiffView } from './DiffView.ts';
 import { runProjectSearch, matchesToExcerptInputs } from './multibuffer/projectSearch.ts';
 import { openReferencesPicker } from './ReferencesPicker.ts';
 import { openCommandPicker } from './CommandPicker.ts';
@@ -177,7 +175,7 @@ export class AppWindow {
   // Teardown for a center tab, keyed by its root widget — run (and cleared) when the
   // tab closes (see disposeChild). The generic seam behind `zym.workspace.openTab`'s
   // `onClose`; the continuous-diff views (editable + read-only commit/branch) use it
-  // to dispose on close. ContinuousDiffView.forRoot routes commands to the focused one.
+  // to dispose on close. DiffView.forRoot routes commands to the focused one.
   private readonly tabCloseHandlers = new Map<Widget, () => void>();
   // Session modified-status registrations (editors, running agents), keyed by the
   // tab's root widget so the registration is disposed when the tab closes.
@@ -2325,14 +2323,22 @@ export class AppWindow {
     const rel = Path.relative(root, path);
     git(root, ['show', `HEAD:${rel}`], (ok, stdout) => {
       const head = ok ? stdout : ''; // untracked / new file → empty base (all added)
-      const model = computeDiff(head, current);
-      if (model.hunks.length === 0) {
+      if (head === current) {
         this.toast('No changes against HEAD');
         return;
       }
+      // One-file diff on the unified surface: OLD = HEAD blob, NEW = the editor's current
+      // text (incl. unsaved edits). Read-only snapshot (not backed by the live Document).
       const name = Path.basename(path);
-      const viewer = new DiffViewer(model, { title: `${name} (working tree ↔ HEAD)`, languagePath: path });
-      this.workbench.center.add(viewer.root, { title: `± ${name}`, requireTabBar: true });
+      const view = new DiffView({
+        files: [{ path, oldText: head, newText: current }],
+        cwd: this.workbench.cwd,
+        onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
+      });
+      const child = this.workbench.center.add(view.root, { title: `± ${name}`, requireTabBar: true });
+      this.tabCloseHandlers.set(view.root, () => view.dispose());
+      child.select();
+      view.focus();
     });
   }
 
@@ -2458,7 +2464,7 @@ export class AppWindow {
         return { path, oldText, newText };
       }),
     );
-    const view = new ContinuousDiffView({
+    const view = new DiffView({
       files,
       cwd,
       editable: true,
@@ -3152,13 +3158,13 @@ export class AppWindow {
   private activeSavableSurface(): { save(): void } | null {
     const widget = this.activeChildWidget();
     if (!widget) return null;
-    return this.searchResultsViews.get(widget) ?? ContinuousDiffView.forRoot(widget) ?? null;
+    return this.searchResultsViews.get(widget) ?? DiffView.forRoot(widget) ?? null;
   }
 
   /** The diff multibuffer hosted by the active child, if any (for the expand-context commands). */
-  private activeContinuousDiff(): ContinuousDiffView | null {
+  private activeContinuousDiff(): DiffView | null {
     const widget = this.activeChildWidget();
-    return widget ? ContinuousDiffView.forRoot(widget) : null;
+    return widget ? DiffView.forRoot(widget) : null;
   }
 
   /** The search-results multibuffer hosted by the active child, if any (for the collapse commands). */

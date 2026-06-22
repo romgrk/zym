@@ -56,7 +56,7 @@ backed by a `MultiBufferDocument`, so vim/search/decorations come free.
 UI classes carry no `MultiBuffer` in their name; that's the model layer
 (`src/ui/multibuffer/`).
 - `SearchResultsView` (project search) — `src/ui/SearchResultsView.ts`.
-- `ContinuousDiffView` (git diff) — `src/ui/ContinuousDiffView.ts`;
+- `DiffView` (git diff) — `src/ui/DiffView.ts`;
   `buildDiffMultiBuffer` (`diffMultiBuffer.ts`, model) windows each file
   (context ±3, runs ≥2 elided to a `⋯` gap), `diffSegments.ts` does the
   line-diff → items (eq/ins → editable new-side, del → phantom old-blob
@@ -102,7 +102,7 @@ Single-file editing plus both multibuffer surfaces run on the
     for unstage), then re-read the index + repaint markers (no geometry
     reflow — staging doesn't touch the worktree↔HEAD diff). Partial-file
     (per-hunk) staging works; external index moves refresh via
-    `git.onChange`. Tested by `ContinuousDiffStaging.test.ts` (real
+    `git.onChange`. Tested by `DiffViewStaging.test.ts` (real
     temp-repo round-trip).
   - **Commit** — `space g c` → `git:start-commit` opens
     `.git/COMMIT_EDITMSG` in a tab (save+close commits).
@@ -175,7 +175,7 @@ Single-file editing plus both multibuffer surfaces run on the
   `queueMicrotask`/`Promise`/`setTimeout(0)` — Node drains microtasks
   only on a libuv turn, which never happens during the GLib main loop, so
   a microtask-scheduled re-diff silently never runs in the app
-  (`ContinuousDiffView.scheduleMicroReDiff`). Tests must drive a realized
+  (`DiffView.scheduleMicroReDiff`). Tests must drive a realized
   view + `GLib.MainContext.iteration(true)`, not `await`. See the
   `queuemicrotask-dead-under-glib-loop` memory.
   - **Two timings, two tools:** *before-paint* work (a re-diff that must
@@ -246,7 +246,7 @@ Single-file editing plus both multibuffer surfaces run on the
   `src/syntax/DocumentSyntax.ts`, `SyntaxProjection.ts`,
   `syntax-controller.ts`; `Document.ts`, `DocumentRegistry.ts`.
 - Surfaces (UI, `src/ui/`): `SearchResultsView.ts`,
-  `ContinuousDiffView.ts`, `SourceLineNumberGutter.ts`, `HeaderBands.ts`;
+  `DiffView.ts`, `SourceLineNumberGutter.ts`, `HeaderBands.ts`;
   plus `src/ui/TextEditor/DiffLineNumberGutter.ts`,
   `applyDiffDecorations.ts`.
 - Block decorations: `src/ui/TextEditor/BlockDecorations.ts` (generic
@@ -256,7 +256,7 @@ Single-file editing plus both multibuffer surfaces run on the
   `MultiBufferDocument.ts`, `diffMultiBuffer.ts`, `diffSegments.ts`,
   `projectSearch.ts`, `ExcerptSyntaxProjection.ts`.
 - Wiring: `src/ui/AppWindow.ts` (`openSearchResults`/`space *`,
-  `openContinuousDiff`/`space g D`, `file:save` routing,
-  `diff:expand-*`).
+  `openContinuousDiff`/`space g d d`, `file:save` routing,
+  `diff:expand-*`); read-only commit/branch diffs in `src/ui/diffViews.ts`.
 - Reuse: `src/util/lineDiff.ts`, `DiffModel.ts`;
   `src/lsp/workspaceEdit.ts`.

@@ -1,6 +1,6 @@
 /*
  * DiffCommentBox — a small focusable comment input shown inline in the continuous
- * diff (ContinuousDiffView), hosted in the editor's focusable `Peek` (a sibling
+ * diff (DiffView), hosted in the editor's focusable `Peek` (a sibling
  * overlay card, NOT a `BlockDecorations` band: the latter is the non-interactive
  * add_overlay path, where a nested focusable editor leaks IM input — see
  * Peek.ts / BlockDecorations.ts). The body is a buffer-only `TextEditor` (full vim

@@ -222,7 +222,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     // `#AppWindow`; it routes here automatically (this embedded editor registers no gutter
     // variant). Bare `s`/`u` are left to vim (substitute / undo) since this surface is editable.
     // `g d` jumps to the file/line under the cursor — Enter now opens the inline comment box
-    // (handled directly in ContinuousDiffView), which sends the row/selection + comment to the agent.
+    // (handled directly in DiffView), which sends the row/selection + comment to the agent.
     'g d': 'diff:open-file',
   },
 

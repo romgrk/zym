@@ -1,6 +1,6 @@
 /*
  * Editable diff multibuffer — HUNK STAGING (Phase G5, docs/text-editor/multibuffer.md, task #17).
- * Over a real temp git repo, `ContinuousDiffView({ editable, cwd })` reads each file's index blob
+ * Over a real temp git repo, `DiffView({ editable, cwd })` reads each file's index blob
  * and classifies every changed row as staged / unstaged (the gutter marker). `stageHunkAtCursor`
  * builds the index→worktree hunk patch and `git apply --cached`s it; `unstageHunkAtCursor` reverses
  * the HEAD→index hunk out of the index. After each op the index is re-read and the markers flip.
@@ -18,7 +18,7 @@ import { tmpDir as makeTmpDir } from '../util/testTmp.ts';
 import { Gtk } from '../gi.ts';
 import { zym } from '../zym.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
-import { ContinuousDiffView } from './ContinuousDiffView.ts';
+import { DiffView } from './DiffView.ts';
 import { invalidateRepoRoot } from '../git.ts';
 
 Gtk.init();
@@ -47,16 +47,16 @@ function gitRepo(committed: string, worktree: string): { repo: string; file: str
   return { repo, file };
 }
 
-const stagedState = (mbv: ContinuousDiffView): (string | null)[] => (mbv as any).dmb.stagedState;
-const rowKinds = (mbv: ContinuousDiffView): string[] => (mbv as any).dmb.rowKinds;
+const stagedState = (mbv: DiffView): (string | null)[] => (mbv as any).dmb.stagedState;
+const rowKinds = (mbv: DiffView): string[] => (mbv as any).dmb.rowKinds;
 const indexBlob = (repo: string): string => execFileSync('git', ['show', ':f.ts'], { cwd: repo }).toString('utf8');
-const stateOf = (mbv: ContinuousDiffView, kind: string): (string | null)[] =>
+const stateOf = (mbv: DiffView, kind: string): (string | null)[] =>
   stagedState(mbv).filter((_s, i) => rowKinds(mbv)[i] === kind);
 
 function open(committed: string, worktree: string) {
   const { repo, file } = gitRepo(committed, worktree);
   const registry = new DocumentRegistry();
-  const mbv = new ContinuousDiffView({
+  const mbv = new DiffView({
     editable: true,
     documents: registry,
     cwd: repo,
