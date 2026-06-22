@@ -79,7 +79,7 @@ import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
 import { zym } from '../zym.ts';
 import { type SessionParticipant, type TabState, type WorkspaceState, type SessionState, type PanelNode } from '../SessionManager.ts';
-import { SessionController } from '../SessionController.ts';
+import { SessionController, deserializeTab } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
 import { NotificationLog } from './NotificationLog.ts';
 import { KeymapPanel } from './KeymapPanel.ts';
@@ -399,6 +399,8 @@ export class AppWindow {
       if (options?.cursor) editor.restoreCursor(options.cursor);
     });
     zym.workspace.setActiveEditorProvider(() => this.activeEditor);
+    // Expose closed-tab reopening app-wide; the history stack lives on the workspace.
+    zym.workspace.setTabReopener((state) => this.reopenTab(state));
     zym.keymaps.initialize();
     // which-key hint: shows the continuations after a queued prefix (e.g. Space).
     this.whichKey = new WhichKey(this.contentOverlay);
@@ -1290,7 +1292,14 @@ export class AppWindow {
         return true;
       },
       // Agent tabs are vetoed above, so only editors / plain terminals reach here.
-      onClosed: (widget) => this.disposeChild(widget),
+      // Snapshot the tab's restorable state before disposeChild tears it down, so
+      // `tab:reopen-last` can rebuild it; tabs that don't persist (search-results /
+      // diff views) serialize to null and aren't recorded.
+      onClosed: (widget) => {
+        const state = this.serializeChild(widget);
+        if (state) zym.workspace.recordClosedTab(state);
+        this.disposeChild(widget);
+      },
     });
   }
 
@@ -1323,6 +1332,24 @@ export class AppWindow {
       this.commitEditors.delete(widget);
       this.finishCommit(commitInfo.repo, commitInfo.msgPath, commitInfo.amend);
     }
+  }
+
+  // Rebuild one closed tab from its serialized state — the reopener `zym.workspace`
+  // calls (it owns the history stack; the panel tree lives here). Reuses the same
+  // per-kind reconstruction as session restore (deserializeTab + the shared builders,
+  // so cursor/scroll come back too), then attaches the rebuilt tab to the active pane
+  // and focuses it. Returns false when it can't be rebuilt (e.g. a file deleted since
+  // it was closed), so the workspace skips it and tries the next entry.
+  private reopenTab(state: TabState): boolean {
+    const built = deserializeTab(state, {
+      createEditorTab: (path, restore) => this.createEditorTab(path, restore),
+      createTerminalTab: (cwd) => this.createTerminalTab(cwd),
+    });
+    if (!built) return false;
+    const child = this.workbench.center.add(built.widget, { title: built.title, requireTabBar: built.requireTabBar });
+    built.onAttached?.(child);
+    (this.editors.get(built.widget) ?? this.terminals.get(built.widget))?.focus();
+    return true;
   }
 
   /**
@@ -1700,6 +1727,10 @@ export class AppWindow {
       'pane:split-right': { didDispatch: () => this.splitPane('right'), description: 'Split the pane to the right' },
       'pane:split-down': { didDispatch: () => this.splitPane('down'), description: 'Split the pane downward' },
       'pane:close': { didDispatch: () => this.closePane(), description: 'Close the active pane' },
+      // The lifecycle counterpart to closing a tab: rebuild the most recently closed
+      // one from the workspace's reopen stack (cross-panel, so it lives here, not in
+      // Panel's per-panel tab commands).
+      'tab:reopen-last': { didDispatch: () => zym.workspace.reopenLastTab(), description: 'Reopen the last closed tab' },
       'pane:focus-left': { didDispatch: () => this.navPane('left'), description: 'Focus the pane to the left' },
       'pane:focus-right': { didDispatch: () => this.navPane('right'), description: 'Focus the pane to the right' },
       'pane:focus-up': { didDispatch: () => this.navPane('up'), description: 'Focus the pane above' },

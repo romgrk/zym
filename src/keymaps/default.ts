@@ -130,6 +130,7 @@ const TAB_BINDINGS: Record<string, Binding> = {
   'alt->': 'tab:move-forward',
   'alt-9': 'tab:go-to-last',
   'alt-c': 'tab:close', // close the focused panel child
+  'alt-C': 'tab:reopen-last', // shift mirror of alt-c: bring back the last closed tab
   'alt-p': 'tab:toggle-pin', // pin/unpin the active tab (pinned tabs group at the front)
 };
 for (let n = 1; n <= 8; n++)

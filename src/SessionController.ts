@@ -176,26 +176,54 @@ export class SessionController {
     return zym.session.load(this.opts.root)?.window;
   }
 
-  // Rebuild one tab. Files that vanished are skipped (and counted); terminals are
-  // respawned in their cwd; agents are not relaunched here (see the phase plan).
+  // Rebuild one tab during restore. Files that vanished are skipped (and counted) and
+  // a dirty file's unsaved edits are pulled from the buffer cache; the per-kind
+  // reconstruction itself is shared with `tab:reopen-last` (see deserializeTab).
   private deserialize(tab: TabState): RestoredChild | null {
-    switch (tab.kind) {
-      case 'file': {
-        if (!Fs.existsSync(tab.path)) {
-          this.missing.push(tab.path);
-          return null;
-        }
-        // Restore unsaved edits from the buffer cache when this tab was dirty.
-        const unsavedText =
-          tab.dirty && this.restoringState
-            ? zym.session.readBuffer(this.restoringState, tab.path) ?? undefined
-            : undefined;
-        return this.opts.createEditorTab(tab.path, { cursor: tab.cursor, scroll: tab.scroll, unsavedText });
-      }
-      case 'terminal':
-        return this.opts.createTerminalTab(tab.cwd);
-      case 'agent':
+    return deserializeTab(tab, this.opts, {
+      onMissingFile: (path) => this.missing.push(path),
+      unsavedText: (path) =>
+        this.restoringState ? zym.session.readBuffer(this.restoringState, path) ?? undefined : undefined,
+    });
+  }
+}
+
+/** Builders that turn a tab's persistent state back into a (detached) tab widget. */
+export interface TabBuilders {
+  createEditorTab: (
+    path: string,
+    restore: { cursor?: [number, number]; scroll?: number; unsavedText?: string },
+  ) => RestoredChild | null;
+  createTerminalTab: (cwd: string) => RestoredChild | null;
+}
+
+/**
+ * Rebuild one tab from its persistent state into a *detached* `RestoredChild` (the
+ * caller places it — a restored split-tree leaf, or the active pane for
+ * `tab:reopen-last`). Returns null for a tab that can't be rebuilt: a file whose path
+ * no longer exists (reported via `onMissingFile` so restore can count it and reopen
+ * can skip to the next entry), or an agent (never rebuilt through this path).
+ *
+ * The restore-only concerns are hooks: `unsavedText` supplies a dirty file's cached
+ * edits (reopen has none, since the cache is only written on session save).
+ */
+export function deserializeTab(
+  tab: TabState,
+  builders: TabBuilders,
+  hooks: { onMissingFile?: (path: string) => void; unsavedText?: (path: string) => string | undefined } = {},
+): RestoredChild | null {
+  switch (tab.kind) {
+    case 'file': {
+      if (!Fs.existsSync(tab.path)) {
+        hooks.onMissingFile?.(tab.path);
         return null;
+      }
+      const unsavedText = tab.dirty ? hooks.unsavedText?.(tab.path) : undefined;
+      return builders.createEditorTab(tab.path, { cursor: tab.cursor, scroll: tab.scroll, unsavedText });
     }
+    case 'terminal':
+      return builders.createTerminalTab(tab.cwd);
+    case 'agent':
+      return null;
   }
 }
