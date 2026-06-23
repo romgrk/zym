@@ -34,7 +34,8 @@ import { openActionRunner } from './ActionPicker.ts';
 import { AgentConversation } from './AgentConversation.ts';
 import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
 import { listResumableSessions, recordSessionWorktree, relativeTime, type AgentSession } from '../agentSessions.ts';
-import { WorkbenchList, PROJECT_NAME } from './WorkbenchList.ts';
+import { PROJECT_NAME } from './WorkbenchList.ts';
+import { Sidebar } from './Sidebar.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
 import { GitPanel } from './GitPanel.ts';
 import { fileIconGlyph } from './fileIcons.ts';
@@ -117,11 +118,6 @@ const TOAST_TIMEOUT = 15;
 // Shared `replaceKey` for the upstream-pull lifecycle, so the "behind" prompt,
 // the "pulling…" spinner, and the result all transform one toast in place.
 const PULL_NOTICE_KEY = 'git:pull';
-// Expanded width (px) of the workbench sidebar — the full-height column at the very
-// left of the window, outside (left of) the header bar.
-const LAYOUT_SIDEBAR_WIDTH = 280;
-// Collapsed sidebar width (icons only) — toggled by the robot button.
-const LAYOUT_SIDEBAR_COLLAPSED_WIDTH = 48;
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 
@@ -164,10 +160,10 @@ export class AppWindow {
   // closed, or the user closes the tab (see pruneActionTerminals / disposeChild).
   private readonly actionTerminals = new Map<Widget, { agent: Agent; actionId: string; terminal: Terminal; child: PanelChild }>();
 
-  private readonly workbenchList: WorkbenchList;
-  // The top-level split whose start child is the workbench sidebar; its position is
-  // the sidebar width (toggled between expanded / collapsed by the robot button).
-  private sidebarSplit!: InstanceType<typeof Gtk.Paned>;
+  // The workbench sidebar: the full-height column at the very left of the window plus
+  // the top-level split that separates it from the content. Owns the `WorkbenchList`
+  // (`this.sidebar.list`) and the collapse/expand width toggle.
+  private readonly sidebar: Sidebar;
   // Commit-message editor tabs: the message file each is bound to, so closing the
   // tab can commit (git-style: write the message, save, close to commit).
   private readonly commitEditors = new Map<Widget, { repo: string; msgPath: string; amend: boolean }>();
@@ -291,21 +287,6 @@ export class AppWindow {
       ownsServer: (rootDir) => this.ownerWorkbenchCwd(rootDir) === this.workbench.cwd,
     });
 
-    // The workbench list lives in its own full-height sidebar at the very left of the
-    // window (built into the top-level split below), not in the workbench dock.
-    this.workbenchList = new WorkbenchList({
-      onActivate: (agent) => this.showAgent(agent),
-      onActivateUser: () => this.activateOwner('user'), // the user row → user workbench
-      onToggleCollapsed: (collapsed) =>
-        this.sidebarSplit.setPosition(collapsed ? LAYOUT_SIDEBAR_COLLAPSED_WIDTH : LAYOUT_SIDEBAR_WIDTH),
-      onRestart: (agent) => this.restartAgent(agent),
-      onStop: (agent) => agent.kill(),
-      onClose: (agent) => this.closeAgent(agent),
-      onRename: (agent) => this.renameAgentPrompt(agent),
-      onOpenChanges: (agent) => this.openAgentChanges(agent),
-      gitFor: (agent) => this.workbenches.get(agent)?.git ?? null,
-    });
-
     // Session save/restore/autosave is anchored to the user workbench (its center +
     // file tree). The builders construct (but don't attach) a tab during restore;
     // PanelGroup.restoreLayout places them into the tree.
@@ -358,27 +339,26 @@ export class AppWindow {
     this.toastOverlay.setChild(toolbarView);
 
     // Workbench sidebar: a full-height column at the very left of the window, *outside*
-    // the header bar. A top-level horizontal paned splits it from everything else
-    // (the header bar + workbench, wrapped by the toast overlay), so it spans from
-    // the window's top edge to its bottom; its width (the split position) is toggled
-    // between expanded / collapsed by the robot button.
-    const workbenchSidebar = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    workbenchSidebar.setName('WorkbenchSidebar'); // selector identity for CSS
-    this.workbenchList.root.setHexpand(true);
-    this.workbenchList.root.setVexpand(true); // fill the sidebar (height + width)
-    workbenchSidebar.append(this.workbenchList.root);
-    this.sidebarSplit = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
-    this.sidebarSplit.setStartChild(workbenchSidebar);
-    this.sidebarSplit.setEndChild(this.toastOverlay);
-    this.sidebarSplit.setPosition(LAYOUT_SIDEBAR_WIDTH);
-    this.sidebarSplit.setResizeStartChild(false); // window resize grows the content, not the sidebar
-    this.sidebarSplit.setShrinkStartChild(false);
+    // the header bar, split from the content (the header bar + workbench, wrapped by
+    // the toast overlay). The Sidebar owns the WorkbenchList and the collapse/expand
+    // width toggle; its agent callbacks route into the active-workbench machinery.
+    this.sidebar = new Sidebar({
+      content: this.toastOverlay,
+      onActivate: (agent) => this.showAgent(agent),
+      onActivateUser: () => this.activateOwner('user'), // the user row → user workbench
+      onRestart: (agent) => this.restartAgent(agent),
+      onStop: (agent) => agent.kill(),
+      onClose: (agent) => this.closeAgent(agent),
+      onRename: (agent) => this.renameAgentPrompt(agent),
+      onOpenChanges: (agent) => this.openAgentChanges(agent),
+      gitFor: (agent) => this.workbenches.get(agent)?.git ?? null,
+    });
 
     // Window-level overlay over the whole layout (sidebar + header + content), so
     // floating pickers cover the entire window rather than being clipped to the
     // content area (where they slid under the sidebar).
     this.overlay = new Gtk.Overlay();
-    this.overlay.setChild(this.sidebarSplit);
+    this.overlay.setChild(this.sidebar.root);
 
     // Bridge the notification manager to the toast stack. Only actionable
     // User-facing severities (info/success/warning/error/fatal) pop a transient
@@ -549,7 +529,7 @@ export class AppWindow {
     for (const wb of this.workbenches.values()) releaseGitRepo(wb.git);
     this.configWatcher.dispose();
     this.keymapWatcher.dispose();
-    this.workbenchList.dispose();
+    this.sidebar.dispose();
     this.workbench.gitPanel?.dispose();
     this.workbench.notificationLog.dispose();
     this.workbench.keymapPanel.dispose();
@@ -1172,7 +1152,7 @@ export class AppWindow {
   // The sidebar selection follows the active workbench's owner (which person you're
   // viewing), not focus.
   private updateAgentHighlight(): void {
-    this.workbenchList.selectAgent(this.workbench.owner === 'user' ? null : this.workbench.owner);
+    this.sidebar.list.selectAgent(this.workbench.owner === 'user' ? null : this.workbench.owner);
   }
 
   // Tell each agent whether the user is currently looking at it — only the agent
@@ -1572,7 +1552,7 @@ export class AppWindow {
   private activateWorkbench(workbench: Workbench<'user' | Agent>): void {
     this.workbench = workbench;
     this.contentOverlay.setChild(workbench.root); // show this workbench
-    this.workbenchList.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
+    this.sidebar.list.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
     this.rebindGitChrome(); // header branch/GitHub now reflect this workbench's root
     this.workbenchStatus.refresh(); // diagnostics pill + LSP indicator → this workbench
     this.updateViewedAgent();
@@ -1625,7 +1605,7 @@ export class AppWindow {
     releaseGitRepo(oldGit);
     // Sidebar branch line: re-read + re-subscribe now that the git is swapped (the
     // row can't observe the swap itself without racing the re-root).
-    if (workbench.owner !== 'user') this.workbenchList.refreshAgent(workbench.owner);
+    if (workbench.owner !== 'user') this.sidebar.list.refreshAgent(workbench.owner);
     if (this.workbench === workbench) this.rebindGitChrome();
     // Diagnostics ownership shifts on a re-root (paths under the old/new root change
     // hands), so re-scope every workbench's panel and the active header status.
@@ -1715,7 +1695,7 @@ export class AppWindow {
   /** Show the sidebar-header unsaved dot when any open editor has unsaved edits. */
   private updateModifiedMarker() {
     const modified = [...this.editors.values()].some((e) => e.isModified());
-    this.workbenchList.setModified(modified);
+    this.sidebar.list.setModified(modified);
   }
 
   // --- Commands --------------------------------------------------------------
@@ -1751,7 +1731,7 @@ export class AppWindow {
       // collapsed away by closing its last tab).
       'file-tree:focus': { didDispatch: () => this.revealLeftTab('files'), description: 'Focus the file tree' },
       'git-panel:focus': { didDispatch: () => this.revealLeftTab('git'), description: 'Focus Source Control' },
-      'workbench-list:focus': { didDispatch: () => this.workbenchList.focus(), description: 'Focus the workbench sidebar' },
+      'workbench-list:focus': { didDispatch: () => this.sidebar.list.focus(), description: 'Focus the workbench sidebar' },
       // Cycle the active workbench through [user, …agents] (the workbench-list order).
       'workbench:previous': { didDispatch: () => this.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
       'workbench:next': { didDispatch: () => this.cycleWorkbench(1), description: 'Switch to the next workbench' },
@@ -2998,7 +2978,7 @@ export class AppWindow {
       { root: this.workbench.leftPanel.root, focus: () => this.focusSidePanel() },
       // The agent list is its own full-height sidebar (left of everything); its
       // geometry makes it the leftmost zone for directional pane navigation.
-      { root: this.workbenchList.root, focus: () => this.workbenchList.focus() },
+      { root: this.sidebar.list.root, focus: () => this.sidebar.list.focus() },
       { root: this.workbench.center.root, focus: () => this.focusActivePane() },
     ];
     if (this.workbench.bottomDock === 'notifications')

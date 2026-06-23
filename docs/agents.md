@@ -102,21 +102,27 @@ What already exists and is reused, not rebuilt:
 - **`src/AgentManager.ts` — `zym.agents`** — the registry: `add`/`remove`/
   `getAgents` (launch order) + `onDidAddAgent`/`onDidRemoveAgent`.
   The agent list / sidebar is `WorkbenchList` (not a separate `AgentList`).
-- **`src/ui/WorkbenchList.ts`** — the contents of the **WorkbenchSidebar** (the
-  full-height column at the very left of the window, outside/left of the header
-  bar; AppWindow wraps everything in a top-level horizontal `Gtk.Paned` —
-  `sidebarSplit` — whose start child is the sidebar). Each entry is associated
-  with a particular **workbench**: the first ("default", selected-by-default)
-  row is the **user** (person glyph + name, as a pseudo-agent —
-  `onActivateUser`), the rest are the running agents (status indicator + title
+- **`src/ui/Sidebar.ts`** — assembles the **WorkbenchSidebar** (the full-height
+  column at the very left of the window, outside/left of the header bar). It owns
+  the `WorkbenchList` (exposed as `sidebar.list`), wraps it in the sidebar column,
+  and splits that column from the window content with a top-level horizontal
+  `Gtk.Paned` (its `root`, whose start child is the sidebar and whose end child is
+  the host-supplied `content`). It also owns the collapse/expand width toggle: the
+  list's robot button fires `onToggleCollapsed`, and the sidebar applies the
+  `Gtk.Paned` position (between `SIDEBAR_COLLAPSED_WIDTH` and `SIDEBAR_WIDTH`).
+  AppWindow constructs one `Sidebar`, forwarding the agent callbacks, and never
+  touches the list/paned directly.
+- **`src/ui/WorkbenchList.ts`** — the contents of the WorkbenchSidebar column.
+  Each entry is associated with a particular **workbench**: the first ("default",
+  selected-by-default) row is the **user** (person glyph + name, as a pseudo-agent
+  — `onActivateUser`), the rest are the running agents (status indicator + title
   + changed-files badge). **Never empty** (the user row is always present → no
   empty state); every row is one header-bar tall. Its top is an
   `Adw.HeaderBar` (themed to match the window header bar) whose only content is
   a flat **logo button** (a square placeholder glyph for now — will become the
   real logo — styled like the git branch button) that collapses the sidebar to
-  icons-only / expands to icons+text — the width change is applied by the host
-  via `onToggleCollapsed` (`sidebarSplit` position between
-  `LAYOUT_SIDEBAR_COLLAPSED_WIDTH` and `LAYOUT_SIDEBAR_WIDTH`).
+  icons-only / expands to icons+text — the width change is requested via
+  `onToggleCollapsed` (the `Sidebar` applies it).
 - **`src/ui/AgentPicker.ts`** — fuzzy quick-switcher over running agents, with
   a *Start agent: `<query>`* action that launches a new agent with the typed
   prompt.
