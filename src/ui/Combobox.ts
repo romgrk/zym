@@ -247,9 +247,6 @@ export class Combobox {
     const row = new Gtk.ListBoxRow();
     row.setChild(label);
     row.setFocusable(false);
-    const hover = new Gtk.EventControllerMotion();
-    hover.on('enter', () => this.listBox.selectRow(row));
-    row.addController(hover);
     return row;
   }
 

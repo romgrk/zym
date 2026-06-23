@@ -215,3 +215,27 @@ test('match rows are recycled across rebuilds (no churn), growing and shrinking'
   assert.deepEqual(rows(host), [{ name: 'PickerRow', text: 'h' }]);
   picker.close();
 });
+
+// Match rows must carry no event controllers. The old select-on-hover affordance
+// added a hover `EventControllerMotion` per row, whose handler closure node-gtk
+// roots — a row removed from the pool then pinned its whole subtree forever (the
+// multi-GB idle-RSS leak). Selection is now keyboard- and click-driven only, so
+// rows hold no controllers and nothing leaks. `observeControllers().nItems`
+// counts the controllers on a widget.
+const controllerCount = (w: any): number => w.observeControllers().nItems as number;
+
+test('match rows carry no event controllers (select-on-hover removed, no leak)', () => {
+  const host = new Gtk.Overlay();
+  const picker = openPicker({ host, items: ['a', 'b', 'c', 'd', 'e'], onSelect: () => {} });
+  const listBox = findListBox(host);
+
+  for (let i = 0; i < 5; i++) {
+    assert.equal(controllerCount(listBox.getRowAtIndex(i)), 0, `match row ${i} has no event controller`);
+  }
+
+  // Growing and shrinking the pool must not introduce controllers either.
+  picker.setItems(['a', 'b', 'c', 'd', 'e', 'f']);
+  picker.setItems(['a']);
+  assert.equal(controllerCount(listBox.getRowAtIndex(0)), 0, 'reused row has no event controller');
+  picker.close();
+});

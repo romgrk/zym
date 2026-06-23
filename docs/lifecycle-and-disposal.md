@@ -46,6 +46,16 @@ dispose it as a unit.
 7. **Clear timers** in `dispose()` (`setTimeout`/`setInterval` ids).
 8. **Prefer `WeakMap` for per-widget side tables** — a missed disposal
    degrades to dead data, not a pinned widget.
+9. **Remove event controllers from recycled/removed widgets.** node-gtk roots a
+   controller's signal-handler closures (persistent handles) while it is
+   connected, so a controller left on a widget that is then removed from the
+   list/tree and dropped pins that widget's whole subtree (row → box → labels)
+   forever — even an empty handler, and even when the entire tree is dropped.
+   Add controllers to widgets that may be removed at runtime through
+   `trackController` and sever them with `detachControllers(widget)` before the
+   removal (`src/util/widgetControllers.ts`). `removeController` releases the
+   rooted closure; `observeControllers()` can't enumerate them in this node-gtk
+   build, so we track them ourselves.
 
 ## Reference — `TextEditor.dispose()`
 
@@ -76,3 +86,16 @@ handler (rule 2). Native leak = `app.run()` frame dominates CPU with JS idle
   [git/index.md](git/index.md).
 - **Overlay-child `unparent` crash** — fixed with the hide+pool slot pattern
   (rule 6).
+- **List-row controller closures → multi-GB idle RSS** — every Picker/Combobox
+  match row carried a select-on-hover `EventControllerMotion` whose
+  `() => listBox.selectRow(row)` closure node-gtk rooted; removing a surplus row
+  (per keystroke) without removing the controller pinned the row → box → labels
+  subtree. The file picker churns the most, so ~77k detached `GtkLabel`s
+  accumulated with nothing open. A live CDP bisection isolated it: a row removed
+  with the controller survived GC, the same row with `removeController` was
+  collected (true for both list-churn and whole-card drop). Resolved by **dropping
+  select-on-hover** (selection is keyboard/click-only now), so those rows carry no
+  controller at all. `GitPanel`'s rows keep a real double-click `GestureClick` and
+  rebuild on every poll, so they use `trackController`/`detachControllers`
+  (rule 9). Same class, still open: `NotificationToasts` (toast card click) and
+  other recycled widgets with controllers.

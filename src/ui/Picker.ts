@@ -565,8 +565,8 @@ export function openPicker(options: PickerOptions): PickerHandle {
 
   // Reconcile the pooled match rows to `ranked`: reuse existing rows (swap only
   // their child widget), append new ones as the list grows, and remove the
-  // surplus when it shrinks. Hovering a row selects it (so mouse and keyboard
-  // selection agree); the hover handler is wired once when a row is created.
+  // surplus when it shrinks. Selection is keyboard- and click-driven; rows carry
+  // no controllers (mouse hover does not move the selection).
   const renderRow = options.renderRow ?? defaultRowRenderer;
   const syncMatchRows = (ranked: RankedItem[]) => {
     for (let i = 0; i < ranked.length; i++) {
@@ -576,9 +576,6 @@ export function openPicker(options: PickerOptions): PickerHandle {
       } else {
         const row = new Gtk.ListBoxRow();
         row.setChild(child);
-        const hover = new Gtk.EventControllerMotion();
-        hover.on('enter', () => listBox.selectRow(row));
-        row.addController(hover);
         listBox.append(row);
         matchRows.push(row);
       }
@@ -642,10 +639,6 @@ export function openPicker(options: PickerOptions): PickerHandle {
       actionRow = new Gtk.ListBoxRow();
       actionRow.setChild(label);
       actionRow.addCssClass('action-row');
-      const hover = new Gtk.EventControllerMotion();
-      const row = actionRow;
-      hover.on('enter', () => listBox.selectRow(row));
-      actionRow.addController(hover);
       listBox.append(actionRow);
     }
 
@@ -746,7 +739,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   }
   entry.on('activate', () => choose(null));
   listBox.on('row-activated', (row) => choose(row));
-  // Drive the side preview off selection changes (keyboard move + hover both go
+  // Drive the side preview off selection changes (keyboard move and click both go
   // through `selectRow`, so this single hook covers them).
   if (options.preview) listBox.on('row-selected', refreshPreview);
 

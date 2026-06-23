@@ -19,6 +19,7 @@ import { addStyles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import { trackController, detachControllers } from '../util/widgetControllers.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import type { GitRepo } from '../git.ts';
 import {
@@ -266,6 +267,7 @@ export class GitPanel {
     let child = this.list.getFirstChild();
     while (child) {
       const next = child.getNextSibling();
+      detachControllers(child); // release each row's rooted click closure before dropping it
       this.list.remove(child);
       child = next;
     }
@@ -341,7 +343,7 @@ export class GitPanel {
     gesture.on('pressed', (nPress: number) => {
       if (nPress === 2) this.open(change);
     });
-    row.addController(gesture);
+    trackController(row, gesture);
     return row;
   }
 
