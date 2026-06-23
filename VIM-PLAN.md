@@ -13,20 +13,33 @@ identity stubs that exist today. The vendored vim layer
 `buffer`/`screen` method names unchanged — the point is to make those names mean
 what Atom means, not to rewrite the ported code.
 
-## Current state (accurate as of this branch)
+## Handoff status
+
+- **Stage 1 is DONE and merged to `master`** (rename commit `22fc09e`, merge
+  `7bf6969`). It was rename-only; typecheck + the full test suite were green.
+- **Next agent: start from `master`** — the work is all there. Stage 2 below is
+  the main thread (behaviour-bearing, needs running the app to verify vim with
+  folds); the parallel vim `as any` track is independent and lower-risk if you
+  want a self-contained, fully-test-gated task instead.
+
+## Current state (after Stage 1)
 
 - `ViewProjection` (`src/ui/TextEditor/ViewProjection.ts`, pure, unit-tested)
-  already implements the real 3-space coordinate map under the **old** names
-  `source` / `projection` / `view`. The fold `FoldHost` interface in
-  `SyntaxController` (`src/syntax/syntax-controller.ts`) uses **model** / `view`.
-- `EditorModel` / `Cursor` / `Selection` operate directly on the materialized
-  *view* (screen) buffer and treat `screen` = `buffer` = identity: the
-  `*ForScreenPosition` / `*ForScreenRow` methods clamp and return the same point.
-  Correct only when no fold/wrap is active.
+  implements the real 3-space coordinate map under the **canonical** names
+  `document` / `buffer` / `screen`. The `FoldHost` contract
+  (`src/syntax/syntax-controller.ts`) + its `Document`/`ProjectionView` impls +
+  `SyntaxController`'s internal translators all speak `document` / `screen`
+  (`documentToScreen` / `screenToDocument` / `documentLineForScreenLine` / …).
+- ⚠️ **Stage 2 target:** `EditorModel` / `Cursor` / `Selection` still operate
+  directly on the materialized *screen* buffer and treat `screen` = `buffer` =
+  identity: the `*ForScreenPosition` / `*ForScreenRow` methods clamp and return
+  the same point. Correct only when no fold/wrap is active — so the vim layer
+  still "ignores folds".
 - Soft-wrap is real (GtkSourceView renders it; a "long-line mode" disables it)
   but lives only in pixel geometry (`gj`/`gk` via `displayLineMove`), not in the
-  Point-based screen coordinates.
-- Baseline is green: `pnpm run typecheck` clean, `pnpm run test` 988 pass.
+  Point-based screen coordinates. (Stage 3.)
+- Baseline is green: `pnpm run typecheck` clean, `pnpm run test` 1006 pass
+  (2 pre-existing skips).
 
 ## Stage 1 — rename the projection layer to the canonical names (no behavior change) — ✅ DONE
 
