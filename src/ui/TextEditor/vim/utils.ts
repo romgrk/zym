@@ -15,7 +15,7 @@ import type { Cursor } from '../Cursor.ts'
 
 // Scan options shared by scanEditor/findInEditor/findPoint and friends.
 // TODO(vim-ts): tighten — some callers pass extra ad-hoc props.
-interface ScanOptions {
+export interface ScanOptions {
   from?: PointLike
   scanRange?: RangeLike
   contains?: boolean
@@ -26,7 +26,7 @@ interface ScanOptions {
   [key: string]: any
 }
 
-type ScanDirection = 'forward' | 'next' | 'backward' | 'previous'
+export type ScanDirection = 'forward' | 'next' | 'backward' | 'previous'
 
 // Atom's default `editor.nonWordCharacters`, used for word-boundary detection.
 export const DEFAULT_NON_WORD_CHARACTERS = '/\\()"\':,.;<>~!@#$%^&*|+=[]{}`?-…'
@@ -198,15 +198,10 @@ function getNonWordCharactersForCursor (cursor: Cursor): string {
     : DEFAULT_NON_WORD_CHARACTERS
 }
 
-function getRows (editor: EditorModel, bufferOrScreen: 'buffer' | 'screen', {startRow, direction}: {startRow: number, direction: 'previous' | 'next'}): number[] | undefined {
-  switch (direction) {
-    case 'previous':
-      return startRow <= 0 ? [] : getList(startRow - 1, 0)
-    case 'next': {
-      const endRow = bufferOrScreen === 'buffer' ? getVimLastBufferRow(editor) : getVimLastScreenRow(editor)
-      return startRow >= endRow ? [] : getList(startRow + 1, endRow)
-    }
-  }
+function getRows (editor: EditorModel, bufferOrScreen: 'buffer' | 'screen', {startRow, direction}: {startRow: number, direction: 'previous' | 'next'}): number[] {
+  if (direction === 'previous') return startRow <= 0 ? [] : getList(startRow - 1, 0)
+  const endRow = bufferOrScreen === 'buffer' ? getVimLastBufferRow(editor) : getVimLastScreenRow(editor)
+  return startRow >= endRow ? [] : getList(startRow + 1, endRow)
 }
 
 // Return Vim's EOF position.
@@ -594,7 +589,7 @@ function isSingleLineText (text: string): boolean {
 // Valid options
 //  - wordRegex: instance of RegExp
 //  - nonWordCharacters: string
-interface WordOptions {
+export interface WordOptions {
   singleNonWordChar?: boolean
   wordRegex?: RegExp
   nonWordCharacters?: string
@@ -1022,8 +1017,8 @@ function scanEditor (editor: EditorModel, direction: ScanDirection, regex: RegEx
 //  - No need to call stop()
 //  - No need to use temporal variable to extract found var from callback.
 //  - Whatever value you can return(range, point, whatever you returned truthy value)
-function findInEditor<T> (editor: EditorModel, direction: ScanDirection, regex: RegExp, options: ScanOptions, fn: (event: ScanMatchResult) => T): T | undefined {
-  let result: T | undefined
+function findInEditor<T> (editor: EditorModel, direction: ScanDirection, regex: RegExp, options: ScanOptions, fn: (event: ScanMatchResult) => T | false | null | undefined): T | undefined {
+  let result: T | false | null | undefined
   scanEditor(editor, direction, regex, options, event => {
     result = fn(event)
     if (result) {

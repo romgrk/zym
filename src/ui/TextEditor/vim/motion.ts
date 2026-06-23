@@ -6,6 +6,7 @@ import { Point } from '../../../text/Point.ts'
 import { Range } from '../../../text/Range.ts'
 import { Base } from './base.ts'
 import type { Cursor } from '../Cursor.ts'
+import type { ScanOptions } from './utils.ts'
 
 /** A buffer wise — how a motion/selection spans the buffer. */
 type Wise = 'characterwise' | 'linewise' | 'blockwise'
@@ -313,7 +314,7 @@ class MoveDownDisplayLine extends MoveUpDisplayLine {
 class MoveUpToEdge extends Motion {
   wise: Wise = 'linewise'
   jump = true
-  direction: Direction = 'previous'
+  direction: 'previous' | 'next' = 'previous'
   moveCursor (cursor: Cursor): void {
     this.moveCursorCountTimes(cursor, () => {
       const point = this.getPoint(cursor.getScreenPosition())
@@ -367,7 +368,7 @@ class MoveUpToEdge extends Motion {
 }
 
 class MoveDownToEdge extends MoveUpToEdge {
-  direction: Direction = 'next'
+  direction: 'previous' | 'next' = 'next'
 }
 
 // Word Motion family
@@ -383,7 +384,7 @@ class MoveDownToEdge extends MoveUpToEdge {
 class MotionByWord extends Motion {
   static command = false
   wordRegex: RegExp | null = null
-  direction: Direction = null
+  direction: 'previous' | 'next' | null = null
   which: 'start' | 'end' | null = null
   skipBlankRow = false
   skipEmptyRow = false
@@ -396,8 +397,8 @@ class MotionByWord extends Motion {
   }
 
   getPoint (cursor: Cursor, countState: {count: number, isFinal: boolean, stop: () => void}): Point | [number, number] {
-    const {direction} = this
-    let {which} = this
+    const direction = this.direction! // always set by concrete word motions
+    let which = this.which! // always set by concrete word motions
     const regex = this.getWordRegexForCursor(cursor)
 
     const from = cursor.getBufferPosition()
@@ -449,7 +450,7 @@ class MotionByWord extends Motion {
 
 // w
 class MoveToNextWord extends MotionByWord {
-  direction: Direction = 'next'
+  direction: 'previous' | 'next' = 'next'
   which: 'start' | 'end' | null = 'start'
 }
 
@@ -473,7 +474,7 @@ class MoveToNextAlphanumericWord extends MoveToNextWord {
 
 // b
 class MoveToPreviousWord extends MotionByWord {
-  direction: Direction = 'previous'
+  direction: 'previous' | 'next' = 'previous'
   which: 'start' | 'end' | null = 'start'
   skipWhiteSpaceOnlyRow = true
 }
@@ -499,7 +500,7 @@ class MoveToPreviousAlphanumericWord extends MoveToPreviousWord {
 // e
 class MoveToEndOfWord extends MotionByWord {
   inclusive = true
-  direction: Direction = 'next'
+  direction: 'previous' | 'next' = 'next'
   which: 'start' | 'end' | null = 'end'
   skipEmptyRow = true
   skipWhiteSpaceOnlyRow = true
@@ -526,7 +527,7 @@ class MoveToEndOfAlphanumericWord extends MoveToEndOfWord {
 // ge
 class MoveToPreviousEndOfWord extends MotionByWord {
   inclusive = true
-  direction: Direction = 'previous'
+  direction: 'previous' | 'next' = 'previous'
   which: 'start' | 'end' | null = 'end'
   skipWhiteSpaceOnlyRow = true
 }
@@ -614,7 +615,7 @@ class MoveToPreviousSentenceSkipBlankRow extends MoveToPreviousSentence {
 // -------------------------
 class MoveToNextParagraph extends Motion {
   jump = true
-  direction: Direction = 'next'
+  direction: 'previous' | 'next' = 'next'
 
   moveCursor (cursor: Cursor): void {
     this.moveCursorCountTimes(cursor, () => {
@@ -637,12 +638,12 @@ class MoveToNextParagraph extends Motion {
 }
 
 class MoveToPreviousParagraph extends MoveToNextParagraph {
-  direction: Direction = 'previous'
+  direction: 'previous' | 'next' = 'previous'
 }
 
 class MoveToNextDiffHunk extends Motion {
   jump = true
-  direction: Direction = 'next'
+  direction: 'previous' | 'next' = 'next'
 
   moveCursor (cursor: Cursor): void {
     this.moveCursorCountTimes(cursor, () => {
@@ -663,7 +664,7 @@ class MoveToNextDiffHunk extends Motion {
 }
 
 class MoveToPreviousDiffHunk extends MoveToNextDiffHunk {
-  direction: Direction = 'previous'
+  direction: 'previous' | 'next' = 'previous'
 }
 
 // `]h` / `[h` — jump to the next/previous git hunk in a live-edited file (the
@@ -730,9 +731,9 @@ class MoveToLastNonblankCharacterOfLineAndDown extends Motion {
 
   moveCursor (cursor: Cursor): void {
     const row = this.limitNumber(cursor.getBufferRow() + this.getCount() - 1, {max: this.getVimLastBufferRow()})
-    const options = {from: [row, Infinity], allowNextLine: false}
+    const options: ScanOptions = {from: [row, Infinity], allowNextLine: false}
     const point = this.findInEditor('backward', /\S|^/, options, (event: {range: Range}) => event.range.start)
-    cursor.setBufferPosition(point)
+    if (point) cursor.setBufferPosition(point)
   }
 }
 

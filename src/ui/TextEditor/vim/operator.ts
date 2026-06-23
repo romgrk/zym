@@ -765,7 +765,7 @@ class Increase extends Operator {
 
   replaceNumberInBufferRange (scanRange: Range, fn?: (event: any) => boolean): Range[] {
     const newRanges: Range[] = []
-    this.scanEditor('forward', this.regex, {scanRange}, (event: any) => {
+    this.scanEditor('forward', this.regex!, {scanRange}, (event: any) => {
       if (fn) {
         if (fn(event)) event.stop()
         else return
@@ -1060,13 +1060,13 @@ class ResolveGitConflict extends Operator {
   }
 
   getConflictingRangeInfo (row: number): any {
-    const from = [row, Infinity]
+    const from: [number, number] = [row, Infinity]
     const conflictStart = this.findInEditor('backward', /^<<<<<<< .+$/, {from}, (event: any) => event.range.start)
 
     if (conflictStart) {
       const startRow = conflictStart.row
       let separatorRow: number | undefined, endRow: number | undefined
-      const from = [startRow + 1, 0]
+      const from: [number, number] = [startRow + 1, 0]
       const regex = /(^<<<<<<< .+$)|(^=======$)|(^>>>>>>> .+$)/g
       this.scanEditor('forward', regex, {from}, ({match, range, stop}: any) => {
         if (match[1]) {

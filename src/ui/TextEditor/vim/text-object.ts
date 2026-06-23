@@ -11,6 +11,7 @@ import type { Operator } from './operator.ts'
 //  - [ ] Make expandable by selection.getBufferRange().union(this.getRange(selection))
 //  - [ ] Count support(priority low)?
 import { Base } from './base.ts'
+import type { ScanOptions } from './utils.ts'
 import PairFinder from './pair-finder.ts'
 import { lhsRhsRanges } from '../lhsRhs.ts'
 import type { LhsRhsRanges } from '../lhsRhs.ts'
@@ -396,7 +397,7 @@ class Tag extends Pair {
 
   getTagStartPoint (from: Point): Point | undefined {
     const regex = PairFinder.TagFinder.pattern
-    const options = {from: [from.row, 0]}
+    const options: ScanOptions = {from: [from.row, 0]}
     return this.findInEditor('forward', regex, options, ({range}: {range: Range}) => range.containsPoint(from, true) && range.start)
   }
 
@@ -805,7 +806,7 @@ class SearchMatchForward extends TextObject {
         from = this.utils.translatePointAndClip(this.editor, from, 'backward')
       }
 
-      const options = {from: [from.row, Infinity]}
+      const options: ScanOptions = {from: [from.row, Infinity]}
       return {
         range: this.findInEditor('backward', regex, options, ({range}: {range: Range}) => range.start.isLessThan(from) && range),
         whichIsHead: 'start'
@@ -815,7 +816,7 @@ class SearchMatchForward extends TextObject {
         from = this.utils.translatePointAndClip(this.editor, from, 'forward')
       }
 
-      const options = {from: [from.row, 0]}
+      const options: ScanOptions = {from: [from.row, 0]}
       return {
         range: this.findInEditor('forward', regex, options, ({range}: {range: Range}) => range.end.isGreaterThan(from) && range),
         whichIsHead: 'end'
