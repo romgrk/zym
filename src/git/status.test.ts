@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseStatus, parseNumstat, parseLsFiles, parseNameStatusZ, parseCommitLog } from './status.ts';
+import { parseStatus, parseNumstat, parseLsFiles, parseNameStatusZ, parseCommitLog, parseCommitFiles } from './status.ts';
 
 // Porcelain v2 -z uses NUL terminators on every record (headers included).
 const Z = (...records: string[]) => records.map((r) => r + '\0').join('');
@@ -149,19 +149,35 @@ test('parseNameStatusZ: paths with spaces; empty input', () => {
 test('parseCommitLog: fields split on the unit separator', () => {
   const US = '\x1f';
   const out =
-    ['abc123full', 'abc123', 'fix: the thing', 'Ada', '3 days ago'].join(US) +
+    ['abc123full', 'abc123', 'fix: the thing', 'Ada', '3 days ago', '1700000000'].join(US) +
     '\n' +
-    ['def456full', 'def456', 'feat: a thing', 'Bob', '5 days ago'].join(US) +
+    ['def456full', 'def456', 'feat: a thing', 'Bob', '5 days ago', '1699000000'].join(US) +
     '\n';
   assert.deepEqual(parseCommitLog(out), [
-    { sha: 'abc123full', shortSha: 'abc123', subject: 'fix: the thing', author: 'Ada', date: '3 days ago' },
-    { sha: 'def456full', shortSha: 'def456', subject: 'feat: a thing', author: 'Bob', date: '5 days ago' },
+    { sha: 'abc123full', shortSha: 'abc123', subject: 'fix: the thing', author: 'Ada', date: '3 days ago', timestamp: 1700000000 },
+    { sha: 'def456full', shortSha: 'def456', subject: 'feat: a thing', author: 'Bob', date: '5 days ago', timestamp: 1699000000 },
   ]);
 });
 
 test('parseCommitLog: subject keeps spaces; empty input', () => {
   const US = '\x1f';
-  const [c] = parseCommitLog(['h', 'h', 'a subject with spaces', 'X', 'now'].join(US));
+  const [c] = parseCommitLog(['h', 'h', 'a subject with spaces', 'X', 'now', '0'].join(US));
   assert.equal(c.subject, 'a subject with spaces');
   assert.deepEqual(parseCommitLog(''), []);
+});
+
+// --- parseCommitFiles: RS-delimited `git log --name-only` records -----------
+
+test('parseCommitFiles: maps each sha to its changed paths', () => {
+  const RS = '\x1e';
+  // A merge commit (no files), then a commit with a blank line before its files.
+  const out =
+    `${RS}merge000\n` +
+    `${RS}abc123\n\nsrc/a.ts\nsrc/b.ts\n` +
+    `${RS}def456\n\ndocs/readme.md\n`;
+  const map = parseCommitFiles(out);
+  assert.deepEqual(map.get('merge000'), []);
+  assert.deepEqual(map.get('abc123'), ['src/a.ts', 'src/b.ts']);
+  assert.deepEqual(map.get('def456'), ['docs/readme.md']);
+  assert.deepEqual(parseCommitFiles(''), new Map());
 });

@@ -45,7 +45,9 @@ import { GithubButtons } from './GithubButtons.ts';
 import { acquireGitRepo, releaseGitRepo, type GitOpResult } from '../git.ts';
 import { git, repoRoot, invalidateRepoRoot, commitMsgPath, listWorktrees, lastCommitMessage } from '../git.ts';
 import { stage, unstage, stageAll, unstageAll, type GitDone } from '../git.ts';
-import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
+import { openCommitDiff, openCommitPicker, openBranchDiff, buildCommitDiffView } from './diffViews.ts';
+import { GitLogView } from './GitLogView.ts';
+import type { CommitSummary } from '../git.ts';
 import { openGithubService, type GithubService } from '../github.ts';
 import { registerGithubCommands } from './githubCommands.ts';
 import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './Workbench.ts';
@@ -183,6 +185,11 @@ export class AppWindow {
   // `onClose`; the continuous-diff views (editable + read-only commit/branch) use it
   // to dispose on close. DiffView.forRoot routes commands to the focused one.
   private readonly tabCloseHandlers = new Map<Widget, () => void>();
+  // The commit diff the git log viewer is currently showing in its side split, so a
+  // new selection replaces it (rather than stacking tabs). Cleared when that diff's
+  // tab is closed; the panel is re-derived from the live view (Panel.containing) so a
+  // user-closed split splits fresh next time. Its handle lets us close the old tab.
+  private gitLogDiff: { view: DiffView; child: PanelChild } | null = null;
   // Session modified-status registrations (editors, running agents), keyed by the
   // tab's root widget so the registration is disposed when the tab closes.
   private readonly participants = new Map<Widget, DisposableLike>();
@@ -2224,6 +2231,11 @@ export class AppWindow {
         description: 'Diff this branch against master/main (PR-style)',
         when: () => this.workbench.git.getHead() !== null,
       },
+      'git:log': {
+        didDispatch: () => this.openGitLog(),
+        description: 'Open the git log (history) viewer',
+        when: () => this.workbench.git.getHead() !== null,
+      },
       'diff:expand-context': {
         didDispatch: () => this.activeContinuousDiff()?.expandContextAtCursor(),
         description: 'Reveal more unchanged lines at the nearest gap',
@@ -2486,6 +2498,64 @@ export class AppWindow {
     view.onReviewChange(() => child.setTitle(title())); // show the accumulated-review count
     child.select();
     view.focus();
+  }
+
+  // `git:log` — open the git history viewer as a center tab. Selecting a commit
+  // opens its diff in a split to the right (see openCommitBesideLog).
+  private openGitLog(): void {
+    const cwd = this.workbench.cwd;
+    if (!repoRoot(cwd)) {
+      this.toast('Not in a git repository');
+      return;
+    }
+    const view = new GitLogView({
+      cwd,
+      git: this.workbench.git,
+      onOpenCommit: (commit) => void this.openCommitBesideLog(view, commit),
+    });
+    this.openCenterTab(view.root, {
+      title: `${Icons.git}  Log`,
+      requireTabBar: true,
+      onClose: () => view.dispose(),
+    });
+    view.focus(); // openCenterTab focuses the tab root; move focus into the commit list
+  }
+
+  // Show `commit`'s diff in a split to the right of the `log` viewer, replacing any
+  // diff a previous selection opened there (so browsing j/k/Enter reuses one split
+  // rather than stacking tabs). Focus stays on the log so navigation continues.
+  private async openCommitBesideLog(log: GitLogView, commit: CommitSummary): Promise<void> {
+    const cwd = this.workbench.cwd;
+    const root = repoRoot(cwd);
+    if (!root) return;
+    const built = await buildCommitDiffView(root, commit, cwd);
+    if (!built) {
+      this.toast('Commit has no file changes');
+      return;
+    }
+
+    // Reuse the panel the previous diff lives in (if still open); otherwise split to
+    // the right of the log's own pane. Panel.containing returns null once the user
+    // has closed that split, so we split afresh then.
+    const previous = this.gitLogDiff;
+    let panel = previous ? Panel.containing(previous.view.root) : null;
+    if (!panel) {
+      Panel.containing(log.root)?.activate(); // split relative to the log, not whatever was active
+      panel = this.workbench.center.split('right');
+    }
+    // Add the new diff before closing the old one, so the panel never empties (which
+    // would collapse the split) in between.
+    const child = panel.add(built.view.root, { title: built.title, requireTabBar: true });
+    // disposeChild runs this on close: dispose the view, and forget it if it was the
+    // one we're tracking (so a user-closed split splits fresh next time).
+    this.tabCloseHandlers.set(built.view.root, () => {
+      built.view.dispose();
+      if (this.gitLogDiff?.view === built.view) this.gitLogDiff = null;
+    });
+    previous?.child.close(); // disposes the old view via its own tabCloseHandler
+    this.gitLogDiff = { view: built.view, child };
+    child.select();
+    built.view.focus(); // move focus into the opened diff (o/Enter follows the commit)
   }
 
   // Terminal command: open a shell in a new center-panel tab. Handler only;

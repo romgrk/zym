@@ -18,7 +18,9 @@ import * as Path from 'node:path';
 import { type ProcResult, runProcess } from '../process/runner.ts';
 import {
   COMMIT_LOG_FORMAT,
+  COMMIT_FILES_FORMAT,
   parseCommitLog,
+  parseCommitFiles,
   parseNameStatusZ,
   type ChangedFile,
   type CommitSummary,
@@ -372,6 +374,14 @@ export function currentBranch(root: string, onDone: (branch: string | null) => v
   git(root, ['branch', '--show-current'], (ok, stdout) => onDone(ok ? stdout.trim() || null : null));
 }
 
+/** The upstream tracking ref of the current branch (e.g. `origin/master`), or null
+ *  when there is none (no upstream configured / detached HEAD / not a repo). Async. */
+export function upstreamRef(root: string, onDone: (ref: string | null) => void): void {
+  git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], (ok, stdout) =>
+    onDone(ok ? stdout.trim() || null : null),
+  );
+}
+
 /** Local branch names, most-recently-committed first. Async. */
 export function listBranches(root: string, onDone: (branches: string[]) => void): void {
   git(root, ['branch', '--format=%(refname:short)', '--sort=-committerdate'], (ok, stdout) =>
@@ -466,6 +476,22 @@ export function listCommits(
     root,
     ['log', `--max-count=${limit}`, '--date=relative', `--format=${COMMIT_LOG_FORMAT}`, rev, '--'],
     (ok, stdout) => onDone(ok ? parseCommitLog(stdout) : []),
+  );
+}
+
+/** The changed paths of the recent commits reachable from `rev`, keyed by full sha —
+ *  one `git log --name-only` pass, so the log viewer's `file:` filter can match files
+ *  without a call per commit. Merge commits list no files (see `parseCommitFiles`). Async. */
+export function listCommitFiles(
+  root: string,
+  rev: string,
+  limit: number,
+  onDone: (files: Map<string, string[]>) => void,
+): void {
+  git(
+    root,
+    ['log', `--max-count=${limit}`, '--name-only', `--format=${COMMIT_FILES_FORMAT}`, rev, '--'],
+    (ok, stdout) => onDone(ok ? parseCommitFiles(stdout) : new Map()),
   );
 }
 

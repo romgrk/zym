@@ -202,12 +202,14 @@ export interface CommitSummary {
   author: string;
   /** Author date, as formatted by `git log --date` (we ask for relative). */
   date: string;
+  /** Author date as a UNIX timestamp (seconds), for absolute/friendly formatting. */
+  timestamp: number;
 }
 
 const LOG_FIELD_SEP = '\x1f'; // ASCII unit separator — never appears in commit fields we read
 
 /** The format string to pass to `git log --format=` so `parseCommitLog` can read it. */
-export const COMMIT_LOG_FORMAT = ['%H', '%h', '%s', '%an', '%ad'].join(LOG_FIELD_SEP);
+export const COMMIT_LOG_FORMAT = ['%H', '%h', '%s', '%an', '%ad', '%at'].join(LOG_FIELD_SEP);
 
 /** Parse `git log --format=COMMIT_LOG_FORMAT` (one unit-separated record per line). */
 export function parseCommitLog(out: string): CommitSummary[] {
@@ -215,7 +217,28 @@ export function parseCommitLog(out: string): CommitSummary[] {
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const [sha = '', shortSha = '', subject = '', author = '', date = ''] = line.split(LOG_FIELD_SEP);
-      return { sha, shortSha, subject, author, date };
+      const [sha = '', shortSha = '', subject = '', author = '', date = '', at = ''] = line.split(LOG_FIELD_SEP);
+      return { sha, shortSha, subject, author, date, timestamp: Number(at) || 0 };
     });
+}
+
+// --- commit → changed files (for the log viewer's `file:` filter) -------------
+// A record per commit: an ASCII record separator (RS, 0x1e) then the full sha,
+// then `--name-only` lists the changed paths one per line. Records are read in one
+// `git log` pass so the filter can match against files without a call per commit.
+
+/** RS-prefixed format begins each `git log --name-only` record (see `parseCommitFiles`). */
+export const COMMIT_FILES_FORMAT = '\x1e%H';
+
+/** Parse `git log --name-only --format=COMMIT_FILES_FORMAT` into sha → changed paths.
+ *  Merge commits list no files (no `-m`), so they map to an empty array. */
+export function parseCommitFiles(out: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const record of out.split('\x1e')) {
+    if (!record.trim()) continue;
+    const [sha = '', ...rest] = record.split('\n');
+    const oid = sha.trim();
+    if (oid) map.set(oid, rest.map((l) => l.trim()).filter(Boolean));
+  }
+  return map;
 }

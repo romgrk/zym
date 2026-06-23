@@ -53,16 +53,48 @@ export async function openCommitDiff(rev = 'HEAD'): Promise<void> {
     zym.notifications.addInfo(`No commit found for '${rev}'`);
     return;
   }
-  const files = await new Promise<ChangedFile[]>((resolve) => commitChangedFiles(root, commit.sha, resolve));
-  if (files.length === 0) {
+  const built = await buildCommitDiffView(root, commit, wb.cwd);
+  if (!built) {
     zym.notifications.addInfo('Commit has no file changes');
     return;
   }
+  zym.workspace.openTab(built.view.root, {
+    title: built.title,
+    requireTabBar: true,
+    onClose: () => built.view.dispose(),
+  });
+  built.view.focus(); // focus the editor (openTab focuses the tab's root widget, not the inner editor)
+}
+
+/** A built, not-yet-hosted read-only diff of a single commit (vs its first parent),
+ *  with the tab title it should carry. The git log viewer hosts this in a side split;
+ *  `openCommitDiff` hosts it as a center tab. */
+export interface BuiltCommitDiff {
+  view: DiffView;
+  title: string;
+}
+
+/** Build a read-only DiffView for `commit` (its changes vs its first parent), or null
+ *  when it touched no files. The shared core behind `openCommitDiff` and the git log
+ *  viewer — the caller decides where to host the returned view. */
+export async function buildCommitDiffView(
+  root: string,
+  commit: CommitSummary,
+  cwd: string,
+): Promise<BuiltCommitDiff | null> {
+  const files = await new Promise<ChangedFile[]>((resolve) => commitChangedFiles(root, commit.sha, resolve));
+  if (files.length === 0) return null;
   // OLD = the parent blob (`<sha>^`); for the root commit `<sha>^` doesn't resolve
   // and readFileAtRef yields '' — so an initial commit reads as all-added, as wanted.
   const diffFiles = await buildRefDiffFiles(root, files, `${commit.sha}^`, commit.sha);
+  const view = new DiffView({
+    files: diffFiles,
+    cwd,
+    editable: false, // historical content — both sides are git blobs, not live documents
+    onActivate: ({ path, row }) => zym.workspace.openFile(path, { cursor: [row, 0] }),
+  });
   const subject = commit.subject.length > 50 ? `${commit.subject.slice(0, 50)}…` : commit.subject;
-  presentReadonlyDiff(diffFiles, Icons.gitCommit, `${commit.shortSha}  ${subject}`, wb.cwd);
+  return { view, title: `${Icons.gitCommit}  ${commit.shortSha}  ${subject}` };
 }
 
 /** `git:diff-commit` with no argument — pick a recent commit, then diff it (via `openCommitDiff`).
