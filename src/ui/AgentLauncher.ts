@@ -20,6 +20,7 @@ import { theme } from '../theme/theme.ts';
 import { openFloatingCard } from './FloatingCard.ts';
 import { Combobox } from './Combobox.ts';
 import { createInput } from './TextEditor/TextEditor.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 import { AGENT_CONFIGS, listAgentKinds, type AgentKind } from '../agents/configs.ts';
 import { repoRoot, listBranches } from '../git.ts';
 
@@ -180,6 +181,11 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
 
   const draft = savedDraft; // an unsent prompt from a previous dismissal, if any
 
+  // Owns everything the launcher pins that node-gtk would otherwise root past the card's
+  // lifetime: the comboboxes (each pins controllers + a parented popover) and the launcher's
+  // own raw controllers. Disposed in onClose, AFTER the option values are read for persistence.
+  const disposables = new CompositeDisposable();
+
   let commandsSub: { dispose(): void } | null = null;
   const card = openFloatingCard({
     host,
@@ -189,6 +195,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     // Remember the (possibly unsent) prompt + the chosen options on any dismissal, so they
     // persist to the next launch; submit clears the draft below (but keeps the options).
     onClose: () => {
+      // Read the option values BEFORE disposing — disposing tears down the comboboxes.
       savedDraft = input.getText();
       savedModel = modelDropdown.getValue();
       savedPermission = permissionDropdown.getValue();
@@ -196,6 +203,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
       savedKind = kindDropdown.getValue() as AgentKind;
       if (worktreeDropdown) savedWorktree = worktreeDropdown.getValue();
       commandsSub?.dispose();
+      disposables.dispose();
     },
   });
   const panel = card.panel;
@@ -207,10 +215,10 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const kind0 = savedKind || defaultKind;
   const kindOptions = AGENT_CONFIGS[kind0].options;
 
-  const modelDropdown = new Combobox({ options: kindOptions.models, value: savedModel || kindOptions.defaultModel });
-  const permissionDropdown = new Combobox({ options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode });
-  const effortDropdown = new Combobox({ options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort });
-  const kindDropdown = new Combobox({
+  const modelDropdown = disposables.use(new Combobox({ options: kindOptions.models, value: savedModel || kindOptions.defaultModel }));
+  const permissionDropdown = disposables.use(new Combobox({ options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
+  const effortDropdown = disposables.use(new Combobox({ options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort }));
+  const kindDropdown = disposables.use(new Combobox({
     options: listAgentKinds(),
     value: kind0,
     onChange: (value) => {
@@ -219,7 +227,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
       permissionDropdown.setOptions(opts.permissionModes, opts.defaultPermissionMode);
       effortDropdown.setOptions(opts.efforts, opts.defaultEffort);
     },
-  });
+  }));
 
   // Worktree: a dropdown with two special choices up top — "create" (start in a fresh
   // worktree the agent makes) and "current" (run in the workbench cwd, no worktree) —
@@ -244,7 +252,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     : savedWorktree;
   const worktreeDropdown = newWorktree
     ? null
-    : new Combobox({ options: worktreeSpecials, value: worktreeInitial, specialLabels: ['create'], mutedLabels: ['current'] });
+    : disposables.use(new Combobox({ options: worktreeSpecials, value: worktreeInitial, specialLabels: ['create'], mutedLabels: ['current'] }));
   const repo = repoRoot(cwd);
   if (worktreeDropdown && repo) {
     listBranches(repo, (branches) => {
@@ -285,7 +293,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const promptFocus = new Gtk.EventControllerFocus();
   promptFocus.on('enter', () => panel.addCssClass('prompt-focused'));
   promptFocus.on('leave', () => panel.removeCssClass('prompt-focused'));
-  promptContainer.addController(promptFocus);
+  disposables.addController(promptContainer, promptFocus);
 
   // A WrapBox so the option fields reflow onto another line on a narrow card rather
   // than overflowing. Each field carries a caption above its control. The worktree field
@@ -336,7 +344,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     card.close();
     return true;
   });
-  panel.addController(keys);
+  disposables.addController(panel, keys);
 
   // Focus the worktree combobox first in the existing-worktree flow (pick before typing);
   // every other flow (incl. this-worktree, which is pre-selected) focuses the prompt. Focus

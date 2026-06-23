@@ -18,6 +18,7 @@ import {
   type VteTerminal,
 } from '../gi.ts';
 import { fonts } from '../fonts.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 import { addStyles } from '../styles.ts';
 import { zym } from '../zym.ts';
 import { Icons } from './icons.ts';
@@ -99,6 +100,7 @@ export class Terminal {
   // navigation work. Escape ↔ `i` switch; `ctrl-[` still sends a literal Escape.
   private _mode: TerminalMode = 'insert';
   private readonly modeHandlers: Array<() => void> = [];
+  protected readonly disposables = new CompositeDisposable();
 
   constructor(options: TerminalOptions = {}) {
     this.onExit = options.onExit ?? (() => {});
@@ -330,7 +332,14 @@ export class Terminal {
     // `enter`), so this never spuriously flips back to insert.
     const focus = new Gtk.EventControllerFocus();
     focus.on('enter', () => this.setMode('insert'));
-    this.terminal.addController(focus);
+    this.disposables.addController(this.terminal, focus);
+  }
+
+  /** Sever the Vte focus controller node-gtk roots; idempotent. A closed terminal
+   *  tab unparents (no `destroy`), so this must run from the owner (disposeChild /
+   *  closeAgent). Subclasses overriding this must call `super.dispose()`. */
+  dispose(): void {
+    this.disposables.dispose();
   }
 
   // Reflect the mode onto the widget's CSS classes: `.has-text-input` (which

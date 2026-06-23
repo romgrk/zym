@@ -11,6 +11,7 @@
  */
 import { Gtk, Adw } from '../gi.ts';
 import { addStyles } from '../styles.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -112,6 +113,12 @@ export interface FloatingCardHandle {
 export function openFloatingCard(options: FloatingCardOptions): FloatingCardHandle {
   const { host } = options;
 
+  // Funnel for this card's controller teardown. node-gtk roots a connected
+  // controller's signal closures behind a Global handle, so the scrim/focus
+  // controllers must be removed (in `close()`, while the widgets still exist)
+  // before the overlay drops them — otherwise the whole card subtree leaks.
+  const disposables = new CompositeDisposable();
+
   // Remember whatever held focus before the card opened, so dismissing returns
   // focus there (e.g. back to the editor) rather than stranding it on the removed
   // overlay. Captured before the caller grabs focus into the card.
@@ -125,7 +132,7 @@ export function openFloatingCard(options: FloatingCardOptions): FloatingCardHand
     scrim.addCssClass('floating-card-scrim');
     const click = new Gtk.GestureClick();
     click.on('released', () => close());
-    scrim.addController(click);
+    disposables.addController(scrim, click);
     host.addOverlay(scrim);
   }
 
@@ -164,6 +171,10 @@ export function openFloatingCard(options: FloatingCardOptions): FloatingCardHand
     options.onClose?.();
     const remove = () => {
       if (positionHandler) host.off('get-child-position', positionHandler);
+      // Sever the scrim/focus controllers while their widgets still exist and are
+      // in the tree — before removeOverlay drops them — so node-gtk releases the
+      // rooted closures instead of pinning the whole card subtree.
+      disposables.dispose();
       host.removeOverlay(panel);
       if (scrim) host.removeOverlay(scrim);
       if (restoreFocus) previousFocus?.grabFocus();
@@ -197,7 +208,7 @@ export function openFloatingCard(options: FloatingCardOptions): FloatingCardHand
       if (windowActive && focused && !focusWithin) close();
     }, 0);
   });
-  panel.addController(focus);
+  disposables.addController(panel, focus);
 
   // Widget-anchored positioning: place the card relative to `anchor.to`'s on-screen
   // box via the overlay's `get-child-position` (the same mechanism Peek uses). The

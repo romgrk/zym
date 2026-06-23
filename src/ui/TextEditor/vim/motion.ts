@@ -702,6 +702,43 @@ class MoveToPreviousHunk extends MotionByHunk {
   direction: Direction = 'previous'
 }
 
+// `]d` / `[d` — jump to the next/previous LSP diagnostic in the file, landing on
+// its exact start (row + column, so several diagnostics on one line are distinct).
+// Positions come from the host via the EditorModel diagnostic provider; no
+// provider (buffer-only / no LSP) → no-op.
+class MotionByDiagnostic extends Motion {
+  static command = false
+  jump = true
+  direction: Direction = null
+
+  getPositions (): Point[] {
+    const positions = this.editor.getDiagnosticPositions()
+    return this.direction === 'previous' ? positions.slice().reverse() : positions
+  }
+
+  findPosition (cursor: Cursor): Point | undefined {
+    const from = cursor.getBufferPosition()
+    return this.getPositions().find(point =>
+      this.direction === 'previous' ? point.isLessThan(from) : point.isGreaterThan(from)
+    )
+  }
+
+  moveCursor (cursor: Cursor): void {
+    this.moveCursorCountTimes(cursor, () => {
+      const point = this.findPosition(cursor)
+      if (point) cursor.setBufferPosition(point)
+    })
+  }
+}
+
+class MoveToNextDiagnostic extends MotionByDiagnostic {
+  direction: Direction = 'next'
+}
+
+class MoveToPreviousDiagnostic extends MotionByDiagnostic {
+  direction: Direction = 'previous'
+}
+
 // -------------------------
 // keymap: 0
 class MoveToBeginningOfLine extends Motion {
@@ -1573,6 +1610,8 @@ const __operations = {
   MoveToPreviousDiffHunk,
   MoveToNextHunk,
   MoveToPreviousHunk,
+  MoveToNextDiagnostic,
+  MoveToPreviousDiagnostic,
   MoveToBeginningOfLine,
   MoveToColumn,
   MoveToLastCharacterOfLine,

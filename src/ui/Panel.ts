@@ -14,6 +14,7 @@
  * panel tree (VS Code-style editor groups).
  */
 import { Adw, Gtk, Pango } from '../gi.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { zym } from '../zym.ts';
@@ -146,6 +147,9 @@ export class Panel {
   readonly root: InstanceType<typeof Gtk.Box>;
 
   private readonly options: PanelOptions;
+  // Panels churn (split-collapse, per-agent docks); node-gtk roots their connected
+  // controllers/handlers, so funnel teardown here and sever it in dispose() (rule 9).
+  private readonly disposables = new CompositeDisposable();
   private readonly view: InstanceType<typeof Adw.TabView>;
   // A two-page stack: the tab content when populated, the empty-state placeholder
   // when the panel holds no tabs. `updateEmptyState` swaps between them.
@@ -211,13 +215,13 @@ export class Panel {
     });
     focus.on('leave', () => this.updateFocusOutline());
     focus.on('notify::is-focus', () => this.updateFocusOutline());
-    this.root.addController(focus);
+    this.disposables.addController(this.root, focus);
 
-    this.view.on('notify::selected-page', () => {
+    this.disposables.connect(this.view, 'notify::selected-page', () => {
       this.options.onActiveChanged?.(this.activeChild);
       this.updateFocusOutline(); // the focused child changed with the tab
     });
-    this.view.on('page-detached', (page: any) => {
+    this.disposables.connect(this.view, 'page-detached', (page: any) => {
       Panel.childPanels.delete(page.getChild());
       this.forcedBarChildren.delete(page.getChild());
       this.options.onClosed?.(page.getChild());
@@ -229,7 +233,7 @@ export class Panel {
     // destroy its only view. Returning true delegates finishing to us, so we must
     // call closePageFinish with whether the close is allowed.
     if (this.options.onTabCloseRequest) {
-      this.view.on('close-page', (page: any) => {
+      this.disposables.connect(this.view, 'close-page', (page: any) => {
         const allow = this.options.onTabCloseRequest!(page.getChild());
         this.view.closePageFinish(page, allow);
         return true;
@@ -258,7 +262,7 @@ export class Panel {
     // never competes with a child widget's own click-to-focus.
     const click = new Gtk.GestureClick();
     click.on('pressed', () => this.root.grabFocus());
-    outer.addController(click);
+    this.disposables.addController(outer, click);
 
     // Centered content group: expands to claim the area, then centers within it.
     this.emptyInner = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
@@ -465,7 +469,7 @@ export class Panel {
   // its root widget instance. The shared `Panel` key bindings (central keymap)
   // route keystrokes to the focused panel, which dispatches them back here.
   private registerTabCommands(): void {
-    zym.commands.add(this.root, {
+    this.disposables.add(zym.commands.add(this.root, {
       'tab:next': { didDispatch: () => this.selectNextTab(), description: 'Next tab' },
       'tab:previous': { didDispatch: () => this.selectPreviousTab(), description: 'Previous tab' },
       'tab:go-to-last': { didDispatch: () => this.selectLastTab(), description: 'Go to the last tab' },
@@ -478,7 +482,15 @@ export class Panel {
       'tab:pin': { didDispatch: () => this.setActiveTabPinned(true), description: 'Pin the active tab' },
       'tab:unpin': { didDispatch: () => this.setActiveTabPinned(false), description: 'Unpin the active tab' },
       'tab:toggle-pin': { didDispatch: () => this.toggleActiveTabPinned(), description: 'Toggle the active tab pinned' },
-    });
+    }));
+  }
+
+  /** Sever this panel's focus/click controllers, its TabView handlers, and its
+   *  tab-command registration (all node-gtk- or registry-rooted). Called when the
+   *  panel is dropped — a split collapsing (PanelGroup) or a workbench closing.
+   *  Idempotent. */
+  dispose(): void {
+    this.disposables.dispose();
   }
 
   /** Add `child` as a new tab and select it. Pass `requireTabBar` for a child

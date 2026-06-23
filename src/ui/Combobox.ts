@@ -14,6 +14,7 @@
 import { Gtk, Gdk, Pango } from '../gi.ts';
 import { addStyles } from '../styles.ts';
 import { rank } from './Picker.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 
 const POPOVER_MAX_HEIGHT = 320;
 
@@ -65,6 +66,8 @@ export class Combobox {
   private settingText = false; // suppress `changed` while seeding the entry
   private suppressOpenOnFocus = false; // a focus() that shouldn't pop the list open
 
+  private readonly disposables = new CompositeDisposable();
+
   constructor(config: ComboboxConfig) {
     this.options = config.options;
     this.value = config.value;
@@ -103,28 +106,33 @@ export class Combobox {
     this.popover.setPosition(Gtk.PositionType.BOTTOM);
     this.popover.setChild(this.scrolled);
     this.popover.setParent(this.root);
+    // A setParent'd popover must be unparented or it pins the subtree — defer it
+    // alongside the controllers so dispose() is the whole teardown.
+    this.disposables.defer(() => this.popover.unparent());
 
     this.updateDisplay();
 
-    // Typing while closed: open seeded with what the user typed.
-    this.entry.on('changed', () => {
+    // Typing while closed: open seeded with what the user typed. These handlers
+    // capture `this`, so they're tracked too — a dropped combobox would leak via
+    // them otherwise (node-gtk roots connected closures).
+    this.disposables.connect(this.entry, 'changed', () => {
       if (this.settingText) return;
       const text = this.entry.getText();
       if (!this.open) this.openPopup(text);
       else this.rebuild(text);
     });
-    this.entry.on('activate', () => this.acceptSelected());
-    this.listBox.on('row-activated', (row) => this.acceptRow(row));
+    this.disposables.connect(this.entry, 'activate', () => this.acceptSelected());
+    this.disposables.connect(this.listBox, 'row-activated', (row) => this.acceptRow(row));
 
     // Clicking while already focused (popup closed) reopens.
     const click = new Gtk.GestureClick();
     click.on('pressed', () => { if (!this.open) this.openPopup(); });
-    this.entry.addController(click);
+    this.disposables.addController(this.entry, click);
 
     const keys = new Gtk.EventControllerKey();
     keys.setPropagationPhase(Gtk.PropagationPhase.CAPTURE);
     keys.on('key-pressed', (keyval: number) => this.onEntryKey(keyval));
-    this.entry.addController(keys);
+    this.disposables.addController(this.entry, keys);
 
     // Focus-in opens the popup (e.g. tabbing into the widget).
     // Focus-out closes it — because the entry is always the sole Tab stop,
@@ -132,11 +140,17 @@ export class Combobox {
     const focus = new Gtk.EventControllerFocus();
     focus.on('enter', () => { if (!this.suppressOpenOnFocus) this.openPopup(); });
     focus.on('leave', () => setTimeout(() => { if (this.open) this.cancel(); }, 0));
-    this.entry.addController(focus);
+    this.disposables.addController(this.entry, focus);
   }
 
   getValue(): string {
     return this.value;
+  }
+
+  /** Sever the entry controllers + the parented popover that would otherwise keep the
+   *  control's subtree rooted by node-gtk. Idempotent (the bag seals itself). */
+  dispose(): void {
+    this.disposables.dispose();
   }
 
   /** Move keyboard focus into the control. By default focusing opens the popover (the same

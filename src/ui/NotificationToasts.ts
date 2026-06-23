@@ -14,6 +14,7 @@
  * bottom-right; the assembled stack is exposed via `root`.
  */
 import { Gtk } from '../gi.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 import type { Notification } from '../Notification.ts';
 import { Icons, iconLabel } from './icons.ts';
 
@@ -40,7 +41,7 @@ export class NotificationToasts {
   // stacking a new one (both still appear as separate rows in the log).
   private readonly replaceable = new Map<
     string,
-    { card: Box; revealer: Revealer; cancelTimer: () => void; notification: Notification }
+    { card: Box; revealer: Revealer; cancelTimer: () => void; notification: Notification; scope: CompositeDisposable }
   >();
 
   constructor(options: NotificationToastsOptions) {
@@ -73,8 +74,11 @@ export class NotificationToasts {
       prev.cancelTimer();
       prev.card.removeCssClass(`notification-${prev.notification.getType()}`);
       prev.notification.dismiss();
-      const cancelTimer = this.fillCard(prev.card, prev.revealer, notification);
-      this.replaceable.set(key!, { card: prev.card, revealer: prev.revealer, cancelTimer, notification });
+      // Reuse the SAME per-card scope: `fillCard` clears it first, severing the
+      // superseded card's button handlers + click controller before re-adding the
+      // new ones, so reuse can't stack rooted closures on the recycled card.
+      const cancelTimer = this.fillCard(prev.card, prev.revealer, notification, prev.scope);
+      this.replaceable.set(key!, { card: prev.card, revealer: prev.revealer, cancelTimer, notification, scope: prev.scope });
       notification.setDisplayed(true);
       return;
     }
@@ -88,14 +92,18 @@ export class NotificationToasts {
       revealChild: false,
     });
     revealer.setChild(card);
-    const cancelTimer = this.fillCard(card, revealer, notification);
+    // Per-card teardown: holds the card's button handlers + click controller, all
+    // of which node-gtk roots while connected. `fillCard` clears it on reuse and
+    // the removal paths clear it before the card leaves the tree (rule 9).
+    const scope = new CompositeDisposable();
+    const cancelTimer = this.fillCard(card, revealer, notification, scope);
     this.root.prepend(revealer);
     // Flip to revealed once mapped so the transition actually plays (toggling it
     // synchronously on an unmapped widget would snap straight to shown).
     setTimeout(() => {
       revealer.setRevealChild(true);
     }, 0);
-    if (key) this.replaceable.set(key, { card, revealer, cancelTimer, notification });
+    if (key) this.replaceable.set(key, { card, revealer, cancelTimer, notification, scope });
     notification.setDisplayed(true);
   }
 
@@ -111,7 +119,8 @@ export class NotificationToasts {
   // (Re)fill `card` with `notification`'s content + behavior. Returns a function
   // that cancels the auto-expire timer (called when the card is reused in place).
   // `revealer` is the card's animated host — removing the toast collapses it.
-  private fillCard(card: Box, revealer: Revealer, notification: Notification): () => void {
+  private fillCard(card: Box, revealer: Revealer, notification: Notification, scope: CompositeDisposable): () => void {
+    scope.clear(); // sever the previous fill's button handlers + click controller before rebuilding
     for (let child = card.getFirstChild(); child; ) {
       const next = child.getNextSibling();
       card.remove(child);
@@ -161,7 +170,7 @@ export class NotificationToasts {
     if (button) {
       const action = new Gtk.Button({ label: button.text });
       action.setValign(Gtk.Align.CENTER);
-      action.on('clicked', () => {
+      scope.connect(action, 'clicked', () => {
         button.onDidClick();
         if (!notification.getReplaceKey()) remove();
       });
@@ -190,12 +199,13 @@ export class NotificationToasts {
       if (key && this.replaceable.get(key)?.card === card) this.replaceable.delete(key);
     };
     const remove = () => {
+      scope.clear(); // detach the card's controller + button handlers before it leaves the tree
       cancelTimer();
       this.animateOut(revealer);
       notification.dismiss();
       forget();
     };
-    close.on('clicked', remove);
+    scope.connect(close, 'clicked', remove);
 
     // Clicking the card body runs the default action and dismisses the toast.
     // The buttons above claim their own clicks, so they don't trip this gesture.
@@ -206,11 +216,12 @@ export class NotificationToasts {
         notification.activate();
         remove();
       });
-      card.addController(click);
+      scope.addController(card, click);
     }
     if (!notification.isDismissable()) {
       timeoutId = setTimeout(() => {
         timeoutId = null;
+        scope.clear(); // detach the card's controller + button handlers before it leaves the tree
         this.animateOut(revealer);
         notification.dismiss();
         forget();

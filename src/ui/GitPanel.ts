@@ -19,7 +19,6 @@ import { addStyles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import { trackController, detachControllers } from '../util/widgetControllers.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import type { GitRepo } from '../git.ts';
 import {
@@ -100,6 +99,8 @@ export class GitPanel {
   private readonly onOpenFile: (path: string) => void;
   private readonly onCommit: () => void;
   private readonly subs = new CompositeDisposable();
+  // Per-poll row controllers: cleared+rebuilt every refresh (rule 9), torn down with `subs`.
+  private readonly rowScope = this.subs.nest();
   private gitUnsub?: () => void; // the active git's onChange subscription
   private readonly list: InstanceType<typeof Gtk.ListBox>;
   private readonly scrolled: InstanceType<typeof Gtk.ScrolledWindow>;
@@ -264,10 +265,10 @@ export class GitPanel {
     const keepFocus = this.hasFocusWithin();
     const scrollValue = this.scrolled.getVadjustment().getValue();
 
+    this.rowScope.clear(); // release every previous row's rooted click closure before dropping the rows
     let child = this.list.getFirstChild();
     while (child) {
       const next = child.getNextSibling();
-      detachControllers(child); // release each row's rooted click closure before dropping it
       this.list.remove(child);
       child = next;
     }
@@ -343,7 +344,7 @@ export class GitPanel {
     gesture.on('pressed', (nPress: number) => {
       if (nPress === 2) this.open(change);
     });
-    trackController(row, gesture);
+    this.rowScope.addController(row, gesture);
     return row;
   }
 

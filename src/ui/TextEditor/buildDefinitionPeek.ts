@@ -9,6 +9,7 @@ import * as Path from 'node:path';
 import { Gdk, Gtk } from '../../gi.ts';
 import { theme } from '../../theme/theme.ts';
 import { addStyles } from '../../styles.ts';
+import { CompositeDisposable } from '../../util/eventKit.ts';
 import { TextEditor, INPUT_PADDING } from './TextEditor.ts';
 
 const PEEK_BG = theme.ui.surface.popover;
@@ -53,6 +54,19 @@ export function wrapPeekBody(
   const card = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   card.addCssClass('peek-card');
 
+  // The peek card is built fresh per go-to-definition and dropped when the Peek
+  // host removes it from the overlay (Peek.close → removeOverlay). node-gtk roots
+  // the key controller's `key-pressed` closure (it captures `onClose`) behind a
+  // Global handle, so the controller must be removed before the card is dropped or
+  // the whole nested-editor subtree leaks. Funnel its teardown here and fire it on
+  // every close route: the user-driven close (button/Escape, which dispose first,
+  // then trigger the actual close while the card is still mounted) and the
+  // programmatic close (toggle / replace by a new peek), caught via the card's
+  // `unmap` when removeOverlay detaches it. Disposal is idempotent, so whichever
+  // route runs first wins and the rest are no-ops.
+  const disposables = new CompositeDisposable();
+  const closePeek = () => { disposables.dispose(); onClose(); };
+
   // Header: "file:line" on the left, a close button on the right.
   const header = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
   header.addCssClass('peek-header');
@@ -61,7 +75,7 @@ export function wrapPeekBody(
   header.append(title);
   const close = new Gtk.Button({ label: '✕' });
   close.addCssClass('flat');
-  close.on('clicked', onClose);
+  close.on('clicked', closePeek);
   header.append(close);
   card.append(header);
 
@@ -73,10 +87,15 @@ export function wrapPeekBody(
   const keys = new Gtk.EventControllerKey();
   keys.setPropagationPhase(Gtk.PropagationPhase.CAPTURE);
   keys.on('key-pressed', (keyval: number) => {
-    if (keyval === Gdk.KEY_Escape) { onClose(); return true; }
+    if (keyval === Gdk.KEY_Escape) { closePeek(); return true; }
     return false;
   });
-  card.addController(keys);
+  disposables.addController(card, keys);
+
+  // Catch the programmatic close paths (toggle / replaced by a new peek) that
+  // bypass the button/Escape handlers: removeOverlay unmaps the card, which
+  // releases the controller while the card object is still alive.
+  disposables.connect(card, 'unmap', () => disposables.dispose());
 
   return { widget: card, height };
 }

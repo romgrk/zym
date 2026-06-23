@@ -202,3 +202,118 @@ WS=$WS node cdp.mjs sample 60                     # names the allocating call st
 Notes:
 - The inspector left open on PID `3500205` closes when the editor restarts.
 - The running instance is at ~3.3 GB; a restart reclaims it.
+
+---
+
+# Investigation #3: the controller-pin leak class is systemic, not site-local
+
+Status: **FIXED.** A generic disposal mechanism (the `CompositeDisposable`
+acquire-and-defer helpers — `addController`/`connect`/`timer`/`nest`/…) now
+funnels every controller + handler, and all ~13 sites below were migrated onto
+it (added a `dispose()` where one was missing and wired it to each widget's drop
+point; `nest()` for churned widgets; `BlockDecorationSpec.dispose` for the
+`HeaderBands`; retired the per-class `connect` helper + `widgetControllers.ts`).
+Verified: `pnpm run typecheck` + `pnpm run lint` clean; `node --test` green
+(incl. a new GTK-level regression `src/util/eventKit.gtk.test.ts` asserting
+`addController` + `dispose()` → 0 controllers on a real widget, and `nest()`
+re-arm). The durable write-up is `docs/lifecycle-and-disposal.md` (Primitives +
+rule 9 + Incidents). Original findings below.
+
+---
+
+Status (at discovery): **AUDIT COMPLETE + MECHANISM AND ONE SITE PROVEN LIVE; ~13
+sites open (unfixed).** Hunt run against the live editor I was running inside (PID
+`3577604`, fresh — already has the #1/#2 fixes) via the Node inspector
+(`SIGUSR1` → CDP on `127.0.0.1:9229`). Same leak *class* as #1/#2
+(`node-gtk#455` — a connected controller's signal closure is strong-rooted),
+but #1 and #2 each patched one site. This pass shows the pattern is **endemic**:
+of ~30 `addController` call sites, only the 2 already fixed
+(`SearchResultsView`, `GitPanel`) sever their controllers; the rest leak when
+their widget is dropped.
+
+## The decisive generalization (live in-process bisection)
+
+`/tmp/zym-leak/probe-controllers.mjs` builds 300 widgets per variant in the live
+process (real node-gtk build + running GLib loop, so toggle-ref collection
+actually fires), each carrying a controller whose `key-pressed` closure captures
+a `{ widget, sentinel }` graph; removes the widget from its parent; drops all JS
+refs; forces GC; counts `WeakRef` survivors:
+
+| Variant | Pattern (which real sites) | Survivors | Verdict |
+|---|---|---|---|
+| A | raw `addController` + `c.on(sig, …)`, **no** detach/disconnect | **300 / 300** | **LEAK** |
+| B | same, but `c.off(sig, handler)` before drop | 0 / 300 | collected — **disconnecting the handler releases the pin** |
+| C | same, but `widget.removeController(c)` before drop | 0 / 300 | collected — `removeController` releases the pin |
+
+This pins down the **discriminator** the whole audit rests on: a controller site
+is safe iff, before the widget is dropped, **either** the handler is disconnected
+(`off`) **or** the controller is removed. `TextEditor` routes every controller
+through a `connect()` helper (`obj.on` + `subs.add(Disposable(() => obj.off(…)))`,
+disposed in `dispose()`) → variant B → **safe**. Every other site uses raw
+`addController` + raw `c.on(…)` and neither disconnects nor removes → variant A
+→ **leaks when its widget is dropped**.
+
+## One site proven live end-to-end (real app path)
+
+`NotificationToasts` (#1 flagged it "still open"). Drove **80 reuses of one
+`replaceKey`** through the real `zym.notifications.add(…, { onDidClick })` path:
+each `show()` → `fillCard(prev.card, …)` re-runs and re-adds a `GestureClick`
+(`NotificationToasts.ts:209`) to the *same* card without removing the prior one;
+then the card auto-expired (15 s) and left the tree. Post-GC heapsnapshot diff:
+
+| Grower | Δ | note |
+|---|---|---|
+| `GtkGestureClick` | **+80** | one stacked per `fillCard`, none removed |
+| `closure remove` / `forget` / `cancelTimer` / `onDidClick` | +80 each | the rooted `released` closure + what it captures |
+| `Notification` / `Date` / `Emitter` | +80 each | every **superseded** notification pinned forever |
+| `GtkLabel` / `GtkBox` | +723 / +482 | collateral card-subtree content |
+
+`retain.mjs toast-b path GtkGestureClick` → every sample rooted at
+**`(Global handles)` depth 1**, no widget-tree path — the node-gtk persistent-handle
+signature, *after* the card was removed from the tree. So one notification key
+permanently leaked 80 native controllers + 80 notification graphs. Both the
+per-removal leak (card dropped with controller attached) and the `fillCard`
+stacking leak are real.
+
+## Full audit — every `addController` site (raw unless noted)
+
+SAFE (handler disconnected on dispose via `connect()`):
+- `TextEditor.ts:707, :1588, :1794` — all via `connect()` (variant B).
+- `SearchResultsView.ts:402/413`, `GitPanel.ts:346` — `trackController` +
+  `detachControllers` (variant C; fixed in #2 / rule 9).
+- `src/poc/*` — dead code (not imported outside `poc/`).
+
+LEAK (raw `addController` + raw `.on`, owner churns, no disconnect/removeController):
+
+| Site | Controller | Owner churn | Pinned graph |
+|---|---|---|---|
+| **`DiffView.ts:645/656`** | Key (Enter) + GestureClick (dbl-click) on `editor.sourceView` | per diff / per re-diff | **byte-for-byte the #2 pattern** — editor + acquired Documents + buffers + ~24 tags/buffer + header rows. `dispose()` (1016-1043) never removes them. **Highest impact.** |
+| **`CompletionController.ts:422`** | Key (capture) on `editor.view` | per editor (file open/close) | CompletionController → editor → view → buffer → tags. `dispose()` (78-90) only clears a timeout + `popup.dispose()`. |
+| **`HeaderBands.ts:68/86`** | GestureClick on band row / `⋯` gap | per keystroke (search) / per re-diff | discarded header/gap subtrees + the view (`onActivate`/`onExpand` capture `this` of SearchResultsView/DiffView). `BlockDecorations` detaches the widget but never the controller. High churn. |
+| `SearchBar.ts:374/382` | Key + Focus on `panel` | per editor | whole SearchBar graph; **class has no `dispose()`**. |
+| `buildDefinitionPeek.ts:79` | Key (Escape) on peek `card` | per go-to-def peek | peek card + nested editor (`onClose` capture); `Peek.close()` never disposes/removes. |
+| `Terminal.ts:333` | Focus on the `Vte.Terminal` | per terminal tab | Terminal + Vte + scrollback; **no `dispose()`**. |
+| `FloatingCard.ts:128/200` | GestureClick on `scrim` + Focus on `panel` | **every** picker / palette / find / launcher open | the whole card content (Picker list / launcher); `close()` removes the overlay child but no controllers; **no `dispose()`**. |
+| `Combobox.ts:122/127/135` | Click + Key + Focus on `entry` | 4-5 per AgentLauncher open | whole Combobox (entry + popover + list); **no `dispose()`**. |
+| `Panel.ts:214/261` | Focus on `root` + GestureClick on empty-state | per split-collapse / per agent workbench | whole Panel graph; **no `dispose()`**. |
+| `QuestionCard.ts:133/138/160` | Focus + Key per option, Key on `root` | per AskUserQuestion (+ per option) | QuestionCard graph; option `note`s detached on submit with controllers attached; **no `dispose()`**. |
+| `AgentConversation.ts:345` | Motion on `transcriptOverlay` | per agent | whole conversation graph; `dispose()` exists but never removes it. |
+| `AppWindow.ts:934` | Focus on `agent.root` | per agent close | the **entire closed agent** (`enter` closure captures `agent`); `closeAgent` drops `agent.root` without removing it. |
+
+## Fix shape (uniform)
+
+Route each through `trackController(widget, c)` (or keep the raw `addController`
+but register `c.off(sig, handler)`), then sever before the widget is dropped:
+`detachControllers(widget)` in the owner's `dispose()`/`close()`/teardown — and
+add a `dispose()` to the classes that lack one (`SearchBar`, `Terminal`,
+`Combobox`, `Panel`, `QuestionCard`, `FloatingCard`). For `NotificationToasts`,
+remove the old `GestureClick` before `fillCard` re-adds one, and on `animateOut`.
+`DiffView` is the exact twin of the already-fixed `SearchResultsView` and should
+be fixed the same way first.
+
+## Tooling
+
+Adds `/tmp/zym-leak/probe-controllers.mjs` (the A/B/C variant bisection) to the
+#2 toolkit. App internals are reachable from the inspector via `globalThis.zym`
+(`.workspace`, `.commands`, `.notifications`, `.agents`, …), which is how the
+toast path was driven live without a synthetic repro.

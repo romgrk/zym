@@ -26,7 +26,7 @@
  *   hLeft[ left | hCenterRight[ vTop[ top | vBottom[ center | bottom ] ] | right ] ]
  */
 import { Gtk } from '../gi.ts';
-import type { GitRepo } from '../git.ts';
+import { releaseGitRepo, type GitRepo } from '../git.ts';
 import type { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
 import type { FileTree } from './FileTree.ts';
 import type { GitPanel } from './GitPanel.ts';
@@ -104,6 +104,7 @@ export class Workbench<TOwner = unknown> {
   keymapPanel: KeymapPanel;
   keymapDock: Panel;
   bottomDock: BottomDock = null;
+  private disposed = false;
 
   private readonly hLeft: InstanceType<typeof Gtk.Paned>;
   private readonly hCenterRight: InstanceType<typeof Gtk.Paned>;
@@ -187,6 +188,28 @@ export class Workbench<TOwner = unknown> {
 
   setCenter(panel: Dockable | null) {
     this.vBottom.setStartChild(panel?.root ?? null);
+  }
+
+  /** Tear down every widget this workbench owns — the dock + center Panels (their
+   *  focus/click controllers, TabView handlers, tab-command registration — rule 9),
+   *  the file tree / Source-Control / bottom-dock content (each holds global
+   *  subscriptions), and release the pooled git repo (refcounted; a shared root
+   *  survives until its last workbench releases it). Idempotent. The editors tabbed
+   *  into the center are owned by AppWindow and disposed there (disposeChild). */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.fileTree.dispose(); // also holds a git subscription
+    this.gitPanel?.dispose();
+    this.diagnosticsPanel.dispose();
+    this.notificationLog.dispose();
+    this.keymapPanel.dispose();
+    this.center.dispose();
+    this.leftPanel.dispose();
+    this.notificationPanel.dispose();
+    this.diagnosticsDock.dispose();
+    this.keymapDock.dispose();
+    releaseGitRepo(this.git);
   }
 
   private setSlot(side: DockSide, panel: Dockable | null) {

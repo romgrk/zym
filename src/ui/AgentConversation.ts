@@ -342,7 +342,7 @@ export class AgentConversation implements Agent {
     const copyMotion = new Gtk.EventControllerMotion();
     copyMotion.on('motion', (x: number, y: number) => this.updateCopyButton(transcriptOverlay, x, y));
     copyMotion.on('leave', () => this.copyButton.setVisible(false));
-    transcriptOverlay.addController(copyMotion);
+    this.subs.addController(transcriptOverlay, copyMotion);
 
     // The footer's left slot: a live "Thinking… (N tokens)" indicator (spinner +
     // label) that REPLACES the status icon while the agent works (see refreshThinking
@@ -1219,12 +1219,13 @@ export class AgentConversation implements Agent {
 
   private addQuestionCard(req: QuestionRequest): void {
     const card = new QuestionCard(req, (answers) => this.session.answerQuestion(req.id, answers));
+    this.subs.defer(() => card.dispose()); // sever the card's controllers when the conversation tears down
     this.transcript.appendEntry(card.root);
     // The card grabs keyboard focus on map (for j/k nav), which scrolls its focused
     // option into view — before it's measured that can fling the transcript to the
     // top and release stick-to-bottom. Our map handler runs AFTER the card's, so it
     // re-arms following and re-pins, landing the new question in view like any entry.
-    card.root.on('map', () => this.transcript.scrollToBottom(true)); // re-arm + re-pin
+    this.subs.connect(card.root, 'map', () => this.transcript.scrollToBottom(true)); // re-arm + re-pin
     this.transcript.scrollToBottom();
   }
 

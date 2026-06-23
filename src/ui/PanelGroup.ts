@@ -298,6 +298,18 @@ export class PanelGroup {
 
     if (this.active === leaf) this.setActive(firstLeaf(sibling));
     this.updateWelcomeState();
+    leaf.panel.dispose(); // the collapsed leaf's panel is gone — sever its controllers (rule 9)
+  }
+
+  /** Tear down every panel in the layout tree — called when the owning workbench
+   *  closes. Each Panel's focus/click controllers + TabView handlers are node-gtk-
+   *  rooted, so a dropped workbench would otherwise leak them all (rule 9). */
+  dispose(): void {
+    const walk = (node: Node): void => {
+      if (node instanceof Leaf) node.panel.dispose();
+      else { walk(node.start); walk(node.end); }
+    };
+    walk(this.rootNode);
   }
 
   // --- Session serialization -------------------------------------------------

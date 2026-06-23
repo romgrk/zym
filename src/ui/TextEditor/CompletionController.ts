@@ -15,6 +15,7 @@
  * vim (it exits insert mode); the host dismisses on any leave-insert.
  */
 import { Gdk, Gtk, type SourceView } from '../../gi.ts';
+import { CompositeDisposable } from '../../util/eventKit.ts';
 import { Point } from '../../text/Point.ts';
 import { Range } from '../../text/Range.ts';
 import type { EditorModel } from './EditorModel.ts';
@@ -43,6 +44,7 @@ export class CompletionController {
   private readonly isInsertMode: () => boolean;
   private readonly popup: CompletionPopup;
   private readonly sources: CompletionSource[] = [];
+  private readonly disposables = new CompositeDisposable();
 
   private requestSeq = 0; // drops stale async source responses
   private debounceId: NodeJS.Timeout | null = null;
@@ -80,6 +82,7 @@ export class CompletionController {
   /** Tear down the popup (unparents its popover from the view). */
   dispose(): void {
     if (this.debounceId) clearTimeout(this.debounceId);
+    this.disposables.dispose(); // sever the capture-phase key controller on the editor view
     this.popup.dispose();
   }
 
@@ -419,6 +422,6 @@ export class CompletionController {
           return false; // typing flows through → onBufferChanged re-queries
       }
     });
-    this.editor.view.addController(keys);
+    this.disposables.addController(this.editor.view, keys);
   }
 }

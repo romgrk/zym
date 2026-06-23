@@ -524,15 +524,13 @@ export class AppWindow {
     this.githubButtons.dispose();
     this.workbenchStatus.dispose();
     this.github.dispose();
-    // Release every workbench's pooled GitRepo (refcounted — a shared root is only
-    // disposed when its last workbench releases it).
-    for (const wb of this.workbenches.values()) releaseGitRepo(wb.git);
     this.configWatcher.dispose();
     this.keymapWatcher.dispose();
     this.sidebar.dispose();
-    this.workbench.gitPanel?.dispose();
-    this.workbench.notificationLog.dispose();
-    this.workbench.keymapPanel.dispose();
+    // Every workbench (the user's + each agent's) owns its dock/center Panels + content
+    // and a refcounted pooled git repo — dispose them as units (a shared root is only
+    // freed when its last workbench releases it).
+    for (const wb of this.workbenches.values()) wb.dispose();
     // Drain any tab/agent subscriptions whose tabs weren't individually closed.
     for (const subs of this.tabSubs.values()) subs.dispose();
     this.tabSubs.clear();
@@ -911,7 +909,7 @@ export class AppWindow {
     // Track the last-focused agent (the default target for send-to-agent).
     const focus = new Gtk.EventControllerFocus();
     focus.on('enter', () => { this.lastAgent = agent; });
-    agent.root.addController(focus);
+    agentSubs.addController(agent.root, focus); // severed in closeAgent; `enter` captures the agent (rule 9)
     agent.start(); // terminal: no-op (already spawned); headless: spawn claude now
     if (!options.background) agent.focus(); // the workbench is already active (above); focus the agent
     return agent;
@@ -1339,20 +1337,15 @@ export class AppWindow {
       for (const [widget, owner] of [...this.editorOwners]) {
         if (owner === workbench) this.disposeChild(widget);
       }
-      workbench.fileTree.dispose(); // also holds a git subscription
-      workbench.gitPanel?.dispose();
-      // The bottom-dock panels subscribe to global signals (diagnostics store,
-      // notifications, keymap) — dispose them so a closed agent leaves nothing behind.
-      workbench.diagnosticsPanel.dispose();
-      workbench.notificationLog.dispose();
-      workbench.keymapPanel.dispose();
-      releaseGitRepo(workbench.git); // refcounted; the shared user/worktree repo survives
+      workbench.dispose(); // tears down every widget it owns (file tree, Source-Control,
+      // dock + center Panels, bottom-dock content) and releases its pooled git repo
     }
     this.participants.get(agent.root)?.dispose();
     this.participants.delete(agent.root);
     this.agentSubs.get(agent)?.dispose(); // title/status/worktree/files subscriptions
     this.agentSubs.delete(agent);
     this.agentChildren.delete(agent.root);
+    this.terminals.get(agent.root)?.dispose(); // sever the AgentTerminal's Vte focus controller
     this.terminals.delete(agent.root);
     this.conversations.get(agent.root)?.dispose(); // headless agent: kill child + IPC watchers
     this.conversations.delete(agent.root);
@@ -1433,10 +1426,13 @@ export class AppWindow {
     this.tabCloseHandlers.delete(widget);
     this.editorOwners.delete(widget);
     this.editorChildren.delete(widget);
+    this.terminals.get(widget)?.dispose(); // sever the Vte focus controller (rule 9)
     this.terminals.delete(widget);
     // An agent-action terminal: kill any still-running command (e.g. a dev server)
     // so a closed/cleared action leaves nothing behind, then drop it from the map.
-    this.actionTerminals.get(widget)?.terminal.kill();
+    const actionTerminal = this.actionTerminals.get(widget);
+    actionTerminal?.terminal.kill();
+    actionTerminal?.terminal.dispose();
     this.actionTerminals.delete(widget);
     this.conversations.get(widget)?.dispose(); // kill the claude child + IPC watchers
     this.conversations.delete(widget);
@@ -2326,19 +2322,24 @@ export class AppWindow {
         description: 'Expand every file (search results)',
         when: () => this.activeSearchResults() !== null,
       },
-      // Unified hunk commands: the same `git:stage-hunk`/`git:unstage-hunk` (`space h s`/`u`)
-      // as the editor gutter, routed here for the continuous diff. The continuous-diff editor
-      // is embedded (no gutter), so it never registers the editor's variant — these AppWindow
-      // registrations are what the focus chain resolves while it's focused.
-      'git:stage-hunk': {
+      // Unified hunk commands: the same `git:hunk-stage`/`git:hunk-unstage`/`git:hunk-revert`
+      // (`space h s`/`u`/`r`) as the editor gutter, routed here for the continuous diff. The
+      // continuous-diff editor is embedded (no gutter), so it never registers the editor's variant —
+      // these AppWindow registrations are what the focus chain resolves while it's focused.
+      'git:hunk-stage': {
         didDispatch: () => this.activeContinuousDiff()?.stageHunkAtCursor(),
         description: 'Stage the hunk under the cursor (continuous diff)',
         when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
       },
-      'git:unstage-hunk': {
+      'git:hunk-unstage': {
         didDispatch: () => this.activeContinuousDiff()?.unstageHunkAtCursor(),
         description: 'Unstage the hunk under the cursor (continuous diff)',
         when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
+      },
+      'git:hunk-revert': {
+        didDispatch: () => this.activeContinuousDiff()?.revertHunkAtCursor(),
+        description: 'Revert the hunk under the cursor (continuous diff)',
+        when: () => this.activeContinuousDiff()?.live === true, // revert restores to the index → live-diff only
       },
       'diff:review-comment': {
         didDispatch: () => this.activeContinuousDiff()?.startComment(),

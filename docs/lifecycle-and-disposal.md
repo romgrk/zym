@@ -26,6 +26,26 @@ dispose disposes immediately, so late subs can't leak), `Emitter` (returns
 `Disposable`s). Track a component's subs in one `CompositeDisposable` and
 dispose it as a unit.
 
+`CompositeDisposable` is the **funnel for all teardown** an owner accumulates.
+Its acquire-and-defer helpers pair each resource with its cleanup in one call, so
+the leak-prone "attached a handler/controller and forgot to remove it" can't
+arise — prefer them over raw GTK calls:
+
+- `defer(fn)` — register a teardown closure.
+- `connect(obj, sig, handler)` — `obj.on(sig, handler)` now, `obj.off(...)` on
+  dispose (for any node-gtk GObject signal whose handler reaches back to a
+  disposable owner). Replaces the old per-class `connect` helpers.
+- `addController(widget, controller)` — `widget.addController(c)` now,
+  `widget.removeController(c)` on dispose (rule 9). **Never** raw `addController`.
+- `timer(fn, ms)` / `interval(fn, ms)` — auto-cleared (rule 7).
+- `adopt(value, onDispose)` / `use(child)` — own a value / child disposable.
+
+Two teardown verbs: `dispose()` runs + drops everything and **seals** the bag
+(later adds dispose at once) — an owner's end of life; `clear()` runs + drops but
+keeps the bag **reusable** — re-arm it each cycle for a recycled widget.
+`nest()` gives such a recycled scope its own child bag the owner still tears down
+at the end. Members dispose newest-first (LIFO).
+
 ## The rules
 
 1. **`dispose()` is idempotent** — guard
@@ -51,11 +71,15 @@ dispose it as a unit.
    connected, so a controller left on a widget that is then removed from the
    list/tree and dropped pins that widget's whole subtree (row → box → labels)
    forever — even an empty handler, and even when the entire tree is dropped.
-   Add controllers to widgets that may be removed at runtime through
-   `trackController` and sever them with `detachControllers(widget)` before the
-   removal (`src/util/widgetControllers.ts`). `removeController` releases the
-   rooted closure; `observeControllers()` can't enumerate them in this node-gtk
-   build, so we track them ourselves.
+   Attach **every** controller through `disposables.addController(widget, c)` (or
+   `connect` for a raw `.on` handler that captures the owner) and sever it by
+   disposing the bag before the widget drops. For a widget that **churns**
+   (rebuilt per keystroke / poll / re-diff), put its controllers in a
+   `disposables.nest()` scope and `clear()` it each cycle (e.g. `GitPanel` rows,
+   `HeaderBands` bands via `BlockDecorationSpec.dispose`). Either `removeController`
+   *or* disconnecting the handler releases the rooted closure — both are proven in
+   `src/util/eventKit.gtk.test.ts`. (`observeControllers().nItems` counts but can't
+   enumerate them in this node-gtk build, so the bag remembers them.)
 
 ## Reference — `TextEditor.dispose()`
 
@@ -114,3 +138,20 @@ handler (rule 2). Native leak = `app.run()` frame dominates CPU with JS idle
   sampling profiler, which named `new SearchResultsView` under the rg-result
   callback). Fixed by tracking the controllers (`trackController`) and severing
   them in `dispose()` (`detachControllers(this.editor.sourceView)`) — rule 9.
+- **The controller-pin leak was systemic — ~13 sites, one per component** — an
+  audit of every `addController` call found that only the two already-patched
+  components severed their controllers; the rest (`DiffView`, `CompletionController`,
+  `HeaderBands`, `SearchBar`, `Terminal`, `FloatingCard`, `Combobox`, `Panel`,
+  `QuestionCard`, `buildDefinitionPeek`, `NotificationToasts`, the per-agent focus
+  controller) leaked their whole graph when their widget dropped. A live in-process
+  bisection confirmed the rule (raw `addController` + `.on`, no sever → 300/300
+  survive GC; handler `.off()` *or* `removeController` first → 0/300), and a real
+  app path (`NotificationToasts` `replaceKey` reuse) leaked +80 `GtkGestureClick` at
+  `(Global handles)` per 80 reuses. Resolved by funnelling **all** controllers/
+  handlers through `CompositeDisposable`'s `addController`/`connect` (rule 9 +
+  Primitives), adding a `dispose()` to the classes that lacked one and invoking it
+  at each widget's drop point, using `nest()` for churned widgets (`GitPanel` rows,
+  `HeaderBands` bands via the new `BlockDecorationSpec.dispose`), and retiring the
+  per-class `connect` helper + the `widgetControllers.ts` `trackController`/
+  `detachControllers` shim (folded into the bag). The full hunt + per-site table is
+  in `LEAK.md` Investigation #3.

@@ -13,6 +13,7 @@
  * to a compact record of the choices.
  */
 import { Gtk, Adw, Gdk } from '../../gi.ts';
+import { CompositeDisposable } from '../../util/eventKit.ts';
 import { addStyles } from '../../styles.ts';
 import { theme } from '../../theme/theme.ts';
 import { escapeMarkup, setMarkupSafe, clearChildren } from '../proseMarkup.ts';
@@ -56,6 +57,12 @@ export class QuestionCard {
   private current = 0;
   private answered = false;
   private editing = false; // a note entry holds focus → yield keys to typing
+  // node-gtk roots connected controller/handler closures; the card is built per
+  // question and torn down with the conversation, so funnel teardown here (rule 9).
+  private readonly disposables = new CompositeDisposable();
+  // Per-option controllers/handlers: the option `note`s are dropped on submit, so
+  // this nested scope is cleared then; the root-level controllers live in `disposables`.
+  private readonly optionScope = this.disposables.nest();
 
   constructor(req: QuestionRequest, onAnswer: (answers: Answer[]) => void) {
     this.qs = req.questions;
@@ -113,7 +120,7 @@ export class QuestionCard {
         }
         // Keep the focus highlight on the option the mouse just acted on. For single-select
         // only react to activation, so a radio auto-deselecting its sibling doesn't steal it.
-        check.on('toggled', () => {
+        this.optionScope.connect(check, 'toggled', () => {
           if (this.answered || !(q.multiSelect || check.getActive())) return;
           this.focused[qi] = oi;
           if (qi === this.current) this.applyFocus();
@@ -130,12 +137,12 @@ export class QuestionCard {
           this.editing = false;
           if ((note.getText() ?? '').trim() === '') row.setExpanded(false); // collapse empty notes
         });
-        note.addController(fc);
+        this.optionScope.addController(note, fc);
         const doneEditing = () => check.grabFocus(); // back to the option (→ fc.leave collapses empty notes)
-        note.on('entry-activated', doneEditing); // enter → back to the list
+        this.optionScope.connect(note, 'entry-activated', doneEditing); // enter → back to the list
         const noteKeys = new Gtk.EventControllerKey();
         noteKeys.on('key-pressed', (keyval: number) => { if (keyval === Gdk.KEY_Escape) { doneEditing(); return true; } return false; });
-        note.addController(noteKeys);
+        this.optionScope.addController(note, noteKeys);
         row.addRow(note);
 
         group.add(row);
@@ -152,13 +159,19 @@ export class QuestionCard {
     this.updateHint();
 
     // Keep `current` in sync when the user clicks a switcher tab.
-    this.stack.on('notify::visible-child', () => this.syncCurrent());
+    this.disposables.connect(this.stack, 'notify::visible-child', () => this.syncCurrent());
 
     const keys = new Gtk.EventControllerKey();
     keys.setPropagationPhase(Gtk.PropagationPhase.CAPTURE);
     keys.on('key-pressed', (keyval: number) => this.onKey(keyval));
-    this.root.addController(keys);
-    this.root.on('map', () => this.focusOption(0)); // land on the first option once shown
+    this.disposables.addController(this.root, keys);
+    this.disposables.connect(this.root, 'map', () => this.focusOption(0)); // land on the first option once shown
+  }
+
+  /** Sever the card's controllers/handlers (root + per-option). Called when the
+   *  owning conversation is disposed (the card root is dropped then). Idempotent. */
+  dispose(): void {
+    this.disposables.dispose();
   }
 
   private updateHint(): void {
@@ -260,6 +273,7 @@ export class QuestionCard {
     // Replace the interactive card with a transcript tool row: a check icon + a
     // one-line summary header that expands to the full Q&A. Matches the padding /
     // indent of every other tool row (vs. the old bare, unpadded label).
+    this.optionScope.clear(); // the option notes (+ their controllers) are about to be dropped
     clearChildren(this.root);
     this.root.removeCssClass('is-open'); // answered → release the `space` keymap scope
     const picked = answers.filter((a) => a.labels.length > 0);

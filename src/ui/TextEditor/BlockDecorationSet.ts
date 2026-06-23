@@ -39,6 +39,11 @@ export interface BlockDecorationSpec {
   anchor: BlockDecorationAnchor;
   placement?: BlockDecorationPlacement;
   build: () => InstanceType<typeof Gtk.Widget>;
+  /** Called when THIS spec's built widget is dropped — replaced on a `key` change, removed when
+   *  the decoration leaves the set, or on `clear()`. Use it to sever anything node-gtk roots on
+   *  the widget (an event controller's signal closures), which would otherwise pin the discarded
+   *  widget forever (see docs/lifecycle-and-disposal.md rule 9). Paired with the matching `build`. */
+  dispose?: () => void;
 }
 
 /** Maps a source anchor to its current view row, or null when it isn't shown (collapsed / off the
@@ -46,7 +51,7 @@ export interface BlockDecorationSpec {
 export type AnchorResolver = (anchor: BlockDecorationAnchor) => number | null;
 
 export class BlockDecorationSet {
-  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string }>();
+  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string; dispose?: () => void }>();
   private readonly blocks: BlockDecorations;
   private readonly resolve: AnchorResolver;
   private lastSpecs: BlockDecorationSpec[] = [];
@@ -70,7 +75,10 @@ export class BlockDecorationSet {
   }
 
   clear(): void {
-    for (const entry of this.entries.values()) entry.handle.remove();
+    for (const entry of this.entries.values()) {
+      entry.dispose?.(); // sever the widget's controllers before dropping it
+      entry.handle.remove();
+    }
     this.entries.clear();
     this.lastSpecs = [];
   }
@@ -83,15 +91,22 @@ export class BlockDecorationSet {
       seen.add(spec.id);
       const prev = this.entries.get(spec.id);
       if (prev) {
-        prev.handle.update({ line, widget: prev.key === spec.key ? undefined : spec.build() });
-        prev.key = spec.key;
+        if (prev.key === spec.key) {
+          prev.handle.update({ line }); // unchanged content — keep the widget (and its teardown)
+        } else {
+          prev.dispose?.(); // old widget is about to be replaced — sever its rooted controllers
+          prev.handle.update({ line, widget: spec.build() });
+          prev.key = spec.key;
+          prev.dispose = spec.dispose; // adopt the new widget's teardown
+        }
       } else {
         const handle = this.blocks.add({ line, widget: spec.build(), placement: spec.placement });
-        this.entries.set(spec.id, { handle, key: spec.key });
+        this.entries.set(spec.id, { handle, key: spec.key, dispose: spec.dispose });
       }
     }
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
+        entry.dispose?.(); // removed from the set — sever before dropping the widget
         entry.handle.remove();
         this.entries.delete(id);
       }

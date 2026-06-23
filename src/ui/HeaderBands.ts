@@ -8,6 +8,7 @@
  */
 import * as Path from 'node:path';
 import { Gtk, Pango } from '../gi.ts';
+import type { CompositeDisposable } from '../util/eventKit.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { fileIconGlyph } from './fileIcons.ts';
@@ -34,6 +35,7 @@ addStyles(`
  *  exactly like every other gap band (not as part of the header), with `onExpand` revealing more
  *  context on click. */
 export function buildHeaderWidget(
+  scope: CompositeDisposable,
   label: string,
   path: string,
   onActivate: () => void,
@@ -65,17 +67,21 @@ export function buildHeaderWidget(
   // expands context instead of jumping).
   const click = new Gtk.GestureClick();
   click.on('released', () => onActivate());
-  row.addController(click);
+  scope.addController(row, click); // severed when this band's widget is dropped (rule 9)
   outer.append(row);
 
-  if (subtitle) outer.append(buildGapWidget(subtitle, onExpand));
+  if (subtitle) outer.append(buildGapWidget(scope, subtitle, onExpand));
   return outer;
 }
 
 /** A `⋯ N unchanged lines` gap band — a dim fold marker (not a navigable buffer row), anchored
  *  between two diff windows via `BlockDecorations`, or stacked under a header for a leading gap.
  *  `onActivate` (click) expands more context. */
-export function buildGapWidget(label: string, onActivate?: () => void): InstanceType<typeof Gtk.Widget> {
+export function buildGapWidget(
+  scope: CompositeDisposable,
+  label: string,
+  onActivate?: () => void,
+): InstanceType<typeof Gtk.Widget> {
   const widget = new Gtk.Label({ label, xalign: 0 });
   widget.addCssClass('mb-gap');
   widget.addCssClass('mb-gap-band'); // grey fill — the shared fold-marker style
@@ -83,7 +89,7 @@ export function buildGapWidget(label: string, onActivate?: () => void): Instance
     widget.addCssClass('mb-gap-clickable');
     const click = new Gtk.GestureClick();
     click.on('released', () => onActivate());
-    widget.addController(click);
+    scope.addController(widget, click); // severed when this band's widget is dropped (rule 9)
   }
   return widget;
 }

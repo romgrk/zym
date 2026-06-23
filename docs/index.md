@@ -26,8 +26,6 @@ Most important tasks:
 
 - Use Atom as a model for the overall architecture.
 - Prefer idiomatic Node.js, only use GObject libraries when required.
-- If you use GObject libraries (including GTK), do not count on the GC to dispose
-  of objects: explicitly dispose, unmount, remove, delete them.
 
 ## TypeScript
 
@@ -73,9 +71,22 @@ See [panels.md](panels.md).
 
 Teardown is load-bearing: widgets detach (not destroy) on close and node-gtk pins
 GObjects/handlers, so subscriptions to long-lived objects must be cut by hand in
-an idempotent `dispose()` (`destroy` never fires on tab-close). Covers the
-`eventKit.ts` primitives, the disposal rules, and the CDP leak-hunting recipe.
-Read before adding a component that owns a GObject, handler, timer, or child. See
+an idempotent `dispose()` (`destroy` never fires on tab-close).
+
+**The rule, no exceptions: the instant you acquire a resource, register its
+teardown in the same statement through the owner's `CompositeDisposable`.** A
+signal handler → `disposables.connect(obj, sig, fn)`; an event controller →
+`disposables.addController(widget, c)`; a `setTimeout`/`setInterval` →
+`disposables.timer`/`interval`; a subscription, a `setParent`'d popover, or
+anything else → `disposables.defer(() => …)` (or `adopt`/`use`). **Never** a bare
+`.on()` / `addController()` / `setTimeout()` whose cleanup lives elsewhere (or
+nowhere) — that is the leak. A `dispose()` should do nothing but drain its bag;
+reach for `clear()` / `nest()` to re-arm a recycled widget. Components without a
+`dispose()` that own any such resource are a bug.
+
+Covers the `eventKit.ts` primitives (acquire-and-defer helpers), the disposal
+rules, and the CDP leak-hunting recipe. Read before adding a component that owns
+a GObject, handler, timer, or child. See
 [lifecycle-and-disposal.md](lifecycle-and-disposal.md).
 
 ## Developer tooling

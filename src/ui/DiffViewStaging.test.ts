@@ -112,6 +112,41 @@ test('staging: unstageHunkAtCursor reverts the hunk out of the index; markers fl
   mbv.dispose();
 });
 
+test('revert: revertHunkAtCursor discards the unstaged hunk; the file returns to the index version', async () => {
+  const { file, mbv, caretOnKind } = open('a\nb\nc\n', 'a\nCHANGED\nc\n');
+  await waitFor(() => stagedState(mbv).some((s) => s !== null));
+
+  caretOnKind('added'); // caret on the CHANGED row
+  mbv.revertHunkAtCursor();
+  // The new-side Document is edited + saved, so the worktree returns to the index (== HEAD here).
+  assert.ok(
+    await waitFor(() => Fs.readFileSync(file, 'utf8') === 'a\nb\nc\n'),
+    'the working tree was reverted to the index version',
+  );
+  // The model edit re-diffs the view, so the reverted hunk's changed rows are gone.
+  assert.ok(
+    await waitFor(() => !rowKinds(mbv).includes('added') && !rowKinds(mbv).includes('removed')),
+    'the reverted hunk no longer shows as a change',
+  );
+  mbv.dispose();
+});
+
+test('revert: reverting one of two hunks leaves the other (partial file)', async () => {
+  // HEAD: a,c,e. Worktree adds X (after a) and Y (after c) — two SEPARATE added hunks. Reverting the
+  // hunk under the caret (X) must leave Y in the file.
+  const { file, mbv } = open('a\nc\ne\n', 'a\nX\nc\nY\ne\n');
+  await waitFor(() => stagedState(mbv).some((s) => s !== null));
+
+  // Caret on the FIRST added row (X) and revert just its hunk.
+  mbv.editor.model.setCursorBufferPosition({ row: rowKinds(mbv).indexOf('added'), column: 0 });
+  mbv.revertHunkAtCursor();
+  assert.ok(
+    await waitFor(() => Fs.readFileSync(file, 'utf8') === 'a\nc\nY\ne\n'),
+    'only X was reverted; Y is kept',
+  );
+  mbv.dispose();
+});
+
 test('staging: staging one of two hunks leaves the other unstaged (partial file)', async () => {
   // HEAD: a,c,e. Worktree adds X (after a) and Y (after c) — two SEPARATE added hunks. Staging the
   // hunk under the caret (X) must leave Y unstaged, so the surface shows both states at once.

@@ -15,6 +15,7 @@
  *   - Alt+S cycles the case mode, Alt+R toggles regex (shown in the tooltips)
  */
 import { Gdk, Gtk } from '../../gi.ts';
+import { CompositeDisposable } from '../../util/eventKit.ts';
 import { addStyles } from '../../styles.ts';
 import { theme } from '../../theme/theme.ts';
 import { regexSpans, replacementSpans, applySpans } from './regexHighlight.ts';
@@ -90,6 +91,9 @@ const CASE_ORDER: CaseMode[] = ['smart', 'sensitive', 'insensitive'];
 export class SearchBar {
   private readonly host: Overlay;
   private readonly controller: SearchController;
+  // SearchBar is built per editor and dropped with it; its panel controllers +
+  // widget handlers all funnel here so TextEditor.dispose() can sever them (rule 9).
+  private readonly disposables = new CompositeDisposable();
   private readonly view: SourceView;
 
   private readonly panel: InstanceType<typeof Gtk.Box>;
@@ -120,14 +124,14 @@ export class SearchBar {
     this.view = view;
 
     this.searchEntry = this.makeEntry('Search');
-    this.searchEntry.on('changed', () => {
+    this.disposables.connect(this.searchEntry, 'changed', () => {
       if (this.suppressChange) return; // programmatic mirror of an external search — don't re-run it
       if (!this.applyingHistory) this.historyIndex = -1; // manual edit leaves history recall
       this.render(this.controller.setQuery(this.searchEntry.getText()));
       this.refreshHighlight();
     });
     this.replaceEntry = this.makeEntry('Replace');
-    this.replaceEntry.on('changed', () => this.refreshHighlight());
+    this.disposables.connect(this.replaceEntry, 'changed', () => this.refreshHighlight());
 
     this.countLabel = new Gtk.Label({ label: '', xalign: 1 });
     this.countLabel.addCssClass('search-count');
@@ -275,7 +279,7 @@ export class SearchBar {
     button.addCssClass('toggle');
     button.addCssClass('flat');
     button.setCanFocus(false); // keep focus in the entry
-    button.on('clicked', () => this.cycleCase());
+    this.disposables.connect(button, 'clicked', () => this.cycleCase());
     return button;
   }
 
@@ -301,7 +305,7 @@ export class SearchBar {
     button.addCssClass('flat');
     button.setCanFocus(false);
     button.setTooltipText(tooltip());
-    button.on('toggled', () => {
+    this.disposables.connect(button, 'toggled', () => {
       button.setTooltipText(tooltip());
       onToggle(button.getActive());
     });
@@ -371,7 +375,13 @@ export class SearchBar {
           return false;
       }
     });
-    this.panel.addController(keys);
+    this.disposables.addController(this.panel, keys);
+  }
+
+  /** Sever the panel's key/focus controllers + the entry/button handlers node-gtk
+   *  roots. Called from TextEditor.dispose() when the editor (and this bar) drops. */
+  dispose(): void {
+    this.disposables.dispose();
   }
 
   private installFocusOut(): void {
@@ -379,7 +389,7 @@ export class SearchBar {
     // current match and keeps the highlights up.
     const focus = new Gtk.EventControllerFocus();
     focus.on('leave', () => this.close(false));
-    this.panel.addController(focus);
+    this.disposables.addController(this.panel, focus);
   }
 }
 

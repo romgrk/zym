@@ -375,15 +375,6 @@ export class TextEditor implements DocumentHost {
   // for signals and `subs.add(...)` for registry Disposables.
   private readonly subs = new CompositeDisposable();
 
-  /** Connect a node-gtk GObject signal and register its disconnect in `subs`, so
-   *  `dispose()` releases the Global handle that would otherwise pin this editor.
-   *  Use for EVERY signal whose handler reaches back to `this` (see `subs`). */
-   
-  private connect(obj: any, signal: string, handler: (...args: any[]) => unknown): void {
-    obj.on(signal, handler);
-    this.subs.add(new Disposable(() => obj.off(signal, handler)));
-  }
-
   // The document this editor is a *view* onto (owns the text model + undo + file I/O +
   // LSP). `this.buffer` is this view's own GtkSource.Buffer, kept in sync by the
   // document — separate from other views' buffers, so cursor/selection/folds/decorations
@@ -636,7 +627,7 @@ export class TextEditor implements DocumentHost {
     // down if the widget is destroyed by any other route (dispose() is idempotent).
     // Tracked so dispose() disconnects it — left connected it would itself pin the
     // editor via root's Global handle (the closure captures `this`).
-    this.connect(this.root, 'destroy', () => this.dispose());
+    this.subs.connect(this.root, 'destroy', () => this.dispose());
   }
 
   // --- Buffer-only mode ------------------------------------------------------
@@ -696,7 +687,7 @@ export class TextEditor implements DocumentHost {
       // view is focused (not the search bar) and before a newline is inserted.
       const keys = new Gtk.EventControllerKey();
       keys.setPropagationPhase(Gtk.PropagationPhase.CAPTURE);
-      this.connect(keys, 'key-pressed', (keyval: number, _keycode: number, state: number) => {
+      this.subs.connect(keys, 'key-pressed', (keyval: number, _keycode: number, state: number) => {
         const ctrl = (state & Gdk.ModifierType.CONTROL_MASK) !== 0;
         if (ctrl && (keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter)) {
           mode.onSubmit!(this.getText());
@@ -704,7 +695,7 @@ export class TextEditor implements DocumentHost {
         }
         return false;
       });
-      this.view.addController(keys);
+      this.subs.addController(this.view, keys);
     }
   }
 
@@ -789,6 +780,8 @@ export class TextEditor implements DocumentHost {
     // didClose are driven there off the model). This view contributes the diagnostics
     // renderer and signature help.
     this.diagnostics = new DiagnosticsView(this.view, this.syntax, this.textDecorations, this.editorModel, () => this._currentFile);
+    // Let the vim layer reach diagnostic positions (for `]d`/`[d`); already view-space.
+    this.editorModel.setDiagnosticProvider(() => this.diagnostics.diagnosticPositions());
     // Inlay hints (parameter names / inferred types) trailing each line, per view.
     this.inlayHints = new InlayHintController(
       this.view,
@@ -813,14 +806,14 @@ export class TextEditor implements DocumentHost {
     });
     // The hover popover is anchored to a fixed cursor position; dismiss it once
     // the cursor moves or the view scrolls (both no-ops when nothing is showing).
-    this.connect(this.buffer, 'notify::cursor-position', () => {
+    this.subs.connect(this.buffer, 'notify::cursor-position', () => {
       this.dismissHover();
       if (this.signaturePopover.visible) this.scheduleSignatureRequest();
       this.scheduleLocationBarUpdate();
     });
     const hoverVadj = this.view.getVadjustment();
     if (hoverVadj)
-      this.connect(hoverVadj, 'value-changed', () => {
+      this.subs.connect(hoverVadj, 'value-changed', () => {
         this.dismissHover();
         this.dismissSignature();
       });
@@ -851,6 +844,7 @@ export class TextEditor implements DocumentHost {
     this.hoverPopover.dispose(); // hide + unparent (a setParent'd popover must be unparented)
     this.signaturePopover.dispose();
     this.completion?.dispose(); // unparents the completion popover from the view
+    this.searchBar?.dispose(); // sever the search bar's panel controllers + entry/button handlers
     this.decorationMaterializeSub?.(); // drop the materialize re-projection subscription
     this.decorationMaterializeSub = null;
     this.syntax.dispose(); // detach buffer/view signal handlers + free the tree-sitter tree
@@ -969,7 +963,7 @@ export class TextEditor implements DocumentHost {
     );
     // When this editor is shown again (tab activated / dock revealed), run any
     // refresh deferred while it was off-screen so the bars catch up.
-    this.connect(this.root, 'map', () => this.gitGutter?.notifyVisible());
+    this.subs.connect(this.root, 'map', () => this.gitGutter?.notifyVisible());
     // Let the vim layer reach the gutter's hunk ranges (for `]h`/`[h`). Hunk rows are
     // MODEL/file rows; translate to view rows (folded ones collapse onto one line).
     this.editorModel.setHunkProvider(() => [
@@ -984,9 +978,9 @@ export class TextEditor implements DocumentHost {
     // `space h …` leader; the gutter does the index `git apply`, revert is an
     // in-buffer edit (so it's a single undo).
     zym.commands.add(this.view, {
-      'git:stage-hunk': { didDispatch: () => this.stageHunkAtCursor(), description: 'Stage the hunk under the cursor' },
-      'git:unstage-hunk': { didDispatch: () => this.unstageHunkAtCursor(), description: 'Unstage the hunk under the cursor' },
-      'git:revert-hunk': { didDispatch: () => this.revertHunkAtCursor(), description: 'Revert the hunk under the cursor' },
+      'git:hunk-stage': { didDispatch: () => this.stageHunkAtCursor(), description: 'Stage the hunk under the cursor' },
+      'git:hunk-unstage': { didDispatch: () => this.unstageHunkAtCursor(), description: 'Unstage the hunk under the cursor' },
+      'git:hunk-revert': { didDispatch: () => this.revertHunkAtCursor(), description: 'Revert the hunk under the cursor' },
     });
   }
 
@@ -1173,7 +1167,7 @@ export class TextEditor implements DocumentHost {
       }
       return ++frames < 120; // keep trying ~2s then give up
     };
-    this.connect(this.view, 'map', () => this.view.addTickCallback(tick));
+    this.subs.connect(this.view, 'map', () => this.view.addTickCallback(tick));
   }
 
   /** Whether an inline peek is currently open. */
@@ -1312,7 +1306,7 @@ export class TextEditor implements DocumentHost {
       // The view's first natural-height allocation can still come out stale; force one
       // relayout after map so propagate settles on the exact height (the floor only guards
       // the very first frame).
-      this.connect(this.view, 'map', () => {
+      this.subs.connect(this.view, 'map', () => {
         applyCap();
         applyFloor();
         let frames = 0;
@@ -1352,7 +1346,7 @@ export class TextEditor implements DocumentHost {
           applyPastEnd();
         }, 0);
       };
-      this.connect(vadj, 'changed', scheduleApply);
+      this.subs.connect(vadj, 'changed', scheduleApply);
       this.subs.add(
         new Disposable(() => {
           if (pendingId) clearTimeout(pendingId);
@@ -1463,7 +1457,7 @@ export class TextEditor implements DocumentHost {
       this.placeholderLabel.setMarginTop(padding);
       this.placeholderLabel.setCanTarget(false);
       overlay.addOverlay(this.placeholderLabel);
-      this.connect(this.buffer, 'changed', () =>
+      this.subs.connect(this.buffer, 'changed', () =>
         this.placeholderLabel!.setVisible(this.buffer.getCharCount() === 0),
       );
     }
@@ -1483,9 +1477,9 @@ export class TextEditor implements DocumentHost {
     // this single Revealer. `showBanner` sets the color class, message, and optional
     // action button; `hideBanner` collapses it. A custom Revealer+Box rather than
     // Adw.Banner so we control the layout (full-width tint, centered content).
-    this.connect(this.bannerButton, 'clicked', () => this.bannerAction?.());
+    this.subs.connect(this.bannerButton, 'clicked', () => this.bannerAction?.());
     const bannerDismiss = new Gtk.Button({ label: 'Dismiss' });
-    this.connect(bannerDismiss, 'clicked', () => this.banner.setRevealChild(false));
+    this.subs.connect(bannerDismiss, 'clicked', () => this.banner.setRevealChild(false));
     const bannerContent = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 16 });
     bannerContent.setHexpand(true);
     bannerContent.setHalign(Gtk.Align.CENTER);
@@ -1561,7 +1555,7 @@ export class TextEditor implements DocumentHost {
     // empty/EOL line) lands over the gutter and only corrects on the next cursor
     // move. `map` fires before that first layout pass (line geometry still 0, per
     // revealPeekRow), so re-render on a tick that waits for a real height.
-    this.connect(this.view, 'map', () => {
+    this.subs.connect(this.view, 'map', () => {
       let frames = 0;
       this.view.addTickCallback(() => {
         if (this.view.getRealized() && this.view.getHeight() > 0) {
@@ -1573,19 +1567,19 @@ export class TextEditor implements DocumentHost {
     });
 
     const focus = new Gtk.EventControllerFocus();
-    this.connect(focus, 'enter', () => {
+    this.subs.connect(focus, 'enter', () => {
       this.editorModel.setFocused(true);
       // This view is now the active one of its (possibly shared) document, so the LSP
       // cursor / dialogs / load-save reactions route here.
       this.document.setActiveHost(this);
     });
-    this.connect(focus, 'leave', () => {
+    this.subs.connect(focus, 'leave', () => {
       // The search bar is part of the editor: while it holds focus, keep the
       // active caret rather than switching to the unfocused (inactive) one.
       if (this.searchBar.isOpen) return;
       this.editorModel.setFocused(false);
     });
-    this.view.addController(focus);
+    this.subs.addController(this.view, focus);
   }
 
   /**
@@ -1731,7 +1725,7 @@ export class TextEditor implements DocumentHost {
     // Keep the cursor visible: if a move (w, /, G, a click, …) lands it inside a
     // folded body, open the fold (Vim's `foldopen`). Closing a fold moves the
     // cursor to the still-visible header, so this never fights `fold:close`.
-    this.connect(this.buffer, 'notify::cursor-position', () => {
+    this.subs.connect(this.buffer, 'notify::cursor-position', () => {
       this.syntax.revealLine(this.editorModel.getCursorBufferPosition().row);
     });
   }
@@ -1770,7 +1764,7 @@ export class TextEditor implements DocumentHost {
     // unbound keys to fall through here.
     const keys = new Gtk.EventControllerKey();
     keys.setPropagationPhase(Gtk.PropagationPhase.CAPTURE);
-    this.connect(keys, 'key-pressed', (keyval: number, _keycode: number, state: number) => {
+    this.subs.connect(keys, 'key-pressed', (keyval: number, _keycode: number, state: number) => {
       if (this.vimState.mode !== 'insert') return false;
       if ((state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK)) !== 0) return false;
       // Replace (R) submode: overwrite the character under the cursor on type, and
@@ -1791,7 +1785,7 @@ export class TextEditor implements DocumentHost {
       if (handleTagAutoClose(this.editorModel, ch, this.isTagLanguage())) return true;
       return handleAutoPairInsert(this.editorModel, ch);
     });
-    this.view.addController(keys);
+    this.subs.addController(this.view, keys);
 
     // Reset the replace-mode undo stack each time `R` (re)enters replace mode.
     this.vimState.onDidActivateMode(({ mode, submode }: { mode: string; submode: string | null }) => {
@@ -1838,7 +1832,7 @@ export class TextEditor implements DocumentHost {
     // the disconnect through `subs`, torn down in dispose() (the reliable teardown —
     // the root is detached, not destroyed, on tab close, so a `destroy` handler never
     // fires).
-    this.connect(styleManager, 'notify::dark', apply);
+    this.subs.connect(styleManager, 'notify::dark', apply);
   }
 
   // --- File operations -------------------------------------------------------
@@ -2142,7 +2136,7 @@ export class TextEditor implements DocumentHost {
     };
     if (!apply()) return; // already laid out → set once, done
     if (this.view.getMapped()) this.view.addTickCallback(apply);
-    else this.connect(this.view, 'map', () => this.view.addTickCallback(apply));
+    else this.subs.connect(this.view, 'map', () => this.view.addTickCallback(apply));
   }
 
   /** Restore unsaved content (session restore): replace the buffer and keep it

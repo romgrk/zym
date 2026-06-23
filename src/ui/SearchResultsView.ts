@@ -32,7 +32,7 @@ import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { SourceLineNumberGutter } from './SourceLineNumberGutter.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
 import { Range } from '../text/Range.ts';
-import { trackController, detachControllers } from '../util/widgetControllers.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 import type { BlockDecorationSpec, BlockDecorationSet } from './TextEditor/BlockDecorationSet.ts';
 
 /** One file's contribution: the regions (source model row spans) to show. */
@@ -87,6 +87,7 @@ export class SearchResultsView {
   private excerptInputs: ExcerptInput[] = [];
   private readonly collapsed = new Set<number>();
   private lastLineCount = 0; // view buffer line count, to detect row-count-changing edits
+  private readonly disposables = new CompositeDisposable();
   private disposed = false;
 
   /** The LIVE coordinate map (re-segmentation swaps the underlying projection, so always read
@@ -183,12 +184,14 @@ export class SearchResultsView {
       const collapsed = this.collapsed.has(ei);
       // A `▸` chevron marks a collapsed file; an expanded one keeps the plain filename.
       const label = collapsed ? `▸ ${excerpt.header}` : excerpt.header;
+      const headerScope = new CompositeDisposable();
       specs.push({
         id: `header:${ei}`,
         key: label,
         anchor: { documentKey: first.documentKey, row: first.startRow },
         placement: 'above',
-        build: () => buildHeaderWidget(label, first.documentKey, () => this.onActivate?.({ path: first.documentKey, row: first.startRow })),
+        build: () => buildHeaderWidget(headerScope, label, first.documentKey, () => this.onActivate?.({ path: first.documentKey, row: first.startRow })),
+        dispose: () => headerScope.dispose(),
       });
       // Gaps only when expanded (a collapsed excerpt is a single row — no gaps). Anchor the `⋯`
       // ABOVE the NEXT segment's first row (a start-anchor), not below the previous segment's last
@@ -203,7 +206,7 @@ export class SearchResultsView {
             key: '⋯',
             anchor: { documentKey: seg.documentKey, row: seg.startRow },
             placement: 'above',
-            build: () => buildGapWidget('⋯'),
+            build: () => buildGapWidget(new CompositeDisposable(), '⋯'), // no onActivate → no controller to sever
           });
         }
       }
@@ -399,7 +402,7 @@ export class SearchResultsView {
     // SearchResultsView graph — editor, acquired Documents, buffers, highlight tags — forever.
     // The search results view is rebuilt per query, so that residue grows unbounded.
     // See docs/lifecycle-and-disposal.md rule 9 and romgrk/node-gtk#455.
-    trackController(view, keys);
+    this.disposables.addController(view, keys);
 
     if (this.editable) return; // word-select stays double-clickable while editing
     const click = new Gtk.GestureClick();
@@ -410,7 +413,7 @@ export class SearchResultsView {
       const r = view.getLineAtY(yBuf);
       this.activateRow(asIter(Array.isArray(r) ? r[0] : r).getLine());
     });
-    trackController(view, click); // severed in dispose (see the key controller above)
+    this.disposables.addController(view, click); // severed in dispose (see the key controller above)
   }
 
   private cursorRow(): number {
@@ -445,7 +448,7 @@ export class SearchResultsView {
     // closures capture `this`, and node-gtk roots connected-handler closures, so leaving them
     // on would pin this whole view (editor + acquired Documents + buffers + tags) — the
     // dominant project-search leak. See installNavigation + romgrk/node-gtk#455.
-    detachControllers(this.editor.sourceView);
+    this.disposables.dispose();
     this.bands.clear();
     this.gutter.dispose();
     // The editor owns the ProjectionView (via its MultiBufferDocument); disposing the editor

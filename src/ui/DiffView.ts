@@ -33,6 +33,7 @@ import { DiffCommentBox, buildCommentCard } from './DiffCommentBox.ts';
 import type { BlockDecorationSpec, BlockDecorationSet, BlockDecorationAnchor } from './TextEditor/BlockDecorationSet.ts';
 import { buildRowMap, computeHunks, formatHunkPatch, hunkContainsBufferRow, type Hunk } from '../util/hunkPatch.ts';
 import { applyPatch, git, repoRoot, type GitDone, type GitRepo } from '../git.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
 import { zym } from '../zym.ts';
 import * as Path from 'node:path';
 
@@ -71,7 +72,7 @@ export interface DiffViewOptions {
   editable?: boolean;
   /**
    * LIVE diff: this view tracks the working tree + index, so hunk staging is enabled — the gutter
-   * shows the staged/unstaged marker and `git:stage-hunk`/`git:unstage-hunk` apply. Only the
+   * shows the staged/unstaged marker and `git:hunk-stage`/`git:hunk-unstage`/`git:hunk-revert` apply. Only the
    * staging surface (`git:diff-current-changes`) is live; read-only diffs over historical blobs
    * (commit / branch / file) are NOT live and their gutter omits the staging section. Requires
    * `git` + `cwd` (a repo) to do anything; pairs with `editable` on the staging surface.
@@ -167,7 +168,7 @@ export class DiffView {
   private readonly reviewHandlers: Array<() => void> = [];
   private readonly editable: boolean;
   /** Whether this is a live diff (staging surface): hunk staging + the gutter marker are enabled.
-   *  Public so the command layer can gate `git:stage-hunk`/`git:unstage-hunk` on it. */
+   *  Public so the command layer can gate `git:hunk-stage`/`git:hunk-unstage` on it. */
   readonly live: boolean;
   private readonly registry?: DocumentRegistry;
   // Hunk staging: the repo root, the per-file staged (index) blob, the last-built diff (for the
@@ -182,6 +183,7 @@ export class DiffView {
   private lastLineCount = 0; // view buffer line count, to detect line-count-changing edits
   private readonly modifiedHandlers: Array<() => void> = [];
   private readonly modifiedUnsubs: Array<() => void> = [];
+  private readonly disposables = new CompositeDisposable();
   private disposed = false;
 
   private get projection(): ViewProjection {
@@ -352,6 +354,34 @@ export class DiffView {
     this.applyStaging('unstage');
   }
 
+  /** Revert (discard) the unstaged hunk under the caret: restore its rows to the index version
+   *  on the live new-side Document, as one undoable edit, then save so the working tree matches.
+   *  Mirrors the gutter editor's `git:hunk-revert`, but edits the shared Document (not a git apply
+   *  on disk) so the diff, any open editor, and the LSP all stay in sync. Live diffs only. */
+  revertHunkAtCursor(): void {
+    if (!this.repo) return void zym.notifications.addTrace('Not in a git repository');
+    const ctx = this.caretFileContext();
+    if (!ctx) return void zym.notifications.addTrace('No change under the cursor');
+    const { path, indexLines, worktreeLines, worktreeRow } = ctx;
+
+    // Unstaged hunks live in the index→worktree diff; the displayed new side IS the worktree, so
+    // the caret's worktree row indexes them directly (mirrors `applyStaging('stage')`).
+    const hunk = computeHunks(indexLines, worktreeLines).find((h) => hunkContainsBufferRow(h, worktreeRow));
+    if (!hunk) return void zym.notifications.addTrace('No unstaged change under the cursor');
+
+    const document = this.sources.get(newKey(path))?.document;
+    if (!document) return void zym.notifications.addTrace('Cannot revert a hunk in this diff');
+
+    // Replace the hunk's worktree rows with the index version (`oldLines`, each newline-terminated);
+    // a pure deletion (no new rows) re-inserts the removed lines before `newStart`.
+    const startRow = hunk.newStart;
+    const endRow = hunk.newStart + hunk.newLines.length; // exclusive
+    const restored = hunk.oldLines.map((line) => line + '\n').join('');
+    document.replaceModelLineRange(startRow, endRow, restored);
+    document.save();
+    this.gitRepo?.refresh(); // working-tree change counts (Source Control panel); the model edit re-diffs the view
+  }
+
   private applyStaging(mode: 'stage' | 'unstage'): void {
     if (!this.repo) return void zym.notifications.addTrace('Not in a git repository');
     const ctx = this.caretFileContext();
@@ -477,7 +507,8 @@ export class DiffView {
     this.gapAnchors = dmb.gapAnchors; // kept for the keyboard expand (`expandContextAtCursor`)
     this.headerAnchors = dmb.headerAnchors;
     const specs: BlockDecorationSpec[] = [];
-    dmb.headerAnchors.forEach((h, i) =>
+    dmb.headerAnchors.forEach((h, i) => {
+      const scope = new CompositeDisposable();
       specs.push({
         id: `header:${i}`, // reconcile by ordinal: count changes by delta, content-key rebuilds the widget
         key: DiffView.headerKey(h),
@@ -485,6 +516,7 @@ export class DiffView {
         placement: 'above',
         build: () =>
           buildHeaderWidget(
+            scope,
             h.label,
             h.path,
             () => this.onActivate?.({ path: h.path, row: 0 }),
@@ -493,18 +525,21 @@ export class DiffView {
             // bottom), like clicking any other gap.
             h.leadingRevealRows?.length ? () => this.revealChunk(h.leadingRevealRows!, false) : undefined,
           ),
-      }),
-    );
-    dmb.gapAnchors.forEach((g, i) =>
+        dispose: () => scope.dispose(), // sever the header/gap click controllers when the band is replaced/removed
+      });
+    });
+    dmb.gapAnchors.forEach((g, i) => {
+      const scope = new CompositeDisposable();
       specs.push({
         id: `gap:${i}`,
         key: DiffView.gapKey(g),
         anchor: { viewRow: g.viewRow },
         placement: 'below',
         // Clicking the gap reveals a chunk of its elided lines (extends the window above it).
-        build: () => buildGapWidget(g.label, () => this.revealChunk(g.revealRows, true)),
-      }),
-    );
+        build: () => buildGapWidget(scope, g.label, () => this.revealChunk(g.revealRows, true)),
+        dispose: () => scope.dispose(),
+      });
+    });
     // Accumulated review comments: a read-only card under each commented line (source-anchored, so
     // it tracks the line across re-diffs/edits). Reconciled in the same set by stable id.
     this.pending.forEach((p) =>
@@ -642,7 +677,7 @@ export class DiffView {
       else this.activateRow(this.cursorRow());
       return true;
     });
-    view.addController(keys);
+    this.disposables.addController(view, keys);
 
     if (this.editable) return; // double-click word-select stays while editing
     const click = new Gtk.GestureClick();
@@ -653,7 +688,7 @@ export class DiffView {
       const r = view.getLineAtY(yBuf);
       this.activateRow(asIter(Array.isArray(r) ? r[0] : r).getLine());
     });
-    view.addController(click);
+    this.disposables.addController(view, click);
   }
 
   private cursorRow(): number {
@@ -1039,6 +1074,7 @@ export class DiffView {
       else entry.syntax.dispose();
     }
     this.sources.clear();
+    this.disposables.dispose(); // sever the nav controllers while the source view still exists
     this.editor.dispose();
   }
 }
