@@ -99,3 +99,18 @@ handler (rule 2). Native leak = `app.run()` frame dominates CPU with JS idle
   rebuild on every poll, so they use `trackController`/`detachControllers`
   (rule 9). Same class, still open: `NotificationToasts` (toast card click) and
   other recycled widgets with controllers.
+- **Project-search results view → whole editor graph leaked per query** —
+  `SearchResultsView.installNavigation` attached Enter / double-click
+  `EventController`s to its source view with raw `addController`, and `dispose()`
+  never removed them. Each handler closure captures `this`, so node-gtk's
+  rooted-closure pin (the toggle-ref never downgrades when a connected handler's
+  closure references its own object — romgrk/node-gtk#455) kept the entire view
+  alive: the editor, every `Document` acquired from the registry, their buffers,
+  the ~24 highlight `GtkTextTag`s per buffer, and the excerpt-header rows.
+  `ProjectSearchView` rebuilds the whole `SearchResultsView` on every search run,
+  so the residue grew unbounded — RSS climbed ~0.4 GB → 3.3 GB while the V8 heap
+  stayed flat; heap snapshots showed the survivors rooted at depth 1 by
+  `(Global handles)`. Found via live CDP (post-GC snapshot diffs + the allocation
+  sampling profiler, which named `new SearchResultsView` under the rg-result
+  callback). Fixed by tracking the controllers (`trackController`) and severing
+  them in `dispose()` (`detachControllers(this.editor.sourceView)`) — rule 9.

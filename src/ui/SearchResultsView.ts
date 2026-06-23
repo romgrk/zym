@@ -32,6 +32,7 @@ import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { SourceLineNumberGutter } from './SourceLineNumberGutter.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
 import { Range } from '../text/Range.ts';
+import { trackController, detachControllers } from '../util/widgetControllers.ts';
 import type { BlockDecorationSpec, BlockDecorationSet } from './TextEditor/BlockDecorationSet.ts';
 
 /** One file's contribution: the regions (source model row spans) to show. */
@@ -393,7 +394,12 @@ export class SearchResultsView {
       this.activateRow(this.cursorRow());
       return true;
     });
-    view.addController(keys);
+    // Track + sever on dispose: this closure captures `this`, and node-gtk roots a connected
+    // handler's closure, so leaving the controller on the (detached) view pins the whole
+    // SearchResultsView graph — editor, acquired Documents, buffers, highlight tags — forever.
+    // The search results view is rebuilt per query, so that residue grows unbounded.
+    // See docs/lifecycle-and-disposal.md rule 9 and romgrk/node-gtk#455.
+    trackController(view, keys);
 
     if (this.editable) return; // word-select stays double-clickable while editing
     const click = new Gtk.GestureClick();
@@ -404,7 +410,7 @@ export class SearchResultsView {
       const r = view.getLineAtY(yBuf);
       this.activateRow(asIter(Array.isArray(r) ? r[0] : r).getLine());
     });
-    view.addController(click);
+    trackController(view, click); // severed in dispose (see the key controller above)
   }
 
   private cursorRow(): number {
@@ -435,6 +441,11 @@ export class SearchResultsView {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    // Sever the navigation controllers FIRST, while the source view still exists: their
+    // closures capture `this`, and node-gtk roots connected-handler closures, so leaving them
+    // on would pin this whole view (editor + acquired Documents + buffers + tags) — the
+    // dominant project-search leak. See installNavigation + romgrk/node-gtk#455.
+    detachControllers(this.editor.sourceView);
     this.bands.clear();
     this.gutter.dispose();
     // The editor owns the ProjectionView (via its MultiBufferDocument); disposing the editor
