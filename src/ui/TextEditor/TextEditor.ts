@@ -65,6 +65,7 @@ addStyles(/* css */`
     font: var(--t-font-monospace);
     color: var(--t-ui-editor-foreground);
     caret-color: var(--t-ui-editor-foreground);
+    background-color: var(--view-bg-colo);
   }
   /* Pending-command preview ("showcmd"), floated in the editor's bottom-right. */
   .zym-showcmd {

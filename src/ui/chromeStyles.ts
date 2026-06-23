@@ -13,7 +13,7 @@ import { theme } from '../theme/theme.ts';
 // switch can re-apply it. Themes without their own background (ui.bg unset)
 // leave the chrome to the system Adwaita styling.
 export function applyChromeStyles(): void {
-  const { editor: { background: bg }, surface: { popover: popoverBg, selected: selectedBg } } = theme.ui;
+  const { surface: { popover: popoverBg, selected: selectedBg } } = theme.ui;
   // A theme that follows the system scheme leaves the chrome to Adwaita.
   if (theme.followSystemScheme) {
     styles.remove('theme-chrome');
@@ -24,21 +24,10 @@ export function applyChromeStyles(): void {
   const muted = theme.ui.text.muted;
   const rules = [
     `#Header, #WorkbenchList .workbench-header {
-      background: ${bg};
       box-shadow: none;
       border-bottom: 1px solid ${border};
     }`,
-    `#FileTree, #FileTree listview { background-color: ${bg}; }`,
-    `#NotificationLog, #NotificationLog list { background-color: ${bg}; }`,
-    `#KeymapPanel, #KeymapPanel viewport { background-color: ${bg}; }`,
-    `#PluginManagerPanel, #PluginManagerPanel viewport { background-color: ${bg}; }`,
-    `#LocationList, #LocationList list { background-color: ${bg}; }`,
-    `#WorkbenchList, #WorkbenchList list { background-color: ${bg}; }`,
-    `#GitPanel, #GitPanel list { background-color: ${bg}; }`,
     `#WorkbenchRow { padding: 2px 12px; }`,
-    `#Panel tabbar .box,
-     #Panel tabbar tabbox,
-     #Panel tabbar tab { background-color: ${bg}; }`,
     `#Panel tabbar .box {
       box-shadow: none;
       padding: 0;
@@ -53,9 +42,7 @@ export function applyChromeStyles(): void {
       border-right: 1px solid ${border};
     }`,
     `#Panel tabbar tab:first-child { border-left: 1px solid ${border}; }`,
-    `#Panel tabbar tab:hover { background-color: shade(${bg}, 1.2); }`,
     `#Panel tabbar tab:selected {
-      background-color: shade(${bg}, 1.6);
       box-shadow: inset 0 -2px ${border};
     }`,
     // The empty-panel placeholder blends into the app background; its text, face,
@@ -63,20 +50,9 @@ export function applyChromeStyles(): void {
     // to the foreground color when this is the active panel; the welcome state
     // stays muted throughout (the cat is a calm mascot, the rest reference text).
     // Keycaps derive their chrome from currentColor.
-    `#PanelEmptyState { background-color: ${bg}; }`,
     `#PanelEmptyText, #PanelEmptyEmoticon, #PanelEmptyCat, #PanelEmptyCheatsheet, #PanelEmptyFooter { color: ${muted}; }`,
     `#PanelEmptyText.is-active, #PanelEmptyEmoticon.is-active { color: ${theme.ui.editor.foreground}; }`,
   ];
-
-  // Popover surfaces: the picker card, its search entry, and result list.
-  if (popoverBg) {
-    rules.push(
-      `#Picker,
-       #PickerEntry,
-       #PickerList,
-       #PickerList list { background-color: ${popoverBg}; }`,
-    );
-  }
 
   // Selected entries in lists (file tree, picker results). The file-tree
   // selection is painted only while the tree is focused (`:focus-within`); an

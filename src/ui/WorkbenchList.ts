@@ -37,7 +37,18 @@ export const PROJECT_NAME = Path.basename(process.cwd());
 // slides its height open (on launch) or shut (on close).
 const ROW_TRANSITION_MS = 250;
 
-addStyles(`
+addStyles(/* css */`
+  #WorkbenchList {
+    background-color: var(--sidebar-bg-color); 
+  }
+  #WorkbenchList list {
+    background-color: var(--sidebar-bg-color); 
+  }
+  /* Each row is as tall as the header bar (an Adw.HeaderBar is 47px), so the list
+     reads as a column of header-height entries. */
+  #WorkbenchRow {
+    min-height: 47px;
+  }
   /* The unsaved-changes marker (a small dot) next to the project title — warning-colored. */
   .zym-modified-dot { color: var(--t-ui-status-warning); }
   /* A transparent left border keeps the row content from shifting when the active
@@ -49,16 +60,10 @@ addStyles(`
     border-left: 3px solid transparent;
     border-bottom: 1px solid var(--t-ui-border);
   }
-  /* Each row is as tall as the header bar (an Adw.HeaderBar is 47px), so the list
-     reads as a column of header-height entries. */
-  #WorkbenchRow {
-    min-height: 47px;
-  }
   /* The active row is marked by an accent left-border indicator rather than a
      filled background. */
   #WorkbenchList list row:selected {
     color: var(--t-ui-editor-foreground);
-    background-color: var(--view-bg-color);
     border-left-color: var(--t-ui-status-info);
   }
   /* Per-row edited-files count — a flat, muted button (click opens the files). */
