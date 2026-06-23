@@ -59,8 +59,13 @@ export interface DiffViewOptions {
   onActivate?: (location: { path: string; row: number }) => void;
   /** Deliver a formatted review message (one comment, or an accumulated batch) to the agent. The
    *  view does ALL formatting (`formatDiffComment`/`formatDiffReview`); the host just sends the
-   *  string. Absent → commenting is disabled (no agent to address — e.g. the user workbench). */
+   *  string (typically `zym.workspace.sendReviewToAgent`, which targets the current agent or opens
+   *  the picker). Wired on every diff — live or historical. Absent → commenting is disabled. */
   onSend?: (message: string) => void;
+  /** Context prefixed to every review message — names the revision a HISTORICAL diff is of (e.g.
+   *  ``Review of commit `a0c0365` (subject)``), so the agent knows the lines refer to that commit/
+   *  branch, not the working tree. Omit for working-tree diffs (live / current-file). */
+  reviewContext?: string;
   /** Edit-in-place: back the NEW side with live `Document`s (write-through + save + live
    *  re-diff) instead of disk snapshots. Requires `documents`. */
   editable?: boolean;
@@ -151,6 +156,7 @@ export class DiffView {
   private headerAnchors: DiffMultiBuffer['headerAnchors'] = [];
   private readonly onActivate?: (location: { path: string; row: number }) => void;
   private readonly onSend?: (message: string) => void;
+  private readonly reviewContext?: string;
   private commentBox: DiffCommentBox | null = null;
   // Review mode: while on, a submitted comment is ACCUMULATED (shown as an inline read-only card)
   // instead of sent; `submitReview` flushes the batch. Cards are folded into `installOverlays`'
@@ -185,6 +191,7 @@ export class DiffView {
   constructor(options: DiffViewOptions) {
     this.onActivate = options.onActivate;
     this.onSend = options.onSend;
+    this.reviewContext = options.reviewContext;
     this.files = options.files;
     this.cwd = options.cwd;
     this.editable = !!options.editable;
@@ -629,8 +636,8 @@ export class DiffView {
     keys.on('key-pressed', (keyval: number) => {
       if (keyval !== Gdk.KEY_Return && keyval !== Gdk.KEY_KP_Enter) return false;
       if (this.editable && view.getEditable()) return false; // insert mode: Enter is a newline
-      // Enter opens the comment box where commenting is enabled (an agent workbench); elsewhere it
-      // keeps the original jump-to-file behaviour. `g d` always jumps.
+      // Enter opens the comment box where commenting is enabled (every diff now wires `onSend`);
+      // `g d` always jumps to the file/line instead.
       if (this.canComment) this.startComment();
       else this.activateRow(this.cursorRow());
       return true;
@@ -669,8 +676,9 @@ export class DiffView {
 
   // --- comment to agent ------------------------------------------------------
 
-  /** Whether commenting-to-agent is enabled here — only when an `onSend` sink was wired (i.e. the
-   *  diff lives in an agent's workbench). Gates the `enter` action + the `diff:*` review commands. */
+  /** Whether commenting-to-agent is enabled here — true whenever an `onSend` sink was wired, which
+   *  every diff surface now does (live or historical). Gates the `enter` action + the `diff:*`
+   *  review commands. */
   get canComment(): boolean {
     return !!this.onSend;
   }
@@ -709,7 +717,7 @@ export class DiffView {
         if (!body) return;
         const comment: DiffComment = { ...rest, comment: body };
         if (this.reviewMode) this.addPending(comment, cardAnchor);
-        else this.onSend?.(formatDiffReview([comment], this.cwd ?? process.cwd()));
+        else this.sendReview([comment]);
       },
       onCancel: () => this.closeComment(),
     });
@@ -783,10 +791,16 @@ export class DiffView {
   submitReview(): void {
     if (!this.onSend) return;
     if (this.pending.length === 0) return void zym.notifications.addTrace('No review comments to send');
-    this.onSend(formatDiffReview(this.pending.map((p) => p.comment), this.cwd ?? process.cwd()));
+    this.sendReview(this.pending.map((p) => p.comment));
     this.pending.length = 0;
     this.installOverlays(this.dmb); // drop the inline cards
     this.emitReview();
+  }
+
+  /** Format a review (one comment or a batch) and deliver it to the agent, prefixing the diff's
+   *  `reviewContext` (which revision a historical diff is of) when set. */
+  private sendReview(comments: DiffComment[]): void {
+    this.onSend?.(formatDiffReview(comments, this.cwd ?? process.cwd(), this.reviewContext));
   }
 
   /** Drop the accumulated comment whose card sits on the cursor's line (to fix a mistake). */
@@ -878,9 +892,18 @@ export class DiffView {
       const a = Math.min(...nums), b = Math.max(...nums);
       return a === b ? `L${a}` : `L${a}-${b}`;
     };
+    // Pin the line the comment is ON: a selection covers its rows; a bare cursor pins JUST the
+    // cursor's line — not the whole context hunk the patch was widened to (else the agent can't tell
+    // which line the user meant). For a cursor, the real row at/under it.
+    const focusRows = empty
+      ? [anchorRow >= 0 && anchorRow < kinds.length && isReal(kinds[anchorRow]) ? anchorRow : this.nearestRealRow(anchorRow) ?? rows[0]]
+      : rows;
+    const focusOlds = focusRows.map((r) => this.dmb.oldNums[r]).filter((n): n is number => n != null);
+    const focusNews = focusRows.map((r) => this.dmb.newNums[r]).filter((n): n is number => n != null);
+    const navNew = focusNews.length ? focusNews[0] : this.nearestNum(focusRows[0], 'new') ?? newStart;
     const parts: string[] = [];
-    if (news.length) parts.push(`new ${span(news)}`);
-    if (olds.length) parts.push(`old ${span(olds)}`);
+    if (focusNews.length) parts.push(`new ${span(focusNews)}`);
+    if (focusOlds.length) parts.push(`old ${span(focusOlds)}`);
     // Column precision only for an explicit sub-line selection (not the cursor-widened hunk).
     if (!empty && r0 === r1) {
       const sc = range.start.column, ec = range.end.column; // 0-based; selection covers [sc, ec)
@@ -897,7 +920,7 @@ export class DiffView {
 
     return {
       path: hit.path,
-      navLine: newStart, // always a new-side line (the working-tree file the agent opens)
+      navLine: navNew, // the commented line on the new side (the file the agent opens)
       locator: parts.join(', '),
       patch,
       anchorRow,
@@ -1020,17 +1043,23 @@ export class DiffView {
   }
 }
 
-/** One comment as an agent prompt: a `path:line (locator)` reference, the targeted lines as a
- *  unified-diff hunk (so old/new is explicit), then the comment text. */
+/** One comment as an agent prompt: a `path:line` reference, the targeted lines as a unified-diff
+ *  hunk (so old/new is explicit), then `On <locator>:` + the comment — the location restated right
+ *  next to the text so the agent knows exactly which line it's about (not just from the header). */
 function formatDiffComment(c: DiffComment, cwd: string): string {
   const rel = Path.relative(cwd, c.path);
-  return [`${rel}:${c.navLine} (${c.locator})`, '', '```diff', c.patch, '```', '', c.comment].join('\n');
+  return [`${rel}:${c.navLine}`, '', '```diff', c.patch, '```', '', `On ${c.locator}:`, c.comment].join('\n');
 }
 
 /** A review as an agent prompt: a single comment formats as itself; a batch becomes a numbered list
- *  of the same per-comment blocks under a count header. */
-function formatDiffReview(comments: DiffComment[], cwd: string): string {
-  if (comments.length === 1) return formatDiffComment(comments[0], cwd);
+ *  of the same per-comment blocks under a count header. `context` (set for a historical diff) names
+ *  the revision being reviewed and is prefixed so the agent knows which version the lines refer to. */
+function formatDiffReview(comments: DiffComment[], cwd: string, context?: string): string {
+  if (comments.length === 1) {
+    const body = formatDiffComment(comments[0], cwd);
+    return context ? `${context}\n\n${body}` : body;
+  }
   const blocks = comments.map((c, i) => `### Comment ${i + 1}\n\n${formatDiffComment(c, cwd)}`);
-  return [`Code review — ${comments.length} comments:`, '', ...blocks].join('\n\n');
+  const header = context ? `${context} — ${comments.length} comments:` : `Code review — ${comments.length} comments:`;
+  return [header, '', ...blocks].join('\n\n');
 }

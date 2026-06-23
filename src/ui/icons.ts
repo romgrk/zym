@@ -61,6 +61,7 @@ export const Icons = {
   symbol: NERDFONT.EDITOR.SYMBOL, // "{}" go-to-symbol
   server: NERDFONT.EDITOR.SERVER, // language-server status
   sidebar: NERDFONT.NAV.SIDEBAR, // sidebar toggle
+  newAgent: NERDFONT.SOCIAL.USER, // "Send to new agent" picker entry
 } as const;
 
 // One shared, immutable attribute list applying the icon font (built lazily so it

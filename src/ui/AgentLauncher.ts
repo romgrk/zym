@@ -86,6 +86,9 @@ export interface AgentLauncherOptions {
   defaultKind: AgentKind;
   /** The launch flow to render (default: `'default'`). */
   mode?: LauncherMode;
+  /** Pre-select this worktree choice instead of the last-used one (`default` mode only). The
+   *  review-send flow seeds `'current'` so a review runs against the working tree by default. */
+  initialWorktree?: 'current' | 'create';
   /** Invoked with the assembled launch request when the user submits. */
   onLaunch: (request: AgentLaunchRequest) => void;
 }
@@ -231,10 +234,13 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
         { value: WT_CURRENT, label: 'current' },
       ];
   // `this-worktree` pre-selects the current root; `existing-worktree` keeps the last-used
-  // choice but falls back off a stale "create" (which it doesn't offer).
+  // choice but falls back off a stale "create" (which it doesn't offer). A caller-supplied
+  // `initialWorktree` (default flow) overrides the last-used choice.
   const worktreeInitial =
     mode === 'this-worktree' ? WT_CURRENT
     : worktreeInTitle && savedWorktree === WT_CREATE ? WT_CURRENT
+    : options.initialWorktree === 'current' ? WT_CURRENT
+    : options.initialWorktree === 'create' ? WT_CREATE
     : savedWorktree;
   const worktreeDropdown = newWorktree
     ? null

@@ -428,6 +428,9 @@ export class AppWindow {
     zym.workspace.setTabReopener((state) => this.reopenTab(state));
     zym.workspace.setActiveWorkbenchProvider(() => this.workbench);
     zym.workspace.setTabHost((widget, options) => this.openCenterTab(widget, options));
+    // Expose diff-review delivery app-wide so the decoupled commit/branch diff views (diffViews.ts)
+    // can route comments to an agent without reaching into the AppWindow.
+    zym.workspace.setReviewSink((message) => this.reviewToAgent(message));
     zym.keymaps.initialize();
     // which-key hint: shows the continuations after a queued prefix (e.g. Space).
     this.whichKey = new WhichKey(this.contentOverlay);
@@ -947,7 +950,7 @@ export class AppWindow {
 
   // Feed `text` into `agent`'s prompt. With `submit`, send it as a turn immediately
   // (TUI: Enter submits). `reveal` (default true) shows + focuses the agent; pass
-  // false to deliver in the background and leave focus where it is (a diff comment).
+  // false to deliver in the background and leave focus where it is.
   private deliverToAgent(agent: Agent, text: string, options?: { submit?: boolean; reveal?: boolean }): void {
     const reveal = options?.reveal !== false;
     agent.deliver(text, { submit: options?.submit, focus: reveal });
@@ -963,6 +966,44 @@ export class AppWindow {
       return;
     }
     this.deliverToAgent(agent, text, options);
+  }
+
+  // Deliver a diff review (one comment, or an accumulated batch) to an agent — the sink every
+  // diff surface's `onSend` routes through (directly here, or via `zym.workspace.sendReviewToAgent`
+  // for the decoupled commit/branch views). Sends it as a turn and REVEALS the agent so the review
+  // visibly lands and the agent starts working on it (a background send left the user unsure it
+  // arrived — and the diff often sits in a different workbench than the agent). With no agent
+  // running, the picker chooses one — or starts a fresh agent with the review as its first turn.
+  // So a review can ALWAYS reach an agent, on any diff.
+  private reviewToAgent(message: string): void {
+    if (!message) return;
+    const agent = this.targetAgent();
+    if (agent) {
+      this.deliverToAgent(agent, message, { submit: true });
+      return;
+    }
+    openAgentPicker(this.overlay, {
+      placeholder: 'Send review to agent…',
+      onActivate: (agent) => this.deliverToAgent(agent, message, { submit: true }),
+      // A highlighted, always-present "Send to new agent" entry → the launcher (pick model /
+      // permission / worktree), then deliver the review to the agent it starts.
+      newAgent: { label: 'Send to new agent', run: () => this.launchAgentForReview(message) },
+    });
+  }
+
+  // The "Send to new agent" review path: open the launcher (model / permission / worktree), then
+  // deliver the review to the agent it starts — as a turn, queued after any worktree-setup launch
+  // prompt. openAgent already reveals a foreground agent, so don't re-reveal here.
+  private launchAgentForReview(message: string): void {
+    openAgentLauncher(this.overlay, {
+      cwd: this.workbench.cwd,
+      defaultKind: resolveAgentKind(zym.config.get('agent.implementation')),
+      initialWorktree: 'current', // a review runs against the working tree by default
+      onLaunch: ({ prompt, command, cwd, kind, worktree, background }) => {
+        const agent = this.openAgent({ prompt: launchPrompt(prompt, worktree), command, cwd, kind, background });
+        this.deliverToAgent(agent, message, { submit: true, reveal: false });
+      },
+    });
   }
 
   // Send to an agent chosen from the picker (or a freshly started one).
@@ -2215,7 +2256,7 @@ export class AppWindow {
       },
       'file:save-as': { didDispatch: () => this.saveAsDialog(), description: 'Save the current file as…', when: () => this.activeEditor !== null },
       'git:diff-current': {
-        didDispatch: () => this.diffActiveAgainstHead(),
+        didDispatch: () => this.openCurrentFileDiff(),
         description: 'Diff the current file (working tree vs HEAD)',
         when: () => this.activeEditor?.currentFile != null,
       },
@@ -2237,8 +2278,8 @@ export class AppWindow {
         description: 'Open project search (full-text, ripgrep) in a multibuffer',
       },
       'git:diff-current-changes': {
-        didDispatch: () => void this.openContinuousDiff(),
-        description: 'Show every changed file as one continuous diff (multibuffer)',
+        didDispatch: () => void this.openLiveDiff(),
+        description: 'Diff working-tree changes (live, stageable)',
       },
       'git:diff-commit': {
         // With a revision argument, diff that commit; with none, pick one first.
@@ -2306,7 +2347,7 @@ export class AppWindow {
       'diff:review-comment': {
         didDispatch: () => this.activeContinuousDiff()?.startComment(),
         description: 'Comment on the cursor/selection',
-        when: () => this.activeContinuousDiff()?.canComment === true, // agent workbench only
+        when: () => this.activeContinuousDiff()?.canComment === true, // any diff (routes to an agent)
       },
       'diff:review-toggle': {
         didDispatch: () => this.activeContinuousDiff()?.toggleReviewMode(),
@@ -2334,7 +2375,7 @@ export class AppWindow {
   }
 
   /** Open a read-only diff of the active file (working tree vs git HEAD) in a tab. */
-  private diffActiveAgainstHead(): void {
+  private openCurrentFileDiff(): void {
     const editor = this.activeEditor;
     const path = editor?.currentFile;
     if (!editor || !path) return;
@@ -2358,9 +2399,13 @@ export class AppWindow {
         files: [{ path, oldText: head, newText: current }],
         cwd: this.workbench.cwd,
         onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
+        onSend: (message) => this.reviewToAgent(message), // comment/review → agent
       });
       const child = this.workbench.center.add(view.root, { title: `± ${name}`, requireTabBar: true });
       this.tabCloseHandlers.set(view.root, () => view.dispose());
+      // Consult the diff on window close so unsent review comments aren't lost (disposeChild
+      // disposes this with the tab).
+      this.participants.set(view.root, zym.session.registerParticipant(view));
       child.select();
       view.focus();
     });
@@ -2430,9 +2475,9 @@ export class AppWindow {
     widget.grabFocus();
   }
 
-  /** Show every changed file (working tree vs HEAD) as ONE continuous diff in a tab — the
-   *  multibuffer diff surface (read-only for now; docs/text-editor/multibuffer.md, G5). */
-  private async openContinuousDiff(): Promise<void> {
+  /** Show every changed file (working tree vs HEAD) as ONE continuous diff in a tab — the live,
+   *  editable staging surface (multibuffer; docs/text-editor/multibuffer.md). */
+  private async openLiveDiff(): Promise<void> {
     const cwd = this.workbench.cwd;
     const root = repoRoot(cwd);
     if (!root) {
@@ -2472,13 +2517,10 @@ export class AppWindow {
       documents: this.documents,
       git: this.workbench.git, // enables the staged/unstaged gutter marker + `space h s`/`space h u`
       onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
-      // The view formats the comment/review; the host just delivers the string to the agent as a
-      // turn (submit directly — TUI: Enter submits — and don't steal focus from the diff). Only
-      // wired in an agent's workbench: no agent to address from the user workbench, so commenting is
-      // disabled there (`canComment` is false → Enter falls back to jump-to-file).
-      onSend: this.workbench.owner === 'user'
-        ? undefined
-        : (message) => this.sendToAgent(message, { submit: true, reveal: false }),
+      // The view formats the comment/review; the host just delivers the string. `reviewToAgent`
+      // sends to the current agent (or opens the picker to choose/start one when none runs), so a
+      // review always reaches an agent — even from the user workbench.
+      onSend: (message) => this.reviewToAgent(message),
     });
     const title = () => {
       const mod = view.isModified() ? `${Icons.modified} ` : '';
