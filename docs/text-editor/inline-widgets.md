@@ -155,6 +155,18 @@ child is the work:
 - **Reposition via a frame-clock tick callback** (a few frames after a
   change), not idle/timeout (which fire mid-transition and read bogus
   coordinates); guard against moving to a zero-height (invalid) rect.
+- **The overlay caret is a consumer too.** `TextEditor.renderCursorOverlay`
+  / `renderExtraCarets` place the hollow/filled/beam caret boxes from
+  `bufferToWindowCoords`, which is all-zero before the first allocation —
+  so a caret painted during load (cursor at 0,0 on an empty/EOL line)
+  lands at widget (0,0), over the gutter, until the next cursor move. Both
+  hide while `getHeight() <= 0`, and `installCursorOverlay` re-runs
+  `refreshCursorStyle()` on a post-`map` tick once the height is real.
+- **The block caret is focus-gated.** `EditorModel.focused` starts
+  `false` (a fresh view holds no keyboard focus) and only the focus
+  controller's `enter` sets it true, so an unfocused view — background
+  tab, inactive split pane, peek — paints *no* block caret. Defaulting it
+  true made any loaded-but-unfocused editor show a solid block.
 
 ### Focus / input
 

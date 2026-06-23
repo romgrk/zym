@@ -1555,6 +1555,22 @@ export class TextEditor implements DocumentHost {
     this.editorModel.onCursorOverlay = (kind, iter) => this.renderCursorOverlay(kind, iter);
     this.editorModel.onExtraCursors = (carets) => this.renderExtraCarets(carets);
 
+    // The overlay caret is placed from view geometry, which is all-zero until the
+    // first size-allocate — so the caret painted during load (cursor at 0,0 on an
+    // empty/EOL line) lands over the gutter and only corrects on the next cursor
+    // move. `map` fires before that first layout pass (line geometry still 0, per
+    // revealPeekRow), so re-render on a tick that waits for a real height.
+    this.connect(this.view, 'map', () => {
+      let frames = 0;
+      this.view.addTickCallback(() => {
+        if (this.view.getRealized() && this.view.getHeight() > 0) {
+          this.editorModel.refreshCursorStyle();
+          return false; // G_SOURCE_REMOVE
+        }
+        return ++frames < 120; // keep trying ~2s then give up
+      });
+    });
+
     const focus = new Gtk.EventControllerFocus();
     this.connect(focus, 'enter', () => {
       this.editorModel.setFocused(true);
@@ -1574,10 +1590,14 @@ export class TextEditor implements DocumentHost {
   /**
    * Render the caret overlay box at `iter`: a hollow rectangle when the view is
    * unfocused, a filled block where there's no glyph to reverse-video (empty
-   * line / past EOL / EOF). `hidden` (or an unrealized view) hides it.
+   * line / past EOL / EOF). `hidden` (or a view not yet realized + laid out) hides it.
    */
   private renderCursorOverlay(kind: 'hidden' | 'hollow' | 'filled', iter?: unknown) {
-    if (kind === 'hidden' || !iter || !this.view.getRealized()) {
+    // `bufferToWindowCoords` reads view geometry that is all-zero until the first
+    // size-allocate, so painting before then drops the caret at widget (0,0) — over
+    // the gutter. Stay hidden until the view is actually laid out; the post-map tick
+    // in installCursorOverlay re-renders once geometry is real.
+    if (kind === 'hidden' || !iter || !this.view.getRealized() || this.view.getHeight() <= 0) {
       this.caret.setVisible(false);
       return;
     }
@@ -1600,7 +1620,10 @@ export class TextEditor implements DocumentHost {
    * reverse-video. Reuses a widget pool; surplus widgets are hidden.
    */
   private renderExtraCarets(carets: Array<{ iter: unknown; beam: boolean }>) {
-    const realized = this.view.getRealized();
+    // As in renderCursorOverlay: geometry is zero until the first allocation, so
+    // treat a not-yet-laid-out view as un-renderable (hide the pool) to avoid
+    // stacking extra carets at (0,0).
+    const realized = this.view.getRealized() && this.view.getHeight() > 0;
     for (let i = 0; i < carets.length; i++) {
       let widget = this.extraCarets[i];
       if (!widget) {

@@ -144,9 +144,12 @@ export class EditorModel {
   // color) — the effect a terminal block cursor uses. `blockCursor` is the
   // current mode's desired shape.
   private blockCursor = false;
-  // Whether the view currently holds focus. While unfocused, the solid block is
-  // replaced by the host widget's hollow-rectangle caret.
-  private focused = true;
+  // Whether the view currently holds focus. While unfocused, no block caret is
+  // painted at all (an inactive editor shows none). Starts false — a freshly
+  // constructed view holds no keyboard focus until it grabs it (foreground opens
+  // call grabFocus in didLoad, which fires the focus controller's `enter`); a
+  // background/split/peek view that never gets focus must not paint a block.
+  private focused = false;
   // Where to paint the block caret, when it should differ from the insert mark.
   // In linewise visual mode the buffer selection runs to the next line's start
   // (to cover the trailing newline), but the caret belongs on the current line;
