@@ -1,11 +1,11 @@
 /*
- * Cursor — the head of a Selection, expressed as a buffer Point.
+ * Cursor — the head of a Selection, expressed as a buffer Point (see
+ * docs/text-editor/coordinates.md).
  *
- * GtkTextBuffer has a single insertion point (the "insert" mark), so an editor
- * has exactly one Cursor today; it is surfaced through `EditorModel.getCursors()`
- * as a one-element array so ported vim-mode-plus code (which assumes there may be
- * many) runs unchanged. `goalColumn` remembers the column an up/down motion is
- * aiming for across short lines; it is consumed by the movement layer (phase 3c).
+ * An editor has N cursors, one per Selection (`EditorModel.getCursors()`): the
+ * primary uses GtkTextBuffer's native "insert" mark, secondaries carry their own
+ * marks (`MarkerLayer`). `goalColumn` remembers the column an up/down motion aims
+ * for across short lines; consumed by the movement layer.
  */
 import { Point, type PointLike } from '../../text/Point.ts';
 import { Range } from '../../text/Range.ts';
@@ -33,7 +33,7 @@ export class Cursor {
     return this.selection.getHeadBufferPosition();
   }
 
-  /** Screen and buffer positions coincide (no soft-wrap / folds). */
+  /** Identity stub — see docs/text-editor/coordinates.md. */
   getScreenPosition(): Point {
     return this.getBufferPosition();
   }
@@ -46,7 +46,7 @@ export class Cursor {
     return this.getBufferColumn();
   }
 
-  /** Move the cursor to a screen position. Screen ≈ buffer (no soft-wrap / folds). */
+  /** Move the cursor to a screen position. Identity stub — see docs/text-editor/coordinates.md. */
   setScreenPosition(point: PointLike, options?: unknown): void {
     this.setBufferPosition(point, options);
   }

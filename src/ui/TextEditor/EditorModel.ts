@@ -386,8 +386,8 @@ export class EditorModel {
     return this.pointAtIter(this.iterAtPoint(point));
   }
 
-  // Screen and buffer coordinates coincide (no soft-wrap; folds ignored for
-  // motion purposes), so these conversions are identity + clamp.
+  // Identity stubs: `screen` should fold/wrap-project `buffer` (WIP) — see
+  // docs/text-editor/coordinates.md.
   screenPositionForBufferPosition(point: PointLike, _options?: unknown): Point {
     return this.clipBufferPosition(point);
   }
@@ -404,7 +404,7 @@ export class EditorModel {
     return clamp(bufferRow, 0, this.getLastBufferRow());
   }
 
-  /** Clamp a screen position into the buffer. Identity + clamp (screen ≈ buffer). */
+  /** Clamp a screen position. Identity stub — see docs/text-editor/coordinates.md. */
   clipScreenPosition(point: PointLike, _options?: unknown): Point {
     return this.clipBufferPosition(point);
   }
@@ -1828,7 +1828,7 @@ export class EditorModel {
     return new Point(row, 0);
   }
 
-  /** Screen and buffer positions coincide (no soft-wrap / folds). */
+  /** Identity stub — see docs/text-editor/coordinates.md. */
   getCursorScreenPosition(): Point {
     return this.getCursorBufferPosition();
   }

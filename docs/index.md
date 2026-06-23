@@ -146,6 +146,8 @@ See [text-editor/index.md](text-editor/index.md).
 
 Per-feature detail:
 
+- [Coordinates](text-editor/coordinates.md) — the `document`/`buffer`/`screen`
+  position vocabulary (canonical); code/docs are mid-migration onto it.
 - [Multibuffer](text-editor/multibuffer.md) — every editor on a
   `ViewProjection`/`ProjectionView` substrate; editable project-search + git-diff
   shipped (folding off by design).
