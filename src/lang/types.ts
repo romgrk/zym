@@ -50,6 +50,29 @@ export interface InjectionDef {
   language?: string;
 }
 
+/**
+ * A normalized cross-grammar injection rule — the high-level form contributed by
+ * plugins (`ctx.languages.registerInjection`) and by the user
+ * (`editor.languageInjections`, after parsing). Unlike `InjectionDef` (which a
+ * grammar declares about *itself*), a rule names its `hosts` explicitly, so a plugin
+ * can inject into grammars it doesn't own (e.g. CSS-in-JS into the TS/JS grammars).
+ *
+ * Exactly one matcher is set; `src/syntax/userInjections.ts` compiles it to a
+ * tree-sitter query (the `comment`/`tag` sugar) or uses `query` verbatim.
+ */
+export interface InjectionRule {
+  /** Host language ids this rule attaches to (e.g. `['typescript', 'tsx']`). */
+  hosts: string[];
+  /** Guest language id its captured content is highlighted as. */
+  language: string;
+  /** Keyword in a line/block comment immediately before a template literal. */
+  comment?: string;
+  /** Tagged-template tag (a `css` tag, or the root identifier of a `styled.div` tag). */
+  tag?: string;
+  /** Raw tree-sitter injection query (capturing `@injection.content`), used verbatim. */
+  query?: string;
+}
+
 /** Tree-sitter grammar binding for a language. */
 export interface GrammarDef {
   /** The grammar `.wasm`: an absolute path, or a module specifier resolved

@@ -66,7 +66,7 @@ export class CursorStyleManager {
 /** A transient overlay near the cursor (count/input echo). Not yet implemented. */
 export class HoverManager {
   constructor(_vimState: VimState) {}
-  set(_value?: unknown): void {}
+  set(_value?: unknown, _point?: unknown): void {}
   reset(): void {}
   clearAllMarkers(): void {}
 }

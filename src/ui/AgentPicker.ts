@@ -14,8 +14,9 @@
  * colliding titles (two `claude` agents read alike) need no disambiguation.
  */
 import { Gtk } from '../gi.ts';
-import { openPicker, type PickerItem } from './Picker.ts';
+import { openPicker, HIGHLIGHT_COLOR, type PickerItem } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
+import { Icons } from './icons.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import * as Path from 'node:path';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
@@ -28,8 +29,13 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 export interface AgentPickerOptions {
   /** Reveal and focus an existing agent's terminal (or, for send-to, its target). */
   onActivate: (agent: Agent) => void;
-  /** Launch a new agent with the typed prompt. */
-  onStart: (prompt: string) => void;
+  /** Launch a new agent with the typed prompt. When omitted, the type-a-prompt action row is
+   *  not offered (use `newAgent` for a "start one" entry that opens the launcher instead). */
+  onStart?: (prompt: string) => void;
+  /** A persistent, highlighted entry (shown last, named by `label`) for starting a brand-new agent
+   *  — e.g. "Send to new agent". Selecting it runs `run` (typically opening the AgentLauncher so the
+   *  user picks model/worktree). Present immediately, even with no running agents. */
+  newAgent?: { label: string; run: () => void };
   /** Resume a past conversation as a fresh agent. When supplied, the project's
    *  resumable conversations are listed alongside the open agents. */
   onResume?: (session: AgentSession) => void;
@@ -42,7 +48,8 @@ export interface AgentPickerOptions {
 
 type Entry =
   | { kind: 'agent'; agent: Agent }
-  | { kind: 'session'; session: AgentSession };
+  | { kind: 'session'; session: AgentSession }
+  | { kind: 'new' };
 
 export function openAgentPicker(host: Overlay, options: AgentPickerOptions): void {
   const items: PickerItem[] = [];
@@ -64,6 +71,12 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
     }
   }
 
+  // Last: a persistent "start a new agent" entry (when the caller supplies one), highlighted so it
+  // reads as the special action rather than another agent to send to.
+  if (options.newAgent) {
+    items.push({ value: '\0new-agent', text: options.newAgent.label, data: { kind: 'new' } satisfies Entry });
+  }
+
   openPicker({
     host,
     placeholder: options.placeholder ?? 'Open agent or conversation…',
@@ -82,6 +95,15 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
           detail: worktree ? `<span face="Sans" line_height="${PROSE_LINE_HEIGHT}">${worktree}</span>` : undefined,
         });
       }
+      // The "start a new agent" action: an accent-coloured glyph + label, set apart from the agent
+      // rows above it.
+      if (entry.kind === 'new') {
+        return renderRowSingleLine({
+          icon: Icons.newAgent,
+          iconColor: HIGHLIGHT_COLOR,
+          main: `<span foreground="${HIGHLIGHT_COLOR}">${proseMarkup(item.text, positions)}</span>`,
+        });
+      }
       // A past conversation: prose label (untitled ones dimmed) + a muted, right-
       // aligned "time ago", prefixed with the worktree name when the conversation
       // ran outside the main project cwd (so it resumes there — branch/worktree).
@@ -96,12 +118,13 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
     onSelect: (_value, item) => {
       const entry = item.data as Entry;
       if (entry.kind === 'agent') options.onActivate(entry.agent);
+      else if (entry.kind === 'new') options.newAgent?.run();
       else options.onResume?.(entry.session);
     },
-    // Typing a prompt that isn't an existing agent/conversation starts a new agent.
-    action: {
-      label: (query) => `Start agent: ${query}`,
-      run: (query) => options.onStart(query),
-    },
+    // Typing a prompt that isn't an existing agent/conversation starts a new agent (when the
+    // caller wires `onStart`; the review flow uses the `newAgent` entry + launcher instead).
+    action: options.onStart
+      ? { label: (query) => `Start agent: ${query}`, run: (query) => options.onStart!(query) }
+      : undefined,
   });
 }

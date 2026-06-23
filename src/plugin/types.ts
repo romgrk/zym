@@ -13,7 +13,7 @@
 import type { Disposable, DisposableLike } from '../util/eventKit.ts';
 import type { Gtk } from '../gi.ts';
 import type { TextEditor } from '../ui/TextEditor/index.ts';
-import type { LanguageDef, GrammarDef, ServerDef } from '../lang/types.ts';
+import type { LanguageDef, GrammarDef, ServerDef, InjectionRule } from '../lang/types.ts';
 import type { ConfigSchema } from '../util/Config.ts';
 import type { CommandMap } from '../CommandManager.ts';
 import type { KeymapBySelector } from '../KeymapManager.ts';
@@ -40,6 +40,10 @@ export interface PluginLanguages {
   registerGrammar(langId: string, def: GrammarDef): Disposable;
   /** Add an LSP server candidate for a language id. */
   registerServer(langId: string, def: ServerDef): Disposable;
+  /** Contribute a cross-grammar language injection (e.g. CSS-in-JS into the TS/JS
+   *  grammars). The rule names its host grammar(s); the guest grammar must be
+   *  registered too (an unknown guest is a harmless no-op). */
+  registerInjection(rule: InjectionRule): Disposable;
 }
 
 /**

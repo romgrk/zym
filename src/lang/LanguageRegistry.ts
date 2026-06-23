@@ -13,6 +13,7 @@ import * as Path from 'node:path';
 import { Disposable } from '../util/eventKit.ts';
 import type {
   LanguageDef, GrammarDef, ServerDef, ActiveServer, ServerOverride, ServerOverrides,
+  InjectionRule,
 } from './types.ts';
 
 export interface ActiveServerOptions {
@@ -24,6 +25,9 @@ export class LanguageRegistry {
   private readonly languages = new Map<string, LanguageDef>();
   private readonly grammars = new Map<string, GrammarDef>();
   private readonly serversByLang = new Map<string, ServerDef[]>();
+  // Cross-grammar injection rules contributed by plugins (the user's own come from
+  // config). Compiled per host grammar by `src/syntax/grammar.ts`.
+  private readonly injections: InjectionRule[] = [];
   // User config (from `lsp.*`): languages to suppress, and per-server tweaks.
   private disabledLanguages = new Set<string>();
   private serverOverrides: ServerOverrides = {};
@@ -45,6 +49,25 @@ export class LanguageRegistry {
     return new Disposable(() => {
       if (this.grammars.get(langId) === def) this.grammars.delete(langId);
     });
+  }
+
+  /**
+   * Contribute a cross-grammar injection rule (a plugin injecting into host grammars
+   * it names in `rule.hosts` — e.g. CSS-in-JS into the TS/JS grammars). Returns a
+   * Disposable that removes it again (plugin deactivation). The syntax layer
+   * (`grammar.ts`) reads these via `injectionRules` and compiles them per host.
+   */
+  registerInjection(rule: InjectionRule): Disposable {
+    this.injections.push(rule);
+    return new Disposable(() => {
+      const i = this.injections.indexOf(rule);
+      if (i !== -1) this.injections.splice(i, 1);
+    });
+  }
+
+  /** Every plugin-contributed injection rule (the user's come from config separately). */
+  injectionRules(): InjectionRule[] {
+    return this.injections;
   }
 
   registerServer(langId: string, def: ServerDef): Disposable {

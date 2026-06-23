@@ -21,6 +21,10 @@ const JS_FOLD_TYPES = [
   'named_imports', 'arguments', 'interface_body', 'enum_body', 'object_type',
 ];
 
+// The grammars the built-in CSS-in-JS injections attach to — the TS and JS (tsx)
+// families (the grammars with `template_string` nodes).
+const JS_TS_GRAMMARS = ['typescript', 'tsx'];
+
 // JS/TS server candidates. flow / tsserver / deno are mutually exclusive (group
 // `js-types`, picked per project by root markers + priority); eslint is additive.
 const FLOW: ServerDef = {
@@ -127,5 +131,12 @@ export const typescriptPlugin: Plugin = {
     languages.registerServer('tsx', TSSERVER);
     languages.registerServer('tsx', DENO);
     languages.registerServer('tsx', ESLINT);
+
+    // CSS-in-JS: a `styled` tagged template (styled-components / emotion —
+    // styled`…`, styled.div`…`) and a `/* css */`- or `// css`-commented template
+    // literal both highlight as CSS. The css guest grammar comes from the css/html
+    // plugins; if neither is active this is a harmless no-op.
+    languages.registerInjection({ hosts: JS_TS_GRAMMARS, tag: 'styled', language: 'css' });
+    languages.registerInjection({ hosts: JS_TS_GRAMMARS, comment: 'css', language: 'css' });
   },
 };

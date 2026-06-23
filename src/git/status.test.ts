@@ -154,16 +154,44 @@ test('parseCommitLog: fields split on the unit separator', () => {
     ['def456full', 'def456', 'feat: a thing', 'Bob', '5 days ago', '1699000000'].join(US) +
     '\n';
   assert.deepEqual(parseCommitLog(out), [
-    { sha: 'abc123full', shortSha: 'abc123', subject: 'fix: the thing', author: 'Ada', date: '3 days ago', timestamp: 1700000000 },
-    { sha: 'def456full', shortSha: 'def456', subject: 'feat: a thing', author: 'Bob', date: '5 days ago', timestamp: 1699000000 },
+    { sha: 'abc123full', shortSha: 'abc123', subject: 'fix: the thing', author: 'Ada', date: '3 days ago', timestamp: 1700000000, refs: [] },
+    { sha: 'def456full', shortSha: 'def456', subject: 'feat: a thing', author: 'Bob', date: '5 days ago', timestamp: 1699000000, refs: [] },
   ]);
 });
 
 test('parseCommitLog: subject keeps spaces; empty input', () => {
   const US = '\x1f';
-  const [c] = parseCommitLog(['h', 'h', 'a subject with spaces', 'X', 'now', '0'].join(US));
+  const [c] = parseCommitLog(['h', 'h', 'a subject with spaces', 'X', 'now', '0', ''].join(US));
   assert.equal(c.subject, 'a subject with spaces');
+  assert.deepEqual(c.refs, []);
   assert.deepEqual(parseCommitLog(''), []);
+});
+
+test('parseCommitLog: classifies the `%D` decoration into branch/remote/tag refs', () => {
+  const US = '\x1f';
+  // The HEAD commit's decoration as `git log --decorate=full --format=%D` prints it:
+  // the checked-out branch (HEAD -> …), a remote, the symbolic origin/HEAD, another
+  // local branch, and a tag — all fully qualified.
+  const decoration =
+    'HEAD -> refs/heads/master, refs/remotes/origin/master, refs/remotes/origin/HEAD, ' +
+    'refs/heads/feat/x, refs/tags/v1.2.0';
+  const [c] = parseCommitLog(['h', 'h', 's', 'A', 'now', '0', decoration].join(US));
+  assert.deepEqual(c.refs, [
+    { name: 'master', kind: 'branch', head: true },
+    { name: 'origin/master', kind: 'remote', head: false },
+    // origin/HEAD (the symbolic default-branch pointer) is dropped as noise.
+    { name: 'feat/x', kind: 'branch', head: false },
+    { name: 'v1.2.0', kind: 'tag', head: false },
+  ]);
+});
+
+test('parseCommitLog: a detached HEAD decorates as a bare HEAD ref', () => {
+  const US = '\x1f';
+  const [c] = parseCommitLog(['h', 'h', 's', 'A', 'now', '0', 'HEAD, refs/tags/v2'].join(US));
+  assert.deepEqual(c.refs, [
+    { name: 'HEAD', kind: 'head', head: true },
+    { name: 'v2', kind: 'tag', head: false },
+  ]);
 });
 
 // --- parseCommitFiles: RS-delimited `git log --name-only` records -----------

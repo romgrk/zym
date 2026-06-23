@@ -58,10 +58,12 @@ export async function openCommitDiff(rev = 'HEAD'): Promise<void> {
     zym.notifications.addInfo('Commit has no file changes');
     return;
   }
+  // Consult the diff on window close so unsent review comments aren't silently lost.
+  const participant = zym.session.registerParticipant(built.view);
   zym.workspace.openTab(built.view.root, {
     title: built.title,
     requireTabBar: true,
-    onClose: () => built.view.dispose(),
+    onClose: () => (participant.dispose(), built.view.dispose()),
   });
   built.view.focus(); // focus the editor (openTab focuses the tab's root widget, not the inner editor)
 }
@@ -92,6 +94,11 @@ export async function buildCommitDiffView(
     cwd,
     editable: false, // historical content — both sides are git blobs, not live documents
     onActivate: ({ path, row }) => zym.workspace.openFile(path, { cursor: [row, 0] }),
+    // Review a historical diff: the view formats each comment; the workspace routes it to an agent
+    // (the current one, or one chosen/started from the picker). Enabled on read-only diffs too.
+    onSend: (message) => zym.workspace.sendReviewToAgent(message),
+    // Tell the agent which commit these lines belong to (they may differ from the working tree).
+    reviewContext: `Review of commit \`${commit.shortSha}\` (${commit.subject})`,
   });
   const subject = commit.subject.length > 50 ? `${commit.subject.slice(0, 50)}…` : commit.subject;
   return { view, title: `${Icons.gitCommit}  ${commit.shortSha}  ${subject}` };
@@ -169,7 +176,7 @@ export async function openBranchDiff(): Promise<void> {
     return;
   }
   const diffFiles = await buildRefDiffFiles(root, files, fork, 'HEAD');
-  presentReadonlyDiff(diffFiles, Icons.gitPullRequest, `${branch ?? 'HEAD'} vs ${base}`, wb.cwd);
+  openReadonlyDiff(diffFiles, Icons.gitPullRequest, `${branch ?? 'HEAD'} vs ${base}`, wb.cwd, `Review of \`${branch ?? 'HEAD'}\` vs \`${base}\``);
 }
 
 /** Build the DiffFile[] for a set of changed paths: OLD side from `oldRef`, NEW from `newRef`. */
@@ -193,20 +200,25 @@ async function buildRefDiffFiles(
   );
 }
 
-/** Open a read-only multibuffer diff in a center tab (no editing / staging / review).
- *  Hosted like the built-in continuous diff — selected, focused, disposed on close,
- *  and driven by the same `zo`/`zR`/`zm` fold commands. */
-function presentReadonlyDiff(files: DiffFile[], icon: string, titleText: string, cwd: string): void {
+/** Open a read-only multibuffer diff in a center tab (no editing / staging, but commenting IS on).
+ *  Hosted like the built-in continuous diff — selected, focused, disposed on close, and driven by
+ *  the same `zo`/`zR`/`zm` fold commands. `reviewContext` names the revision for review messages. */
+function openReadonlyDiff(files: DiffFile[], icon: string, titleText: string, cwd: string, reviewContext: string): void {
   const view = new DiffView({
     files,
     cwd,
     editable: false, // historical content — both sides are git blobs, not live documents
     onActivate: ({ path, row }) => zym.workspace.openFile(path, { cursor: [row, 0] }),
+    // Review a historical diff: the view formats each comment; the workspace routes it to an agent.
+    onSend: (message) => zym.workspace.sendReviewToAgent(message),
+    reviewContext, // tells the agent which branch/base these lines belong to
   });
+  // Consult the diff on window close so unsent review comments aren't silently lost.
+  const participant = zym.session.registerParticipant(view);
   zym.workspace.openTab(view.root, {
     title: `${icon}  ${titleText}`,
     requireTabBar: true,
-    onClose: () => view.dispose(),
+    onClose: () => (participant.dispose(), view.dispose()),
   });
   view.focus(); // focus the editor (openTab focuses the tab's root widget, not the inner editor)
 }

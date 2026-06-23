@@ -11,6 +11,7 @@ import type { Operator } from './operator.ts'
 //  - [ ] Make expandable by selection.getBufferRange().union(this.getRange(selection))
 //  - [ ] Count support(priority low)?
 import { Base } from './base.ts'
+import type { ScanOptions } from './utils.ts'
 import PairFinder from './pair-finder.ts'
 import { lhsRhsRanges } from '../lhsRhs.ts'
 import type { LhsRhsRanges } from '../lhsRhs.ts'
@@ -396,7 +397,7 @@ class Tag extends Pair {
 
   getTagStartPoint (from: Point): Point | undefined {
     const regex = PairFinder.TagFinder.pattern
-    const options = {from: [from.row, 0]}
+    const options: ScanOptions = {from: [from.row, 0]}
     return this.findInEditor('forward', regex, options, ({range}: {range: Range}) => range.containsPoint(from, true) && range.start)
   }
 
@@ -805,7 +806,7 @@ class SearchMatchForward extends TextObject {
         from = this.utils.translatePointAndClip(this.editor, from, 'backward')
       }
 
-      const options = {from: [from.row, Infinity]}
+      const options: ScanOptions = {from: [from.row, Infinity]}
       return {
         range: this.findInEditor('backward', regex, options, ({range}: {range: Range}) => range.start.isLessThan(from) && range),
         whichIsHead: 'start'
@@ -815,7 +816,7 @@ class SearchMatchForward extends TextObject {
         from = this.utils.translatePointAndClip(this.editor, from, 'forward')
       }
 
-      const options = {from: [from.row, 0]}
+      const options: ScanOptions = {from: [from.row, 0]}
       return {
         range: this.findInEditor('forward', regex, options, ({range}: {range: Range}) => range.end.isGreaterThan(from) && range),
         whichIsHead: 'end'
@@ -875,8 +876,7 @@ class PreviousSelection extends TextObject {
     const {properties, submode} = this.vimState.previousSelection
     if (properties && submode) {
       this.wise = submode
-      // TODO(vim-ts): tighten — previousSelection.properties is typed `unknown` upstream.
-      this.swrap(this.editor.getLastSelection()).selectByProperties(properties as any)
+      this.swrap(this.editor.getLastSelection()).selectByProperties(properties)
       return true
     }
     return false
@@ -916,9 +916,8 @@ class VisibleArea extends TextObject {
   selectOnce = true
 
   getRange (_selection: Selection): Range | null | undefined {
-    // TODO(vim-ts): tighten — getVisibleRowRange/bufferRangeForScreenRange not yet on EditorModel.
-    const [startRow, endRow] = (this.editor as any).getVisibleRowRange()
-    return (this.editor as any).bufferRangeForScreenRange([[startRow, 0], [endRow, Infinity]])
+    const [startRow, endRow] = this.editor.getVisibleRowRange()
+    return this.editor.bufferRangeForScreenRange([[startRow, 0], [endRow, Infinity]])
   }
 }
 

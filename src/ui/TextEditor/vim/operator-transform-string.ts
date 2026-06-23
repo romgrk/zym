@@ -289,8 +289,7 @@ class ChangeSurround extends DeleteSurround {
   async focusInputPromised (...args: Parameters<Operator['focusInputPromised']>): Promise<string | undefined> {
     const hoverPoint = this.mutationManager.getInitialPointForSelection(this.editor.getLastSelection())
     const openSurrondText = this.getTargetPair() ? this.getTargetPair()![0] : this.editor.getSelectedText()[0]
-    // TODO(vim-ts): HoverManager.set stub accepts only (value); upstream passes a point too.
-    ;(this.vimState.hover as any).set(openSurrondText, hoverPoint)
+    this.vimState.hover.set(openSurrondText, hoverPoint)
     return super.focusInputPromised(...args)
   }
 }

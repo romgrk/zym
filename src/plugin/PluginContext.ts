@@ -12,11 +12,11 @@ import * as Path from 'node:path';
 import { Disposable, CompositeDisposable, type DisposableLike } from '../util/eventKit.ts';
 import type { TextEditor } from '../ui/TextEditor/index.ts';
 import { languages } from '../lang/index.ts';
-import { clearGrammar } from '../syntax/grammar.ts';
+import { clearGrammar, refreshGrammarInjections } from '../syntax/grammar.ts';
 import { zym } from '../zym.ts';
 import { styles } from '../styles.ts';
 import type { Gtk } from '../gi.ts';
-import type { LanguageDef, GrammarDef, ServerDef } from '../lang/types.ts';
+import type { LanguageDef, GrammarDef, ServerDef, InjectionRule } from '../lang/types.ts';
 import type { ConfigSchema } from '../util/Config.ts';
 import type { CommandMap } from '../CommandManager.ts';
 import type { KeymapBySelector } from '../KeymapManager.ts';
@@ -64,6 +64,16 @@ export class PluginContextImpl implements PluginContext {
         return this.track(new Disposable(() => {
           inner.dispose();
           clearGrammar(langId);
+        }));
+      },
+      registerInjection: (rule: InjectionRule) => {
+        const inner = languages.registerInjection(rule);
+        // Re-attach to loaded grammars now (handles registration after preload) and
+        // again on removal. A no-op during normal activation (grammars load after).
+        refreshGrammarInjections();
+        return this.track(new Disposable(() => {
+          inner.dispose();
+          refreshGrammarInjections();
         }));
       },
     };

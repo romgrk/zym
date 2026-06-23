@@ -15,12 +15,14 @@
  */
 import type VimState from './vim-state.ts';
 import type { VimMode, VimSubmode } from './vim-state.ts';
-import type { EditorModel } from '../EditorModel.ts';
+import type { EditorModel, ScanMatchResult } from '../EditorModel.ts';
 import type { Cursor } from '../Cursor.ts';
 import type { Selection } from '../Selection.ts';
-import type { Point } from '../../../text/Point.ts';
+import type { Point, PointLike } from '../../../text/Point.ts';
+import type { Range } from '../../../text/Range.ts';
 import type { Disposable } from '../../../util/eventKit.ts';
 import type { Operator } from './operator.ts';
+import type { ScanDirection, ScanOptions, WordOptions } from './utils.ts';
 
 /**
  * The kind tag every operation declares as a static; drives dispatch predicates.
@@ -339,17 +341,17 @@ export class Base {
   getVimLastScreenRow () { return this.utils.getVimLastScreenRow(this.editor) } // prettier-ignore
   getValidVimBufferRow (row: number) { return this.utils.getValidVimBufferRow(this.editor, row) } // prettier-ignore
   getValidVimScreenRow (row: number) { return this.utils.getValidVimScreenRow(this.editor, row) } // prettier-ignore
-  getWordBufferRangeAndKindAtBufferPosition (...args: any[]) { return (this.utils.getWordBufferRangeAndKindAtBufferPosition as any)(this.editor, ...args) } // prettier-ignore
+  getWordBufferRangeAndKindAtBufferPosition (point: PointLike, options?: WordOptions) { return this.utils.getWordBufferRangeAndKindAtBufferPosition(this.editor, point, options) } // prettier-ignore
   getFirstCharacterPositionForBufferRow (row: number) { return this.utils.getFirstCharacterPositionForBufferRow(this.editor, row) } // prettier-ignore
   getBufferRangeForRowRange (rowRange: [number, number]) { return this.utils.getBufferRangeForRowRange(this.editor, rowRange) } // prettier-ignore
-  scanEditor (...args: any[]) { return (this.utils.scanEditor as any)(this.editor, ...args) } // prettier-ignore
-  findInEditor (...args: any[]) { return (this.utils.findInEditor as any)(this.editor, ...args) } // prettier-ignore
-  findPoint (...args: any[]) { return (this.utils.findPoint as any)(this.editor, ...args) } // prettier-ignore
-  trimBufferRange (...args: any[]) { return (this.utils.trimBufferRange as any)(this.editor, ...args) } // prettier-ignore
-  isEmptyRow (...args: any[]) { return (this.utils.isEmptyRow as any)(this.editor, ...args) } // prettier-ignore
-  getFoldStartRowForRow (...args: any[]) { return (this.utils.getFoldStartRowForRow as any)(this.editor, ...args) } // prettier-ignore
-  getFoldEndRowForRow (...args: any[]) { return (this.utils.getFoldEndRowForRow as any)(this.editor, ...args) } // prettier-ignore
-  getBufferRows (...args: any[]) { return (this.utils.getRows as any)(this.editor, 'buffer', ...args) } // prettier-ignore
-  getScreenRows (...args: any[]) { return (this.utils.getRows as any)(this.editor, 'screen', ...args) } // prettier-ignore
-  replaceTextInRangeViaDiff (...args: any[]) { return (this.utils.replaceTextInRangeViaDiff as any)(this.editor, ...args) } // prettier-ignore
+  scanEditor (direction: ScanDirection, regex: RegExp, options: ScanOptions, fn: (event: ScanMatchResult) => void) { return this.utils.scanEditor(this.editor, direction, regex, options, fn) } // prettier-ignore
+  findInEditor <T>(direction: ScanDirection, regex: RegExp, options: ScanOptions, fn: (event: ScanMatchResult) => T | false | null | undefined) { return this.utils.findInEditor(this.editor, direction, regex, options, fn) } // prettier-ignore
+  findPoint (direction: ScanDirection, regex: RegExp, which: 'start' | 'end', options: ScanOptions & {preTranslate?: PointLike, postTranslate?: PointLike}) { return this.utils.findPoint(this.editor, direction, regex, which, options) } // prettier-ignore
+  trimBufferRange (range: Range) { return this.utils.trimBufferRange(this.editor, range) } // prettier-ignore
+  isEmptyRow (row: number) { return this.utils.isEmptyRow(this.editor, row) } // prettier-ignore
+  getFoldStartRowForRow (row: number) { return this.utils.getFoldStartRowForRow(this.editor, row) } // prettier-ignore
+  getFoldEndRowForRow (row: number) { return this.utils.getFoldEndRowForRow(this.editor, row) } // prettier-ignore
+  getBufferRows (options: {startRow: number, direction: 'previous' | 'next'}) { return this.utils.getRows(this.editor, 'buffer', options) } // prettier-ignore
+  getScreenRows (options: {startRow: number, direction: 'previous' | 'next'}) { return this.utils.getRows(this.editor, 'screen', options) } // prettier-ignore
+  replaceTextInRangeViaDiff (range: Range, newText: string) { return this.utils.replaceTextInRangeViaDiff(this.editor, range, newText) } // prettier-ignore
 }

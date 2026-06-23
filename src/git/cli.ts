@@ -26,7 +26,7 @@ import {
   type CommitSummary,
 } from './status.ts';
 
-export type { ChangedFile, CommitSummary } from './status.ts';
+export type { ChangedFile, CommitSummary, CommitRef } from './status.ts';
 
 export type GitFileState =
   | 'new'
@@ -474,7 +474,9 @@ export function listCommits(
 ): void {
   git(
     root,
-    ['log', `--max-count=${limit}`, '--date=relative', `--format=${COMMIT_LOG_FORMAT}`, rev, '--'],
+    // `--decorate=full` so `%D` (in COMMIT_LOG_FORMAT) emits fully-qualified ref names
+    // for `parseRefNames` to classify into branch/remote/tag badges.
+    ['log', '--decorate=full', `--max-count=${limit}`, '--date=relative', `--format=${COMMIT_LOG_FORMAT}`, rev, '--'],
     (ok, stdout) => onDone(ok ? parseCommitLog(stdout) : []),
   );
 }

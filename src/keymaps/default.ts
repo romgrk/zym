@@ -260,6 +260,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     o: 'git-log:open',
     enter: 'git-log:open',
     '/': 'git-log:search',
+    'y y': 'git-log:copy-sha', // yank the selected commit's short hash
   },
 
   // The git log's filter field: Down/Enter/Escape drop focus into the results list

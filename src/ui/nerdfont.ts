@@ -37,6 +37,7 @@ export const NERDFONT = {
     MERGE:        '', // U+F419 nf-oct-git_merge
     PULL_REQUEST: '', // U+F407 nf-oct-git_pull_request
     STASH:        '', // U+F187 nf-fa-archive
+    TAG:          '', // U+F02B nf-fa-tag
   },
   NAV: {
     CHEVRON_UP:    '', // U+F077 nf-fa-chevron_up

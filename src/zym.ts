@@ -120,6 +120,19 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     default: true,
     description: 'Allow scrolling past the end of the buffer so the last line can reach the top of the viewport.',
   },
+  'editor.languageInjections': {
+    type: 'array',
+    default: [],
+    description:
+      'User-defined syntax injections: highlight a region of one language as another. ' +
+      'Each entry names the host `host` (a language id or a list, e.g. ["typescript", "tsx"]), ' +
+      'a guest `language` (defaults to the marker), and one matcher: `comment` (a ' +
+      '`/* css */` or `// css` comment before a backtick template), `tag` (a tagged ' +
+      'template such as css`…` or styled.div`…`), or `query` (a raw tree-sitter ' +
+      'injection query). ' +
+      'E.g. [{ "host": ["typescript", "tsx"], "comment": "css" }, ' +
+      '{ "host": "tsx", "tag": "gql", "language": "graphql" }].',
+  },
   'agent.command': {
     type: 'array',
     default: ['claude'],

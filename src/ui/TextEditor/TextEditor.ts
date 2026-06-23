@@ -60,7 +60,7 @@ import {
   type SourceView,
 } from '../../gi.ts';
 
-addStyles(`
+addStyles(/* css */`
   .zym-editor {
     font: var(--t-font-monospace);
     color: var(--t-ui-editor-foreground);

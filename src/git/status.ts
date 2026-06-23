@@ -190,6 +190,18 @@ export function parseNameStatusZ(out: string): ChangedFile[] {
   return files;
 }
 
+/** A ref pointing at a commit, for decorating the log view. `head` marks the ref
+ *  HEAD currently points at — the checked-out branch (kind `branch`), or a detached
+ *  HEAD (kind `head`). */
+export interface CommitRef {
+  /** Display name: `master`, `feat/x` (branch); `origin/master` (remote); `v1.2.0`
+   *  (tag); or `HEAD` (detached). */
+  name: string;
+  kind: 'head' | 'branch' | 'remote' | 'tag';
+  /** Whether HEAD points at this ref. */
+  head: boolean;
+}
+
 /** One commit summary for pickers / log views. */
 export interface CommitSummary {
   /** Full commit OID. */
@@ -204,12 +216,17 @@ export interface CommitSummary {
   date: string;
   /** Author date as a UNIX timestamp (seconds), for absolute/friendly formatting. */
   timestamp: number;
+  /** Branches/tags pointing at this commit (newest-first list is undecorated; the log
+   *  view renders these as badges). Empty for the common no-ref commit. */
+  refs: CommitRef[];
 }
 
 const LOG_FIELD_SEP = '\x1f'; // ASCII unit separator — never appears in commit fields we read
 
-/** The format string to pass to `git log --format=` so `parseCommitLog` can read it. */
-export const COMMIT_LOG_FORMAT = ['%H', '%h', '%s', '%an', '%ad', '%at'].join(LOG_FIELD_SEP);
+/** The format string to pass to `git log --format=` so `parseCommitLog` can read it.
+ *  `%D` (ref names) is last and needs `--decorate=full` so `parseRefNames` gets the
+ *  fully-qualified `refs/heads|remotes|tags/…` form it classifies on. */
+export const COMMIT_LOG_FORMAT = ['%H', '%h', '%s', '%an', '%ad', '%at', '%D'].join(LOG_FIELD_SEP);
 
 /** Parse `git log --format=COMMIT_LOG_FORMAT` (one unit-separated record per line). */
 export function parseCommitLog(out: string): CommitSummary[] {
@@ -217,9 +234,41 @@ export function parseCommitLog(out: string): CommitSummary[] {
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const [sha = '', shortSha = '', subject = '', author = '', date = '', at = ''] = line.split(LOG_FIELD_SEP);
-      return { sha, shortSha, subject, author, date, timestamp: Number(at) || 0 };
+      const [sha = '', shortSha = '', subject = '', author = '', date = '', at = '', refs = ''] =
+        line.split(LOG_FIELD_SEP);
+      return { sha, shortSha, subject, author, date, timestamp: Number(at) || 0, refs: parseRefNames(refs) };
     });
+}
+
+/** Parse the comma-separated ref list `%D` emits under `--decorate=full`: fully
+ *  qualified names (`refs/heads/x`, `refs/remotes/origin/x`, `refs/tags/x`), with a
+ *  leading `HEAD -> refs/heads/x` for the checked-out branch (or a bare `HEAD` when
+ *  detached). The symbolic `origin/HEAD` pointer and other namespaces (stash, notes,
+ *  pull/*) are dropped — only branches and tags decorate the log. */
+export function parseRefNames(raw: string): CommitRef[] {
+  const refs: CommitRef[] = [];
+  for (const part of raw.split(',')) {
+    let token = part.trim();
+    if (!token) continue;
+    let head = false;
+    // " -> " (always space-padded; refnames forbid spaces) marks "HEAD -> <branch>".
+    const arrow = token.indexOf(' -> ');
+    if (arrow !== -1) {
+      head = true;
+      token = token.slice(arrow + 4).trim();
+    }
+    if (token === 'HEAD') {
+      refs.push({ name: 'HEAD', kind: 'head', head: true }); // detached HEAD
+    } else if (token.startsWith('refs/tags/')) {
+      refs.push({ name: token.slice('refs/tags/'.length), kind: 'tag', head });
+    } else if (token.startsWith('refs/remotes/')) {
+      const name = token.slice('refs/remotes/'.length);
+      if (!name.endsWith('/HEAD')) refs.push({ name, kind: 'remote', head }); // skip origin/HEAD
+    } else if (token.startsWith('refs/heads/')) {
+      refs.push({ name: token.slice('refs/heads/'.length), kind: 'branch', head });
+    }
+  }
+  return refs;
 }
 
 // --- commit → changed files (for the log viewer's `file:` filter) -------------

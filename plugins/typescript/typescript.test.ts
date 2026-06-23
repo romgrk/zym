@@ -22,6 +22,7 @@ function fakeContext(
     registerLanguage: (def) => track(reg.registerLanguage(def)),
     registerGrammar: (id, def) => track(reg.registerGrammar(id, def)),
     registerServer: (id, def) => track(reg.registerServer(id, def)),
+    registerInjection: (rule) => track(reg.registerInjection(rule)),
   };
   return {
     id: 'typescript',
@@ -75,6 +76,19 @@ test('grammar binding is registered per language', () => {
   assert.match(reg.grammarFor('typescript')!.highlightsPath, /queries\/typescript\/highlights\.scm$/);
   assert.match(reg.grammarFor('tsx')!.wasm, /tree-sitter-tsx\.wasm$/);
   assert.equal(reg.grammarFor('nope'), null);
+});
+
+test('contributes CSS-in-JS injections (styled tag + css comment) for the TS/JS grammars', () => {
+  const reg = builtins();
+  const rules = reg.injectionRules();
+  const styled = rules.find((r) => r.tag === 'styled');
+  const comment = rules.find((r) => r.comment === 'css');
+  assert.ok(styled && styled.language === 'css', 'a styled`…` → css rule is registered');
+  assert.ok(comment && comment.language === 'css', 'a /* css */ → css rule is registered');
+  // Both target the TS and JS (tsx) grammars.
+  for (const rule of [styled!, comment!]) {
+    assert.deepEqual([...rule.hosts].sort(), ['tsx', 'typescript']);
+  }
 });
 
 test('Flow project: flow wins the js-types group over tsserver; eslint is additive', () => {

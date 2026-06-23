@@ -222,8 +222,7 @@ class ActivateReplaceMode extends ActivateInsertMode {
     for (const char of text) {
       if (char === '\n') continue
       if (selection.cursor.isAtEndOfLine()) break
-      // TODO(vim-ts): EditorModel/Selection doesn't model selectRight yet.
-      ;(selection as any).selectRight()
+      selection.selectRight()
     }
     // TODO(vim-ts): Selection.insertText models no options arg; cast keeps {autoIndent}.
     ;(selection.insertText as any)(text, {autoIndent: false})
@@ -243,8 +242,7 @@ class InsertAfter extends ActivateInsertMode {
 class InsertAtBeginningOfLine extends ActivateInsertMode {
   execute (): void {
     if (this.mode === 'visual' && this.submode !== 'blockwise') {
-      // TODO(vim-ts): EditorModel doesn't model splitSelectionsIntoLines yet.
-      ;(this.editor as any).splitSelectionsIntoLines()
+      this.editor.splitSelectionsIntoLines()
     }
     for (const blockwiseSelection of this.getBlockwiseSelections()) {
       blockwiseSelection.skipNormalization()

@@ -29,6 +29,39 @@ It is fully documented in **[multibuffer.md](multibuffer.md)** — start there.
   (`openCommitPicker`). Both live in **`src/ui/diffViews.ts`**, which builds the
   `DiffFile[]` from git blobs and opens a non-editable `DiffView` in a tab.
 
+## Comment & review (any diff)
+
+`DiffView` carries a comment/review layer (`startComment`, review mode,
+`submitReview`; `src/ui/DiffCommentBox.ts`) that turns the cursor row or a visual
+selection into a `path:line` reference + unified-diff hunk + `On <locator>:` + your
+text, formats it, and hands it to an agent. It's enabled whenever the host wires
+`onSend` — which **every** diff surface now does, live or historical, so a review
+can always be sent to an agent:
+
+- `enter` opens the inline comment box on the row/selection (`g d` still jumps to
+  the file); `ctrl-enter` / `diff:review-toggle` starts **review mode**, which
+  accumulates comments as inline cards (`diff:review-send` flushes the batch as
+  one message, `diff:review-remove` drops one).
+- **Targeting** (`buildCommentTarget`): a visual selection sends exactly the
+  selected rows; a bare cursor widens the *patch* to the surrounding hunk (for
+  context) but the `locator` + `navLine` still pin the **cursor's own line**, so
+  the agent knows precisely which line the comment is about.
+- **Revision context**: a historical diff sets `reviewContext` (e.g. ``Review of
+  commit `a0c0365` (subject)`` or ``Review of `branch` vs `master```), prefixed to
+  the message so the agent knows the lines refer to that revision, not the working
+  tree. Working-tree diffs (live / current-file) omit it.
+- The delivery seam is **`zym.workspace.sendReviewToAgent`** → AppWindow's
+  `reviewToAgent`: with a running agent it sends straight to it and **reveals** it
+  (so the review visibly lands). With none running it opens the agent picker, whose
+  highlighted **"Send to new agent"** entry (`AgentPickerOptions.newAgent`) opens the
+  **AgentLauncher** (pick model / permission / worktree); the review is then
+  delivered to the agent it starts. The live staging surface (`openLiveDiff`) and
+  the editor-hosted single-file diff call `reviewToAgent` directly; the decoupled
+  commit/branch views go through the workspace seam.
+- Read-only diffs register a **session participant**, so unsent (accumulated)
+  review comments prompt before the window closes (`DiffView.isModified()` counts
+  pending comments).
+
 ## Surviving shared pieces
 
 - `src/util/lineDiff.ts` — the minimal Myers O(ND) line diff (degrades to a

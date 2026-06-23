@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { languages } from '../lang/index.ts';
+import { injectionDefsFor, type InjectionRule } from './userInjections.ts';
 
 const require_ = createRequire(import.meta.url);
 const Parser = require_('web-tree-sitter');
@@ -91,7 +92,10 @@ export interface Grammar {
   foldTypes: Set<string>;
   /** Compiled folds query (`@fold` captures); null when the grammar ships none. */
   foldsQuery: any | null;
-  /** Language injections declared by the grammar (empty when none). */
+  /** Injections the grammar itself declares (`GrammarDef.injections`), kept apart
+   *  from user ones so `setUserInjectionRules` can recombine without a wasm reload. */
+  baseInjections: CompiledInjection[];
+  /** Effective injections: `baseInjections` + the user's (from `editor.languageInjections`). */
   injections: CompiledInjection[];
 }
 
@@ -120,6 +124,56 @@ export function langIdForPath(path: string): string | null {
 
 const cache = new Map<string, Grammar>();
 
+// The user's `editor.languageInjections`, normalized. Empty until the app applies
+// config (`setUserInjectionRules`), which happens after `preloadGrammars`; a grammar
+// loaded later (lazily) picks up the current rules in `loadGrammar`.
+let userInjectionRules: InjectionRule[] = [];
+
+/** The high-level injection rules targeting any host: plugin-contributed (from the
+ *  registry) + the user's (from config). Combined here so both ride the same compile. */
+function extraInjectionRules(): InjectionRule[] {
+  return [...languages.injectionRules(), ...userInjectionRules];
+}
+
+/** Compile the injection rules that target `langId` against its grammar. Defensive per
+ *  rule: a malformed query is skipped (warned), never thrown — a bad plugin/user rule
+ *  must not break the host grammar's own highlighting. */
+function compileExtraInjections(langId: string, grammar: Grammar): CompiledInjection[] {
+  const out: CompiledInjection[] = [];
+  for (const def of injectionDefsFor(extraInjectionRules(), langId)) {
+    try {
+      out.push({ query: grammar.language.query(def.query), language: def.language });
+    } catch (error) {
+      console.warn(`[injection] skipping invalid injection for "${langId}": ${(error as Error).message}`);
+    }
+  }
+  return out;
+}
+
+/** Recompute a grammar's effective injections = its own + plugin + user rules'. */
+function applyExtraInjections(langId: string, grammar: Grammar): void {
+  grammar.injections = [...grammar.baseInjections, ...compileExtraInjections(langId, grammar)];
+}
+
+/** Re-attach plugin + user injection rules to every already-loaded grammar, in place
+ *  (no wasm reload). Called when the user's config changes (`setUserInjectionRules`)
+ *  and when a plugin (de)registers an injection (`registerInjection`). A no-op before
+ *  any grammar is loaded — `loadGrammar` itself folds in the current rules. */
+export function refreshGrammarInjections(): void {
+  for (const [langId, grammar] of cache) applyExtraInjections(langId, grammar);
+}
+
+/**
+ * Set the user-configured injection rules (from `editor.languageInjections`) and
+ * re-attach all injections to every already-loaded grammar in place. The caller need
+ * only repaint open editors (the highlighter re-gathers injections each paint). Call
+ * on startup and on every live config edit.
+ */
+export function setUserInjectionRules(rules: InjectionRule[]): void {
+  userInjectionRules = rules;
+  refreshGrammarInjections();
+}
+
 /** Load (and cache) a grammar by language id, or null if unknown. */
 export async function loadGrammar(langId: string): Promise<Grammar | null> {
   const spec = languages.grammarFor(langId);
@@ -129,16 +183,19 @@ export async function loadGrammar(langId: string): Promise<Grammar | null> {
 
   await initTreeSitter();
   const language = await Parser.Language.load(resolveWasm(spec.wasm));
+  const baseInjections: CompiledInjection[] = (spec.injections ?? []).map((inj) => ({
+    query: language.query(inj.query),
+    language: inj.language,
+  }));
   const grammar: Grammar = {
     language,
     query: language.query(Fs.readFileSync(spec.highlightsPath, 'utf8')),
     foldTypes: new Set(spec.foldTypes),
     foldsQuery: spec.foldsPath ? language.query(Fs.readFileSync(spec.foldsPath, 'utf8')) : null,
-    injections: (spec.injections ?? []).map((inj) => ({
-      query: language.query(inj.query),
-      language: inj.language,
-    })),
+    baseInjections,
+    injections: baseInjections,
   };
+  applyExtraInjections(langId, grammar); // fold in any plugin/user rules already set
   cache.set(langId, grammar);
   return grammar;
 }

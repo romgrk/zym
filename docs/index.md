@@ -52,7 +52,8 @@ See [commands-keymaps.md](commands-keymaps.md).
 
 ## Styling & theming
 
-UI styling is in GTK CSS.
+UI styling is in GTK CSS. Editing a file's `addStyles(...)` CSS hot-reloads live
+(watched + re-run on change; on by default, `ZYM_STYLE_HOT_RELOAD=0` to opt out).
 Before writing styles or classnames, see [styling.md](styling.md).
 
 The theme system is being reworked. Avoid using it as much as possible. Only use
@@ -146,6 +147,8 @@ See [text-editor/index.md](text-editor/index.md).
 
 Per-feature detail:
 
+- [Coordinates](text-editor/coordinates.md) — the `document`/`buffer`/`screen`
+  position vocabulary (canonical); code/docs are mid-migration onto it.
 - [Multibuffer](text-editor/multibuffer.md) — every editor on a
   `ViewProjection`/`ProjectionView` substrate; editable project-search + git-diff
   shipped (folding off by design).

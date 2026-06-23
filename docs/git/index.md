@@ -336,7 +336,8 @@ ahead-behind / HEAD sha) over a live `file:`/`author:`/word **search**
   settles on). `o`/`Enter`/`l` load it and move focus *into* the diff. The
   diff is built by `buildCommitDiffView` (shared with `git:diff-commit`,
   vs the commit's first parent), so it gets the fold/expand-context commands
-  (`z o`/`z R`/`z m`) for free.
+  (`z o`/`z R`/`z m`) for free. `y y` (`git-log:copy-sha`) yanks the selected
+  commit's short hash to the system clipboard.
 - **List ↔ diff focus** — the list and the diff are two nested "windows":
   `ctrl-w l` steps from the list into the diff (`git-log:focus-diff`),
   `ctrl-w h` steps back out (`git-log:focus-list`). Both commands are
@@ -344,6 +345,19 @@ ahead-behind / HEAD sha) over a live `file:`/`author:`/word **search**
   viewer. Keys are scoped under `#GitLogList` (bare nav), `#GitLogSearch`
   (drop into the list), and `#GitLogView #GitLogList` / `#GitLogView
   #TextEditor` (the `ctrl-w` focus pair) — see `keymaps/default.ts`.
+- **Ref badges** — commits with refs get a **third row** (under the subject +
+  meta lines) of chips for the branches/tags pointing at them, so you can see
+  where every other branch sits in the history. `listCommits` asks for `%D`
+  under `--decorate=full`; `parseRefNames` (in `git/status.ts`) classifies the
+  fully-qualified names into `CommitRef`s — local `branch`, remote-tracking
+  `remote`, `tag`, or a detached `head` — dropping the symbolic `origin/HEAD` and
+  non-branch/tag namespaces. The **current branch (and a detached HEAD) are not
+  shown** — only *other* refs decorate (`head: true` is filtered out at the view).
+  Chips are color-coded by kind — local branches **info**, remote branches
+  **warning**, tags **success**. The list never scrolls sideways
+  (`scrolled` is `NEVER`/`AUTOMATIC`), so a crowded badge row ellipsizes its chips
+  rather than widening. Only refs on the listed (HEAD-reachable) commits decorate —
+  the log is still the current branch's history, not `--all`.
 
 ## Forge: GitHub — `src/github.ts` + `src/ui/Github*.ts`
 

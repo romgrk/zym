@@ -15,6 +15,7 @@ function activate(): LanguageRegistry {
     registerLanguage: (def) => reg.registerLanguage(def),
     registerGrammar: (id, def) => reg.registerGrammar(id, def),
     registerServer: (id, def) => reg.registerServer(id, def),
+    registerInjection: (rule) => reg.registerInjection(rule),
   };
   const ctx = {
     id: 'rust',

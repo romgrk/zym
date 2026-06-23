@@ -122,6 +122,42 @@ the `parser.c` is ABI ≤14, build, drop the wasm + a palette-mapped
 that language then light up automatically (the registry resolves the fence
 name → the new grammar).
 
+## Cross-grammar injection rules (`InjectionRule`)
+
+An **`InjectionRule`** (`src/lang/types.ts`) injects into host grammars it names
+explicitly — unlike `GrammarDef.injections` (a grammar about itself) — so it can
+target grammars it doesn't own (CSS-in-JS → the TS/JS grammars). A rule has
+required `hosts`, a guest `language` (defaulting to the marker), and one matcher:
+`comment` (a `//` / `/* … */` comment before a backtick template), `tag` (a tagged
+template — `css` or the root of `styled.div`), or a raw tree-sitter `query`.
+
+Two sources, same compile + engine:
+
+- **User config** `editor.languageInjections` — parsed by `parseInjectionRules`
+  (`src/syntax/userInjections.ts`); `AppWindow` applies it via
+  `setUserInjectionRules` on startup + each live edit, then repaints.
+- **Plugins** — `ctx.languages.registerInjection(rule)` (the normalized `hosts`
+  shape; stored on `LanguageRegistry`, tracked for teardown). The TypeScript plugin
+  ships a `styled`-tag and a `/* css */`/`// css`-comment → CSS rule by default.
+
+```jsonc
+"editor.languageInjections": [
+  { "host": ["typescript", "tsx"], "comment": "css" },                   // /* css */ `…` → CSS
+  { "host": ["typescript", "tsx"], "tag": "styled", "language": "css" }, // styled.div`…` → CSS
+  { "host": "python", "query": "(string (string_content) @injection.content)", "language": "sql" }
+]
+```
+
+`userInjections.ts` compiles `comment`/`tag` to a query with a predicate (`#match?`
+/ `#eq?`) + a **static** `language` — the marker is captured only to drive the
+predicate, never as `@injection.language`; content is the template's
+`string_fragment` nodes (backticks + `${…}` excluded, so a region split by a
+substitution highlights each fragment independently). `grammar.ts` keeps each
+grammar's `baseInjections` apart and recompiles `base + plugin + user` per host via
+`refreshGrammarInjections()` (in place, no wasm reload); a rule that fails to compile
+is skipped with a warning. The guest grammar must be registered (css/html/json/…
+already are); an unknown guest is a no-op.
+
 ## Styled tags (bold / italic / scale / background)
 
 Highlight tags are not foreground-only. A capture can carry font styling via

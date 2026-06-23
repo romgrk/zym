@@ -36,6 +36,7 @@ import { escapeMarkup } from './pickerHighlight.ts';
 import { fuzzyMatch } from './fuzzyMatch.ts';
 import { humanReadableTime } from '../util/humanReadableTime.ts';
 import { Icons } from './icons.ts';
+import { clipboard } from './TextEditor/vim/clipboard.ts';
 import { buildCommitDiffView } from './diffViews.ts';
 import { type DiffView } from './DiffView.ts';
 import {
@@ -45,6 +46,7 @@ import {
   upstreamRef,
   type GitRepo,
   type CommitSummary,
+  type CommitRef,
 } from '../git.ts';
 
 export interface GitLogViewOptions {
@@ -93,13 +95,50 @@ addStyles(`
     border-bottom: 1px solid var(--border-color);
   }
   #GitLogView .gitlog-subject { color: var(--t-ui-editor-foreground); }
-  #GitLogView .gitlog-meta { color: var(--t-ui-text-muted); }
+  /* Row gaps (the box itself has no spacing): subject → meta is half a spacing unit,
+     meta → badges a full one. */
+  #GitLogView .gitlog-meta { color: var(--t-ui-text-muted); margin-top: calc(0.5 * var(--t-spacing)); }
+  #GitLogView .gitlog-refs { margin-top: var(--t-spacing); }
+  /* Ref badges: *other* branches/tags pointing at a commit (the current branch is
+     not shown), on their own row under the meta line. A faint tint + matching border
+     per kind: local branches read as info, remote-tracking branches as warning, tags
+     as success. */
+  #GitLogView .gitlog-ref {
+    font-size: var(--t-font-ui-size-small);
+    padding: 0 6px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+  }
+  #GitLogView .gitlog-ref-branch {
+    color: var(--t-ui-status-info);
+    background-color: alpha(var(--t-ui-status-info), 0.12);
+    border-color: alpha(var(--t-ui-status-info), 0.4);
+  }
+  #GitLogView .gitlog-ref-remote {
+    color: var(--t-ui-status-warning);
+    background-color: alpha(var(--t-ui-status-warning), 0.12);
+    border-color: alpha(var(--t-ui-status-warning), 0.4);
+  }
+  #GitLogView .gitlog-ref-tag {
+    color: var(--t-ui-status-success);
+    background-color: alpha(var(--t-ui-status-success), 0.12);
+    border-color: alpha(var(--t-ui-status-success), 0.4);
+  }
   /* Selected row: full selection color while focused, a muted version otherwise. */
   #GitLogList row:selected { background-color: alpha(var(--t-ui-surface-selected), 0.4); }
   #GitLogView:focus-within #GitLogList row:selected { background-color: var(--t-ui-surface-selected); }
   /* Right pane: the embedded diff (or a placeholder while nothing is selected). */
   #GitLogView .gitlog-diff-placeholder { color: var(--t-ui-text-muted); padding: 12px; }
 `);
+
+// Badge order within a row: local branches first, then tags, then remote-tracking
+// branches (the least important to see at a glance). The current branch / HEAD is
+// filtered out before this. `Array.sort` is stable, so equal-rank refs keep git's
+// `%D` order.
+const REF_RANK: Record<CommitRef['kind'], number> = { head: 0, branch: 1, tag: 2, remote: 3 };
+function orderRefs(refs: CommitRef[]): CommitRef[] {
+  return [...refs].sort((a, b) => REF_RANK[a.kind] - REF_RANK[b.kind]);
+}
 
 export class GitLogView {
   readonly root: InstanceType<typeof Gtk.Paned>;
@@ -177,6 +216,7 @@ export class GitLogView {
     this.scrolled = new Gtk.ScrolledWindow();
     this.scrolled.setChild(this.listBox);
     this.scrolled.setVexpand(true);
+    this.scrolled.setPolicy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); // never scroll sideways — rows ellipsize
 
     this.empty = new Gtk.Label({ label: 'No commits', xalign: 0 });
     this.empty.addCssClass('gitlog-empty');
@@ -358,14 +398,41 @@ export class GitLogView {
         `<span face="${fonts.monospaceFamily}">${escapeMarkup(commit.shortSha)}</span>`,
     );
 
-    const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 2 });
+    // Subject, then the meta line, then — only when the commit has refs — a third row
+    // of ref badges (checked-out branch first). The list never scrolls horizontally
+    // (see `scrolled`'s policy), so a crowded badge row ellipsizes rather than widening.
+    // Row gaps are set per-row in CSS (subject → meta vs meta → badges differ).
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     box.append(subject);
     box.append(meta);
+    // Third row: badges for the *other* refs at this commit. The current branch (and a
+    // detached HEAD) are dropped — "you are here" isn't shown as a tag.
+    const refs = orderRefs(commit.refs.filter((r) => !r.head));
+    if (refs.length) {
+      const refsRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
+      refsRow.addCssClass('gitlog-refs');
+      for (const ref of refs) refsRow.append(this.buildRefChip(ref));
+      box.append(refsRow);
+    }
 
     const row = new Gtk.ListBoxRow();
     row.setChild(box);
-    row.setTooltipText(commit.subject);
+    row.setTooltipText(refs.length ? `${refs.map((r) => r.name).join(', ')}\n${commit.subject}` : commit.subject);
     return row;
+  }
+
+  /** A single ref badge: a kind glyph (branch / tag) before the ref name, styled by
+   *  `gitlog-ref-<kind>` (branch / remote / tag — head refs are filtered out before
+   *  here). Long names ellipsize so one branch can't crowd the row. */
+  private buildRefChip(ref: CommitRef): InstanceType<typeof Gtk.Label> {
+    const glyph = ref.kind === 'tag' ? Icons.gitTag : Icons.git;
+    const chip = new Gtk.Label({ xalign: 0 });
+    chip.addCssClass('gitlog-ref');
+    chip.addCssClass(`gitlog-ref-${ref.kind}`);
+    chip.setEllipsize(Pango.EllipsizeMode.END);
+    chip.setMaxWidthChars(22);
+    chip.setMarkup(`<span face="${ICON_FONT_FAMILY}">${glyph}</span> ${escapeMarkup(ref.name)}`);
+    return chip;
   }
 
   // --- Navigation / commands ---------------------------------------------------
@@ -383,6 +450,7 @@ export class GitLogView {
         'core:right': { didDispatch: () => this.openSelected(), description: 'Open the selected commit' },
         'git-log:open': { didDispatch: () => this.openSelected(), description: 'Open the selected commit in a diff' },
         'git-log:search': { didDispatch: () => this.search.grabFocus(), description: 'Filter the commit list' },
+        'git-log:copy-sha': { didDispatch: () => this.copySelectedSha(), description: 'Copy the selected commit short hash' },
       }),
     );
     // `git-log:focus-list` / `git-log:focus-diff` are registered on the view ROOT (not a
@@ -432,6 +500,15 @@ export class GitLogView {
   private activate(index: number): void {
     const commit = this.filtered[index];
     if (commit) this.loadDiff(commit, /* focus */ true);
+  }
+
+  /** Yank the selected commit's short hash to the system clipboard (`y y`). */
+  private copySelectedSha(): void {
+    const row = this.listBox.getSelectedRow();
+    const commit = row ? this.filtered[row.getIndex()] : undefined;
+    if (!commit) return;
+    clipboard.write(commit.shortSha);
+    zym.notifications.addInfo(`Copied ${commit.shortSha}`);
   }
 
   // --- Embedded diff -----------------------------------------------------------

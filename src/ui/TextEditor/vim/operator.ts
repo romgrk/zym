@@ -261,13 +261,11 @@ class Operator extends Base {
       // only plain text (wise is otherwise inferred from a trailing newline).
       // Remember this exact text as blockwise so paste can still column-restore
       // it; cleared by the next non-blockwise yank/delete below.
-      // TODO(vim-ts): add `lastBlockwiseText` to RegisterManager's type.
-      ;(this.vimState.register as any).lastBlockwiseText = blockText
+      this.vimState.register.lastBlockwiseText = blockText
       return
     }
 
-    // TODO(vim-ts): add `lastBlockwiseText` to RegisterManager's type.
-    ;(this.vimState.register as any).lastBlockwiseText = null
+    this.vimState.register.lastBlockwiseText = null
 
     if (wise === 'linewise' && !text.endsWith('\n')) {
       text += '\n'
@@ -765,7 +763,7 @@ class Increase extends Operator {
 
   replaceNumberInBufferRange (scanRange: Range, fn?: (event: any) => boolean): Range[] {
     const newRanges: Range[] = []
-    this.scanEditor('forward', this.regex, {scanRange}, (event: any) => {
+    this.scanEditor('forward', this.regex!, {scanRange}, (event: any) => {
       if (fn) {
         if (fn(event)) event.stop()
         else return
@@ -901,7 +899,7 @@ class PutBefore extends Operator {
     // so also treat text matching the last blockwise yank/delete as blockwise.
     this.blockwisePaste =
       value.type === 'blockwise' ||
-      ((this.vimState.register as any).lastBlockwiseText != null && value.text === (this.vimState.register as any).lastBlockwiseText)
+      (this.vimState.register.lastBlockwiseText != null && value.text === this.vimState.register.lastBlockwiseText)
     const textToPaste = this.blockwisePaste ? value.text : value.text.repeat(this.getCount())
     this.linewisePaste = value.type === 'linewise' || this.isMode('visual', 'linewise')
     const newRange = this.paste(selection, textToPaste, {linewisePaste: this.linewisePaste})
@@ -1060,13 +1058,13 @@ class ResolveGitConflict extends Operator {
   }
 
   getConflictingRangeInfo (row: number): any {
-    const from = [row, Infinity]
+    const from: [number, number] = [row, Infinity]
     const conflictStart = this.findInEditor('backward', /^<<<<<<< .+$/, {from}, (event: any) => event.range.start)
 
     if (conflictStart) {
       const startRow = conflictStart.row
       let separatorRow: number | undefined, endRow: number | undefined
-      const from = [startRow + 1, 0]
+      const from: [number, number] = [startRow + 1, 0]
       const regex = /(^<<<<<<< .+$)|(^=======$)|(^>>>>>>> .+$)/g
       this.scanEditor('forward', regex, {from}, ({match, range, stop}: any) => {
         if (match[1]) {

@@ -40,6 +40,9 @@ type TabReopener = (state: TabState) => boolean;
 type ActiveWorkbenchProvider = () => Workbench | null;
 /** Hosts a widget as a center tab — selected, focused, torn down on close (AppWindow owns the tree). */
 type TabHost = (widget: Widget, options: OpenTabOptions) => void;
+/** Deliver a formatted diff-review message (a comment, or an accumulated batch) to an agent —
+ *  the current one, or one chosen/started from the picker when none is running. */
+type ReviewSink = (message: string) => void;
 
 /** A subscriber registered through `observeTextEditors`, plus the per-editor
  *  Disposables its callback returned (torn down on editor close / unobserve). */
@@ -57,6 +60,7 @@ export class Workspace {
   private tabReopener: TabReopener | null = null;
   private activeWorkbenchProvider: ActiveWorkbenchProvider | null = null;
   private tabHost: TabHost | null = null;
+  private reviewSink: ReviewSink | null = null;
   private readonly editors = new Set<TextEditor>();
   private readonly observers = new Set<EditorObserver>();
   // Recently-closed tabs, most-recent last — the reopen stack for `reopenLastTab`.
@@ -135,6 +139,24 @@ export class Workspace {
     this.tabHost(widget, options);
   }
 
+  /** Wire the review sink (the AppWindow injects this, like `setOpener`) — it routes a diff
+   *  review to an agent. */
+  setReviewSink(sink: ReviewSink): void {
+    this.reviewSink = sink;
+  }
+
+  /** Hand a formatted diff-review message to an agent — the seam any diff surface uses (via its
+   *  `onSend`) to send comments without threading the AppWindow's agent routing through it. The
+   *  sink targets the current agent, falling back to the picker when none is running. No-op (with a
+   *  warning) before a sink is wired. */
+  sendReviewToAgent(message: string): void {
+    if (!this.reviewSink) {
+      console.warn('zym.workspace.sendReviewToAgent called before a sink was registered');
+      return;
+    }
+    this.reviewSink(message);
+  }
+
   // --- text-editor registry --------------------------------------------------
 
   /**
@@ -164,6 +186,12 @@ export class Workspace {
       for (const sub of observer.perEditor.values()) sub?.dispose();
       observer.perEditor.clear();
     });
+  }
+
+  /** A snapshot of every currently-open text editor — for app-wide refreshes (e.g.
+   *  re-highlighting after the user's `editor.languageInjections` rules change). */
+  getTextEditors(): TextEditor[] {
+    return [...this.editors];
   }
 
   private removeTextEditor(editor: TextEditor): void {
