@@ -11,6 +11,13 @@ See also `docs/styling.md` (current `--t-ui-*` token model) and `docs/theming.md
 (owned theme format). Those still describe the **current** bespoke model, which is
 what ships today.
 
+> **Status — pick up at [Handoff](#handoff--current-status-pick-up-here) (end of doc).**
+> The resolver mechanism is now **validated** (probe + `gtk_widget_get_color`, not
+> `lookup_color`) and work is mid-flight in a worktree (uncommitted): doc corrections
+> landed here, a Slice-5 CSS migration is half-done, and three code tasks + the
+> resolver swap remain. The Handoff section has the validated design, the WIP state,
+> and the exact next steps.
+
 ## Goal
 
 - Chrome colors (surfaces, borders, status, accent, shadows, selection) come from
@@ -36,8 +43,9 @@ rendering. It is the mechanism only; the migration that would wire it up was rev
        (`--info-*`, `--hint-*`).
     2. **GTK named-color registry** via `StyleContext.lookup_color` — reads
        libadwaita's `@define-color` names (underscore form: `accent_color`), which
-       libadwaita keeps alongside its CSS variables. (Deprecated GTK4 API, still
-       functional.)
+       libadwaita keeps alongside its CSS variables. Deprecated in GTK4 and limited:
+       it can't evaluate CSS-only colors like `--border-color`. The resolver should
+       move to a probe + `gtk_widget_get_color` (see Key findings).
     3. **static fallback** (`FALLBACK_COLORS`) — for headless / no-display runs.
     Scheme comes from `theme.appearance`; cached by `scheme:name`. No `Gdk.RGBA` or
     `color-bits` leaks — everything is `#rrggbb[aa]` strings end to end.
@@ -49,7 +57,12 @@ rendering. It is the mechanism only; the migration that would wire it up was rev
   - `APP_COLORS` — `--info-*` / `--hint-*` (`-color`/`-bg-color`/`-fg-color` triplets,
     light + dark) — the semantic tokens libadwaita has no variable for.
   - `FALLBACK_COLORS` — a static snapshot of the libadwaita colors we map onto, per
-    scheme, captured by the probe.
+    scheme, for headless / no-display runs. **Incomplete for the loader-fills model:**
+    it carries the standalone `--{success,warning,error}-color` but not the `-bg-color`
+    / `-fg-color` pairs (nor any `--destructive-*`) the `filled` states need, and its
+    dark `--card-bg-color` (`#36363a`) disagrees with libadwaita's translucent
+    `rgb(255 255 255 / 8%)` (≈ `#ffffff14`). Fill the triplets and fix the card value
+    before Slice 1 / Slice 4.
   - `appColorVariables(scheme)` — emits `APP_COLORS` as CSS declarations (the CSS-side
     half of the bridge). **Not wired into any stylesheet** in the current tree.
   - `export type Scheme = 'light' | 'dark'`.
@@ -58,21 +71,39 @@ rendering. It is the mechanism only; the migration that would wire it up was rev
 - **`src/poc/adwaita-probe.ts`** — the validation probe (see below). Standalone; not
   imported by the app.
 
-## Key findings (from the probe)
+## Key findings
 
-`StyleContext.lookup_color` resolves libadwaita's `@define-color` registry. **Validated
-against the full catalog**: 92/106 color vars resolve; all the ones we need do. Notable
-non-resolvers, and what to do instead:
+The non-CSS sinks need to resolve a CSS color to a concrete `#rrggbb[aa]`. Two mechanisms
+exist; **prefer the probe** (runtime is GTK 4.22 / libadwaita 1.9.1):
 
-- `--border-color` — it's `currentColor @ --border-opacity`, CSS-only. For non-CSS
-  consumers, derive manually (window-fg @ ~15%).
-- `--accent-blue … --accent-slate` (named accent palette) — use the numbered palette
-  (`--blue-3`, etc.) instead.
-- opacity / radius vars (`--dim-opacity`, `--card-radius`, …) — not colors; read in CSS
-  directly or hard-code the non-CSS equivalent.
+- **Probe widget + `gtk_widget_get_color()`** (GTK ≥ 4.10, non-deprecated) — style a probe
+  with `color: var(--X)` and read back the resolved color via `widget.getColor()`. This
+  runs GTK's full CSS engine, so it resolves **everything**: `var()`, `color-mix()`,
+  `alpha()`, `shade()`, the CSS-only `--border-color`, and the named accent palette
+  (`--accent-blue …`). The GIR flags this as the replacement for the deprecated APIs.
+  Returns one color (the `color` property) per probe, so use one tiny `Gtk.Label` per
+  variable. **Validated on GTK 4.22 (see Handoff):** a *fresh, unrooted* label resolves
+  synchronously against the display's providers — no window / realize / present needed —
+  but a *reused* label freezes at the scheme it first computed, so create a fresh label
+  per resolve (the `scheme:name` cache then handles light/dark flips). Headless (no
+  display) falls through to `FALLBACK_COLORS`.
+- **`StyleContext.lookup_color`** (what `cssColor.ts` does today) — reads only libadwaita's
+  `@define-color` registry, **can't evaluate `var()` / `color-mix()`**, and is deprecated
+  in GTK4. It misses `--border-color` and the named accent palette, and resolves fewer
+  names over time as libadwaita migrates colors from `@define-color` to CSS-variable-only.
+  A legacy path; swap it for the probe.
 
-GTK CSS itself supports `var()`, `alpha(var(--x), f)`, `mix(...)`, `shade(...)` — so the
-CSS side can read Adwaita variables natively; the bridge is only for the non-CSS sinks.
+Facts that hold for either resolver:
+
+- `--border-color` = `color-mix(in srgb, currentColor var(--border-opacity), transparent)`;
+  `--border-opacity` is 15% (regular) / 50% (high contrast). The probe resolves it; a
+  non-CSS hard-code (window-fg @ 15%) ignores high-contrast mode.
+- the named accent palette (`--accent-blue …`) equals the numbered palette (`--blue-3 …`).
+- opacity / radius vars (`--dim-opacity` 55% / 90% HC, `--window-radius` 15px, …) are not
+  colors — read them in CSS directly (the probe only returns a color).
+
+GTK CSS reads all Adwaita variables natively (`var()`, `alpha(var(--x), f)`, `mix(...)`,
+`shade(...)`), so the CSS side never needs the bridge — it's only for the non-CSS sinks.
 
 ## Token → Adwaita mapping reference
 
@@ -80,10 +111,10 @@ CSS side can read Adwaita variables natively; the bridge is only for the non-CSS
 | --- | --- | --- |
 | `editor.foreground` / `background` | `--view-fg-color` / `--view-bg-color` | Slice 5 |
 | `editor.lineNumber` | `--view-fg-color @ --dim-opacity` | derive |
-| `text.muted` | `--window-fg-color @ --dim-opacity` / `.dim-label` / Pango `alpha="55%"` | native idiom |
+| `text.muted` | `--window-fg-color @ --dim-opacity` / `.dimmed` / Pango `alpha="55%"` | native idiom; `--dim-opacity` is 55% / 90% HC (`.dim-label` is deprecated since 1.7 — use `.dimmed`) |
 | `text.accent` | `--accent-color` | Slice 2 |
-| `border` | `--border-color` (CSS) / window-fg @ ~15% (non-CSS) | Slice 3 |
-| `shadow` | `--shade-color` | Slice 4 |
+| `border` | `--border-color` (CSS, or probe `get_color`) | probe resolves the `color-mix`; `--border-opacity` 15% / 50% HC. Slice 3 |
+| `shadow` | `--shade-color` (generic) — or the per-context shade: `--{card,popover,headerbar,sidebar}-shade-color` | libadwaita has no dedicated drop-shadow var; `--shade-color` is transparent black for separators/undershoots. Slice 4 |
 | `surface.popover` | `--popover-bg-color` (floating) / `--card-bg-color` (cards) | per-context |
 | `surface.selected` | `alpha(var(--accent-bg-color), 0.25)` (focused) / `0.1` (unfocused) | Slice 4 |
 | `status.{success,warning,error}` | `--{success,warning,error}-color` | Slice 1 |
@@ -127,8 +158,9 @@ Filled at load by resolving Adwaita vars:
 | `state.error.filled.background` | `--error-bg-color` |
 
 (Same pattern for the other states; `info`/`hint` resolve from `APP_COLORS`, the rest
-from libadwaita.) `text.accent` becomes `state.accent.flat.foreground`; `status.*`
-becomes `state.*`. Surfaces come back as resolved runtime fields (not in JSON):
+from libadwaita. Note `--warning-fg-color` is dark — `rgb(0 0 0 / 80%)`, both schemes —
+not white like the others, so `state.warning.filled.foreground` is near-black.)
+`text.accent` becomes `state.accent.flat.foreground`; `status.*` becomes `state.*`. Surfaces come back as resolved runtime fields (not in JSON):
 `theme.ui.surface.popover` ← `--popover-bg-color`, `surface.selected` ←
 `--accent-bg-color @ 25%`.
 
@@ -163,10 +195,12 @@ the on-disk/schema field if chrome-owned → `tsc` (it enumerates missed consume
   `var(--{success,warning,error}-color)` / `var(--info-color)`; non-CSS →
   `state.*`. Diff tints derive from Adwaita success/error per scheme.
 - **Slice 2 — accent + muted** (`text.accent`, `text.muted`). accent → `state.accent`;
-  muted → native idiom (CSS `opacity: var(--dim-opacity)` / `.dim-label`; Pango
+  muted → native idiom (CSS `opacity: var(--dim-opacity)` / `.dimmed`; Pango
   `alpha="55%"`; tag/draw sinks resolve `--window-fg-color @ dim-opacity` at load).
-- **Slice 3 — border** (`border`). CSS → `var(--border-color)`; non-CSS → window-fg @
-  `--border-opacity` (~15%) at load (lookup_color can't resolve `--border-color`).
+- **Slice 3 — border** (`border`). CSS → `var(--border-color)`; non-CSS → resolve
+  `--border-color` via the probe (`get_color` evaluates the `color-mix`). A hard-coded
+  fallback (window-fg @ `--border-opacity`, 15% / 50% HC) ignores high-contrast mode, so
+  prefer the probe. `lookup_color` can't resolve `--border-color` at all.
 - **Slice 4 — surfaces + shadow** (`surface.{popover,selected}`, `shadow`). CSS →
   `var(--popover-bg-color)` / `var(--card-bg-color)` /
   `alpha(var(--accent-bg-color), 0.25)` / `var(--shade-color)`.
@@ -178,18 +212,20 @@ the on-disk/schema field if chrome-owned → `tsc` (it enumerates missed consume
   `theme.ui.state` model, the bridge); verify against system Adwaita **light AND dark**;
   remove `src/poc/adwaita-probe.ts`.
 
-> The earlier abandoned attempt landed Slice 1 + Slice 4 in the *old* "consumers call
-> `lookupCSSColor` directly" style, then decided on the loader-fills model above — which
-> would have required reworking those call sites. When restarting, build everything on
-> the loader-fills model from the start.
+> Build everything on the loader-fills model from the start: consumers read `theme.*`
+> (filled at load), never call the resolver directly.
 
 ## Gotchas
 
 - **`tsc` is the completeness check.** Deleting a `ThemeUi` field makes the compiler list
   every remaining consumer. CSS-string consumers (`var(--t-ui-…)` in template literals)
   are **not** type-checked — grep for them: `rg 't-ui-<token>' src --type ts`.
-- A detached `Gtk.Label`'s style context survives GC in node-gtk (the bridge caches one)
-  — verified.
+- **Probe scheme-tracking (settled by the spike):** a *reused* `Gtk.Label` freezes at the
+  scheme it first computed and does NOT update on `Adw.StyleManager::notify::dark`; a
+  *freshly-created* label reads the current scheme synchronously. So the resolver must
+  build a new label per resolve, and `refillTheme` re-resolves under fresh `scheme:name`
+  cache keys. `realize()` without `present()` fails in a nested/headless session (no frame
+  clock) — the bare-label path sidesteps it entirely. See Handoff for the design.
 - libadwaita real vars include `--popover-bg-color`, `--card-bg-color`, `--shade-color`,
   `--accent-bg-color`, `--{success,warning,error}-color`. `--info-color` / `--hint-color`
   are **ours** (emitted via `appColorVariables`).
@@ -198,3 +234,87 @@ the on-disk/schema field if chrome-owned → `tsc` (it enumerates missed consume
   node-gtk at-exit SIGSEGV); lint `node_modules/.bin/eslint <files>`.
 - Leak / GC behavior is **not observable under `node --test`** — WeakRef-style leak
   checks need the live app / CDP, not the unit harness.
+
+## Handoff / current status (pick up here)
+
+Mid-flight in worktree `chore/styling-plan-review` (`/home/romgrk/src/zym-styling-plan-review`),
+**all uncommitted**. The resolver mechanism was validated against live libadwaita 1.9.1 /
+GTK 4.22 via throwaway spikes (now deleted); findings are baked in below.
+
+### Validated resolver (replaces `cssColor.ts` layer 2)
+
+Resolve a CSS color via a probe widget's computed `color`, NOT `lookup_color`. A **fresh,
+unrooted** `Gtk.Label` resolves synchronously against the display's CSS providers — it runs
+the full engine, so `--border-color` (`color-mix`), the named palette (`--accent-blue`),
+surfaces, everything resolves. A *reused* label freezes at its first scheme, so build one
+per resolve. Spike-confirmed values: `--border-color` dark `#ffffff26` / light `#0000061f`
+(light folds in the 80%-alpha `currentColor`), `--accent-blue` `#3584e4`, `--card-bg-color`
+dark `#ffffff14`, `--warning-fg-color` `#000000cc`, `--view-bg-color` dark `#1d1d20` / light
+`#ffffff`. Sketch:
+
+```ts
+let display: InstanceType<typeof Gdk.Display> | null = null;
+let probeProvider: InstanceType<typeof Gtk.CssProvider> | null = null;
+const probeIds = new Map<string, string>(); // cssName -> probe element id
+
+function probeResolve(name: string): string | null {
+  display ??= Gdk.Display.getDefault();
+  if (!display) return null;                 // headless → caller falls through to FALLBACK
+  let id = probeIds.get(name);
+  if (id === undefined) {
+    id = 'zymColorProbe_' + name.replace(/^--/, '').replace(/[^a-z0-9]/gi, '_');
+    probeIds.set(name, id);
+    if (!probeProvider) {
+      probeProvider = new Gtk.CssProvider();
+      Gtk.StyleContext.addProviderForDisplay(display, probeProvider, Gtk.STYLE_PROVIDER_PRIORITY_USER);
+    }
+    probeProvider.loadFromString([...probeIds].map(([n, i]) => `#${i} { color: var(${n}); }`).join('\n'));
+  }
+  const label = new Gtk.Label();             // FRESH per resolve — tracks the live scheme
+  label.setName(id);
+  const rgba = label.getColor();             // node-gtk returns the out GdkRGBA directly
+  return rgba ? gdkRgbaToString(rgba) : null;
+}
+```
+
+Keep layer 1 (`APP_COLORS`) and layer 3 (`FALLBACK_COLORS`); drop the `lookup_color` /
+`styleContext` machinery; update the module header. `cssColor.test.ts` covers layers 1+3
+only and should still pass (layer 2 needs a display).
+
+### WIP in the tree (the user's Slice-5-in-CSS, half-done)
+
+`var(--t-ui-editor-background)` → `var(--view-bg-color)` (and some `--t-ui-editor-foreground`
+→ `--view-fg-color`) across: `markdown-render.ts`, `AgentConversation.ts`, `AgentLauncher.ts`,
+`CompletionPopup.ts`, `LocationBar.ts`, `TextEditor.ts`, `WorkbenchList.ts`, `MarkdownView.ts`.
+Resolve before committing:
+
+- **Inconsistent pairs:** several places switched `background` to `--view-bg-color` but left
+  `color: var(--t-ui-editor-foreground)`. Decide whether to also move fg → `--view-fg-color`
+  (TextEditor's carets already did).
+- **`CompletionPopup.ts`:** dropped the `POPUP_BG` / `SELECTED_BG` consts + the `row:selected`
+  background + the icon color (now `opacity: 0.4`). `DETAIL_COLOR` (and maybe the `theme`
+  import) is likely now unused → **will fail typecheck**; remove it or re-use it. Confirm the
+  removed selected-row background is intended (relying on libadwaita's default selection).
+- **Two accidental comment regressions** (find-replace collateral — the code is unaffected,
+  the comments now lie): `src/theme/theme.ts` (`themeUiCssVariables` doc-comment example) and
+  `src/styles.ts` (~line 170) both rewrote a `--t-ui-editor-background` *example* to
+  `--view-bg-color`, but `themeUiCssVariables` still emits `--t-ui-…`. **Revert both.**
+
+### Next steps
+
+1. **`.dim-label` → `.dimmed`** (libadwaita ≥ 1.7; runtime is 1.9.1): `docs/styling.md` (the
+   "libadwaita's `.dim-label` class" mention) + `GitPanel.ts:373`, `NotificationLog.ts:68` &
+   `:74`, `NotificationToasts.ts:146`.
+2. **`FALLBACK_COLORS` (`theme.ts`):** add the `filled` triplets and fix the card value —
+   `--success-bg-color` L `#2ec27e` / D `#26a269`, `--success-fg-color` `#ffffff`;
+   `--warning-bg-color` L `#e5a50a` / D `#cd9309`, `--warning-fg-color` `#000000cc`;
+   `--error-bg-color` L `#e01b24` / D `#c01c28`, `--error-fg-color` `#ffffff`;
+   `--destructive-color` L `#c30000` / D `#ff938c`, `--destructive-bg-color` L `#e01b24` /
+   D `#c01c28`, `--destructive-fg-color` `#ffffff`; and **`--card-bg-color` dark
+   `#36363a` → `#ffffff14`**.
+3. **`cssColor.ts`:** swap layer 2 to the probe resolver above; update header comment.
+4. `pnpm run typecheck` + `node --test 'src/theme/*.test.ts'`.
+5. Resolve the WIP issues above; revert the two comment regressions.
+6. **Cleanup:** delete any leftover `src/poc/_getcolor_*.mjs` spike files.
+7. Commit everything; merge `chore/styling-plan-review` into `master` `--ff-only`; remove the
+   worktree + delete the branch.
