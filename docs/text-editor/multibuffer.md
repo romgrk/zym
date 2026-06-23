@@ -19,23 +19,24 @@ regression net.
 
 Three layers:
 
-- **Source** — a parsed text unit: a `Document` (live/new side, via
+- **Document** — a parsed text unit: a `Document` (live/new side, via
   `DocumentRegistry`) or a parsed blob (old/base side). Owns its model
   buffer + shared `DocumentSyntax` parse + LSP doc + file I/O.
 - **`ViewProjection`** (`src/ui/TextEditor/ViewProjection.ts`) — pure,
   GTK-free coordinate map over an ordered `Item[]` (`segment`s over
-  sources + synthesized `block` rows). Maps **source `(sourceKey,row,
-  col)` ↔ projection ↔ view**, with **folds composed as a second
-  transform**. `segment = { source, range, editable, kind: 'real' |
-  'phantom' }`. A single full-file segment with no folds `isIdentity` →
-  every translation short-circuits (zero-cost single-file path). The
-  editability gate (`isViewRangeEditable`) rejects block/phantom/
-  cross-source/folded ranges. A no-fold **row-direct** fast path lets
-  in-place edits skip the remap.
+  documents + synthesized `block` rows). Maps **document `(documentKey,row,
+  col)` ↔ buffer ↔ screen** (the vocabulary of
+  `docs/text-editor/coordinates.md`), with **folds composed as the
+  `buffer ↔ screen` transform**. `segment = { document, range, editable,
+  kind: 'real' | 'phantom' }`. A single full-file segment with no folds
+  `isIdentity` → every translation short-circuits (zero-cost single-file
+  path). The editability gate (`isScreenRangeEditable`) rejects block/
+  phantom/cross-document/folded ranges. A no-fold **row-direct** fast path
+  lets in-place edits skip the remap.
 - **`ProjectionView`** (`src/ui/TextEditor/ProjectionView.ts`) — per-view
   materialize + bidirectional sync over a `ViewProjection`. Does
-  write-through (view→source, clamped to one editable segment),
-  reverse-sync (source→view, incremental mirror; `retarget` =
+  write-through (screen→document, clamped to one editable segment),
+  reverse-sync (document→screen, incremental mirror; `retarget` =
   minimal-churn splice re-diff for computed surfaces), incremental
   re-segmentation (`resegment`/`adjustItems`), `retarget` (re-derive
   items + splice), and is the **`UndoTarget`** coordinating a multi-file
@@ -43,12 +44,12 @@ Three layers:
   (the diff) re-derive from scratch on a row-count reverse-sync.
 - **Painter** — `SyntaxController` highlights the view buffer two ways
   (`paintViewLines`):
-  - **single-source** (a normal file): pulls the one `DocumentSyntax`'s
+  - **single-document** (a normal file): pulls the one `DocumentSyntax`'s
     captures and maps them **through the fold map**
-    (`viewIterForModel`/`modelLineRange`) — **fold-aware**.
+    (`screenIterForDocument`/`documentLineRange`) — **fold-aware**.
   - **projection** (a multibuffer): `ExcerptSyntaxProjection.paintSlices`
-    pulls each excerpt's source captures and places them with a
-    **linear** source→view mapping (`sliceIter`) — **NOT fold-aware**
+    pulls each excerpt's document captures and places them with a
+    **linear** document→screen mapping (`sliceIter`) — **NOT fold-aware**
     (see the invariant below).
 
 **Surfaces** are thin orchestrators over a normal `TextEditor` natively
@@ -145,7 +146,7 @@ Single-file editing plus both multibuffer surfaces run on the
   diagnostics/inlay/LSP key off one `Document` today; they must place
   through the unified map for multi-file. The block-decoration substrate
   is ready: `editor.blockDecorations()` already projects SOURCE anchors
-  (`{sourceKey,row}`) through the unified map, so inline
+  (`{documentKey,row}`) through the unified map, so inline
   diagnostics/inlay/code-lens become another channel (see
   `block-decorations.md`).
 - **G9 — more diff sources** — only working-tree vs HEAD today; commit /
@@ -211,16 +212,16 @@ Single-file editing plus both multibuffer surfaces run on the
     don't need this — they're source-anchored block decorations that ride
     their marks (see `docs/text-editor/block-decorations.md`).
 - **Cross-segment edits must be rejected at the FUNNEL, not in
-  write-through.** A view range can be contiguous yet map to a
-  non-contiguous source range — two regions of one file are the same
-  source in different segments, with hidden rows between them.
+  write-through.** A screen range can be contiguous yet map to a
+  non-contiguous document range — two regions of one file are the same
+  document in different segments, with hidden rows between them.
   `EditorModel.setTextInBufferRange`'s `editableAt` gate (→
-  `ViewProjection.isViewRangeEditable`) requires a SINGLE SEGMENT, so
+  `ViewProjection.isScreenRangeEditable`) requires a SINGLE SEGMENT, so
   such an edit is refused before GTK mutates the buffer. Rejecting later
   (in `ProjectionView.writeThrough*`) is too late: the
   `insert-text`/`delete-range` handlers are *before* handlers, so
-  returning early skips the SOURCE write but GTK still applies the edit to
-  the VIEW — view and source diverge.
+  returning early skips the DOCUMENT write but GTK still applies the edit to
+  the view buffer — screen and document diverge.
 - **Overlay bands (headers/gaps/images) are SOURCE-anchored block
   decorations.** Each consumer declares them via
   `editor.blockDecorations()` (a `BlockDecorationSet`) and calls

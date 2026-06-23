@@ -40,8 +40,8 @@ export class MultiBufferDocument implements TextEditorSource {
   }
 
   // --- block-decoration anchoring (delegate to the PV's coordinate map) -------
-  viewRowForSource(_buffer: SourceBuffer, sourceKey: string | undefined, row: number): number | null {
-    return this.pv.view.viewRowForSource(sourceKey ?? this.pv.view.soleKey ?? '', row);
+  screenRowForDocument(_buffer: SourceBuffer, documentKey: string | undefined, row: number): number | null {
+    return this.pv.view.screenRowForDocument(documentKey ?? this.pv.view.soleDocumentKey ?? '', row);
   }
   onDidMaterialize(cb: () => void): () => void {
     return this.pv.onDidMaterialize(cb);
@@ -94,34 +94,34 @@ export class MultiBufferDocument implements TextEditorSource {
   }
 
   // --- folds + translation (delegate to the PV; folding is off, mostly inert) -
-  foldViewRange(_buffer: SourceBuffer, viewStart: number, viewEnd: number, placeholder: string): any {
+  foldScreenRange(_buffer: SourceBuffer, viewStart: number, viewEnd: number, placeholder: string): any {
     return this.pv.fold(viewStart, viewEnd, placeholder);
   }
-  unfoldView(_buffer: SourceBuffer, fold: any): void {
+  unfoldScreen(_buffer: SourceBuffer, fold: any): void {
     this.pv.unfold(fold);
   }
   foldPlaceholderRange(_buffer: SourceBuffer, fold: any): [number, number] {
     return this.pv.foldPlaceholderRange(fold);
   }
-  foldModelText(_buffer: SourceBuffer, fold: any): string {
-    return this.pv.foldModelText(fold);
+  foldDocumentText(_buffer: SourceBuffer, fold: any): string {
+    return this.pv.foldDocumentText(fold);
   }
   isFoldAlive(fold: any): boolean {
     return this.pv.isFoldAlive(fold);
   }
-  modelPointFromView(_buffer: SourceBuffer, point: Point): Point {
-    return this.pv.modelPointFromView(point);
+  documentPointFromScreen(_buffer: SourceBuffer, point: Point): Point {
+    return this.pv.documentPointFromScreen(point);
   }
-  viewPointFromModel(_buffer: SourceBuffer, point: Point): Point {
-    return this.pv.viewPointFromModel(point);
+  screenPointFromDocument(_buffer: SourceBuffer, point: Point): Point {
+    return this.pv.screenPointFromDocument(point);
   }
-  modelLineForViewLine(_buffer: SourceBuffer, viewLine: number): number {
-    return this.pv.modelLineForViewLine(viewLine);
+  documentLineForScreenLine(_buffer: SourceBuffer, viewLine: number): number {
+    return this.pv.documentLineForScreenLine(viewLine);
   }
-  viewLineForModelLine(_buffer: SourceBuffer, modelLine: number): number {
-    return this.pv.viewLineForModelLine(modelLine);
+  screenLineForDocumentLine(_buffer: SourceBuffer, modelLine: number): number {
+    return this.pv.screenLineForDocumentLine(modelLine);
   }
-  modelLineText(row: number): string {
-    return this.pv.modelLineText(row);
+  documentLineText(row: number): string {
+    return this.pv.documentLineText(row);
   }
 }

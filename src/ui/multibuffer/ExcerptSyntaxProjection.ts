@@ -7,7 +7,7 @@
  * own grammar — the keystone Phase 0 unlocked (one parse per Document, many projections).
  *
  * Coordinates come from the unified `ViewProjection` (the same substrate the single-file
- * editor uses): `segmentRunsInViewRange` gives the source slices to paint, `blockRows` the
+ * editor uses): `segmentRunsInScreenRange` gives the source slices to paint, `blockRows` the
  * header / gap rows to style.
  */
 import { Gtk, Pango } from '../../gi.ts';
@@ -41,15 +41,15 @@ export class ExcerptSyntaxProjection implements SyntaxProjection {
 
   paintSlices(viewFrom: number, viewTo: number): SyntaxSlice[] {
     const slices: SyntaxSlice[] = [];
-    for (const run of this.getProjection().segmentRunsInViewRange(viewFrom, viewTo)) {
-      const syntax = this.sources.get(run.sourceKey);
+    for (const run of this.getProjection().segmentRunsInScreenRange(viewFrom, viewTo)) {
+      const syntax = this.sources.get(run.documentKey);
       if (!syntax) continue;
       slices.push({
         syntax,
-        fromRow: run.fromSourceRow,
-        toRow: run.toSourceRow,
-        sourceStart: run.fromSourceRow,
-        viewStart: run.viewStart,
+        fromRow: run.fromDocumentRow,
+        toRow: run.toDocumentRow,
+        sourceStart: run.fromDocumentRow,
+        viewStart: run.screenStart,
       });
     }
     return slices;
@@ -64,9 +64,9 @@ export class ExcerptSyntaxProjection implements SyntaxProjection {
    *  from the painter's highlight tags, so no collision). */
   decorate(buffer: any): void {
     if (!this.headerTag) this.buildTags(buffer);
-    for (const { viewRow, kind } of this.getProjection().blockRows()) {
-      if (kind === 'header') this.applyRow(buffer, this.headerTag, viewRow);
-      else if (kind === 'gap') this.applyRow(buffer, this.gapTag, viewRow);
+    for (const { screenRow, kind } of this.getProjection().blockRows()) {
+      if (kind === 'header') this.applyRow(buffer, this.headerTag, screenRow);
+      else if (kind === 'gap') this.applyRow(buffer, this.gapTag, screenRow);
     }
   }
 
@@ -83,12 +83,12 @@ export class ExcerptSyntaxProjection implements SyntaxProjection {
     this.gapTag = mk({ name: 'mb:gap', editable: false, foreground: theme.ui.text.muted });
   }
 
-  /** Apply `tag` across view row `viewRow`, including its trailing newline so the paragraph
+  /** Apply `tag` across view row `screenRow`, including its trailing newline so the paragraph
    *  background spans the full row. */
-  private applyRow(buffer: any, tag: any, viewRow: number): void {
-    const start = asIter(buffer.getIterAtLine(viewRow));
-    const next = asIter(buffer.getIterAtLine(viewRow + 1));
-    const end = next.getLine() === viewRow ? this.endOfLine(buffer, viewRow) : next;
+  private applyRow(buffer: any, tag: any, screenRow: number): void {
+    const start = asIter(buffer.getIterAtLine(screenRow));
+    const next = asIter(buffer.getIterAtLine(screenRow + 1));
+    const end = next.getLine() === screenRow ? this.endOfLine(buffer, screenRow) : next;
     buffer.applyTag(tag, start, end);
   }
 

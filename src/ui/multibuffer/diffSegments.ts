@@ -61,13 +61,13 @@ export function rowsToItems(rows: readonly DiffRow[], newKey: string, oldKey: st
   let cur: Segment | null = null;
   for (const rec of rows) {
     const isNew = rec.op !== 'del';
-    const sourceKey = isNew ? newKey : oldKey;
+    const documentKey = isNew ? newKey : oldKey;
     const sourceRow = isNew ? rec.newRow : rec.oldRow;
     const kind: Segment['kind'] = isNew ? 'real' : 'phantom';
-    if (cur && cur.sourceKey === sourceKey && cur.kind === kind && sourceRow === cur.endRow + 1) {
+    if (cur && cur.documentKey === documentKey && cur.kind === kind && sourceRow === cur.endRow + 1) {
       cur.endRow = sourceRow;
     } else {
-      cur = { sourceKey, startRow: sourceRow, endRow: sourceRow, editable: isNew, kind };
+      cur = { documentKey, startRow: sourceRow, endRow: sourceRow, editable: isNew, kind };
       items.push({ type: 'segment', segment: cur });
     }
     ops.push(rec.op);

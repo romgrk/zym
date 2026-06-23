@@ -213,7 +213,7 @@ export function installGitBlame(): Disposable {
       () => editor.currentFile,
       () => editor.sourceText, // the canonical source text — folds don't substitute file lines
       () => editor.model.getCursorBufferPosition().row,
-      (viewRow) => editor.modelLineForViewLine(viewRow),
+      (viewRow) => editor.documentLineForScreenLine(viewRow),
     );
     const subs = new CompositeDisposable(
       editor.onDidChangeCursorPosition(() => controller.onCursorMoved()),

@@ -572,8 +572,8 @@ export class TextEditor implements DocumentHost {
       placeholderRanges: () => this.syntax.placeholderRanges(),
       unfoldAt: (off) => this.syntax.unfoldAtViewOffset(off),
       unfoldAll: () => this.syntax.unfoldAll(),
-      viewPointFromModel: (p) => this.document.viewPointFromModel(this.buffer, p),
-      modelLineText: (row) => this.document.modelLineText(row),
+      screenPointFromDocument: (p) => this.document.screenPointFromDocument(this.buffer, p),
+      documentLineText: (row) => this.document.documentLineText(row),
       revealFoldsMatching: (test) => this.syntax.revealFoldsMatching(test),
     });
     // Real (tree-sitter) indent source for `=`/paste-reindent/new lines.
@@ -792,7 +792,7 @@ export class TextEditor implements DocumentHost {
     this.inlayHints = new InlayHintController(
       this.view,
       () => this.lspDocument ?? null,
-      (line) => this.document.viewLineForModelLine(this.buffer, line),
+      (line) => this.document.screenLineForDocumentLine(this.buffer, line),
     );
     this.subs.add(zym.config.observe('editor.inlayHints', () => void this.inlayHints.refresh()));
     // A fold open/close shifts the view lines under the model-positioned decorations
@@ -963,7 +963,7 @@ export class TextEditor implements DocumentHost {
       () => this._currentFile,
       () => this.document.getText(), // diff against the MODEL (full file), not the collapsed view
       this.gitRepo,
-      (line) => this.document.modelLineForViewLine(this.buffer, line),
+      (line) => this.document.documentLineForScreenLine(this.buffer, line),
       () => this.root.getMapped(), // off-screen editors defer their git-show refresh
     );
     // When this editor is shown again (tab activated / dock revealed), run any
@@ -972,7 +972,7 @@ export class TextEditor implements DocumentHost {
     // Let the vim layer reach the gutter's hunk ranges (for `]h`/`[h`). Hunk rows are
     // MODEL/file rows; translate to view rows (folded ones collapse onto one line).
     this.editorModel.setHunkProvider(() => [
-      ...new Set((this.gitGutter?.hunkStartRows() ?? []).map((r) => this.document.viewLineForModelLine(this.buffer, r))),
+      ...new Set((this.gitGutter?.hunkStartRows() ?? []).map((r) => this.document.screenLineForDocumentLine(this.buffer, r))),
     ]);
     // Live updates: re-diff the buffer (debounced) on every edit.
     this.editorModel.onDidChangeText(() => this.gitGutter?.scheduleUpdate());
@@ -1133,11 +1133,11 @@ export class TextEditor implements DocumentHost {
 
   /** A declarative, SOURCE-anchored block-decoration set over this editor (the search/diff header
    *  + gap bands, markdown inline images). Declare specs via `set()`; the set reconciles them and
-   *  projects each `{sourceKey?, row}` anchor onto its view line. Positions then ride the
+   *  projects each `{documentKey?, row}` anchor onto its view line. Positions then ride the
    *  primitive's marks across edits; the editor re-projects the set only on a re-materialize. */
   blockDecorations(): BlockDecorationSet {
     const set = new BlockDecorationSet(this.blockDecorationController, (anchor) =>
-      'viewRow' in anchor ? anchor.viewRow : this.document.viewRowForSource(this.buffer, anchor.sourceKey, anchor.row),
+      'viewRow' in anchor ? anchor.viewRow : this.document.screenRowForDocument(this.buffer, anchor.documentKey, anchor.row),
     );
     this.decorationSets.push(set);
     this.decorationMaterializeSub ??= this.document.onDidMaterialize(() => {
@@ -1713,12 +1713,12 @@ export class TextEditor implements DocumentHost {
   }
 
   /** VIEW line → MODEL line through the fold projection (the diff gutter keys by it). */
-  modelLineForViewLine(line: number): number {
-    return this.document.modelLineForViewLine(this.buffer, line);
+  documentLineForScreenLine(line: number): number {
+    return this.document.documentLineForScreenLine(this.buffer, line);
   }
   /** MODEL line → VIEW line (a folded run's model lines have no view line). */
-  viewLineForModelLine(line: number): number {
-    return this.document.viewPointFromModel(this.buffer, new Point(line, 0)).row;
+  screenLineForDocumentLine(line: number): number {
+    return this.document.screenPointFromDocument(this.buffer, new Point(line, 0)).row;
   }
 
   /** After `zo`/`za` opens a fold, drop the caret (no selection) on the first non-blank
@@ -2022,7 +2022,7 @@ export class TextEditor implements DocumentHost {
   /** @internal The cursor for an LSP request (anchors completion/hover at this view).
    *  Translated to model space — inline fold anchors shift view columns past them. */
   lspCursor(): Point {
-    return this.document.modelPointFromView(this.buffer, this.editorModel.getCursorBufferPosition());
+    return this.document.documentPointFromScreen(this.buffer, this.editorModel.getCursorBufferPosition());
   }
 
   // --- Identity --------------------------------------------------------------

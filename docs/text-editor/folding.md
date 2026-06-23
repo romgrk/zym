@@ -3,7 +3,7 @@
 Single-line, **navigable** code folding — a folded `import { … } from 'x'`
 reads as `import {[N]} from 'x'` on one real line whose `}`/tail you can move
 the cursor over, and an `if/else if/else` folds one-per-line. Built on a
-reusable **view-side text projection**: a model range is physically replaced by
+reusable **view-side text projection**: a document range is physically replaced by
 a short placeholder in the *view* buffer while the headless **model** stays the
 full source of truth.
 
@@ -31,18 +31,18 @@ all of these.
 
 ## The primitive — `Document` fold projection
 
-`src/ui/TextEditor/Document.ts`. A **fold** collapses a model range into a short
+`src/ui/TextEditor/Document.ts`. A **fold** collapses a document range into a short
 placeholder in ONE view; folds are per-view (a split can fold what the other
 shows).
 
 ```ts
-const fold = doc.foldViewRange(buffer, viewStart, viewEnd, '[3]'); // collapse → placeholder
-doc.unfoldView(buffer, fold);                                       // restore model text
-const [ps, pe] = doc.foldPlaceholderRange(buffer, fold);           // live view offsets
+const fold = doc.foldScreenRange(buffer, viewStart, viewEnd, '[3]'); // collapse → placeholder
+doc.unfoldScreen(buffer, fold);                                       // restore document text
+const [ps, pe] = doc.foldPlaceholderRange(buffer, fold);           // live screen offsets
 ```
 
 Each fold owns four marks: `pStart/pEnd` (view, the placeholder) and
-`mStart/mEnd` (model, the collapsed range). The view buffer = model text with
+`mStart/mEnd` (model, the collapsed range). The view buffer = document text with
 each fold's `[mStart,mEnd)` replaced by its placeholder.
 
 **Invariant (the whole point):** `model == view with every placeholder
@@ -56,8 +56,8 @@ forwards to the model.
   edit lands at the right *view* offset). A model edit **inside** a collapsed
   range is absorbed by the fold (`editInsideFold`), not painted onto the
   placeholder.
-- `modelPointFromView` / `viewPointFromModel`, `modelLineForViewLine` /
-  `viewLineForModelLine`, `modelLineText` — for the boundaries below.
+- `documentPointFromScreen` / `screenPointFromDocument`, `documentLineForScreenLine` /
+  `screenLineForDocumentLine`, `documentLineText` — for the boundaries below.
 
 Validated headless in `Document.test.ts` (incl. a 600-edit cross-view fuzz with
 a live fold that round-trips through unfold).
@@ -104,20 +104,20 @@ atomic — it does NOT trust GtkSourceView's view of the text:
   real text, so deleting a selection that includes a fold deletes the folded
   lines too. Guarded so it can't infinitely recurse if nothing reveals.
 - **Search over the document** — before scanning the (collapsed) view, the
-  search reveals each fold whose **model content** matches
+  search reveals each fold whose **document content** matches
   (`revealFoldsMatching`), leaving non-matching folds closed. So `/`, the search
   bar, `*`/`#` find folded content without a blanket unfold, and never match the
   `[N]` placeholder text.
 - `zc` keeps the caret unless it was inside the collapsed body.
 
-## Boundary rule — rendering model coordinates on the projected view
+## Boundary rule — rendering document coordinates on the projected view
 
-**Anything that paints LSP/model-space results on the view must do TWO things**
+**Anything that paints LSP/document-space results on the view must do TWO things**
 (both no-ops without folds, via identity translation):
 
-1. **Translate model→view at render time** (and skip/clamp ranges inside folds),
-   because view lines/cols diverge from the file once folded.
-2. **Re-render when folds toggle** — a fold open/close shifts the view lines
+1. **Translate document→screen at render time** (and skip/clamp ranges inside folds),
+   because screen lines/cols diverge from the file once folded.
+2. **Re-render when folds toggle** — a fold open/close shifts the screen lines
    *under* already-rendered decorations, so positions go stale until re-placed.
    `SyntaxController.onFoldsChanged(cb)` fires after every fold open/close (it's
    the choke point — `toggleFold` covers commands/gutter/`za`/`zc`/search/
@@ -127,31 +127,31 @@ Today:
 - `DiagnosticsView` — encodes columns off `modelLineTextForRow`, then
   `viewRangeFromModel(...)` per diagnostic (a fold-internal one lands on its
   placeholder line); re-rendered on `onFoldsChanged`.
-- `InlayHintController` — translates each hint's model line to a view line
-  (injected `toViewLine`, wired to `viewLineForModelLine`); caches the last
+- `InlayHintController` — translates each hint's document line to a screen line
+  (injected `toViewLine`, wired to `screenLineForDocumentLine`); caches the last
   fetch (`lastHints`) so a fold toggle re-places via `rerender()` (no LSP
   round-trip).
 - `GitGutter` — the change bars: diff against the **model** text (not the
-  collapsed view, which yields a garbage diff), translate view→model in
+  collapsed view, which yields a garbage diff), translate screen→document in
   `queryData`; the gutter re-queries on the fold toggle's `queueDraw`, so no
-  subscription needed. `]h`/`[h` translate the hunk rows model→view; hunk
+  subscription needed. `]h`/`[h` translate the hunk rows document→screen; hunk
   actions unfold first so view==model.
 - LSP **requests** translate the other way: `lspCursor` is
-  `modelPointFromView(...)`.
+  `documentPointFromScreen(...)`.
 
-When adding a feature that renders model-space ranges (references peek, code
+When adding a feature that renders document-space ranges (references peek, code
 lens, range code-actions, etc.) apply the same `viewRangeFromModel` /
-`modelPointFromView` **and** re-render on `onFoldsChanged` — the standing cost of
+`documentPointFromScreen` **and** re-render on `onFoldsChanged` — the standing cost of
 view≠model, and the easiest thing to forget.
 
 ## Reusing the projection for other inline markers
 
 Any "show a short stand-in for a longer model span, on one real navigable line"
-can reuse `foldViewRange`/`unfoldView` + the `FoldAccess` atomicity, e.g.
+can reuse `foldScreenRange`/`unfoldScreen` + the `FoldAccess` atomicity, e.g.
 collapsing a long string/array literal, a `// region` block, generated code, or
 a redacted span. Wire a consumer that (1) decides the view range + placeholder,
-(2) styles the placeholder via a tag, (3) reuses the model↔view translation at
-every model-coord boundary. Overlay/peek content that adds its *own* line still
+(2) styles the placeholder via a tag, (3) reuses the document↔screen translation at
+every document-coord boundary. Overlay/peek content that adds its *own* line still
 belongs to [inline-widgets.md](inline-widgets.md); use the projection when the
 view shows *less*.
 
@@ -164,10 +164,10 @@ view shows *less*.
   change — see language-config.md). Indentation-based languages (Python) have no
   continuation line, so keep-footer doesn't apply.
 - **Nested folds** compose; folding over an already-folded region **subsumes**
-  the inner fold (`Document.foldViewRange` drops it,
+  the inner fold (`Document.foldScreenRange` drops it,
   `SyntaxController.pruneDeadFolds` clears the handle, `isFoldAlive` guards the
   read paths). Covered by tests.
-- New **model-coord renderers** must translate *and* re-render on
+- New **document-coord renderers** must translate *and* re-render on
   `onFoldsChanged` (see the boundary rule).
 
 ## Remaining / planned

@@ -180,8 +180,8 @@ function modelWithFold() {
     placeholderRanges: () => [[2, 7]],
     unfoldAt: (off) => { unfolded.push(off); return true; },
     unfoldAll: () => {},
-    viewPointFromModel: (p) => p,
-    modelLineText: () => '',
+    screenPointFromDocument: (p) => p,
+    documentLineText: () => '',
     revealFoldsMatching: () => {},
   });
   return { m, buffer, unfolded };
@@ -234,14 +234,14 @@ test('editing across a fold reveals it and edits the real (former-folded) text',
   const buffer = doc.createView();
   const view = new GtkSource.View({ buffer });
   const m = new EditorModel(view, buffer);
-  const fold = doc.foldViewRange(buffer, 2, 5, '[...]'); // collapse "XYZ" → view "ab[...]cd"
+  const fold = doc.foldScreenRange(buffer, 2, 5, '[...]'); // collapse "XYZ" → view "ab[...]cd"
   let folded = true;
   m.setFoldAccess({
     placeholderRanges: () => (folded ? [doc.foldPlaceholderRange(buffer, fold!)] : []),
-    unfoldAt: () => { doc.unfoldView(buffer, fold!); folded = false; return true; },
+    unfoldAt: () => { doc.unfoldScreen(buffer, fold!); folded = false; return true; },
     unfoldAll: () => {},
-    viewPointFromModel: (p) => p,
-    modelLineText: () => '',
+    screenPointFromDocument: (p) => p,
+    documentLineText: () => '',
     revealFoldsMatching: () => {},
   });
   // Delete a range crossing the placeholder → reveal + delete the real content.

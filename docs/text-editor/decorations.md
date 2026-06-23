@@ -18,7 +18,7 @@ Atom's types are `line`, `line-number`/`gutter`, `highlight`, `cursor`,
 | **gutter / line-number** | per-renderer `GtkSource.GutterRendererText` | a glyph per line | line numbers + fold chevron (`SyntaxController`), git change bars (`GitGutter`), diagnostic severity (`DiagnosticsView`), diff old/new line columns (`CombinedDiffLineNumberGutter`) |
 | **cursor** | `EditorModel` (`cursorTag`, `extraSelectionTag`) | tag + native | vim block cursor, multi-cursor, native selection |
 | **text** (trailing/virtual) | `VirtualText` | `GtkSourceAnnotations` (EOL) | inlay hints, error lens |
-| **text** (mid-line virtual) | the fold projection (`Document.foldViewRange`) | view-only text in the view buffer | fold `[N]` placeholder — see below |
+| **text** (mid-line virtual) | the fold projection (`Document.foldScreenRange`) | view-only text in the view buffer | fold `[N]` placeholder — see below |
 | **overlay** | `EditorPopover`, `Peek`, `Leap` | cursor-anchored `Gtk.Popover` (`EditorPopover`); `Gtk.Overlay`/`Gtk.Fixed` child (`Peek`/`Leap`) | hover, signature help, completion (`EditorPopover`); see-definition (`Peek`); leap marks (`Leap`) |
 | **block** | `BlockDecorations` | text-window overlay widget that reserves a vertical band | diff `⋯ N unchanged lines` |
 
@@ -56,7 +56,7 @@ Two flavors of "text shown but not in the model":
 - **Mid-line** view-only text — the **fold projection** already does this:
   the fold `[N]` placeholder is real text in the *view* buffer (not the
   model), inserted mid-line (`import {[N]} from 'x'`). So true
-  column-positioned virtual text *is* available via `Document.foldViewRange`
+  column-positioned virtual text *is* available via `Document.foldScreenRange`
   + the view↔model translation — inlay hints currently use the simpler EOL
   path, but could move mid-line on this mechanism.
 

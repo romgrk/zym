@@ -93,9 +93,9 @@ export interface FoldAccess {
   /** Expand every fold (so a search sees the whole document). */
   unfoldAll(): void;
   /** MODEL caret → VIEW caret (folds shift lines/cols); for rendering LSP results. */
-  viewPointFromModel(point: Point): Point;
+  screenPointFromDocument(point: Point): Point;
   /** MODEL line text (no newline) — for LSP column-encoding of model-space ranges. */
-  modelLineText(row: number): string;
+  documentLineText(row: number): string;
   /** Reveal folds whose collapsed model content matches `test` (search). */
   revealFoldsMatching(test: (text: string) => boolean): void;
 }
@@ -528,14 +528,14 @@ export class EditorModel {
 
   /** MODEL row text (the LSP file's line), falling back to the view when no folds. */
   modelLineTextForRow(row: number): string {
-    return this.foldAccess ? this.foldAccess.modelLineText(row) : this.lineTextForBufferRow(row);
+    return this.foldAccess ? this.foldAccess.documentLineText(row) : this.lineTextForBufferRow(row);
   }
 
   /** Translate a MODEL range (LSP result) into VIEW space for rendering on the buffer. */
   viewRangeFromModel(range: Range): Range {
     if (!this.foldAccess) return Range.fromObject(range);
     const r = Range.fromObject(range);
-    return new Range(this.foldAccess.viewPointFromModel(r.start), this.foldAccess.viewPointFromModel(r.end));
+    return new Range(this.foldAccess.screenPointFromDocument(r.start), this.foldAccess.screenPointFromDocument(r.end));
   }
 
   private offsetOf(iter: TextIter): number {

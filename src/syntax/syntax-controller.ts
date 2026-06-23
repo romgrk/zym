@@ -32,23 +32,23 @@ import type { SyntaxProjection, SyntaxSlice } from './SyntaxProjection.ts';
 import { rangeGaps, mergeRange, type LineRange } from './paintRegions.ts';
 import { HighlightTags } from './highlightTags.ts';
 import { GutterRenderer } from './gutterRenderers.ts';
-/** The view↔model projection a SyntaxController folds through (the editor's Document).
- *  The painter parses the *model* (via a shared `DocumentSyntax`) and translates captures
+/** The screen↔document projection a SyntaxController folds through (the editor's Document).
+ *  The painter parses the *document* (via a shared `DocumentSyntax`) and translates captures
  *  + tree-query results through these, so the line/point translators are now part of the
  *  contract (each returns identity while a view has no collapsed folds). */
 export interface FoldHost {
-  foldViewRange(buffer: SourceBuffer, viewStart: number, viewEnd: number, placeholder: string): any;
-  unfoldView(buffer: SourceBuffer, fold: any): void;
+  foldScreenRange(buffer: SourceBuffer, screenStart: number, screenEnd: number, placeholder: string): any;
+  unfoldScreen(buffer: SourceBuffer, fold: any): void;
   foldPlaceholderRange(buffer: SourceBuffer, fold: any): [number, number];
-  modelLineForViewLine(buffer: SourceBuffer, viewLine: number): number;
-  viewLineForModelLine(buffer: SourceBuffer, modelLine: number): number;
-  modelPointFromView(buffer: SourceBuffer, point: Point): Point;
-  viewPointFromModel(buffer: SourceBuffer, point: Point): Point;
-  modelLineText(row: number): string;
+  documentLineForScreenLine(buffer: SourceBuffer, screenLine: number): number;
+  screenLineForDocumentLine(buffer: SourceBuffer, documentLine: number): number;
+  documentPointFromScreen(buffer: SourceBuffer, point: Point): Point;
+  screenPointFromDocument(buffer: SourceBuffer, point: Point): Point;
+  documentLineText(row: number): string;
   /** False once an enclosing fold has subsumed this one (its marks are gone). */
   isFoldAlive(fold: any): boolean;
-  /** The model text a fold currently collapses (for matching during search). */
-  foldModelText(buffer: SourceBuffer, fold: any): string;
+  /** The document text a fold currently collapses (for matching during search). */
+  foldDocumentText(buffer: SourceBuffer, fold: any): string;
 }
 
 // Paint newly-revealed lines this often *during* a scroll (a throttle, not a trailing
@@ -160,8 +160,8 @@ export class SyntaxController {
   // Git change bar / diagnostic glyph cells, fed by GitGutter / DiagnosticsView via
   // setGitCell / setDiagCell (they no longer own renderers). null = no such column;
   // a function returns the per-line markup fragment (or '' for a blank, padded cell).
-  private gitCell: ((viewLine: number) => string) | null = null;
-  private diagCell: ((viewLine: number) => string) | null = null;
+  private gitCell: ((screenLine: number) => string) | null = null;
+  private diagCell: ((screenLine: number) => string) | null = null;
   // Cached line-number digit width. The gutter renderer reads this once per visible
   // line per paint, so it must not call getLineCount() (an FFI) each time; it's
   // refreshed from primeGutter (on every buffer edit) and lazily on first read.
@@ -323,8 +323,8 @@ export class SyntaxController {
    * when there's no parse tree.
    */
   isInStringOrComment(row: number, column: number): boolean {
-    const [mRow, mCol] = this.modelPos(row, column);
-    return this.docSyntax.isInStringOrComment(mRow, mCol);
+    const [docRow, docCol] = this.documentPos(row, column);
+    return this.docSyntax.isInStringOrComment(docRow, docCol);
   }
 
   /** Highlight the bracket under (or just before) the cursor and its match. */
@@ -473,9 +473,9 @@ export class SyntaxController {
       }
       return;
     }
-    const [mFrom, mTo] = vFrom === null || vTo === null ? [null, null] : this.modelLineRange(vFrom, vTo);
+    const [mFrom, mTo] = vFrom === null || vTo === null ? [null, null] : this.documentLineRange(vFrom, vTo);
     const captures = this.docSyntax.captures(mFrom, mTo);
-    this.highlight.paint(this.buffer, captures, (row, col) => this.viewIterForModel(row, col));
+    this.highlight.paint(this.buffer, captures, (row, col) => this.screenIterForDocument(row, col));
   }
 
   /** A VIEW-buffer iter for a source `(row, col)` capture inside a projection `slice` (a
@@ -491,9 +491,9 @@ export class SyntaxController {
   private sliceIter(slice: SyntaxSlice, sourceRow: number, sourceCol: number): any {
     if (sourceRow < slice.fromRow) return asIter(this.buffer.getIterAtLineOffset(slice.viewStart, 0));
     if (sourceRow > slice.toRow) return this.lineEndIter(slice.viewStart + (slice.toRow - slice.sourceStart));
-    const viewRow = slice.viewStart + (sourceRow - slice.sourceStart);
-    const col = slice.syntax.hasAstral ? this.toCodepointColumn(viewRow, sourceCol) : sourceCol;
-    return asIter(this.buffer.getIterAtLineOffset(viewRow, col));
+    const screenRow = slice.viewStart + (sourceRow - slice.sourceStart);
+    const col = slice.syntax.hasAstral ? this.toCodepointColumn(screenRow, sourceCol) : sourceCol;
+    return asIter(this.buffer.getIterAtLineOffset(screenRow, col));
   }
 
   /** On scroll (no reparse): paint just the parts of the visible range not already in the
@@ -596,7 +596,7 @@ export class SyntaxController {
   /** @internal The diagnostic-glyph column is active. */
   get hasDiagColumn(): boolean { return this.diagCell !== null; }
 
-  setGitCell(cell: ((viewLine: number) => string) | null): void {
+  setGitCell(cell: ((screenLine: number) => string) | null): void {
     this.gitCell = cell;
     if (this.disposed) return; // GitGutter.dispose may run after ours — don't touch the buffer
     this.lineNumberPrimedDigits = -1; // force re-prime (column width changed)
@@ -604,7 +604,7 @@ export class SyntaxController {
     this.redrawGutter();
   }
 
-  setDiagCell(cell: ((viewLine: number) => string) | null): void {
+  setDiagCell(cell: ((screenLine: number) => string) | null): void {
     this.diagCell = cell;
     if (this.disposed) return;
     this.lineNumberPrimedDigits = -1;
@@ -612,9 +612,9 @@ export class SyntaxController {
     this.redrawGutter();
   }
 
-  /** Markup fragment for the git bar / diagnostic glyph on `viewLine` ('' = blank). */
-  gitCellFor(viewLine: number): string { return this.gitCell ? this.gitCell(viewLine) : ''; }
-  diagCellFor(viewLine: number): string { return this.diagCell ? this.diagCell(viewLine) : ''; }
+  /** Markup fragment for the git bar / diagnostic glyph on `screenLine` ('' = blank). */
+  gitCellFor(screenLine: number): string { return this.gitCell ? this.gitCell(screenLine) : ''; }
+  diagCellFor(screenLine: number): string { return this.diagCell ? this.diagCell(screenLine) : ''; }
 
   /** Repaint the gutter (a git/diagnostic recompute changed a cell). No-op pre-install. */
   redrawGutter(): void { this.gutterRenderer?.queueDraw(); }
@@ -663,54 +663,54 @@ export class SyntaxController {
   /** The syntactic indent level for VIEW `row` (enclosing fold-block depth), or null when
    *  there's no parse tree — the editor's "real" indent source for `=` / paste-reindent. */
   indentLevelForRow(row: number): number | null {
-    return this.docSyntax.indentLevelForRow(this.modelRow(row));
+    return this.docSyntax.indentLevelForRow(this.documentRow(row));
   }
 
-  // --- model↔view translation ------------------------------------------------
-  // Captures + tree queries come back from the shared parse in MODEL coordinates. They
-  // only differ from this view's coordinates when (a) the parse runs on a separate model
-  // buffer (a shared DocumentSyntax — `translate`) AND (b) this view has collapsed folds.
-  // Both false → every translator is identity (the common path costs nothing).
+  // --- document↔screen translation -------------------------------------------
+  // Captures + tree queries come back from the shared parse in DOCUMENT coordinates. They
+  // only differ from this view's screen coordinates when (a) the parse runs on a separate
+  // document buffer (a shared DocumentSyntax — `translate`) AND (b) this view has collapsed
+  // folds. Both false → every translator is identity (the common path costs nothing).
 
-  /** Whether captures need model→view translation: true when the shared parse runs on a
-   *  buffer other than this view's (i.e. the Document's model), false for a private parse. */
+  /** Whether captures need document→screen translation: true when the shared parse runs on a
+   *  buffer other than this view's (i.e. the Document's model buffer), false for a private parse. */
   private get translate(): boolean {
     return this.docSyntax.sourceBuffer !== this.buffer;
   }
 
-  /** Whether this view currently collapses any model range (folds shift view lines/cols). */
-  private get viewFolded(): boolean {
+  /** Whether this view currently collapses any document range (folds shift screen lines/cols). */
+  private get screenFolded(): boolean {
     return this.translate && !!this.foldHost && this.activeFolds.length > 0;
   }
 
-  private modelRow(viewRow: number): number {
-    return this.viewFolded ? this.foldHost!.modelLineForViewLine(this.buffer, viewRow) : viewRow;
+  private documentRow(screenRow: number): number {
+    return this.screenFolded ? this.foldHost!.documentLineForScreenLine(this.buffer, screenRow) : screenRow;
   }
-  private viewRow(modelRow: number): number {
-    return this.viewFolded ? this.foldHost!.viewLineForModelLine(this.buffer, modelRow) : modelRow;
+  private screenRow(documentRow: number): number {
+    return this.screenFolded ? this.foldHost!.screenLineForDocumentLine(this.buffer, documentRow) : documentRow;
   }
-  private modelPos(viewRow: number, viewCol: number): [number, number] {
-    if (!this.viewFolded) return [viewRow, viewCol];
-    const p = this.foldHost!.modelPointFromView(this.buffer, new Point(viewRow, viewCol));
+  private documentPos(screenRow: number, screenCol: number): [number, number] {
+    if (!this.screenFolded) return [screenRow, screenCol];
+    const p = this.foldHost!.documentPointFromScreen(this.buffer, new Point(screenRow, screenCol));
     return [p.row, p.column];
   }
-  private modelLineRange(vFrom: number, vTo: number): [number, number] {
-    return [this.modelRow(vFrom), this.modelRow(vTo)];
+  private documentLineRange(screenFrom: number, screenTo: number): [number, number] {
+    return [this.documentRow(screenFrom), this.documentRow(screenTo)];
   }
 
-  /** A VIEW-buffer iter for a MODEL `(row, col)` capture position. Identity (direct iter,
-   *  view text == model text) unless this view has collapsed folds, in which case it walks
+  /** A view-buffer iter for a DOCUMENT `(row, col)` capture position. Identity (direct iter,
+   *  screen text == document text) unless this view has collapsed folds, in which case it walks
    *  the Document's projection; a position inside a fold maps to its placeholder (then the
    *  zero-width range applyTag no-ops). */
-  private viewIterForModel(modelRow: number, modelCol: number): any {
-    if (this.viewFolded) {
-      const col = this.docSyntax.hasAstral ? this.modelCodepointCol(modelRow, modelCol) : modelCol;
-      const vp = this.foldHost!.viewPointFromModel(this.buffer, new Point(modelRow, col));
+  private screenIterForDocument(documentRow: number, documentCol: number): any {
+    if (this.screenFolded) {
+      const col = this.docSyntax.hasAstral ? this.documentCodepointCol(documentRow, documentCol) : documentCol;
+      const vp = this.foldHost!.screenPointFromDocument(this.buffer, new Point(documentRow, col));
       return asIter(this.buffer.getIterAtLineOffset(vp.row, vp.column));
     }
-    // view line == model line, view text == model text → resolve directly on the view buffer.
-    const col = this.docSyntax.hasAstral ? this.toCodepointColumn(modelRow, modelCol) : modelCol;
-    return asIter(this.buffer.getIterAtLineOffset(modelRow, col));
+    // screen line == document line, screen text == document text → resolve directly on the view buffer.
+    const col = this.docSyntax.hasAstral ? this.toCodepointColumn(documentRow, documentCol) : documentCol;
+    return asIter(this.buffer.getIterAtLineOffset(documentRow, col));
   }
 
   /** Rebuild `foldsByHeaderLine` from the shared parse's discovered fold ranges (MODEL
@@ -736,9 +736,9 @@ export class SyntaxController {
     }
     // Expanded discovered foldable regions (model coords → this view's lines).
     for (const { startRow, endRow, joinFooter } of this.docSyntax.foldRanges()) {
-      const vStart = this.viewRow(startRow);
+      const vStart = this.screenRow(startRow);
       if (this.foldsByHeaderLine.has(vStart)) continue; // a collapsed fold already owns this line
-      this.foldsByHeaderLine.set(vStart, { startLine: vStart, endLine: this.viewRow(endRow), folded: false, joinFooter });
+      this.foldsByHeaderLine.set(vStart, { startLine: vStart, endLine: this.screenRow(endRow), folded: false, joinFooter });
     }
   }
 
@@ -753,9 +753,9 @@ export class SyntaxController {
   /** UTF-16 column on MODEL `row` → codepoint column, for the folded translation path
    *  (which feeds codepoint columns into the Document projection). Reads the model line
    *  text through the fold host. Only reached on astral + folded; uncached (rare). */
-  private modelCodepointCol(modelRow: number, utf16Col: number): number {
+  private documentCodepointCol(documentRow: number, utf16Col: number): number {
     if (utf16Col <= 0 || !this.foldHost) return utf16Col;
-    const text = this.foldHost.modelLineText(modelRow);
+    const text = this.foldHost.documentLineText(documentRow);
     let cp = 0;
     for (let i = 0; i < utf16Col && i < text.length; cp++) {
       const code = text.charCodeAt(i);
@@ -794,7 +794,7 @@ export class SyntaxController {
     // Track this code fold's desired open/closed state by its MODEL start row. Captured
     // before the expand splices the body back.
     const codeFold = !!this.foldHost;
-    const modelStart = codeFold ? this.modelRow(region.startLine) : -1;
+    const modelStart = codeFold ? this.documentRow(region.startLine) : -1;
     let revealed: RevealedRange | null = null;
     if (region.folded && region.handle) {
       // Expand: restore the body text from the model and report the restored range so a
@@ -802,7 +802,7 @@ export class SyntaxController {
       const [ps, pe] = this.foldHost!.foldPlaceholderRange(this.buffer, region.handle);
       const sm = buffer.createMark(null, asIter(buffer.getIterAtOffset(ps)), true);
       const em = buffer.createMark(null, asIter(buffer.getIterAtOffset(pe)), false);
-      this.foldHost!.unfoldView(this.buffer, region.handle);
+      this.foldHost!.unfoldScreen(this.buffer, region.handle);
       revealed = [this.pointAtOffset(this.markOffset(sm)), this.pointAtOffset(this.markOffset(em))];
       buffer.deleteMark(sm);
       buffer.deleteMark(em);
@@ -829,8 +829,8 @@ export class SyntaxController {
       const lines = join ? region.endLine - region.startLine + 1 : region.endLine - region.startLine - 1;
       const placeholder = `[${lines}]`; // lines folded
       const cursorInside = cursorOff > viewStart && cursorOff < viewEnd;
-      const handle = this.foldHost.foldViewRange(this.buffer, viewStart, viewEnd, placeholder);
-      // foldViewRange may have subsumed folds nested in this range — drop their handles.
+      const handle = this.foldHost.foldScreenRange(this.buffer, viewStart, viewEnd, placeholder);
+      // foldScreenRange may have subsumed folds nested in this range — drop their handles.
       this.pruneDeadFolds();
       if (handle) {
         this.activeFolds.push(handle);
@@ -894,8 +894,8 @@ export class SyntaxController {
       for (const r of children) {
         if (collapsed.some((c) => r.startRow >= c.s && r.endRow <= c.e)) continue; // nested → subsumed
         const child: FoldRegion = {
-          startLine: this.viewRow(r.startRow),
-          endLine: this.viewRow(r.endRow),
+          startLine: this.screenRow(r.startRow),
+          endLine: this.screenRow(r.endRow),
           folded: false,
           joinFooter: r.joinFooter,
         };
@@ -982,40 +982,40 @@ export class SyntaxController {
    * function or with no parse tree.
    */
   functionRangeAt(row: number, column: number): NodeRowRange | null {
-    const [mRow, mCol] = this.modelPos(row, column);
-    return this.toViewRowRange(this.docSyntax.functionRangeAt(mRow, mCol));
+    const [docRow, docCol] = this.documentPos(row, column);
+    return this.toScreenRowRange(this.docSyntax.functionRangeAt(docRow, docCol));
   }
 
   /** The class/interface/enum enclosing `(row, column)`, for the `ic`/`ac` text object. */
   classRangeAt(row: number, column: number): NodeRowRange | null {
-    const [mRow, mCol] = this.modelPos(row, column);
-    return this.toViewRowRange(this.docSyntax.classRangeAt(mRow, mCol));
+    const [docRow, docCol] = this.documentPos(row, column);
+    return this.toScreenRowRange(this.docSyntax.classRangeAt(docRow, docCol));
   }
 
   /** Structural scopes (class/function/…) enclosing view `(row, column)`, outermost first,
    *  for the editor info-bar breadcrumb. Names only — no view-range round-trip needed. */
   breadcrumbAt(row: number, column: number): Crumb[] {
-    const [mRow, mCol] = this.modelPos(row, column);
-    return this.docSyntax.breadcrumbAt(mRow, mCol);
+    const [docRow, docCol] = this.documentPos(row, column);
+    return this.docSyntax.breadcrumbAt(docRow, docCol);
   }
 
   /** The JSX/HTML tag-name ranges (opening + closing, or one self-closing) of the
    *  element at `(row, column)`, for `tag:rename`. Null when off a tag / no tree. */
   tagNamesAt(row: number, column: number): TagName[] | null {
-    const [mRow, mCol] = this.modelPos(row, column);
-    const tags = this.docSyntax.tagNamesAt(mRow, mCol);
-    if (!tags || !this.viewFolded) return tags; // model coords == view coords
+    const [docRow, docCol] = this.documentPos(row, column);
+    const tags = this.docSyntax.tagNamesAt(docRow, docCol);
+    if (!tags || !this.screenFolded) return tags; // document coords == screen coords
     return tags.map((t) => {
-      const s = this.foldHost!.viewPointFromModel(this.buffer, new Point(t.startRow, t.startColumn));
-      const e = this.foldHost!.viewPointFromModel(this.buffer, new Point(t.endRow, t.endColumn));
+      const s = this.foldHost!.screenPointFromDocument(this.buffer, new Point(t.startRow, t.startColumn));
+      const e = this.foldHost!.screenPointFromDocument(this.buffer, new Point(t.endRow, t.endColumn));
       return { ...t, startRow: s.row, startColumn: s.column, endRow: e.row, endColumn: e.column };
     });
   }
 
   /** Translate a model-coord NodeRowRange to this view's lines (identity unless folded). */
-  private toViewRowRange(r: NodeRowRange | null): NodeRowRange | null {
-    if (!r || !this.viewFolded) return r;
-    const vl = (row: number): number => this.foldHost!.viewLineForModelLine(this.buffer, row);
+  private toScreenRowRange(r: NodeRowRange | null): NodeRowRange | null {
+    if (!r || !this.screenFolded) return r;
+    const vl = (row: number): number => this.foldHost!.screenLineForDocumentLine(this.buffer, row);
     return {
       outer: { startRow: vl(r.outer.startRow), endRow: vl(r.outer.endRow) },
       inner: { startRow: vl(r.inner.startRow), endRow: vl(r.inner.endRow) },
@@ -1154,8 +1154,8 @@ export class SyntaxController {
       for (const r of ranges) {
         if (collapsed.some((c) => r.startRow >= c.s && r.endRow <= c.e)) continue; // nested → subsumed
         const region: FoldRegion = {
-          startLine: this.viewRow(r.startRow),
-          endLine: this.viewRow(r.endRow),
+          startLine: this.screenRow(r.startRow),
+          endLine: this.screenRow(r.endRow),
           folded: false,
           joinFooter: r.joinFooter,
         };
@@ -1175,7 +1175,7 @@ export class SyntaxController {
   unfoldAll(): void {
     this.desiredClosed.clear(); // `zr` opens every level and forgets all closed state.
     if (this.activeFolds.length === 0) return;
-    for (const handle of [...this.activeFolds]) this.foldHost?.unfoldView(this.buffer, handle);
+    for (const handle of [...this.activeFolds]) this.foldHost?.unfoldScreen(this.buffer, handle);
     this.activeFolds.length = 0;
     for (const region of this.foldsByHeaderLine.values()) { region.folded = false; region.handle = undefined; }
     // Re-key to the now-expanded view lines, and REPAINT: restoring a fold's body splices it
@@ -1203,7 +1203,7 @@ export class SyntaxController {
     if (!this.foldHost) return;
     for (const handle of [...this.activeFolds]) {
       if (!this.foldHost.isFoldAlive(handle)) continue;
-      if (test(this.foldHost.foldModelText(this.buffer, handle))) {
+      if (test(this.foldHost.foldDocumentText(this.buffer, handle))) {
         this.unfoldAtViewOffset(this.foldHost.foldPlaceholderRange(this.buffer, handle)[0]);
       }
     }
@@ -1228,8 +1228,8 @@ export class SyntaxController {
     return false;
   }
 
-  /** The model (file) line shown at view line `viewLine` — the gutter renders this. */
-  modelLineFor(viewLine: number): number {
-    return this.foldHost ? this.foldHost.modelLineForViewLine(this.buffer, viewLine) : viewLine;
+  /** The model (file) line shown at view line `screenLine` — the gutter renders this. */
+  modelLineFor(screenLine: number): number {
+    return this.foldHost ? this.foldHost.documentLineForScreenLine(this.buffer, screenLine) : screenLine;
   }
 }

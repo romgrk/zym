@@ -10,7 +10,7 @@ import { buildDiffMultiBuffer } from './diffMultiBuffer.ts';
 import { ViewProjection, type Segment } from '../TextEditor/ViewProjection.ts';
 
 function project(dmb: ReturnType<typeof buildDiffMultiBuffer>): ViewProjection {
-  return ViewProjection.build(dmb.items, (s: Segment) => dmb.sources.get(s.sourceKey)!.slice(s.startRow, s.endRow + 1));
+  return ViewProjection.build(dmb.items, (s: Segment) => dmb.sources.get(s.documentKey)!.slice(s.startRow, s.endRow + 1));
 }
 
 test('widget mode: no header/blank/gap block rows — headers + gaps are anchors, not buffer text', () => {
@@ -22,7 +22,7 @@ test('widget mode: no header/blank/gap block rows — headers + gaps are anchors
   assert.ok(!dmb.rowKinds.includes('header') && !dmb.rowKinds.includes('gap') && !dmb.rowKinds.includes('blank'),
     'no header/gap/blank rows in widget mode');
   const p = project(dmb);
-  assert.ok(!p.viewText.includes('unchanged'), 'the `⋯ unchanged lines` gap is not buffer text');
+  assert.ok(!p.screenText.includes('unchanged'), 'the `⋯ unchanged lines` gap is not buffer text');
   assert.equal(dmb.headerAnchors.length, 1);
   assert.equal(dmb.headerAnchors[0].viewRow, 0, 'header anchors above the first content row');
   assert.equal(dmb.gapAnchors.length, 1, 'one between-window gap, as an anchor band');
@@ -36,7 +36,7 @@ test('reveal forces elided rows visible (expand-context)', () => {
   const gapRows = collapsed.gapAnchors[0].revealRows;
   assert.ok(gapRows.length > 0, 'the unchanged middle elides to a gap');
   const expanded = buildDiffMultiBuffer([file], undefined, { headers: 'widget', reveal: (r) => gapRows.slice(0, 3).includes(r) });
-  assert.ok(project(expanded).viewText.length > project(collapsed).viewText.length, 'revealing rows grows the view');
+  assert.ok(project(expanded).screenText.length > project(collapsed).screenText.length, 'revealing rows grows the view');
   assert.ok(expanded.gapAnchors[0].revealRows.length < gapRows.length, 'and shrinks the remaining gap');
 });
 
@@ -44,13 +44,13 @@ test('single-file diff: header + context/added/removed rows, kinds aligned', () 
   const dmb = buildDiffMultiBuffer([{ path: '/a.ts', oldText: 'a\nb\nc\n', newText: 'a\nX\nc\n' }]);
   const p = project(dmb);
   // rows: 0:a.ts(header) 1:a(ctx) 2:b(removed) 3:X(added) 4:c(ctx) 5:""(ctx, trailing)
-  assert.equal(p.viewText, 'a.ts\na\nb\nX\nc\n');
+  assert.equal(p.screenText, 'a.ts\na\nb\nX\nc\n');
   assert.deepEqual(dmb.rowKinds, ['header', 'context', 'removed', 'added', 'context', 'context']);
   // removed line maps to the OLD source (read-only phantom); added/context to the NEW source.
-  assert.equal(p.isViewPositionEditable(2, 0), false, 'removed line is a read-only phantom');
-  assert.equal(p.isViewPositionEditable(3, 0), true, 'added line is editable (new side)');
-  assert.deepEqual(p.sourceRowAtViewRow(2), { sourceKey: 'old:/a.ts', sourceRow: 1 }, 'removed `b` from old blob');
-  assert.deepEqual(p.sourceRowAtViewRow(3), { sourceKey: 'new:/a.ts', sourceRow: 1 }, 'added `X` from new');
+  assert.equal(p.isScreenPositionEditable(2, 0), false, 'removed line is a read-only phantom');
+  assert.equal(p.isScreenPositionEditable(3, 0), true, 'added line is editable (new side)');
+  assert.deepEqual(p.documentRowAtScreenRow(2), { documentKey: 'old:/a.ts', documentRow: 1 }, 'removed `b` from old blob');
+  assert.deepEqual(p.documentRowAtScreenRow(3), { documentKey: 'new:/a.ts', documentRow: 1 }, 'added `X` from new');
 });
 
 test('per-row old/new line numbers (for the gutters): blank where a side has no line', () => {
@@ -67,15 +67,15 @@ test('multi-file diff: blank separator + per-file headers, kinds aligned across 
   ]);
   const p = project(dmb);
   // a.ts: header, x(ctx), y(added), ""(ctx)   blank   b.ts: header, p(removed), q(ctx), ""(ctx)
-  assert.equal(p.viewText, 'a.ts\nx\ny\n\n\nb.ts\np\nq\n');
+  assert.equal(p.screenText, 'a.ts\nx\ny\n\n\nb.ts\np\nq\n');
   assert.deepEqual(dmb.rowKinds, [
     'header', 'context', 'added', 'context',
     'blank',
     'header', 'removed', 'context', 'context',
   ]);
-  assert.equal(dmb.rowKinds.length, p.viewRowCount, 'one kind per view row');
+  assert.equal(dmb.rowKinds.length, p.screenRowCount, 'one kind per view row');
   // the second file's removed `p` resolves to b.ts's old blob.
-  assert.deepEqual(p.sourceRowAtViewRow(6), { sourceKey: 'old:/b.ts', sourceRow: 0 });
+  assert.deepEqual(p.documentRowAtScreenRow(6), { documentKey: 'old:/b.ts', documentRow: 0 });
 });
 
 test('header label is relative to cwd when given', () => {

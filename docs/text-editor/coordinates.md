@@ -60,19 +60,25 @@ Read these — both are intentional and will mislead if you assume otherwise.
 
 The vocabulary above is the target; the code is mid-migration.
 
-- The projection code still uses pre-unification names: `ViewProjection` calls
-  the spaces **source / projection / view**, and the fold `FoldHost`
-  (`SyntaxController`) calls them **model / view**. Mapping: `source` & `model` →
-  **document**, `projection` → **buffer**, `view` → **screen**.
-- `EditorModel` / `Cursor` / `Selection` operate directly on the materialized
-  *view* buffer and treat `screen` = `buffer` = identity (the `*ForScreenPosition`
-  methods are clamp-only stubs). Correct only with no fold or wrap active; the
-  vim layer "ignores folds" as a consequence.
+- **Stage 1 done — the projection layer speaks the canonical names.**
+  `ViewProjection` (`documentToScreen` / `screenToDocument` /
+  `bufferOffsetToScreen` / `screenOffsetToBuffer` / `bufferRowForDocument` / …,
+  `Segment.documentKey`, `ScreenTarget`/`DocumentPosition`), the `FoldHost`
+  contract + its `ProjectionView` / `Document` implementations
+  (`documentLineForScreenLine` / `screenLineForDocumentLine` /
+  `documentPointFromScreen` / `screenPointFromDocument` / `foldScreenRange` / …),
+  and `SyntaxController`'s internal translators (`documentRow` / `screenRow` /
+  `documentPos` / `screenIterForDocument` / …) are all on **document / buffer /
+  screen**. This was a rename-only change (no behavior change).
+- `EditorModel` / `Cursor` / `Selection` still operate directly on the
+  materialized *view* buffer and treat `screen` = `buffer` = identity (the
+  `*ForScreenPosition` methods are clamp-only stubs). Correct only with no fold
+  or wrap active; the vim layer "ignores folds" as a consequence. (Stage 2.)
 - Soft-wrap is GTK-rendered; only `gj`/`gk` thread it (via pixels), not the
   Point-based screen coordinates.
-- **Target:** `EditorModel` speaks `buffer` and delegates `buffer ↔ screen` to
-  `ViewProjection` (folds) + GTK (wrap); the vendored vim layer keeps its Atom
-  `buffer`/`screen` method names unchanged.
+- **Stage 2 target:** `EditorModel` speaks `buffer` and delegates `buffer ↔
+  screen` to `ViewProjection` (folds) + GTK (wrap); the vendored vim layer keeps
+  its Atom `buffer`/`screen` method names unchanged.
 
 ## Old → new name map
 

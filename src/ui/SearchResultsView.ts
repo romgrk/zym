@@ -130,7 +130,7 @@ export class SearchResultsView {
       // Vim operators bypass the native editable tag, so gate them on the live map: only a
       // wholly-editable, single-source view range accepts an edit (block / spanning ranges
       // reject). The materialize layer already read-only-tags block rows for interactive input.
-      this.editor.model.setEditableCheck((s, e) => this.projectionView.view.isViewRangeEditable(s, e));
+      this.editor.model.setEditableCheck((s, e) => this.projectionView.view.isScreenRangeEditable(s, e));
     }
     this.installNavigation();
     // Per-excerpt source line numbers: a left gutter that asks the live projection for the
@@ -185,9 +185,9 @@ export class SearchResultsView {
       specs.push({
         id: `header:${ei}`,
         key: label,
-        anchor: { sourceKey: first.sourceKey, row: first.startRow },
+        anchor: { documentKey: first.documentKey, row: first.startRow },
         placement: 'above',
-        build: () => buildHeaderWidget(label, first.sourceKey, () => this.onActivate?.({ path: first.sourceKey, row: first.startRow })),
+        build: () => buildHeaderWidget(label, first.documentKey, () => this.onActivate?.({ path: first.documentKey, row: first.startRow })),
       });
       // Gaps only when expanded (a collapsed excerpt is a single row — no gaps). Anchor the `⋯`
       // ABOVE the NEXT segment's first row (a start-anchor), not below the previous segment's last
@@ -200,7 +200,7 @@ export class SearchResultsView {
           specs.push({
             id: `gap:${ei}:${i}`,
             key: '⋯',
-            anchor: { sourceKey: seg.sourceKey, row: seg.startRow },
+            anchor: { documentKey: seg.documentKey, row: seg.startRow },
             placement: 'above',
             build: () => buildGapWidget('⋯'),
           });
@@ -250,15 +250,15 @@ export class SearchResultsView {
   private rebuild(): void {
     if (this.disposed) return;
     const caret = this.editor.model.getCursorBufferPosition();
-    const anchor = this.projection.viewToSource(caret.row, caret.column);
+    const anchor = this.projection.screenToDocument(caret.row, caret.column);
     this.projectionView.retarget(this.currentItems());
     this.editor.repaintSyntax();
     this.installBands();
     this.highlightMatches(this.excerptInputs);
-    if (anchor.kind === 'source') {
+    if (anchor.kind === 'document') {
       const pos =
-        this.projection.sourceToView(anchor.sourceKey, anchor.row, anchor.column) ??
-        this.firstVisibleViewPosition(anchor.sourceKey);
+        this.projection.documentToScreen(anchor.documentKey, anchor.row, anchor.column) ??
+        this.firstVisibleViewPosition(anchor.documentKey);
       if (pos) this.editor.model.setCursorBufferPosition(pos);
     }
   }
@@ -268,22 +268,22 @@ export class SearchResultsView {
   private excerptAtCursor(): number | null {
     const buffer = this.editor.sourceView.getBuffer();
     const row = asIter(buffer.getIterAtMark(buffer.getInsert())).getLine();
-    const src = this.projection.viewToSource(row, 0);
-    if (src.kind !== 'source') return null;
+    const src = this.projection.screenToDocument(row, 0);
+    if (src.kind !== 'document') return null;
     for (let i = 0; i < this.excerpts.length; i++) {
       for (const seg of this.excerpts[i].segments) {
-        if (seg.sourceKey === src.sourceKey && src.row >= seg.startRow && src.row <= seg.endRow) return i;
+        if (seg.documentKey === src.documentKey && src.row >= seg.startRow && src.row <= seg.endRow) return i;
       }
     }
     return null;
   }
 
   /** The view position of a source's first still-shown row (for caret recovery after a collapse). */
-  private firstVisibleViewPosition(sourceKey: string): { row: number; column: number } | null {
+  private firstVisibleViewPosition(documentKey: string): { row: number; column: number } | null {
     for (const excerpt of this.excerpts) {
       const first = excerpt.segments[0];
-      if (first?.sourceKey !== sourceKey) continue;
-      const pos = this.projection.sourceToView(sourceKey, first.startRow, 0);
+      if (first?.documentKey !== documentKey) continue;
+      const pos = this.projection.documentToScreen(documentKey, first.startRow, 0);
       if (pos) return pos;
     }
     return null;
@@ -298,8 +298,8 @@ export class SearchResultsView {
     const projection = this.projectionView.view;
     for (const excerpt of excerpts) {
       for (const m of excerpt.matches ?? []) {
-        const start = projection.sourceToView(excerpt.path, m.row, m.startCol);
-        const end = projection.sourceToView(excerpt.path, m.row, m.endCol);
+        const start = projection.documentToScreen(excerpt.path, m.row, m.startCol);
+        const end = projection.documentToScreen(excerpt.path, m.row, m.endCol);
         if (!start || !end) continue; // match row not projected (shouldn't happen — regions wrap matches)
         layer.decorate(new Range(start, end), 'highlight');
       }
@@ -317,7 +317,7 @@ export class SearchResultsView {
       const lastRow = Math.max(0, entry.lines.length - 1);
       const segments: Segment[] = input.regions
         .map((r): Segment => ({
-          sourceKey: input.path,
+          documentKey: input.path,
           startRow: Math.max(0, Math.min(r.startRow, lastRow)),
           endRow: Math.max(0, Math.min(r.endRow, lastRow)),
           editable: this.editable,
@@ -413,8 +413,8 @@ export class SearchResultsView {
   }
 
   private activateRow(viewRow: number): void {
-    const target = this.projection.viewToSource(viewRow, 0);
-    if (target.kind === 'source') this.onActivate?.({ path: target.sourceKey, row: target.row });
+    const target = this.projection.screenToDocument(viewRow, 0);
+    if (target.kind === 'document') this.onActivate?.({ path: target.documentKey, row: target.row });
   }
 
   /** Whether any edited source has unsaved changes (editable mode). */

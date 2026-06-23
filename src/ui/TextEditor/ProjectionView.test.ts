@@ -28,7 +28,7 @@ function srcBuffer(text: string): SourceBuffer {
   return b;
 }
 const fileItem = (key: string, lastRow: number): Item =>
-  ({ type: 'segment', segment: { sourceKey: key, startRow: 0, endRow: lastRow, editable: true, kind: 'real' } });
+  ({ type: 'segment', segment: { documentKey: key, startRow: 0, endRow: lastRow, editable: true, kind: 'real' } });
 
 function identitySetup(text: string) {
   const src = srcBuffer(text);
@@ -92,13 +92,13 @@ function multiSetup() {
   const a = srcBuffer('// a\nconst aaa = 1;\nfunction fa() {}\n');
   const b = srcBuffer('const bbb = 2;\nlet ccc = 3;\n');
   // Editable segments so the gating distinction (block = readonly, segment = editable) is
-  // meaningful; viewText / reverse-sync are unaffected by the flag.
+  // meaningful; screenText / reverse-sync are unaffected by the flag.
   const items: Item[] = [
     { type: 'block', block: { kind: 'header', text: 'a.ts' } },
-    { type: 'segment', segment: { sourceKey: 'a.ts', startRow: 1, endRow: 2, editable: true, kind: 'real' } },
+    { type: 'segment', segment: { documentKey: 'a.ts', startRow: 1, endRow: 2, editable: true, kind: 'real' } },
     { type: 'block', block: { kind: 'blank', text: '' } },
     { type: 'block', block: { kind: 'header', text: 'b.ts' } },
-    { type: 'segment', segment: { sourceKey: 'b.ts', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
+    { type: 'segment', segment: { documentKey: 'b.ts', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
   ];
   const pv = new ProjectionView(items, new Map([['a.ts', a], ['b.ts', b]]));
   return { a, b, pv };
@@ -175,8 +175,8 @@ function editableMulti() {
   a.setEnableUndo(true);
   b.setEnableUndo(true);
   const items: Item[] = [
-    { type: 'segment', segment: { sourceKey: 'a', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
-    { type: 'segment', segment: { sourceKey: 'b', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
+    { type: 'segment', segment: { documentKey: 'a', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
+    { type: 'segment', segment: { documentKey: 'b', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
   ];
   const pv = new ProjectionView(items, new Map([['a', a], ['b', b]]));
   return { a, b, pv }; // view rows: 0:a0 1:a1 2:b0 3:b1
@@ -241,9 +241,9 @@ function twoExcerptsOfOneFile() {
   f.setEnableUndo(true);
   const items: Item[] = [
     { type: 'block', block: { kind: 'header', text: 'F' } },
-    { type: 'segment', segment: { sourceKey: 'f', startRow: 1, endRow: 3, editable: true, kind: 'real' } },
+    { type: 'segment', segment: { documentKey: 'f', startRow: 1, endRow: 3, editable: true, kind: 'real' } },
     { type: 'block', block: { kind: 'blank', text: '' } },
-    { type: 'segment', segment: { sourceKey: 'f', startRow: 6, endRow: 8, editable: true, kind: 'real' } },
+    { type: 'segment', segment: { documentKey: 'f', startRow: 6, endRow: 8, editable: true, kind: 'real' } },
   ];
   const pv = new ProjectionView(items, new Map([['f', f]]));
   // view rows: 0:F 1:l1 2:l2 3:l3 4:<blank> 5:l6 6:l7 7:l8
@@ -320,11 +320,11 @@ test('300 row-count-changing edits within editable segments never desync map↔b
   // Consistency: the view buffer's line count matches the map, and every source-mapped view
   // row shows exactly its source row's text (block rows are left to the materializer).
   const consistent = (): string => {
-    const n = pv.view.viewRowCount;
+    const n = pv.view.screenRowCount;
     if (buf.getLineCount() !== n) return `line count ${buf.getLineCount()} != map ${n}`;
     for (let r = 0; r < n; r++) {
-      const t = pv.view.viewToSource(r, 0);
-      if (t.kind !== 'source') continue;
+      const t = pv.view.screenToDocument(r, 0);
+      if (t.kind !== 'document') continue;
       const want = lineTextOf(f, t.row);
       const got = lineTextOf(buf, r);
       if (want !== got) return `row ${r} → src ${t.row}: "${got}" != "${want}"`;
@@ -334,7 +334,7 @@ test('300 row-count-changing edits within editable segments never desync map↔b
   // Editable view rows (those mapping to a source row), recomputed each iteration.
   const editableRows = (): number[] => {
     const out: number[] = [];
-    for (let r = 0; r < pv.view.viewRowCount; r++) if (pv.view.viewToSource(r, 0).kind === 'source') out.push(r);
+    for (let r = 0; r < pv.view.screenRowCount; r++) if (pv.view.screenToDocument(r, 0).kind === 'document') out.push(r);
     return out;
   };
   let why = '';
@@ -353,9 +353,9 @@ test('300 row-count-changing edits within editable segments never desync map↔b
     } else {
       // Line-merge delete only when row r+1 is in the SAME segment (else the write-through
       // rejects but GTK would still apply the view delete — not a valid interactive edit).
-      const here = pv.view.viewToSource(r, 0);
-      const next = pv.view.viewToSource(r + 1, 0);
-      if (here.kind === 'source' && next.kind === 'source' && here.segmentIndex === next.segmentIndex) {
+      const here = pv.view.screenToDocument(r, 0);
+      const next = pv.view.screenToDocument(r + 1, 0);
+      if (here.kind === 'document' && next.kind === 'document' && here.segmentIndex === next.segmentIndex) {
         deleteRange(buf, asIter(buf.getIterAtLine(r)).getOffset(), asIter(buf.getIterAtLine(r + 1)).getOffset());
       }
     }
@@ -373,7 +373,7 @@ test('300 row-count-changing edits within editable segments never desync map↔b
 test('retarget: minimal-churn item swap keeps unchanged rows (decorations survive)', () => {
   const f = srcBuffer('l0\nl1\nl2\nl3\nl4\n');
   const seg = (a: number, b: number): Item =>
-    ({ type: 'segment', segment: { sourceKey: 'f', startRow: a, endRow: b, editable: true, kind: 'real' } });
+    ({ type: 'segment', segment: { documentKey: 'f', startRow: a, endRow: b, editable: true, kind: 'real' } });
   const gap: Item = { type: 'block', block: { kind: 'gap', text: '⋯' } };
   const pv = new ProjectionView([seg(0, 2)], new Map([['f', f]]));
   assert.equal(textOf(pv.buffer), 'l0\nl1\nl2');
@@ -388,7 +388,7 @@ test('retarget: minimal-churn item swap keeps unchanged rows (decorations surviv
 
   pv.retarget([seg(0, 2), gap, seg(4, 4)]); // append a gap + a second window
   assert.equal(textOf(pv.buffer), 'l0\nl1\nl2\n⋯\nl4', 'rows appended at the bottom');
-  assert.equal(pv.view.viewRowCount, 5);
+  assert.equal(pv.view.screenRowCount, 5);
   assert.equal(hasDeco(), true, 'row 0 decoration survived the append (no full re-materialize)');
   // The appended gap row is re-locked read-only.
   const ro = buf.getTagTable().lookup('vp:readonly');
@@ -503,19 +503,19 @@ test('view↔source line + point translation across a fold', () => {
   const { pv } = identitySetup(SAMPLE);
   const fold = pv.fold(FOLD[0], FOLD[1], '[...]')!;
   // view line 0 = "import {[...]} from './git.ts';"; view line 1 (after the fold) = source line 3.
-  assert.equal(pv.modelLineForViewLine(0), 0);
-  assert.equal(pv.modelLineForViewLine(1), 3);
-  assert.equal(pv.viewLineForModelLine(3), 1);
+  assert.equal(pv.documentLineForScreenLine(0), 0);
+  assert.equal(pv.documentLineForScreenLine(1), 3);
+  assert.equal(pv.screenLineForDocumentLine(3), 1);
   // the `}` is at view column 13 on line 0, and is column 0 on source line 2.
-  const mp = pv.modelPointFromView(new Point(0, 13));
+  const mp = pv.documentPointFromScreen(new Point(0, 13));
   assert.equal(mp.row, 2);
   assert.equal(mp.column, 0);
   // round-trip a source point below the fold.
-  const vp = pv.viewPointFromModel(new Point(3, 0));
-  assert.deepEqual(pv.modelPointFromView(vp).toArray(), [3, 0]);
+  const vp = pv.screenPointFromDocument(new Point(3, 0));
+  assert.deepEqual(pv.documentPointFromScreen(vp).toArray(), [3, 0]);
   // fold introspection
   assert.deepEqual(pv.foldPlaceholderRange(fold), [8, 13]);
-  assert.equal(pv.foldModelText(fold), "\n  X,\n");
+  assert.equal(pv.foldDocumentText(fold), "\n  X,\n");
   assert.equal(pv.isFoldAlive(fold), true);
   pv.unfold(fold);
   assert.equal(pv.isFoldAlive(fold), false);

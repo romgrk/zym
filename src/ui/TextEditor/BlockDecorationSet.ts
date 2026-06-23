@@ -2,7 +2,7 @@
  * BlockDecorationSet — the declarative layer over the generic `BlockDecorations` primitive.
  *
  * A consumer (the project-search / continuous-diff header+gap bands, the markdown image preview)
- * declares a set of block decorations against STABLE SOURCE anchors — `{ sourceKey?, row }` — and
+ * declares a set of block decorations against STABLE SOURCE anchors — `{ documentKey?, row }` — and
  * calls `set(specs)` only when its LOGICAL model changes (collapse/expand, a re-diff, an image
  * added/removed). This layer reconciles the set by `id` (add new / remove gone / swap a survivor's
  * widget only when its `key` changed) and projects each anchor to a VIEW row via the editor's
@@ -21,7 +21,7 @@ import type { BlockDecorations, BlockDecorationHandle, BlockDecorationPlacement 
 
 /**
  * Where a decoration is anchored. Two forms:
- *  - a SOURCE position `{ sourceKey?, row }` (sourceKey omitted → the sole source) — the editor
+ *  - a SOURCE position `{ documentKey?, row }` (documentKey omitted → the sole source) — the editor
  *    projects it to a view row and can RE-PROJECT it after a materialize. Preferred: it survives
  *    collapse/reflow/reload. Used by search (headers/gaps) and markdown (images).
  *  - a direct `{ viewRow }` — for a COMPUTED surface (the continuous diff) that recomputes its own
@@ -29,7 +29,7 @@ import type { BlockDecorations, BlockDecorationHandle, BlockDecorationPlacement 
  *    row with no stable source position. Not re-projectable across a materialize (the surface never
  *    materializes — it splices), so the owner must re-`set()` after any structural change.
  */
-export type BlockDecorationAnchor = { sourceKey?: string; row: number } | { viewRow: number };
+export type BlockDecorationAnchor = { documentKey?: string; row: number } | { viewRow: number };
 
 export interface BlockDecorationSpec {
   /** Stable identity across `set()` calls — a decoration is reused/moved/removed by `id`. */

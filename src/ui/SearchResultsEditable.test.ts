@@ -93,7 +93,7 @@ test('gaps are widgets, not buffer text — only real source rows reach the buff
   const { mbv } = setupWithGap();
   assert.deepEqual(mbv.editor.getText().split('\n'), ['L0', 'L1', 'L4', 'L5'], 'the `⋯` gap is not a buffer row');
   const projection = (mbv as any).projectionView.view;
-  for (let r = 0; r < 4; r++) assert.equal(projection.viewToSource(r, 0).kind, 'source', `row ${r} is a real source row`);
+  for (let r = 0; r < 4; r++) assert.equal(projection.screenToDocument(r, 0).kind, 'document', `row ${r} is a real source row`);
   mbv.dispose();
 });
 
@@ -130,8 +130,8 @@ test('collapse: collapseAll shows one row per file; expandAll restores all', () 
 test('collapse: a collapsed file still maps its visible row to the source (navigation works)', () => {
   const { mbv } = setupWithGap();
   mbv.collapseAll();
-  const target = (mbv as any).projectionView.view.viewToSource(0, 0);
-  assert.equal(target.kind, 'source', 'the surviving row maps to a real source position');
+  const target = (mbv as any).projectionView.view.screenToDocument(0, 0);
+  assert.equal(target.kind, 'document', 'the surviving row maps to a real source position');
   assert.equal(target.row, 0, 'it is the file\'s first row');
   mbv.dispose();
 });

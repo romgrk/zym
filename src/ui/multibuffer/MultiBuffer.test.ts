@@ -32,8 +32,8 @@ before(async () => {
 });
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
-const seg = (sourceKey: string, startRow: number, endRow: number): Segment =>
-  ({ sourceKey, startRow, endRow, editable: false, kind: 'real' });
+const seg = (documentKey: string, startRow: number, endRow: number): Segment =>
+  ({ documentKey, startRow, endRow, editable: false, kind: 'real' });
 
 /** A parsed source over a bare buffer (the read-only-snapshot shape SearchResultsView uses). */
 function source(text: string, path: string): DocumentSyntax {
@@ -46,9 +46,9 @@ function source(text: string, path: string): DocumentSyntax {
 
 /** Build the multibuffer buffer + paint it through a projection-mode SyntaxController. */
 function paintMultibuffer(excerpts: Excerpt[], lines: Record<string, string[]>, sources: Map<string, DocumentSyntax>) {
-  const projection = ViewProjection.build(excerptsToItems(excerpts), (s) => lines[s.sourceKey].slice(s.startRow, s.endRow + 1));
+  const projection = ViewProjection.build(excerptsToItems(excerpts), (s) => lines[s.documentKey].slice(s.startRow, s.endRow + 1));
   const buffer = new GtkSource.Buffer();
-  buffer.setText(projection.viewText, -1);
+  buffer.setText(projection.screenText, -1);
   const view = new GtkSource.View({ buffer });
   const syntax = new SyntaxController(view, buffer, {
     folding: false,
@@ -85,7 +85,7 @@ test('the painter paints each excerpt at its translated view rows from its own p
   ];
   const { buffer, projection } = paintMultibuffer(excerpts, lines, new Map([['/a.ts', a], ['/b.ts', b]]));
   // 0:a.ts 1:const aaa 2:function fa 3:<blank> 4:b.ts 5:const bbb 6:let ccc
-  assert.equal(projection.viewText, 'a.ts\nconst aaa = 1;\nfunction fa() {}\n\nb.ts\nconst bbb = 2;\nlet ccc = 3;');
+  assert.equal(projection.screenText, 'a.ts\nconst aaa = 1;\nfunction fa() {}\n\nb.ts\nconst bbb = 2;\nlet ccc = 3;');
 
   assert.ok(tokenHasTag(buffer, 1, 'const', 'ts:keyword'), 'A: const highlighted (source row 1 → view row 1)');
   assert.ok(tokenHasTag(buffer, 2, 'function', 'ts:keyword'), 'A: function (source row 2 → view row 2)');
@@ -142,7 +142,7 @@ test('a ProjectionView-backed multibuffer (the SearchResultsView path) materiali
   syntax.paint();
   assert.ok(tokenHasTag(buffer, 1, 'const', 'ts:keyword'), 'a.ts excerpt painted from its own parse');
   assert.ok(tokenHasTag(buffer, 5, 'const', 'ts:keyword'), 'b.ts excerpt painted at its translated rows');
-  assert.deepEqual(pv.view.sourceRowAtViewRow(2), { sourceKey: '/a.ts', sourceRow: 2 }, 'navigation resolves');
+  assert.deepEqual(pv.view.documentRowAtScreenRow(2), { documentKey: '/a.ts', documentRow: 2 }, 'navigation resolves');
   pv.dispose();
   aSyn.dispose();
   bSyn.dispose();
@@ -197,8 +197,8 @@ test('the coordinate map resolves cursor rows back to source locations', () => {
   const lines: Record<string, string[]> = { '/a.ts': ['const x = 1;', 'const y = 2;', ''] };
   const excerpts: Excerpt[] = [{ header: 'a.ts', segments: [seg('/a.ts', 0, 1)] }];
   const { projection } = paintMultibuffer(excerpts, lines, new Map([['/a.ts', a]]));
-  assert.equal(projection.viewToSource(0, 0).kind, 'block', 'header row is not a source location');
-  assert.deepEqual(projection.sourceRowAtViewRow(1), { sourceKey: '/a.ts', sourceRow: 0 }, 'first body row → source row 0');
-  assert.deepEqual(projection.sourceRowAtViewRow(2), { sourceKey: '/a.ts', sourceRow: 1 }, 'second body row → source row 1');
+  assert.equal(projection.screenToDocument(0, 0).kind, 'block', 'header row is not a source location');
+  assert.deepEqual(projection.documentRowAtScreenRow(1), { documentKey: '/a.ts', documentRow: 0 }, 'first body row → source row 0');
+  assert.deepEqual(projection.documentRowAtScreenRow(2), { documentKey: '/a.ts', documentRow: 1 }, 'second body row → source row 1');
   a.dispose();
 });

@@ -133,12 +133,12 @@ test('REAL o then u realigns the next excerpt header against a FRESH projection'
   const { a, b, registry, mbv, lines } = setupTwoFiles();
   const projection = () => (mbv as any).projectionView.view;
   // installBands anchors b.ts's header at this view row; before the edit it is row 3 ("one").
-  assert.equal(projection().viewRowForSource(b, 0), 3, 'b.ts header anchors at view row 3 initially');
+  assert.equal(projection().screenRowForDocument(b, 0), 3, 'b.ts header anchors at view row 3 initially');
 
   mbv.editor.model.setCursorBufferPosition(new Point(0, 0)); // on "alpha"
   run(mbv, 'InsertBelowWithNewline'); // o — inserts a line in a.ts; b.ts header shifts to row 4
   (mbv.editor as any).vimState.activate?.('normal');
-  assert.equal(projection().viewRowForSource(b, 0), 4, 'after o, b.ts header is one row lower');
+  assert.equal(projection().screenRowForDocument(b, 0), 4, 'after o, b.ts header is one row lower');
 
   mbv.editor.model.undo(); // u — reverse-sync mirrors the delete; the remap is DEFERRED
   // The remap is queued (not yet run): band reconcile MUST be skipped now (the map is stale) and
@@ -149,6 +149,6 @@ test('REAL o then u realigns the next excerpt header against a FRESH projection'
   // Let the deferred remap settle, then the projection band-anchor must be back to row 3. (Before
   // the fix the map stayed stale and installBands anchored the header off the wrong row.)
   await new Promise((r) => setTimeout(r, 30));
-  assert.equal(projection().viewRowForSource(b, 0), 3, 'after the remap settles, b.ts header anchors at row 3 again');
+  assert.equal(projection().screenRowForDocument(b, 0), 3, 'after the remap settles, b.ts header anchors at row 3 again');
   mbv.dispose();
 });

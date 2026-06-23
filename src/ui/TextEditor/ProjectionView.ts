@@ -12,7 +12,7 @@
  * This generalizes today's `Document.createView`/`forward`/`propagate` (which sync ONE model
  * buffer to ONE view) to N sources stitched into one view, with the coordinate map +
  * editability gating delegated to `ViewProjection`. The single full-file source is the
- * IDENTITY case: `viewToSource`/`sourceToView` short-circuit, so the sync is a 1:1 mirror —
+ * IDENTITY case: `screenToDocument`/`documentToScreen` short-circuit, so the sync is a 1:1 mirror —
  * byte-for-byte today's Document behavior, which the headless tests pin down.
  *
  * Editable real segments are the only rows a view edit may touch; block (header/gap/blank)
@@ -92,7 +92,7 @@ export class ProjectionView {
   private actionDepth = 0; // re-entrancy depth for begin/endUserAction (nested transacts)
 
   /**
-   * Build the view buffer from `items` over `sources` (keyed by `Segment.sourceKey`). The
+   * Build the view buffer from `items` over `sources` (keyed by `Segment.documentKey`). The
    * normal-editor case is `new ProjectionView([fullFileSegment], new Map([[path, model]]))`.
    */
   constructor(items: Item[], sources: Map<string, SourceBuffer>) {
@@ -113,8 +113,8 @@ export class ProjectionView {
     return this.projection;
   }
 
-  private sourceLines(seg: { sourceKey: string; startRow: number; endRow: number }): string[] {
-    const buf = this.sources.get(seg.sourceKey);
+  private sourceLines(seg: { documentKey: string; startRow: number; endRow: number }): string[] {
+    const buf = this.sources.get(seg.documentKey);
     if (!buf) return [];
     const out: string[] = [];
     for (let r = seg.startRow; r <= seg.endRow; r++) out.push(lineText(buf, r));
@@ -126,7 +126,7 @@ export class ProjectionView {
   private materialize(): void {
     this.viewSuppress = true;
     try {
-      this.buffer.setText(this.projection.viewText, -1);
+      this.buffer.setText(this.projection.screenText, -1);
       this.applyReadonlyTags();
       this.buffer.setModified(false);
     } finally {
@@ -152,9 +152,9 @@ export class ProjectionView {
     if (this.projection.isIdentity) return;
     const buffer = this.buffer as any;
     const tag = buffer.getTagTable().lookup(READONLY_TAG);
-    const rowCount = this.projection.viewRowCount;
+    const rowCount = this.projection.screenRowCount;
     for (let row = 0; row < rowCount; row++) {
-      if (this.projection.isViewPositionEditable(row, 0)) continue;
+      if (this.projection.isScreenPositionEditable(row, 0)) continue;
       const start = asIter(buffer.getIterAtLine(row));
       const end = asIter(buffer.getIterAtLine(row + 1)); // includes the trailing '\n' → spans the row
       const endIter = end.getLine() === row ? this.endOfLine(row) : end;
@@ -175,7 +175,7 @@ export class ProjectionView {
   // stays authoritative; reverse-sync from that source is suppressed so it doesn't
   // double-apply (and GTK gives the originating view the text). SINGLE-SOURCE is offset-based:
   // projection offset == source offset, so a view offset → source offset is just the fold
-  // transform (`viewOffsetToProj`). Multi-source *editable* write-through is Phase 3a — a
+  // transform (`screenOffsetToBuffer`). Multi-source *editable* write-through is Phase 3a — a
   // read-only multi-source projection fires no view edits here (the readonly tag blocks them).
 
   private wireView(): void {
@@ -191,11 +191,11 @@ export class ProjectionView {
 
   private writeThroughInsert(iter: any, text: string): void {
     // SINGLE-SOURCE: offset-based (proj == source), fold-aware via the offset transform.
-    if (this.projection.isSingleSource) {
+    if (this.projection.isSingleDocument) {
       const src = this.soleSource();
       if (!src) return;
-      const srcOffset = this.projection.viewOffsetToProj(iter.getOffset());
-      this.suppressing(this.projection.soleKey!, () => src.insert(iterAtOffset(src, srcOffset), text, -1));
+      const srcOffset = this.projection.screenOffsetToBuffer(iter.getOffset());
+      this.suppressing(this.projection.soleDocumentKey!, () => src.insert(iterAtOffset(src, srcOffset), text, -1));
       return;
     }
     // MULTI-SOURCE: route the edit to the segment's source. The readonly tag blocks edits on
@@ -205,26 +205,26 @@ export class ProjectionView {
     // re-segments below.
     const row = iter.getLine();
     const col = iter.getLineOffset();
-    const target = this.projection.viewToSource(row, col);
-    if (target.kind !== 'source' || !this.projection.isViewPositionEditable(row, col)) return;
-    const src = this.sources.get(target.sourceKey);
+    const target = this.projection.screenToDocument(row, col);
+    if (target.kind !== 'document' || !this.projection.isScreenPositionEditable(row, col)) return;
+    const src = this.sources.get(target.documentKey);
     if (!src) return;
-    this.noteSourceEdit(target.sourceKey);
-    this.suppressing(target.sourceKey, () =>
+    this.noteSourceEdit(target.documentKey);
+    this.suppressing(target.documentKey, () =>
       src.insert(asIter(src.getIterAtLineOffset(target.row, target.column)), text, -1),
     );
     const added = newlineCount(text);
-    if (added > 0) this.resegment(target.sourceKey, target.row, added);
+    if (added > 0) this.resegment(target.documentKey, target.row, added);
   }
 
   private writeThroughDelete(startIter: any, endIter: any): void {
-    if (this.projection.isSingleSource) {
+    if (this.projection.isSingleDocument) {
       const src = this.soleSource();
       if (!src) return;
-      const s = this.projection.viewOffsetToProj(startIter.getOffset());
-      const e = this.projection.viewOffsetToProj(endIter.getOffset());
+      const s = this.projection.screenOffsetToBuffer(startIter.getOffset());
+      const e = this.projection.screenOffsetToBuffer(endIter.getOffset());
       if (e <= s) return; // a delete wholly inside a fold placeholder maps to a zero range
-      this.suppressing(this.projection.soleKey!, () => src.delete(iterAtOffset(src, s), iterAtOffset(src, e)));
+      this.suppressing(this.projection.soleDocumentKey!, () => src.delete(iterAtOffset(src, s), iterAtOffset(src, e)));
       return;
     }
     // MULTI-SOURCE: a delete within ONE editable segment routes to its source. A delete ending at
@@ -236,9 +236,9 @@ export class ProjectionView {
     const startCol = startIter.getLineOffset();
     const endLine = endIter.getLine();
     const endCol = endIter.getLineOffset();
-    const a = this.projection.viewToSource(startLine, startCol);
-    if (a.kind !== 'source') return;
-    if (!this.projection.isViewPositionEditable(startLine, startCol)) return;
+    const a = this.projection.screenToDocument(startLine, startCol);
+    if (a.kind !== 'document') return;
+    if (!this.projection.isScreenPositionEditable(startLine, startCol)) return;
     let bRow: number;
     let bCol: number;
     if (endCol === 0 && endLine > startLine) {
@@ -246,27 +246,27 @@ export class ProjectionView {
       // AND contiguous source rows. (Two regions of one file are the same source but different
       // segments, with HIDDEN rows between them; deleting across that gap would silently remove the
       // unshown lines.) The source deletion ends at the start of the next source line.
-      const last = this.projection.viewToSource(endLine - 1, 0);
-      if (last.kind !== 'source' || last.sourceKey !== a.sourceKey || last.segmentIndex !== a.segmentIndex) return;
+      const last = this.projection.screenToDocument(endLine - 1, 0);
+      if (last.kind !== 'document' || last.documentKey !== a.documentKey || last.segmentIndex !== a.segmentIndex) return;
       bRow = last.row + 1;
       bCol = 0;
     } else {
-      const b = this.projection.viewToSource(endLine, endCol);
-      if (b.kind !== 'source' || b.sourceKey !== a.sourceKey || b.segmentIndex !== a.segmentIndex) return;
+      const b = this.projection.screenToDocument(endLine, endCol);
+      if (b.kind !== 'document' || b.documentKey !== a.documentKey || b.segmentIndex !== a.segmentIndex) return;
       bRow = b.row;
       bCol = b.column;
     }
-    const src = this.sources.get(a.sourceKey);
+    const src = this.sources.get(a.documentKey);
     if (!src) return;
-    this.noteSourceEdit(a.sourceKey);
-    this.suppressing(a.sourceKey, () =>
+    this.noteSourceEdit(a.documentKey);
+    this.suppressing(a.documentKey, () =>
       src.delete(
         asIter(src.getIterAtLineOffset(a.row, a.column)),
         asIter(src.getIterAtLineOffset(bRow, bCol)),
       ),
     );
     const removed = bRow - a.row; // rows merged away by a multi-line delete (0 = in-place)
-    if (removed > 0) this.resegment(a.sourceKey, a.row, -removed);
+    if (removed > 0) this.resegment(a.documentKey, a.row, -removed);
   }
 
   /** Source `key` gained/lost `rowDelta` rows at source row `editRow`. Shift the segment
@@ -281,7 +281,7 @@ export class ProjectionView {
     for (const item of this.items) {
       if (item.type !== 'segment') continue;
       const seg = item.segment;
-      if (seg.sourceKey !== key) continue;
+      if (seg.documentKey !== key) continue;
       if (editRow < seg.startRow) {
         seg.startRow += rowDelta;
         seg.endRow += rowDelta;
@@ -321,14 +321,14 @@ export class ProjectionView {
   }
 
   private onSourceInsert(key: string, iter: any, text: string): void {
-    if (!this.projection.isSingleSource) {
+    if (!this.projection.isSingleDocument) {
       if (this.sourceSuppress.has(key)) return;
       if (this.replaying && this.resyncHandler) return; // diff undo/redo: afterReplay re-derives once
       // A COMPUTED surface (a diff) can't be re-flowed by window arithmetic — the row's
       // classification (added/context) + the elision can change — so always re-derive it.
       if (text.includes('\n') && this.resyncHandler) return this.scheduleRebuild();
       const sr = iter.getLine();
-      const pos = this.projection.sourceToView(key, sr, iter.getLineOffset());
+      const pos = this.projection.documentToScreen(key, sr, iter.getLineOffset());
       if (text.includes('\n')) {
         // A row-count change (undo / another view / external). When the insert point is in a
         // shown segment, MIRROR the exact text into the view + grow the windows, then remap the
@@ -351,20 +351,20 @@ export class ProjectionView {
     }
     const off = iter.getOffset();
     if (!this.sourceSuppress.has(key) && !this.projection.foldContaining(off)) {
-      const viewOff = this.projection.projOffsetToView(off);
+      const viewOff = this.projection.bufferOffsetToScreen(off);
       this.applyToView((buffer) => buffer.insert(iterAtOffset(buffer, viewOff), text, -1));
     }
     this.projection.shiftFoldsForInsert(off, cpLength(text));
   }
 
   private onSourceDelete(key: string, startIter: any, endIter: any): void {
-    if (!this.projection.isSingleSource) {
+    if (!this.projection.isSingleDocument) {
       if (this.sourceSuppress.has(key)) return;
       if (this.replaying && this.resyncHandler) return; // diff undo/redo: afterReplay re-derives once
       // A COMPUTED surface (a diff) always re-derives on a row-count change (see onSourceInsert).
       if (startIter.getLine() !== endIter.getLine() && this.resyncHandler) return this.scheduleRebuild();
-      const a = this.projection.sourceToView(key, startIter.getLine(), startIter.getLineOffset());
-      const b = this.projection.sourceToView(key, endIter.getLine(), endIter.getLineOffset());
+      const a = this.projection.documentToScreen(key, startIter.getLine(), startIter.getLineOffset());
+      const b = this.projection.documentToScreen(key, endIter.getLine(), endIter.getLineOffset());
       if (startIter.getLine() !== endIter.getLine()) {
         const removed = endIter.getLine() - startIter.getLine();
         this.adjustItems(key, startIter.getLine(), -removed);
@@ -389,8 +389,8 @@ export class ProjectionView {
       const fold = this.projection.foldContaining(startOff);
       const absorbed = !!fold && startOff >= fold.start && endOff <= fold.end; // fully inside a fold
       if (!absorbed) {
-        const vs = this.projection.projOffsetToView(startOff);
-        const ve = this.projection.projOffsetToView(endOff);
+        const vs = this.projection.bufferOffsetToScreen(startOff);
+        const ve = this.projection.bufferOffsetToScreen(endOff);
         if (ve > vs) this.applyToView((buffer) => buffer.delete(iterAtOffset(buffer, vs), iterAtOffset(buffer, ve)));
       }
     }
@@ -405,9 +405,9 @@ export class ProjectionView {
    *  a fold makes the view non-identity but stays incrementally synced via the offset
    *  transform. Subsumes any inner folds in the range (their bodies join this collapse). */
   fold(viewStart: number, viewEnd: number, placeholder: string): Fold | null {
-    if (!this.projection.isSingleSource || viewEnd <= viewStart) return null;
-    const projStart = this.projection.viewOffsetToProj(viewStart);
-    const projEnd = this.projection.viewOffsetToProj(viewEnd);
+    if (!this.projection.isSingleDocument || viewEnd <= viewStart) return null;
+    const projStart = this.projection.screenOffsetToBuffer(viewStart);
+    const projEnd = this.projection.screenOffsetToBuffer(viewEnd);
     if (projEnd <= projStart) return null;
     this.projection.removeFoldsWithin(projStart, projEnd); // an outer fold subsumes inner ones
     const handle = this.projection.addFold(projStart, projEnd, placeholder);
@@ -425,7 +425,7 @@ export class ProjectionView {
   unfold(handle: Fold): void {
     const src = this.soleSource();
     if (!src) return;
-    const viewStart = this.projection.projOffsetToView(handle.start);
+    const viewStart = this.projection.bufferOffsetToScreen(handle.start);
     const placeholderLen = cpLength(handle.placeholder);
     const body = src.getText(iterAtOffset(src, handle.start), iterAtOffset(src, handle.end), true); // proj == source
     this.projection.removeFold(handle);
@@ -435,47 +435,47 @@ export class ProjectionView {
     });
   }
 
-  // --- view ↔ source translation (the FoldHost surface SyntaxController consumes) --------
-  // Single-source only (the editor's fold host is per-file): the offset transform composes
-  // the fold collapse and proj offset == source offset. A non-single-source projection
+  // --- screen ↔ document translation (the FoldHost surface SyntaxController consumes) --------
+  // Single-document only (the editor's fold host is per-file): the offset transform composes
+  // the fold collapse and buffer offset == document offset. A non-single-document projection
   // returns identity (its painter uses the SyntaxProjection path, not this).
 
-  /** The source (file) line shown at view line `viewLine` — for the line-number gutter. */
-  modelLineForViewLine(viewLine: number): number {
+  /** The document (file) line shown at screen line `screenLine` — for the line-number gutter. */
+  documentLineForScreenLine(screenLine: number): number {
     const src = this.soleSource();
-    if (!src) return viewLine;
-    const viewOff = asIter(this.buffer.getIterAtLine(viewLine)).getOffset();
-    return iterAtOffset(src, this.projection.viewOffsetToProj(viewOff)).getLine();
+    if (!src) return screenLine;
+    const screenOff = asIter(this.buffer.getIterAtLine(screenLine)).getOffset();
+    return iterAtOffset(src, this.projection.screenOffsetToBuffer(screenOff)).getLine();
   }
 
-  /** The view line showing source line `modelLine` (its start) — for diagnostics/decorations. */
-  viewLineForModelLine(modelLine: number): number {
+  /** The screen line showing document line `documentLine` (its start) — for diagnostics/decorations. */
+  screenLineForDocumentLine(documentLine: number): number {
     const src = this.soleSource();
-    if (!src) return modelLine;
-    const srcOff = asIter(src.getIterAtLine(modelLine)).getOffset();
-    return iterAtOffset(this.buffer, this.projection.projOffsetToView(srcOff)).getLine();
+    if (!src) return documentLine;
+    const srcOff = asIter(src.getIterAtLine(documentLine)).getOffset();
+    return iterAtOffset(this.buffer, this.projection.bufferOffsetToScreen(srcOff)).getLine();
   }
 
-  /** Translate a VIEW caret to SOURCE coordinates (folds shift lines + columns) — for LSP. */
-  modelPointFromView(point: Point): Point {
+  /** Translate a SCREEN caret to DOCUMENT coordinates (folds shift lines + columns) — for LSP. */
+  documentPointFromScreen(point: Point): Point {
     const src = this.soleSource();
     if (!src) return point;
     const viewOff = asIter(this.buffer.getIterAtLineOffset(point.row, point.column)).getOffset();
-    const iter = iterAtOffset(src, this.projection.viewOffsetToProj(viewOff));
+    const iter = iterAtOffset(src, this.projection.screenOffsetToBuffer(viewOff));
     return new Point(iter.getLine(), iter.getLineOffset());
   }
 
-  /** Translate a SOURCE caret to VIEW coordinates (a position inside a fold → placeholder). */
-  viewPointFromModel(point: Point): Point {
+  /** Translate a DOCUMENT caret to SCREEN coordinates (a position inside a fold → placeholder). */
+  screenPointFromDocument(point: Point): Point {
     const src = this.soleSource();
     if (!src) return point;
     const srcOff = asIter(src.getIterAtLineOffset(point.row, point.column)).getOffset();
-    const iter = iterAtOffset(this.buffer, this.projection.projOffsetToView(srcOff));
+    const iter = iterAtOffset(this.buffer, this.projection.bufferOffsetToScreen(srcOff));
     return new Point(iter.getLine(), iter.getLineOffset());
   }
 
-  /** Text of source line `row` (no newline) — for LSP column encoding of source ranges. */
-  modelLineText(row: number): string {
+  /** Text of document line `row` (no newline) — for LSP column encoding of document ranges. */
+  documentLineText(row: number): string {
     const src = this.soleSource();
     return src ? lineText(src, row) : '';
   }
@@ -485,13 +485,13 @@ export class ProjectionView {
    *  range (matching the old impl's collapsed marks), so a caller snapping the cursor out of
    *  a placeholder doesn't loop on a stale range while `unfold`'s splice is still in flight. */
   foldPlaceholderRange(fold: Fold): [number, number] {
-    const viewStart = this.projection.projOffsetToView(fold.start);
+    const viewStart = this.projection.bufferOffsetToScreen(fold.start);
     if (!this.isFoldAlive(fold)) return [viewStart, viewStart];
     return [viewStart, viewStart + cpLength(fold.placeholder)];
   }
 
-  /** The source text a fold currently collapses (for search-reveal matching). */
-  foldModelText(fold: Fold): string {
+  /** The document text a fold currently collapses (for search-reveal matching). */
+  foldDocumentText(fold: Fold): string {
     const src = this.soleSource();
     return src ? src.getText(iterAtOffset(src, fold.start), iterAtOffset(src, fold.end), true) : '';
   }
@@ -502,7 +502,7 @@ export class ProjectionView {
   }
 
   private soleSource(): SourceBuffer | null {
-    const key = this.projection.soleKey;
+    const key = this.projection.soleDocumentKey;
     return key ? this.sources.get(key) ?? null : null;
   }
 
@@ -700,7 +700,7 @@ export class ProjectionView {
     const next = ViewProjection.build(items, (seg) => this.sourceLines(seg));
     this.viewSuppress = true;
     try {
-      this.spliceTo(next.viewText);
+      this.spliceTo(next.screenText);
       this.items = items;
       this.projection = next;
       this.relockReadonly();

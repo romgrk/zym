@@ -228,7 +228,7 @@ export class DiffView {
     this.editor.sourceView.addCssClass('continuous-diff');
 
     if (this.editable) {
-      this.editor.model.setEditableCheck((s, e) => this.projection.isViewRangeEditable(s, e));
+      this.editor.model.setEditableCheck((s, e) => this.projection.isScreenRangeEditable(s, e));
       // A row-count reverse-sync (undo / external) can't be re-flowed by window arithmetic on a
       // diff (new-side + phantom segments interleave), so re-derive the diff from scratch instead.
       this.projectionView.setResyncHandler(() => this.reDiff());
@@ -589,7 +589,7 @@ export class DiffView {
     // is re-classified as added and moves past the removed block), so a view-row caret would be
     // left pointing at a different (often phantom) row — and edits would then land there.
     const caret = this.editor.model.getCursorBufferPosition();
-    const anchor = this.projection.viewToSource(caret.row, caret.column);
+    const anchor = this.projection.screenToDocument(caret.row, caret.column);
     const dmb = this.buildDiff();
     this.dmb = dmb;
     this.suppressReDiff = true; // retarget's view edits must not re-trigger a re-diff
@@ -604,8 +604,8 @@ export class DiffView {
     // retarget swapped rows but didn't repaint — re-highlight the spliced sections.
     this.editor.repaintSyntax();
     // Restore the caret to where its source position now shows (it followed the reflow).
-    if (anchor.kind === 'source') {
-      const pos = this.projection.sourceToView(anchor.sourceKey, anchor.row, anchor.column);
+    if (anchor.kind === 'document') {
+      const pos = this.projection.documentToScreen(anchor.documentKey, anchor.row, anchor.column);
       if (pos) this.editor.model.setCursorBufferPosition(pos);
     }
     this.lastLineCount = this.projectionView.buffer.getLineCount(); // reflow changed it
@@ -662,10 +662,10 @@ export class DiffView {
   }
 
   private activateRow(viewRow: number): void {
-    const target = this.projection.viewToSource(viewRow, 0);
-    if (target.kind !== 'source') return;
-    const sep = target.sourceKey.indexOf(':'); // keys are `new:<path>` / `old:<path>`
-    const path = sep >= 0 ? target.sourceKey.slice(sep + 1) : target.sourceKey;
+    const target = this.projection.screenToDocument(viewRow, 0);
+    if (target.kind !== 'document') return;
+    const sep = target.documentKey.indexOf(':'); // keys are `new:<path>` / `old:<path>`
+    const path = sep >= 0 ? target.documentKey.slice(sep + 1) : target.documentKey;
     this.onActivate?.({ path, row: target.row });
   }
 
@@ -827,7 +827,7 @@ export class DiffView {
   /** The current view row of a block-decoration anchor (for matching the cursor to a card). */
   private anchorViewRow(anchor: BlockDecorationAnchor): number | null {
     if ('viewRow' in anchor) return anchor.viewRow;
-    const pos = this.projection.sourceToView(anchor.sourceKey ?? '', anchor.row, 0);
+    const pos = this.projection.documentToScreen(anchor.documentKey ?? '', anchor.row, 0);
     return pos ? pos.row : null;
   }
 
@@ -914,9 +914,9 @@ export class DiffView {
 
     // Anchor a pending-comment card at the cursor/selection line (same spot the editor box sat) by
     // SOURCE position, so it tracks the line across re-diffs/edits; fall back to a direct view row.
-    const src = this.projection.viewToSource(anchorRow, 0);
+    const src = this.projection.screenToDocument(anchorRow, 0);
     const cardAnchor: BlockDecorationAnchor =
-      src.kind === 'source' ? { sourceKey: src.sourceKey, row: src.row } : { viewRow: anchorRow };
+      src.kind === 'document' ? { documentKey: src.documentKey, row: src.row } : { viewRow: anchorRow };
 
     return {
       path: hit.path,

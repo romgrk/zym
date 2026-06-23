@@ -3,7 +3,7 @@
  * multibuffer (project search). A multibuffer view row doesn't equal a source line: header /
  * gap / blank rows are synthesized, and each excerpt shows a slice of a different file. So the
  * renderer asks the LIVE `ViewProjection` for the source line behind each view row
- * (`sourceRowAtViewRow`) — a real source row renders `sourceRow + 1`, a block / folded row
+ * (`documentRowAtScreenRow`) — a real source row renders `documentRow + 1`, a block / folded row
  * renders blank (the column keeps its width). Re-segmentation swaps the projection, so it's
  * read through a getter rather than captured.
  *
@@ -21,8 +21,8 @@ const COLOR = theme.ui.editor.lineNumber;
  *  to `width`; all-blank (width spaces) for a header / gap / blank / folded row. Pure — the
  *  unit-tested core of the renderer. */
 export function lineNumberLabel(projection: ViewProjection, viewRow: number, width: number): string {
-  const src = projection.sourceRowAtViewRow(viewRow);
-  return (src ? String(src.sourceRow + 1) : '').padStart(width);
+  const src = projection.documentRowAtScreenRow(viewRow);
+  return (src ? String(src.documentRow + 1) : '').padStart(width);
 }
 
 class MultiBufferLineRenderer extends GtkSource.GutterRendererText {

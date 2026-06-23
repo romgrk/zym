@@ -53,9 +53,9 @@ TextEditor
 ## API
 
 ```ts
-// Anchor: a SOURCE position (sourceKey optional → the sole source; re-projectable across a
+// Anchor: a SOURCE position (documentKey optional → the sole source; re-projectable across a
 // materialize) OR a direct view row (for a computed surface like the diff that re-set()s itself).
-type BlockDecorationAnchor = { sourceKey?: string; row: number } | { viewRow: number }
+type BlockDecorationAnchor = { documentKey?: string; row: number } | { viewRow: number }
 
 interface BlockDecorationSpec {
   id: string;                       // stable identity across set() calls (reused/moved/removed by id)
@@ -93,8 +93,8 @@ only on a new narrow `ProjectionView.onDidMaterialize` (initial build /
 ## Who calls `set()`, and when (logical-model changes only)
 
 - **Project search** (`SearchResultsView`): on construct + collapse/expand.
-  Header anchor `(sourceKey, firstSourceRow)`, gap anchor
-  `(sourceKey, segmentEndRow)`. The gap is anchored ABOVE the next region's
+  Header anchor `(documentKey, firstSourceRow)`, gap anchor
+  `(documentKey, segmentEndRow)`. The gap is anchored ABOVE the next region's
   first row (a start-anchor) so `o` on the previous region's last line rides
   it.
 - **Continuous diff** (`DiffView`): on construct + each re-diff

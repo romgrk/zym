@@ -318,7 +318,7 @@ export class Document implements TextEditorSource {
     return {
       type: 'segment',
       segment: {
-        sourceKey: SOURCE_KEY,
+        documentKey: SOURCE_KEY,
         startRow: 0,
         endRow: Math.max(0, this.model.getLineCount() - 1),
         editable: true,
@@ -327,13 +327,13 @@ export class Document implements TextEditorSource {
     };
   }
 
-  /** Collapse a view range to `placeholder`; returns the fold handle (opaque to callers). */
-  foldViewRange(buffer: SourceBuffer, viewStart: number, viewEnd: number, placeholder: string): any {
-    return this.pvFor(buffer)?.fold(viewStart, viewEnd, placeholder) ?? null;
+  /** Collapse a screen range to `placeholder`; returns the fold handle (opaque to callers). */
+  foldScreenRange(buffer: SourceBuffer, screenStart: number, screenEnd: number, placeholder: string): any {
+    return this.pvFor(buffer)?.fold(screenStart, screenEnd, placeholder) ?? null;
   }
 
   /** Expand a fold (restore its collapsed text). */
-  unfoldView(buffer: SourceBuffer, fold: any): void {
+  unfoldScreen(buffer: SourceBuffer, fold: any): void {
     this.pvFor(buffer)?.unfold(fold);
   }
 
@@ -342,9 +342,9 @@ export class Document implements TextEditorSource {
     return this.pvFor(buffer)?.foldPlaceholderRange(fold) ?? [0, 0];
   }
 
-  /** The model text a fold currently stands in for (for search-reveal matching). */
-  foldModelText(buffer: SourceBuffer, fold: any): string {
-    return this.pvFor(buffer)?.foldModelText(fold) ?? '';
+  /** The document text a fold currently stands in for (for search-reveal matching). */
+  foldDocumentText(buffer: SourceBuffer, fold: any): string {
+    return this.pvFor(buffer)?.foldDocumentText(fold) ?? '';
   }
 
   /** Whether a fold handle is still live (not subsumed by an enclosing fold). */
@@ -354,36 +354,36 @@ export class Document implements TextEditorSource {
     return false;
   }
 
-  /** Translate a VIEW caret position to MODEL space (folds shift lines + columns) — for LSP. */
-  modelPointFromView(buffer: SourceBuffer, point: Point): Point {
-    return this.pvFor(buffer)?.modelPointFromView(point) ?? point;
+  /** Translate a SCREEN caret position to DOCUMENT space (folds shift lines + columns) — for LSP. */
+  documentPointFromScreen(buffer: SourceBuffer, point: Point): Point {
+    return this.pvFor(buffer)?.documentPointFromScreen(point) ?? point;
   }
 
-  /** Translate a MODEL caret position to VIEW space (a position inside a fold → its
+  /** Translate a DOCUMENT caret position to SCREEN space (a position inside a fold → its
    *  placeholder). For rendering LSP results (diagnostics, inlay hints) on the collapsed view. */
-  viewPointFromModel(buffer: SourceBuffer, point: Point): Point {
-    return this.pvFor(buffer)?.viewPointFromModel(point) ?? point;
+  screenPointFromDocument(buffer: SourceBuffer, point: Point): Point {
+    return this.pvFor(buffer)?.screenPointFromDocument(point) ?? point;
   }
 
-  /** Text of MODEL row `row` (no newline) — for LSP column-encoding of model ranges. */
-  modelLineText(row: number): string {
+  /** Text of DOCUMENT row `row` (no newline) — for LSP column-encoding of document ranges. */
+  documentLineText(row: number): string {
     return this.lineText(row);
   }
 
-  /** Model line (0-based) shown at VIEW line `viewLine` — for the line-number gutter. */
-  modelLineForViewLine(buffer: SourceBuffer, viewLine: number): number {
-    return this.pvFor(buffer)?.modelLineForViewLine(viewLine) ?? viewLine;
+  /** Document line (0-based) shown at SCREEN line `screenLine` — for the line-number gutter. */
+  documentLineForScreenLine(buffer: SourceBuffer, screenLine: number): number {
+    return this.pvFor(buffer)?.documentLineForScreenLine(screenLine) ?? screenLine;
   }
 
-  /** VIEW line showing model line `modelLine` (its start) — for diagnostics/decorations. */
-  viewLineForModelLine(buffer: SourceBuffer, modelLine: number): number {
-    return this.pvFor(buffer)?.viewLineForModelLine(modelLine) ?? modelLine;
+  /** SCREEN line showing document line `documentLine` (its start) — for diagnostics/decorations. */
+  screenLineForDocumentLine(buffer: SourceBuffer, documentLine: number): number {
+    return this.pvFor(buffer)?.screenLineForDocumentLine(documentLine) ?? documentLine;
   }
 
-  // --- block-decoration anchoring (single source: the file is the sole source) -
-  /** The view row showing source `row` — `sourceKey` is ignored (one source). Fold-aware. */
-  viewRowForSource(buffer: SourceBuffer, _sourceKey: string | undefined, row: number): number | null {
-    return this.viewLineForModelLine(buffer, row);
+  // --- block-decoration anchoring (single document: the file is the sole document) -
+  /** The screen row showing document `row` — `documentKey` is ignored (one document). Fold-aware. */
+  screenRowForDocument(buffer: SourceBuffer, _documentKey: string | undefined, row: number): number | null {
+    return this.screenLineForDocumentLine(buffer, row);
   }
   /** Fired when a view re-materializes (a file load/reload via `setText`), which drops marks. */
   private readonly materializeHandlers = new Set<() => void>();

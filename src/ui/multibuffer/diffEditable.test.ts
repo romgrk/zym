@@ -38,7 +38,7 @@ function setup(oldText: string, newText: string) {
 test('editing a context/added row writes through to the live new-side Document', () => {
   const { path, doc, pv } = setup('a\nb\nc\n', 'a\nX\nc\n');
   // view rows: 0 header, 1 a(ctx), 2 b(removed), 3 X(added), 4 c(ctx), 5 ""(ctx)
-  const aRow = pv.view.viewRowForSource(`new:${path}`, 0)!; // the `a` context line (new row 0)
+  const aRow = pv.view.screenRowForDocument(`new:${path}`, 0)!; // the `a` context line (new row 0)
   insertAtRow(pv.buffer, aRow, 'Z');
   assert.equal(doc.getText(), 'Za\nX\nc\n', 'edit wrote through to the live Document model');
   assert.equal((textOf(pv.buffer) as string).split('\n')[aRow], 'Za', 'and shows in the diff view');
@@ -46,7 +46,7 @@ test('editing a context/added row writes through to the live new-side Document',
 
 test('editing a removed (phantom old-side) row is rejected — the base blob is read-only', () => {
   const { path, doc, oldBuf, pv } = setup('a\nb\nc\n', 'a\nX\nc\n');
-  const bRow = pv.view.viewRowForSource(`old:${path}`, 1)!; // removed `b` (old row 1)
+  const bRow = pv.view.screenRowForDocument(`old:${path}`, 1)!; // removed `b` (old row 1)
   insertAtRow(pv.buffer, bRow, 'Q');
   assert.equal(textOf(oldBuf), 'a\nb\nc\n', 'base blob unchanged');
   assert.equal(doc.getText(), 'a\nX\nc\n', 'new-side Document unchanged');
@@ -54,7 +54,7 @@ test('editing a removed (phantom old-side) row is rejected — the base blob is 
 
 test('the ProjectionView coordinates undo of a diff edit', () => {
   const { path, doc, pv } = setup('a\nb\nc\n', 'a\nX\nc\n');
-  const xRow = pv.view.viewRowForSource(`new:${path}`, 1)!; // the added `X` (new row 1)
+  const xRow = pv.view.screenRowForDocument(`new:${path}`, 1)!; // the added `X` (new row 1)
   pv.beginUserAction();
   insertAtRow(pv.buffer, xRow, 'YY');
   pv.endUserAction();
