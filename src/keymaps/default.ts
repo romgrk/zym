@@ -86,9 +86,9 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space g u .': 'git:unstage-current', // "u"nstage the current file
   // Hunk-level staging on the gutter hunk under the cursor (editor only): "s"tage,
   // "u"nstage (a staged/blue hunk), "r"evert (discard the unstaged change).
-  'space h s': 'git:stage-hunk',
-  'space h u': 'git:unstage-hunk',
-  'space h r': 'git:revert-hunk',
+  'space h s': 'git:hunk-stage',
+  'space h u': 'git:hunk-unstage',
+  'space h r': 'git:hunk-revert',
   // Branch (space g b …): switch / delete / merge / rename.
   'space g b b': 'git:branch-switch', // "b"ranch picker (switch / create)
   'space g b d': 'git:branch-delete',
@@ -226,7 +226,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'z o': 'diff:expand-context', // reveal more unchanged lines at the nearest gap
     'z R': 'diff:expand-all', // reveal all unchanged lines (show the full files)
     'z m': 'diff:collapse-context', // re-collapse expanded context
-    // Hunk staging (`space h s`/`u` → git:stage-hunk/unstage-hunk) is the unified binding from
+    // Hunk staging (`space h s`/`u` → git:hunk-stage/git:hunk-unstage) is the unified binding from
     // `#AppWindow`; it routes here automatically (this embedded editor registers no gutter
     // variant). Bare `s`/`u` are left to vim (substitute / undo) since this surface is editable.
     // `g d` jumps to the file/line under the cursor — Enter now opens the inline comment box

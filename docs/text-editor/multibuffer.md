@@ -99,16 +99,20 @@ Single-file editing plus both multibuffer surfaces run on the
     classified staged/unstaged against the index (staged = HEAD↔index,
     unstaged = index↔worktree, the same model `GitGutter` uses). A gutter
     marker bar shows it (info/blue = staged, warning/amber = unstaged). `space h s`/`space h u` →
-    `git:stage-hunk`/`git:unstage-hunk` (the unified hunk commands, shared
+    `git:hunk-stage`/`git:hunk-unstage` (the unified hunk commands, shared
     with the editor gutter; routed here via the focus chain since this
     embedded editor registers no gutter variant, and bare vim `s`/`u` stay
     substitute/undo) build the hunk patch (`formatHunkPatch`) and
     `applyPatch --cached` (`--reverse`
     for unstage), then re-read the index + repaint markers (no geometry
-    reflow — staging doesn't touch the worktree↔HEAD diff). Partial-file
-    (per-hunk) staging works; external index moves refresh via
-    `git.onChange`. Tested by `DiffViewStaging.test.ts` (real
-    temp-repo round-trip).
+    reflow — staging doesn't touch the worktree↔HEAD diff). `space h r` →
+    `git:hunk-revert` discards the unstaged hunk: unlike stage/unstage (which
+    `git apply` the index), it restores the hunk's rows to the index version on
+    the live new-side `Document` (`replaceModelLineRange`, one undo) and saves —
+    so the diff, any open editor, and the LSP stay in sync (a `git apply` on disk
+    would desync the in-memory Document). Partial-file (per-hunk) staging/revert
+    works; external index moves refresh via `git.onChange`. Tested by
+    `DiffViewStaging.test.ts` (real temp-repo round-trip).
   - **Commit** — `space g c` → `git:start-commit` opens
     `.git/COMMIT_EDITMSG` in a tab (save+close commits).
   - `space g o` opens the diff multibuffer (the `GitStagingView`

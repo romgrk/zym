@@ -120,6 +120,9 @@ const SEQUENCE_BINDINGS: Record<string, string> = {
   // [h/]h — jump to the previous/next git hunk (GitGutter change bars).
   '[ h': 'MoveToPreviousHunk',
   '] h': 'MoveToNextHunk',
+  // [d/]d — jump to the previous/next LSP diagnostic in the file.
+  '[ d': 'MoveToPreviousDiagnostic',
+  '] d': 'MoveToNextDiagnostic',
 };
 
 // By default `j`/`k` move by display line too (like `:set nowrap`-free editors),

@@ -2346,19 +2346,24 @@ export class AppWindow {
         description: 'Expand every file (search results)',
         when: () => this.activeSearchResults() !== null,
       },
-      // Unified hunk commands: the same `git:stage-hunk`/`git:unstage-hunk` (`space h s`/`u`)
-      // as the editor gutter, routed here for the continuous diff. The continuous-diff editor
-      // is embedded (no gutter), so it never registers the editor's variant — these AppWindow
-      // registrations are what the focus chain resolves while it's focused.
-      'git:stage-hunk': {
+      // Unified hunk commands: the same `git:hunk-stage`/`git:hunk-unstage`/`git:hunk-revert`
+      // (`space h s`/`u`/`r`) as the editor gutter, routed here for the continuous diff. The
+      // continuous-diff editor is embedded (no gutter), so it never registers the editor's variant —
+      // these AppWindow registrations are what the focus chain resolves while it's focused.
+      'git:hunk-stage': {
         didDispatch: () => this.activeContinuousDiff()?.stageHunkAtCursor(),
         description: 'Stage the hunk under the cursor (continuous diff)',
         when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
       },
-      'git:unstage-hunk': {
+      'git:hunk-unstage': {
         didDispatch: () => this.activeContinuousDiff()?.unstageHunkAtCursor(),
         description: 'Unstage the hunk under the cursor (continuous diff)',
         when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
+      },
+      'git:hunk-revert': {
+        didDispatch: () => this.activeContinuousDiff()?.revertHunkAtCursor(),
+        description: 'Revert the hunk under the cursor (continuous diff)',
+        when: () => this.activeContinuousDiff()?.live === true, // revert restores to the index → live-diff only
       },
       'diff:review-comment': {
         didDispatch: () => this.activeContinuousDiff()?.startComment(),

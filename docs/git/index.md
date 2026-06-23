@@ -279,9 +279,10 @@ next `map`, so only visible editors refetch on a repo change.
 
 It also drives **hunk-level staging**: `stageHunk`/`unstageHunk` (`space h
 s` / `space h u`) synthesize a unified diff for the hunk under the cursor
-and `git apply --cached` it (via `applyPatch`); `revert-hunk` (`space h
-r`) is done in the buffer by the editor. Hunk helpers live in
-`util/hunkPatch.ts`.
+and `git apply --cached` it (via `applyPatch`); `hunk-revert` (`space h
+r`) is done in the buffer (restore the hunk's rows to the index version, then
+save) — by the editor over its `GitGutter`, and by the continuous diff over its
+live new-side `Document`. Hunk helpers live in `util/hunkPatch.ts`.
 
 ### Inline blame — `src/ui/TextEditor/GitBlameController.ts`
 

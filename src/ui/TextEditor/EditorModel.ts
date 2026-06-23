@@ -384,6 +384,20 @@ export class EditorModel {
     return this.hunkProvider?.() ?? [];
   }
 
+  // LSP-diagnostic navigation (vim `]d`/`[d`). The host (TextEditor) registers a
+  // provider backed by DiagnosticsView; absent (buffer-only editors, no LSP) it
+  // yields no diagnostics and the motions no-op.
+  private diagnosticProvider?: () => Point[];
+
+  setDiagnosticProvider(provider: () => Point[]): void {
+    this.diagnosticProvider = provider;
+  }
+
+  /** Sorted buffer positions where each diagnostic begins (empty when unavailable). */
+  getDiagnosticPositions(): Point[] {
+    return this.diagnosticProvider?.() ?? [];
+  }
+
   /** `point` clamped to a real position within the buffer. */
   clipBufferPosition(point: PointLike): Point {
     return this.pointAtIter(this.iterAtPoint(point));

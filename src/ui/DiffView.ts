@@ -71,7 +71,7 @@ export interface DiffViewOptions {
   editable?: boolean;
   /**
    * LIVE diff: this view tracks the working tree + index, so hunk staging is enabled — the gutter
-   * shows the staged/unstaged marker and `git:stage-hunk`/`git:unstage-hunk` apply. Only the
+   * shows the staged/unstaged marker and `git:hunk-stage`/`git:hunk-unstage`/`git:hunk-revert` apply. Only the
    * staging surface (`git:diff-current-changes`) is live; read-only diffs over historical blobs
    * (commit / branch / file) are NOT live and their gutter omits the staging section. Requires
    * `git` + `cwd` (a repo) to do anything; pairs with `editable` on the staging surface.
@@ -167,7 +167,7 @@ export class DiffView {
   private readonly reviewHandlers: Array<() => void> = [];
   private readonly editable: boolean;
   /** Whether this is a live diff (staging surface): hunk staging + the gutter marker are enabled.
-   *  Public so the command layer can gate `git:stage-hunk`/`git:unstage-hunk` on it. */
+   *  Public so the command layer can gate `git:hunk-stage`/`git:hunk-unstage` on it. */
   readonly live: boolean;
   private readonly registry?: DocumentRegistry;
   // Hunk staging: the repo root, the per-file staged (index) blob, the last-built diff (for the
@@ -350,6 +350,34 @@ export class DiffView {
   /** Unstage the staged hunk under the caret (its index change reverted out of the index). */
   unstageHunkAtCursor(): void {
     this.applyStaging('unstage');
+  }
+
+  /** Revert (discard) the unstaged hunk under the caret: restore its rows to the index version
+   *  on the live new-side Document, as one undoable edit, then save so the working tree matches.
+   *  Mirrors the gutter editor's `git:hunk-revert`, but edits the shared Document (not a git apply
+   *  on disk) so the diff, any open editor, and the LSP all stay in sync. Live diffs only. */
+  revertHunkAtCursor(): void {
+    if (!this.repo) return void zym.notifications.addTrace('Not in a git repository');
+    const ctx = this.caretFileContext();
+    if (!ctx) return void zym.notifications.addTrace('No change under the cursor');
+    const { path, indexLines, worktreeLines, worktreeRow } = ctx;
+
+    // Unstaged hunks live in the index→worktree diff; the displayed new side IS the worktree, so
+    // the caret's worktree row indexes them directly (mirrors `applyStaging('stage')`).
+    const hunk = computeHunks(indexLines, worktreeLines).find((h) => hunkContainsBufferRow(h, worktreeRow));
+    if (!hunk) return void zym.notifications.addTrace('No unstaged change under the cursor');
+
+    const document = this.sources.get(newKey(path))?.document;
+    if (!document) return void zym.notifications.addTrace('Cannot revert a hunk in this diff');
+
+    // Replace the hunk's worktree rows with the index version (`oldLines`, each newline-terminated);
+    // a pure deletion (no new rows) re-inserts the removed lines before `newStart`.
+    const startRow = hunk.newStart;
+    const endRow = hunk.newStart + hunk.newLines.length; // exclusive
+    const restored = hunk.oldLines.map((line) => line + '\n').join('');
+    document.replaceModelLineRange(startRow, endRow, restored);
+    document.save();
+    this.gitRepo?.refresh(); // working-tree change counts (Source Control panel); the model edit re-diffs the view
   }
 
   private applyStaging(mode: 'stage' | 'unstage'): void {

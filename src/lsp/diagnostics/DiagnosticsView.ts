@@ -131,6 +131,22 @@ export class DiagnosticsView {
     }
   }
 
+  /** Sorted view-space start positions of every diagnostic in the current file
+   *  (for vim `]d`/`[d`). Recomputed from the store so it always reflects the
+   *  latest, mirroring `render()`'s MODEL→VIEW range conversion. */
+  diagnosticPositions(): Point[] {
+    const path = this.getPath();
+    const entries = path ? zym.lsp.diagnostics.get(path) : [];
+    const lineAt = (row: number) => this.model.modelLineTextForRow(row);
+    const positions = entries.map(
+      ({ diagnostic, encoding }) =>
+        this.model.viewRangeFromModel(lspToRange(diagnostic.range, lineAt, encoding)).start,
+    );
+    // The store sorts by MODEL position; folds can re-order in VIEW space, so re-sort.
+    positions.sort((a, b) => a.compare(b));
+    return positions;
+  }
+
   dispose(): void {
     this.decorations.clearUnderlines();
     this.severityByLine.clear();

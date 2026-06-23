@@ -789,6 +789,8 @@ export class TextEditor implements DocumentHost {
     // didClose are driven there off the model). This view contributes the diagnostics
     // renderer and signature help.
     this.diagnostics = new DiagnosticsView(this.view, this.syntax, this.textDecorations, this.editorModel, () => this._currentFile);
+    // Let the vim layer reach diagnostic positions (for `]d`/`[d`); already view-space.
+    this.editorModel.setDiagnosticProvider(() => this.diagnostics.diagnosticPositions());
     // Inlay hints (parameter names / inferred types) trailing each line, per view.
     this.inlayHints = new InlayHintController(
       this.view,
@@ -984,9 +986,9 @@ export class TextEditor implements DocumentHost {
     // `space h …` leader; the gutter does the index `git apply`, revert is an
     // in-buffer edit (so it's a single undo).
     zym.commands.add(this.view, {
-      'git:stage-hunk': { didDispatch: () => this.stageHunkAtCursor(), description: 'Stage the hunk under the cursor' },
-      'git:unstage-hunk': { didDispatch: () => this.unstageHunkAtCursor(), description: 'Unstage the hunk under the cursor' },
-      'git:revert-hunk': { didDispatch: () => this.revertHunkAtCursor(), description: 'Revert the hunk under the cursor' },
+      'git:hunk-stage': { didDispatch: () => this.stageHunkAtCursor(), description: 'Stage the hunk under the cursor' },
+      'git:hunk-unstage': { didDispatch: () => this.unstageHunkAtCursor(), description: 'Unstage the hunk under the cursor' },
+      'git:hunk-revert': { didDispatch: () => this.revertHunkAtCursor(), description: 'Revert the hunk under the cursor' },
     });
   }
 

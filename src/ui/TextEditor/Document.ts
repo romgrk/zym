@@ -302,6 +302,21 @@ export class Document implements TextEditorSource {
     this.model.endUserAction();
   }
 
+  /** Replace model rows `[startRow, endRow)` (endRow exclusive) with `text`, as one undo
+   *  step. The caller saves. The editable diff surface uses this to revert a hunk on the live
+   *  new-side Document (shared with any open editor of the same file): the model→view
+   *  reverse-sync repaints every view and the LSP didChange fires off the model signals.
+   *  `endRow` at/after the last line targets EOF (so a trailing hunk is replaced cleanly). */
+  replaceModelLineRange(startRow: number, endRow: number, text: string): void {
+    this.transact(() => {
+      const start = asIter(this.model.getIterAtLine(startRow));
+      const end =
+        endRow >= this.model.getLineCount() ? this.model.getEndIter() : asIter(this.model.getIterAtLine(endRow));
+      if (start.compare(end) !== 0) this.model.delete(start, end);
+      if (text.length > 0) this.model.insert(asIter(this.model.getIterAtLine(startRow)), text, -1);
+    });
+  }
+
   // --- View sync + folds (delegated to each view's ProjectionView) -----------
   // Each view is a ProjectionView over the model (one full-file editable segment — the
   // identity case): it owns write-through (view→model), reverse-sync (model→view), and its

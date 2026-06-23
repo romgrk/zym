@@ -13,6 +13,8 @@ default (no flag).
   (`ys`/`ds`/`cs`), indent/outdent/join.
 - `gv` reselects the last visual selection; `gb` selects the latest
   changed/yanked region (the `` `[ ``/`` `] `` change marks).
+- `]h`/`[h` jump to the next/previous git hunk; `]d`/`[d` to the next/previous
+  LSP diagnostic (positions fed from the host via `EditorModel` providers).
 - **zym-original `g`-commands** (`vim/zym-commands.ts`): `gf` opens the file named
   under the cursor (resolving against the current file's dir, then the project
   root, then absolute / `~`); `gw` opens a Google search for the word under the
