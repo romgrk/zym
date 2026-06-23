@@ -1,7 +1,9 @@
 # Styling
 
-How UI styling is done across the app, and the shared tokens components
-should reuse so the chrome stays visually consistent.
+Design system and CSS concerns.
+
+- Right now, the codebase doesn't reflect this document. It must be migrated
+  incrementally. New code should use these principles as much as possible.
 
 ## Mechanisms
 

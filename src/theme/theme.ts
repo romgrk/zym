@@ -425,13 +425,13 @@ function applyMarkupDefaults(syntax: SyntaxColors, syntaxStyle: SyntaxStyles, ui
     // `displayLineMove` moves by display row via the view's layout, so a normal
     // glyph (the unscaled `##` markers) on a taller heading line still steps off it.
     // Colors inherit `markup.heading` via prefix fallback (resolveSyntaxColor).
-    'markup.heading': { bold: true, scale: 1.2 }, // setext / generic fallback
-    'markup.heading.1': { bold: true, scale: 1.5 },
-    'markup.heading.2': { bold: true, scale: 1.2 },
+    'markup.heading': { bold: true, scale: 1 }, // setext / generic fallback
+    'markup.heading.1': { bold: true, scale: 2.4},
+    'markup.heading.2': { bold: true, scale: 1.5 },
     'markup.heading.3': { bold: true, scale: 1.1 },
-    'markup.heading.4': { bold: true, scale: 1.1 },
-    'markup.heading.5': { bold: true, scale: 1.1 },
-    'markup.heading.6': { bold: true, scale: 1.1 },
+    'markup.heading.4': { bold: true, scale: 1 },
+    'markup.heading.5': { bold: true, scale: 1 },
+    'markup.heading.6': { bold: true, scale: 1 },
     'markup.strong': { bold: true },
     'markup.emphasis': { italic: true },
     'markup.strikethrough': { strikethrough: true },
