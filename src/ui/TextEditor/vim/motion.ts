@@ -318,8 +318,7 @@ class MoveUpToEdge extends Motion {
   moveCursor (cursor: Cursor): void {
     this.moveCursorCountTimes(cursor, () => {
       const point = this.getPoint(cursor.getScreenPosition())
-      // TODO(vim-ts): setScreenPosition not yet on Cursor
-      if (point) (cursor as any).setScreenPosition(point)
+      if (point) cursor.setScreenPosition(point)
     })
   }
 
@@ -362,8 +361,7 @@ class MoveUpToEdge extends Motion {
 
     // If clipped, it means that original ponit was non stoppable(e.g. point.colum > EOL).
     const {row} = point
-    // TODO(vim-ts): clipScreenPosition not yet on EditorModel
-    return (row === 0 || row === this.getVimLastScreenRow()) && point.isEqual((this.editor as any).clipScreenPosition(point))
+    return (row === 0 || row === this.getVimLastScreenRow()) && point.isEqual(this.editor.clipScreenPosition(point))
   }
 }
 
@@ -789,8 +787,7 @@ class MoveToScreenColumn extends Motion {
     const point = this.utils.getScreenPositionForScreenRow(this.editor, cursor.getScreenRow(), this.which, {
       allowOffScreenPosition: this.getConfig('allowMoveToOffScreenColumnOnScreenLineMotion')
     })
-    // TODO(vim-ts): setScreenPosition not yet on Cursor
-    if (point) (cursor as any).setScreenPosition(point)
+    if (point) cursor.setScreenPosition(point)
   }
 }
 

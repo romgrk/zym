@@ -876,8 +876,7 @@ class PreviousSelection extends TextObject {
     const {properties, submode} = this.vimState.previousSelection
     if (properties && submode) {
       this.wise = submode
-      // TODO(vim-ts): tighten — previousSelection.properties is typed `unknown` upstream.
-      this.swrap(this.editor.getLastSelection()).selectByProperties(properties as any)
+      this.swrap(this.editor.getLastSelection()).selectByProperties(properties)
       return true
     }
     return false
@@ -917,9 +916,8 @@ class VisibleArea extends TextObject {
   selectOnce = true
 
   getRange (_selection: Selection): Range | null | undefined {
-    // TODO(vim-ts): tighten — getVisibleRowRange/bufferRangeForScreenRange not yet on EditorModel.
-    const [startRow, endRow] = (this.editor as any).getVisibleRowRange()
-    return (this.editor as any).bufferRangeForScreenRange([[startRow, 0], [endRow, Infinity]])
+    const [startRow, endRow] = this.editor.getVisibleRowRange()
+    return this.editor.bufferRangeForScreenRange([[startRow, 0], [endRow, Infinity]])
   }
 }
 

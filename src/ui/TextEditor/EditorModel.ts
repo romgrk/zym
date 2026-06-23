@@ -404,6 +404,26 @@ export class EditorModel {
     return clamp(bufferRow, 0, this.getLastBufferRow());
   }
 
+  /** Clamp a screen position into the buffer. Identity + clamp (screen ≈ buffer). */
+  clipScreenPosition(point: PointLike, _options?: unknown): Point {
+    return this.clipBufferPosition(point);
+  }
+
+  /** The visible screen-row range as `[firstVisibleScreenRow, lastVisibleScreenRow]`. */
+  getVisibleRowRange(): [number, number] {
+    return [this.getFirstVisibleScreenRow(), this.getLastVisibleScreenRow()];
+  }
+
+  bufferRangeForScreenRange(screenRange: RangeLike): Range {
+    const r = Range.fromObject(screenRange);
+    return new Range(this.bufferPositionForScreenPosition(r.start), this.bufferPositionForScreenPosition(r.end));
+  }
+
+  screenRangeForBufferRange(bufferRange: RangeLike): Range {
+    const r = Range.fromObject(bufferRange);
+    return new Range(this.screenPositionForBufferPosition(r.start), this.screenPositionForBufferPosition(r.end));
+  }
+
   /** True when `row` is empty or contains only whitespace. */
   isBufferRowBlank(row: number): boolean {
     return /^\s*$/.test(this.lineTextForBufferRow(row));
@@ -732,6 +752,25 @@ export class EditorModel {
     for (let i = 1; i < ranges.length; i++) this.addSelectionForBufferRange(ranges[i], options);
   }
 
+  /** Replace every multi-row selection with one single-row selection per row it
+   *  spans (visual-block `I`/`A` over a non-blockwise visual selection). */
+  splitSelectionsIntoLines(): void {
+    const ranges: Range[] = [];
+    for (const range of this.getSelectedBufferRanges()) {
+      if (range.start.row === range.end.row) {
+        ranges.push(range);
+        continue;
+      }
+      const { start, end } = range;
+      ranges.push(new Range(start, new Point(start.row, this.lineLength(start.row))));
+      for (let row = start.row + 1; row < end.row; row++) {
+        ranges.push(new Range(new Point(row, 0), new Point(row, this.lineLength(row))));
+      }
+      ranges.push(new Range(new Point(end.row, 0), end));
+    }
+    this.setSelectedBufferRanges(ranges);
+  }
+
   /**
    * Merge selections that share any buffer row into one spanning selection,
    * destroying the absorbed ones (used by linewise occurrence so adjacent
@@ -922,6 +961,14 @@ export class EditorModel {
     if (cursor.row === row && cursor.column <= Math.max(current.length, indent.length)) {
       this.setCursorBufferPosition(new Point(row, indent.length));
     }
+  }
+
+  /** Replace `row`'s leading whitespace so it sits at indent level `newLevel`. */
+  setIndentationForBufferRow(row: number, newLevel: number): void {
+    const indent = this.buildIndentString(Math.max(0, newLevel));
+    const current = this.leadingWhitespaceForBufferRow(row);
+    if (current === indent) return;
+    this.setTextInBufferRange(new Range(new Point(row, 0), new Point(row, current.length)), indent);
   }
 
   // --- Undo grouping ---------------------------------------------------------

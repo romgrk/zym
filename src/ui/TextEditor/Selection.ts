@@ -32,6 +32,9 @@ export class Selection {
   // `EditorModel.promoteAnotherToPrimary`.
   isPrimary: boolean;
   goalColumn: number | null = null;
+  // Stashed by the mouse-interaction layer (shift+click) to preserve the
+  // pre-click tail screen range; see VimState.observeMouse.
+  initialScreenRange?: Range;
 
   // While true, moving the cursor extends the selection (moves the head mark
   // only) instead of collapsing it. Set during `modifySelection`.
@@ -193,6 +196,12 @@ export class Selection {
     return !this.isEmpty() && this.getHeadBufferPosition().isLessThan(this.getTailBufferPosition());
   }
 
+  /** Order against `other` by buffer range (start, then end). Mirrors Atom's
+   *  `Selection.compare`; used to sort selections by buffer position. */
+  compare(other: Selection): -1 | 0 | 1 {
+    return this.getBufferRange().compare(other.getBufferRange());
+  }
+
   setBufferRange(range: RangeLike, options: SetBufferRangeOptions = {}): void {
     // Coerce — the vim layer (e.g. BlockwiseSelection) passes `[[r,c],[r,c]]`.
     const r = Range.fromObject(range);
@@ -215,6 +224,12 @@ export class Selection {
   /** Collapse the selection to its head, leaving the cursor there. */
   clear(): void {
     this.collapseTo(this.getHeadIter());
+  }
+
+  /** Extend the selection `columnCount` columns to the right (no line wrap).
+   *  Mirrors Atom's `Selection.selectRight`; used by visual-block insert repeat. */
+  selectRight(columnCount = 1): void {
+    this.modifySelection(() => this.cursor.moveRight(columnCount));
   }
 
   /** Replace the selected text with `text`, leaving the cursor after it. */

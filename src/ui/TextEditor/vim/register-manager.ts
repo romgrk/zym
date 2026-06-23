@@ -54,6 +54,9 @@ export default class RegisterManager {
   clipboardBySelection: Map<Selection, string>
   historyIndex: number
   name: string | null = null
+  // Caches the exact text of the last blockwise yank/delete, so a paste can be
+  // recognised as blockwise even after a clipboard round-trip dropped the wise.
+  lastBlockwiseText: string | null = null
 
   constructor (vimState: VimState) {
     this.vimState = vimState

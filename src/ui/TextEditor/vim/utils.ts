@@ -336,7 +336,7 @@ function moveCursorLeft (cursor: Cursor, {allowWrap, preventIncorrectWrap, keepG
   // On atomicSoftTabs enabled editor, there is situation where
   // (bufferColumn >  0 && screenColumn === 0) become true.
   // So we cannot believe bufferColumn, check screenColumn to prevent wrap.
-  if (preventIncorrectWrap && (cursor as any).getScreenColumn() === 0) {
+  if (preventIncorrectWrap && cursor.getScreenColumn() === 0) {
     return
   }
 
@@ -1080,8 +1080,7 @@ function adjustIndentWithKeepingLayout (editor: EditorModel, range: Range): void
   const deltaToSuggestedLevel = suggestedLevel - minLevel
   if (deltaToSuggestedLevel) {
     for (const [row, actualLevel] of rowAndActualLevels) {
-      // TODO(vim-ts): tighten — setIndentationForBufferRow not yet on EditorModel.
-      (editor as any).setIndentationForBufferRow(row, actualLevel + deltaToSuggestedLevel)
+      editor.setIndentationForBufferRow(row, actualLevel + deltaToSuggestedLevel)
     }
   }
 }

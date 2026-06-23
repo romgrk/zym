@@ -125,8 +125,7 @@ class SelectionWrapper {
   }
 
   getTailScreenRange () {
-    // TODO(vim-ts): tighten — screenRangeForBufferRange not yet on EditorModel
-    return (this.selection.editor as any).screenRangeForBufferRange(this.getTailBufferRange())
+    return this.selection.editor.screenRangeForBufferRange(this.getTailBufferRange())
   }
 
   saveProperties (isNormalized?: boolean) {

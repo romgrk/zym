@@ -223,8 +223,7 @@ export default class OperationStack {
 
     if (!top.isReady()) {
       if (this.mode === 'normal' && top.isOperator()) {
-        // TODO(vim-ts): drop cast once VimMode includes 'operator-pending'.
-        this.vimState.activate('operator-pending' as any)
+        this.vimState.activate('operator-pending')
       }
       // Temporary set while command is running to achieve operation-specific keymap scopes
       this.addToClassList(top.getCommandNameWithoutPrefix() + '-pending')

@@ -47,8 +47,7 @@ export default class BlockwiseSelection {
   }
 
   static getSelectionsOrderedByBufferPosition (editor: EditorModel): BlockwiseSelection[] {
-    // TODO(vim-ts): tighten — Selection.compare not yet on Selection model
-    return this.getSelections(editor).sort((a, b) => (a.getStartSelection() as any).compare(b.getStartSelection()))
+    return this.getSelections(editor).sort((a, b) => a.getStartSelection().compare(b.getStartSelection()))
   }
 
   static getLastSelection (editor: EditorModel): BlockwiseSelection | undefined {

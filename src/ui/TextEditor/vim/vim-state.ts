@@ -13,7 +13,7 @@ import MarkManager from './mark-manager.ts'
 import RegisterManager from './register-manager.ts'
 import MutationManager from './mutation-manager.ts'
 import PositionHistory from './position-history.ts'
-import swrap from './selection-wrapper.ts'
+import swrap, { type SelectionProperties } from './selection-wrapper.ts'
 import globalState from './global-state.ts'
 import { CursorStyleManager, HoverManager, FlashManager, OccurrenceManager, SequentialPasteManager, ScrollManager } from './stubs.ts'
 import type { StatusBarManager } from './stubs.ts'
@@ -25,7 +25,7 @@ import type { Disposable as DisposableType } from '../../../util/eventKit.ts'
 import type { Key } from '../../../keymap/Key.ts'
 
 /** The four mode tags VimState moves between. */
-export type VimMode = 'normal' | 'insert' | 'visual'
+export type VimMode = 'normal' | 'insert' | 'visual' | 'operator-pending'
 /**
  * The mode's submode: the visual-mode wise (`characterwise`/`linewise`/
  * `blockwise`) or insert-mode `replace`; `null` when the mode has no submode.
@@ -79,8 +79,12 @@ export default class VimState {
   mode: VimMode
   submode: VimSubmode
   replaceModeDisposable: DisposableType | null
-  previousSelection: { properties?: unknown; submode?: VimSubmode }
+  previousSelection: { properties?: SelectionProperties; submode?: VimSubmode }
   ignoreSelectionChange: boolean
+  // Macro state: the register currently recording (`q{reg}`), and the last
+  // register replayed (so `@@` repeats it). Driven by RecordMacro/ReplayMacro.
+  recordingMacroRegister: string | null = null
+  lastMacroRegister?: string
   subscriptions: CompositeDisposable
 
   // Set/cleared during mode transitions.
@@ -393,7 +397,7 @@ export default class VimState {
     const onMouseDownCapture = () => {
       if (isWaiting('mousedown-capture')) {
         for (const selection of this.editor.getSelections()) {
-          ;(selection as any).initialScreenRange = this.swrap(selection).getTailScreenRange()
+          selection.initialScreenRange = this.swrap(selection).getTailScreenRange()
         }
       }
     }
@@ -404,7 +408,7 @@ export default class VimState {
           this.getBlockwiseSelections().forEach(bs => bs.skipNormalization())
         }
         for (const selection of this.editor.getSelections().filter(s => s.isEmpty())) {
-          ;(selection as any).initialScreenRange = this.swrap(selection).getTailScreenRange()
+          selection.initialScreenRange = this.swrap(selection).getTailScreenRange()
         }
         // For shilft+click which not involve mousemove event.
         this.reconcileVisualModeWithActualSelection(false) // Prevent auto-shift-to-normal-mode by passing `false`

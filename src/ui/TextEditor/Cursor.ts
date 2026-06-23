@@ -42,6 +42,15 @@ export class Cursor {
     return this.getBufferRow();
   }
 
+  getScreenColumn(): number {
+    return this.getBufferColumn();
+  }
+
+  /** Move the cursor to a screen position. Screen ≈ buffer (no soft-wrap / folds). */
+  setScreenPosition(point: PointLike, options?: unknown): void {
+    this.setBufferPosition(point, options);
+  }
+
   /**
    * Move the cursor to `point` (clamped), collapsing any selection. Clears the
    * vertical-motion `goalColumn` — an explicit/horizontal move resets the target.

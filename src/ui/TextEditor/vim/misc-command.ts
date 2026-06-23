@@ -552,13 +552,12 @@ class RecordMacro extends MiscCommand {
     // TODO(vim-ts): macro record methods not yet on KeymapManager
     const km = zym.keymaps
     if (km.isRecordingMacro()) {
-      // TODO(vim-ts): recordingMacroRegister not yet on VimState
-      this.vimState.saveMacro((this.vimState as any).recordingMacroRegister, km.stopMacroRecord())
-      ;(this.vimState as any).recordingMacroRegister = null
+      this.vimState.saveMacro(this.vimState.recordingMacroRegister!, km.stopMacroRecord())
+      this.vimState.recordingMacroRegister = null
     } else {
       const register = await this.readCharPromised()
       if (register && /^[a-zA-Z0-9"]$/.test(register)) {
-        ;(this.vimState as any).recordingMacroRegister = register
+        this.vimState.recordingMacroRegister = register
         km.startMacroRecord()
       }
     }
@@ -574,12 +573,11 @@ class ReplayMacro extends MiscCommand {
 
     let register = await this.readCharPromised()
     if (!register) return
-    // TODO(vim-ts): lastMacroRegister not yet on VimState
-    if (register === '@') register = (this.vimState as any).lastMacroRegister // @@ = repeat last
+    if (register === '@') register = this.vimState.lastMacroRegister // @@ = repeat last
     if (!register) return
     const keys = this.vimState.getMacro(register)
     if (!keys) return
-    ;(this.vimState as any).lastMacroRegister = register
+    this.vimState.lastMacroRegister = register
     for (let i = 0; i < count; i++) this.vimState.replayMacro(keys)
   }
 }
@@ -606,25 +604,25 @@ class PreviousTab extends MiscCommand {
 // cursor directly (not via a jump motion), so stepping the list doesn't itself
 // record new jumps.
 class JumpBackward extends MiscCommand {
-  list: string = 'jumpList'
-  direction: string = 'goBackward'
+  list: 'jumpList' | 'changeList' = 'jumpList'
+  direction: 'goBackward' | 'goForward' = 'goBackward'
   execute (): void {
     // Dynamic dispatch over jumpList/changeList × goBackward/goForward.
-    const list = (this.vimState as any)[this.list]
+    const list = this.vimState[this.list]
     const point: Point | null = list[this.direction](this.getCursorBufferPosition(), this.getCount())
     if (point) this.editor.setCursorBufferPosition(point)
   }
 }
 class JumpForward extends JumpBackward {
-  direction: string = 'goForward'
+  direction: 'goBackward' | 'goForward' = 'goForward'
 }
 class GoToOlderChange extends JumpBackward {
-  list: string = 'changeList'
-  direction: string = 'goBackward'
+  list: 'jumpList' | 'changeList' = 'changeList'
+  direction: 'goBackward' | 'goForward' = 'goBackward'
 }
 class GoToNewerChange extends JumpBackward {
-  list: string = 'changeList'
-  direction: string = 'goForward'
+  list: 'jumpList' | 'changeList' = 'changeList'
+  direction: 'goBackward' | 'goForward' = 'goForward'
 }
 
 const __operations = {
