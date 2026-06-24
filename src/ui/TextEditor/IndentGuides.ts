@@ -11,6 +11,7 @@
  * Toggle with `editor.indentGuides`. Drawing needs a realized, allocated view, so
  * the visual result needs interactive verification (not exercised headlessly).
  */
+import * as Color from 'color-bits/string';
 import { Gdk, Gtk, type SourceView } from '../../gi.ts';
 import { Point } from '../../text/Point.ts';
 import { theme } from '../../theme/theme.ts';
@@ -44,7 +45,7 @@ export class IndentGuides {
     this.view = view;
     this.model = model;
     this.buffer = view.getBuffer();
-    this.rgba.parse(theme.ui.text.muted);
+    this.rgba.parse(Color.lighten(theme.ui.view.bg, 0.07));
 
     this.widget = new Gtk.DrawingArea();
     this.widget.setCanTarget(false);
