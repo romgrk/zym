@@ -11,7 +11,7 @@
  */
 import { Gtk } from '../gi.ts';
 import { addStyles } from '../styles.ts';
-import { symbolicImage } from './icons.ts';
+import { ImageIcons } from '../icons.ts';
 import { keycap } from './Keycap.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -33,9 +33,9 @@ addStyles(/* css */`
   #PanelEmptyFooter .cheat-footer-hint { margin-top: 5px; }
 `);
 
-// The sleeping cat "logo": a bundled symbolic SVG (assets/), recolored to the
-// text color like any symbolic icon.
-const CAT_ICON_FILE = 'cat-sleeping-symbolic.svg';
+// The sleeping cat "logo": a bundled symbolic SVG from the `ImageIcons` catalog,
+// recolored to the text color like any symbolic icon (and muted via
+// #PanelEmptyCat's opacity).
 const CAT_ICON_SIZE = 52;
 
 // A handful of high-value commands. `keys` is the binding in its canonical form —
@@ -71,7 +71,7 @@ export function welcomePanel(): Widget {
   box.setHalign(Gtk.Align.CENTER);
   box.setValign(Gtk.Align.CENTER);
 
-  const cat = symbolicImage(CAT_ICON_FILE, CAT_ICON_SIZE);
+  const cat = ImageIcons.CAT_SLEEPING(CAT_ICON_SIZE);
   cat.setName('PanelEmptyCat'); // CSS identity (#PanelEmptyCat) — recolored like a symbolic icon
   cat.setMarginBottom(20);
   box.append(cat);

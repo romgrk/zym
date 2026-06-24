@@ -38,6 +38,7 @@ Most important tasks:
 - One main component per file, under `src/ui`.
 - Fonts (ui and monospace) are defined in `src/fonts.ts`
 - Icons are Nerd Font glyphs via `src/ui/nerdfonts.ts` — avoid `Gio.ThemedIcon` / `Gtk.Image(iconName)`.
+- Bundled SVGs live in `assets/icons/`, named `*-symbolic.svg` so GTK recolors them to the theme foreground (the suffix is the recolor trigger — `FORCE_SYMBOLIC` won't substitute). `scripts/generate-icons.ts` (run on `postinstall`, or `pnpm run generate-icons`) emits a name→path map to `src/icons.generated.ts` (key drops `-symbolic`), which `src/icons.ts` exposes as `ImageIcons` — `ImageIcons.CAT_SLEEPING(52)` builds a sized, theme-recolored `Gtk.Image`. Add an icon by dropping an `*-symbolic.svg` in the folder and re-running the script.
 - Do not under any circumstance use a Gtk.EventController of any kind without prompting.
 
 ## Commands & keymaps

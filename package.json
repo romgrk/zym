@@ -13,8 +13,9 @@
     "zym": "src/index.ts"
   },
   "scripts": {
-    "start": "node src/index.ts",
-    "postinstall": "pnpm run generate-types",
+    "start": "pnpm run generate-icons && node src/index.ts",
+    "postinstall": "pnpm run generate-types && pnpm run generate-icons",
+    "generate-icons": "node scripts/generate-icons.ts",
     "poc": "node src/poc/fold-highlight.ts",
     "poc:inline": "node src/poc/inline-overlay.ts",
     "poc:peek": "node src/poc/sibling-peek.ts",

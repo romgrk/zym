@@ -11,30 +11,9 @@
  * Glyphs are FontAwesome/Octicon codepoints (present in the Nerd Font); file-type
  * icons live separately in fileIcons.ts.
  */
-import * as Path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Gio, Gtk, Pango } from '../gi.ts';
+import { Gtk, Pango } from '../gi.ts';
 import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { NERDFONT } from './nerdfont.ts';
-
-// Directory holding the few bundled SVG assets (vs. the Nerd Font glyphs above).
-const ASSETS_DIR = Path.join(Path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'assets');
-
-/**
- * Build a `Gtk.Image` from a bundled symbolic SVG (a file under assets/ whose name
- * ends in `-symbolic.svg`). Loaded as a `GtkIconPaintable`, GTK treats it as a
- * symbolic icon and recolors it to the widget's `color` — so it follows the theme
- * (and the empty-state active/idle color) like any symbolic icon, despite not
- * living in an icon theme. Unlike the rest of our icons (Nerd Font glyphs; see the
- * note above), this is a real symbolic SVG.
- */
-export function symbolicImage(filename: string, pixelSize: number): InstanceType<typeof Gtk.Image> {
-  const file = Gio.File.newForPath(Path.join(ASSETS_DIR, filename));
-  const paintable = Gtk.IconPaintable.newForFile(file, pixelSize, 1);
-  const image = Gtk.Image.newFromPaintable(paintable);
-  image.setPixelSize(pixelSize);
-  return image;
-}
 
 // Named UI roles mapped onto the NERDFONT catalog glyphs.
 export const Icons = {
