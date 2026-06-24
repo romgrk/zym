@@ -24,7 +24,7 @@ const COPY_GLYPH = NERDFONT.ACTION.COPY;
 
 // Colors as CSS variables (--t-ui-*); code blocks read the font store's monospace
 // family (--t-font-monospace-family). See docs/styling.md.
-addStyles(`
+addStyles(/* css */`
   .zym-md { }
   .zym-md-code {
     background: var(--view-bg-color);
@@ -33,21 +33,18 @@ addStyles(`
     font-family: var(--t-font-monospace-family);
   }
   .zym-md-quote {
-    border-left: 3px solid var(--t-ui-border);
+    border-left: 3px solid var(--border-color);
     padding-left: 10px;
     opacity: 0.85;
   }
-  /* Table grid lines: the outer top/left edge on the grid, the right/bottom edge on
-     each cell, so adjacent cells share a single 1px line (theme.ui.border) instead of
-     doubling up at the seams. */
   .zym-md-table {
-    border-top: 1px solid var(--t-ui-border);
-    border-left: 1px solid var(--t-ui-border);
+    border-top: 1px solid var(--border-color);
+    border-left: 1px solid var(--border-color);
     border-radius: 4px;
   }
   .zym-md-th, .zym-md-cell {
-    border-right: 1px solid var(--t-ui-border);
-    border-bottom: 1px solid var(--t-ui-border);
+    border-right: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
     padding: 4px 10px;
   }
   .zym-md-th { font-weight: bold; }

@@ -30,7 +30,7 @@ addStyles(`
   #Message.is-user .message-bubble { background: var(--t-ui-surface-selected); }
   #Message.is-assistant .message-bubble {
     background: var(--t-ui-surface-popover);
-    border: 1px solid ${theme.ui.border};
+    border: 1px solid var(--border-color);
   }
   #Message.is-thinking .message-bubble { background: transparent; opacity: 0.55; font-style: italic; }
 `);

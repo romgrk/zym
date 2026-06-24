@@ -26,7 +26,7 @@ export function applyNotificationStyles(): void {
   const rules = [
     `.NotificationToast {
       background-color: ${popoverBg};
-      border: 1px solid ${border};
+      border: 1px solid var(--border-color);
       border-radius: 12px;
       padding: 8px 10px;
       min-width: 260px;

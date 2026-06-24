@@ -23,7 +23,8 @@ export const NERDFONT = {
     CROSS:   '', // U+F467 nf-oct-x
     DOT:     '', // U+F444 nf-oct-dot_fill
     NEUTRAL: '', // U+F11A nf-fa-meh_o
-    SYNC:    '󱥸', // U+F1978 nf-md-cog_sync (agent working spinner)
+    SYNC:    '󱥸', // U+F1978 nf-md-cog_sync (subagent cog)
+    WORKING: '', // U+F141 nf-fa-ellipsis_h (agent in-progress)
     STOP:    '', // U+F28D nf-fa-stop_circle (interrupted)
   },
   TASK: {

@@ -113,7 +113,7 @@ export class WorkbenchList {
   private readonly scrolled: InstanceType<typeof Gtk.ScrolledWindow>;
   private readonly options: WorkbenchListOptions;
   private readonly userName: string;
-  // Renders nerd-font glyphs (header robot, user, working cog) in the icon font.
+  // Renders nerd-font glyphs (header robot, user, working ellipsis) in the icon font.
   private readonly iconAttrs: InstanceType<typeof Pango.AttrList>;
   // The built rows, in list-box order (user first, then agents in launch order).
   // Includes rows mid-removal (`removing`) until their collapse transition finishes.
@@ -368,8 +368,8 @@ export class WorkbenchList {
     agent: Agent,
     unsubs: Array<() => void>,
   ): InstanceType<typeof Gtk.Box> {
-    // Status indicator (shared with the agent picker): a colored dot, or the cog
-    // glyph while working. Shown in both modes; kept in sync.
+    // Status indicator (shared with the agent picker): a colored dot, or the
+    // ellipsis glyph while working. Shown in both modes; kept in sync.
     const status = createAgentStatusIcon(agent);
     unsubs.push(status.dispose);
     const dot = status.widget;

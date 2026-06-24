@@ -1,8 +1,8 @@
 /*
- * agentStatusIcon — the shared agent status indicator. The same dot/cog the
+ * agentStatusIcon — the shared agent status indicator. The same glyph the
  * WorkbenchList sidebar shows on each agent row is reused by the agent picker, so
  * the two stay in lockstep: a colored dot (●) for idle/waiting/exited, or the
- * nf-md-cog-sync glyph while the agent is working.
+ * nf-fa-ellipsis_h glyph (…) while the agent is working.
  *
  * `createAgentStatusIcon` returns a live, self-updating Gtk.Label — for contexts
  * that hold real widgets (the sidebar list). `agentStatusMarkup` returns the
@@ -21,13 +21,13 @@ import type { Agent } from '../agents/types.ts';
 
 export const STATUS_DOT = '●';
 export const DISCONNECTED_DOT = '○'; // hollow: resumed but not reconnected
-export const WORKING_GLYPH = NERDFONT.STATUS.SYNC;
+export const WORKING_GLYPH = NERDFONT.STATUS.WORKING;
 
 // Status → indicator color for the *colored* states (waiting on the user →
 // warning/amber, idle/ready → success/green), used by the *markup* path only —
 // markup can't read CSS variables, so it interpolates the literal. The CSS path
 // uses the matching var(--t-ui-status-*) directly. The muted states — working
-// (cog), exited, and disconnected (resumed-not-reconnected) — carry no color;
+// (ellipsis), exited, and disconnected (resumed-not-reconnected) — carry no color;
 // they dim the inherited foreground (Adwaita's muted idiom: `--dim-opacity` in
 // CSS, `alpha="55%"` in markup) rather than picking a grey.
 const STATUS_COLOR: Partial<Record<AgentStatus, string>> = {
@@ -37,14 +37,14 @@ const STATUS_COLOR: Partial<Record<AgentStatus, string>> = {
 
 const DOT_CLASSES = ['zym-agent-working', 'zym-agent-waiting', 'zym-agent-idle', 'zym-agent-exited', 'zym-agent-disconnected'];
 addStyles(`
-  .zym-agent-working { opacity: var(--dim-opacity); }
+  .zym-agent-working { color: var(--t-ui-text-muted); }
   .zym-agent-waiting { color: var(--t-ui-status-warning); }
   .zym-agent-idle    { color: var(--t-ui-status-success); }
   .zym-agent-exited  { opacity: var(--dim-opacity); }
   .zym-agent-disconnected { opacity: var(--dim-opacity); }
 `);
 
-// The working cog is rendered in the icon font; the plain dot uses the default
+// The working ellipsis is rendered in the icon font; the plain dot uses the default
 // font. Built lazily and shared across every icon.
 let iconAttrs: InstanceType<typeof Pango.AttrList> | null = null;
 function iconFontAttrs(): InstanceType<typeof Pango.AttrList> {
@@ -55,7 +55,7 @@ function iconFontAttrs(): InstanceType<typeof Pango.AttrList> {
   return iconAttrs;
 }
 
-/** Set `label` to reflect `status`: the colored dot, or the cog glyph while working. */
+/** Set `label` to reflect `status`: the colored dot, or the ellipsis glyph while working. */
 export function applyAgentStatus(label: InstanceType<typeof Gtk.Label>, status: AgentStatus): void {
   for (const cls of DOT_CLASSES) label.removeCssClass(cls);
   label.addCssClass(`zym-agent-${status}`); // idle | working | waiting | exited

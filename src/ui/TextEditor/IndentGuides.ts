@@ -44,7 +44,7 @@ export class IndentGuides {
     this.view = view;
     this.model = model;
     this.buffer = view.getBuffer();
-    this.rgba.parse(theme.ui.border);
+    this.rgba.parse(theme.ui.text.muted);
 
     this.widget = new Gtk.DrawingArea();
     this.widget.setCanTarget(false);
