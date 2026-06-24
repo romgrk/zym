@@ -37,6 +37,7 @@ import { QuestionCard } from './conversation/QuestionCard.ts';
 import { ToolRow } from './conversation/ToolRow.ts';
 import { SubagentView } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
+import { ActionsBar } from './conversation/ActionsBar.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
@@ -74,11 +75,6 @@ addStyles(/* css */`
     margin: 0 12px;
   }
 
-  /* Agent-registered actions: a row of buttons just above the input card. The
-     default action reads as the suggested (accent) button. */
-  #AgentConversation .conversation-actions {
-    padding: var(--spacing) calc(var(--spacing));
-  }
   /* The input + its status strip, as a bordered rounded card with its own bg.
      No top margin — the card sits flush under the transcript (no gap above). */
   #AgentConversation .conversation-input-card {
@@ -291,11 +287,11 @@ export class AgentConversation implements Agent {
   private _actions: AgentAction[] = [];
   private readonly actionHandlers: Array<() => void> = [];
   private readonly runningActionHandlers: Array<() => void> = [];
-  private readonly actionsBar: InstanceType<typeof Adw.WrapBox>;
+  private readonly actionsBar: ActionsBar;
   // Background processes of terminal-less actions; re-rendering the bar on change
   // toggles each running action's stop control.
   private readonly actionProcesses = new ActionProcesses(() => {
-    this.renderActions();
+    this.actionsBar.refresh();
     for (const handler of this.runningActionHandlers) handler();
   });
 
@@ -463,18 +459,19 @@ export class AgentConversation implements Agent {
     this.monitorView = new MonitorView(this.session, nav);
 
     // A button bar for the agent's registered actions, just above the input card;
-    // hidden until the agent registers any (see renderActions). A WrapBox so a long
-    // row of actions wraps onto further lines instead of overflowing the width.
-    this.actionsBar = new Adw.WrapBox({ childSpacing: 6, lineSpacing: 6 });
-    this.actionsBar.addCssClass('conversation-actions');
-    this.actionsBar.setVisible(false);
+    // hidden until the agent registers any (see ActionsBar).
+    this.actionsBar = new ActionsBar({
+      isRunning: (id) => this.actionProcesses.isRunning(id),
+      onRun: (action) => this.runAction(action),
+      onStop: (id) => this.stopAction(id),
+    });
 
     const mainBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
     mainBox.addCssClass('conversation-surface');
     mainBox.append(this.tasksPanel.root);
     mainBox.append(transcriptOverlay); // the scroller, with the floating copy button over it
     mainBox.append(this.thinkingReveal); // the thinking spinner sits just above the prompt
-    mainBox.append(this.actionsBar);
+    mainBox.append(this.actionsBar.root);
     mainBox.append(inputCard);
     mainBox.append(this.subagentView.panel.root); // running subagents expand below the input card
     mainBox.append(this.monitorView.panel.root); // running shell monitors, likewise
@@ -743,46 +740,8 @@ export class AgentConversation implements Agent {
   // Replace the registered-actions set and re-render the button bar.
   private setActions(actions: AgentAction[]): void {
     this._actions = actions;
-    this.renderActions();
+    this.actionsBar.render(actions);
     for (const handler of this.actionHandlers) handler();
-  }
-
-  // Rebuild the action button bar from `_actions`. The first action is the default
-  // and reads as the accent "suggested" button; a terminal-less action that is
-  // currently running gets a linked stop control. The bar hides when empty.
-  private renderActions(): void {
-    this.actionsBar.removeAll();
-    this._actions.forEach((action, index) => {
-      const run = new Gtk.Button({ label: action.label });
-      if (index === 0) run.addCssClass('suggested-action'); // the default action
-      // Re-running terminates the previous process first (handled in runAction).
-      run.on('clicked', () => this.runAction(action));
-
-      if (action.terminal) {
-        run.setTooltipText(action.command);
-        this.actionsBar.append(run);
-        return;
-      }
-
-      // Terminal-less: the run button + a stop control, joined (`linked`). The stop
-      // button shows only while the background process is running.
-      const running = this.actionProcesses.isRunning(action.id);
-      run.setTooltipText(`${action.command}\n(background process${running ? ', running — click to restart' : ''})`);
-      const group = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-      group.addCssClass('linked');
-      group.append(run);
-      if (running) {
-        const stop = new Gtk.Button({ valign: Gtk.Align.CENTER });
-        const stopLabel = new Gtk.Label();
-        setMarkupSafe(stopLabel, iconSpan(NERDFONT.STATUS.CROSS, undefined, true), '✗');
-        stop.setChild(stopLabel);
-        stop.setTooltipText(`Stop ${action.label}`);
-        stop.on('clicked', () => this.stopAction(action.id));
-        group.append(stop);
-      }
-      this.actionsBar.append(group);
-    });
-    this.actionsBar.setVisible(this._actions.length > 0);
   }
 
   private cyclePermissionMode(): void {
