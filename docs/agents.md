@@ -134,6 +134,11 @@ What already exists and is reused, not rebuilt:
   (`agents/configs.ts` + `claudeOptions.ts`) supplies the option lists and the
   `buildCommand` argv builder, so changing the kind re-populates them. Enter
   launches; the last-used options + an unsent draft persist to the next open.
+  ctrl-tab / ctrl-shift-tab cycle focus forward / backward through the card's
+  controls in tab order (the Tab the prompt editor swallows), driven by GTK's
+  own `childFocus` traversal so it follows the layout; bound in the window's
+  capture-phase keymap so they're swallowed before Adw.TabView's built-in
+  ctrl-tab cycles a background panel group's tab.
   A `mode` selects one of four flows, differing only in how the worktree choice is
   surfaced/seeded and where focus starts (the worktree is always realized by the
   agent via `set_worktree` — see `launchPrompt`): `default` (`agent:new`) keeps the

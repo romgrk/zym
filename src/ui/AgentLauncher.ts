@@ -101,7 +101,7 @@ addStyles(/* css */`
     font: var(--t-font-monospace);
     border: 1px solid var(--border-color);
     border-radius: var(--popover-radius);
-    background-color: var(--window-bg-color);
+    background-color: var(--view-bg-color);
   }
   /* Accent focus ring around the whole card while the prompt editor has focus
      (toggled via .prompt-focused below). GTK draws the outline following the card's
@@ -152,10 +152,19 @@ function registerLauncherKeymapOnce(): void {
   // switching to the new agent). Escape (core:cancel) dismisses the launcher — handled by a
   // bubble-phase controller on the card so an open combobox popover can swallow it first (a
   // closed combobox lets it through; the window keymap runs in capture phase, ahead of that).
+  //
+  // ctrl-tab / ctrl-shift-tab cycle focus forward / backward through the card's controls in
+  // their natural tab order (prompt → option dropdowns → …, wrapping at the ends) — the Tab /
+  // shift-Tab the prompt editor itself swallows. We bind them here — in the window's
+  // capture-phase keymap — specifically to swallow the keystroke before Adw.TabView's built-in
+  // ctrl-tab shortcut (managed scope, so it fires from any focus) cycles a background panel
+  // group's tab.
   zym.keymaps.add('agent-launcher', {
     '#AgentLauncher': {
       'ctrl-enter': 'launcher:submit',
       'ctrl-shift-enter': 'launcher:submit-background',
+      'ctrl-tab': 'launcher:focus-next',
+      'ctrl-shift-tab': 'launcher:focus-previous',
     },
     '#AgentLauncherPrompt #TextEditor': {
       enter: 'launcher:submit',
@@ -326,11 +335,25 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     onLaunch({ prompt, command, cwd, kind, worktree, background });
   };
 
+  // Cycle keyboard focus through the card's controls in their real tab order, wrapping at the
+  // ends. We drive GTK's own focus traversal (childFocus) scoped to the card rather than naming
+  // widgets, so it follows the layout and survives reordering/adding options. childFocus returns
+  // false when it runs off the end; clearing the card's focus child restarts traversal from the
+  // first/last control, giving the wrap.
+  const cycleFocus = (forward: boolean) => {
+    const dir = forward ? Gtk.DirectionType.TAB_FORWARD : Gtk.DirectionType.TAB_BACKWARD;
+    if (panel.childFocus(dir)) return;
+    panel.setFocusChild(null);
+    panel.childFocus(dir);
+  };
+
   registerLauncherKeymapOnce();
   commandsSub = zym.commands.add(panel, {
     'launcher:submit': { didDispatch: () => submit(false), description: 'Launch the agent and switch to it' },
     'launcher:submit-background': { didDispatch: () => submit(true), description: 'Launch the agent without switching to it' },
     'launcher:newline': { didDispatch: () => input.insertText('\n'), description: 'Insert a newline in the prompt' },
+    'launcher:focus-next': { didDispatch: () => cycleFocus(true), description: 'Cycle focus to the next launcher control' },
+    'launcher:focus-previous': { didDispatch: () => cycleFocus(false), description: 'Cycle focus to the previous launcher control' },
     'core:cancel': { didDispatch: () => card.close(), description: 'Close the launcher' },
   });
 
