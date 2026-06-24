@@ -20,6 +20,10 @@ test('loadTheme("adwaita") resolves the libadwaita-derived palette', () => {
   assert.equal(t.ui.surface.selected, 'rgba(53, 132, 228, 0.25)'); // view_selected_color (accent @ 25%)
   assert.equal(t.ui.text.accent, '#81d0ff'); // standalone accent_color (oklab max(l,0.85))
   assert.equal(t.ui.status.error, '#ff938c'); // standalone error_color
+  // view/card default to the Adwaita CSS variables, resolved to RGB at load.
+  assert.equal(t.ui.view.bg, '#1d1d20'); // --view-bg-color (dark)
+  assert.equal(t.ui.card.fg, '#ffffff'); // --card-fg-color (dark)
+  assert.equal(t.ui.card.bg, '#36363a'); // --card-bg-color (dark)
 });
 
 test('availableThemes lists the shipped theme files, excluding the schema', () => {

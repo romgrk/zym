@@ -45,6 +45,7 @@ export const FALLBACK_COLORS: Record<string, Record<Scheme, string>> = {
   '--accent-fg-color': { dark: '#ffffff', light: '#ffffff' },
   '--popover-bg-color': { dark: '#36363a', light: '#ffffff' },
   '--card-bg-color': { dark: '#36363a', light: '#ffffff' },
+  '--card-fg-color': { dark: '#ffffff', light: '#000006' },
   '--success-color': { dark: '#78e9ab', light: '#007c3d' },
   '--warning-color': { dark: '#ffc252', light: '#905400' },
   '--error-color': { dark: '#ff938c', light: '#c30000' },

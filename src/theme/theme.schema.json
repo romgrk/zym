@@ -62,6 +62,21 @@
             }
           }
         },
+        "card": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "libadwaita card surface colors (boxed/elevated content); defaults point at --card-fg-color / --card-bg-color and are resolved to RGB at load.",
+          "properties": {
+            "fg": {
+              "$ref": "#/$defs/color",
+              "description": "Card foreground (--card-fg-color)."
+            },
+            "bg": {
+              "$ref": "#/$defs/color",
+              "description": "Card background (--card-bg-color)."
+            }
+          }
+        },
         "text": {
           "type": "object",
           "additionalProperties": false,

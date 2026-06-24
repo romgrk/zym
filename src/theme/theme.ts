@@ -55,6 +55,18 @@ export interface ThemeUi {
     /** View background (`--view-bg-color`). */
     bg: string;
   };
+  /**
+   * The libadwaita "card" surface colors — the fg/bg of boxed/elevated content (cards,
+   * boxed lists). Like `view`, the defaults point at the Adwaita CSS variables
+   * (`--card-fg-color` / `--card-bg-color`) and are resolved to concrete RGB at load
+   * (see adaptTheme / resolveCssVarsInPlace), so consumers always read a literal color.
+   */
+  card: {
+    /** Card foreground (`--card-fg-color`). */
+    fg: string;
+    /** Card background (`--card-bg-color`). */
+    bg: string;
+  };
   text: {
     /** De-emphasized text (secondary labels, subtitles). */
     muted: string;
@@ -205,6 +217,7 @@ interface ThemeFromFile {
 interface ThemeFromFileUi {
   editor?: Partial<ThemeUi['editor']>;
   view?: Partial<ThemeUi['view']>;
+  card?: Partial<ThemeUi['card']>;
   text?: Partial<ThemeUi['text']>;
   border?: string;
   shadow?: string;
@@ -217,9 +230,10 @@ interface ThemeFromFileUi {
 }
 
 /*
- * The built-in default theme — a complete dark `Theme` of concrete RGB colors, the one
- * exception being `view.{fg,bg}`, which point at the Adwaita `--view-*-color` variables
- * the loader resolves to RGB (see resolveCssVarsInPlace). Resolved values are safe to
+ * The built-in default theme — a complete dark `Theme` of concrete RGB colors, the
+ * exceptions being `view.{fg,bg}` / `card.{fg,bg}`, which point at the Adwaita
+ * `--view-*-color` / `--card-*-color` variables the loader resolves to RGB (see
+ * resolveCssVarsInPlace). Resolved values are safe to
  * interpolate into Pango markup as well as CSS. It
  * is the single source of color defaults: `loadTheme` deep-merges a theme file's `ui`
  * over `DEFAULT_THEME.ui` (a theme's own values always win), so every `theme.ui.*`
@@ -238,6 +252,7 @@ export const DEFAULT_THEME: Theme = {
   ui: {
     editor: { foreground: '#ffffff', background: '#1e1e1e', lineNumber: '#888888' },
     view: { fg: '--view-fg-color', bg: '--view-bg-color' },
+    card: { fg: '--card-fg-color', bg: '--card-bg-color' },
     text: { muted: '#9a9996', accent: '#c678dd' },
     border: 'rgba(0, 0, 0, 0.3)',
     shadow: 'rgba(0, 0, 0, 0.3)',
@@ -329,6 +344,7 @@ export function adaptTheme(file: ThemeFromFile): Theme {
   const ui: ThemeUi = {
     editor: { ...D.editor, ...f.editor, background: f.editor?.background ?? surface.popover },
     view: { ...D.view, ...f.view },
+    card: { ...D.card, ...f.card },
     text: { ...D.text, ...f.text },
     border: f.border ?? D.border,
     shadow: f.shadow ?? D.shadow,

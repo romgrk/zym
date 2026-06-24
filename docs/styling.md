@@ -159,7 +159,8 @@ Semantic UI colors come from the active theme's `theme.ui`
 (`src/theme/theme.ts`), a concern-grouped nested object:
 `theme.ui.editor.foreground`, `theme.ui.text.muted`, `theme.ui.text.accent`,
 `theme.ui.status.{success,warning,error,info,hint}`,
-`theme.ui.surface.{popover,selected}`, … **Every `theme.ui.*` field is
+`theme.ui.surface.{popover,selected}`, `theme.ui.view.{fg,bg}`,
+`theme.ui.card.{fg,bg}`, … **Every `theme.ui.*` field is
 guaranteed filled** (the loader deep-merges over `DEFAULT_THEME`), so read
 them directly — no `?? fallback`. `theme.ui` mirrors the theme JSON's `ui`
 1:1; the loader + format are documented in [theming.md](theming.md).
