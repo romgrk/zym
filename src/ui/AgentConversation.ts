@@ -61,9 +61,11 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 // Colors come from the theme as CSS variables (--t-ui-*); the monospace bits read
 // the font store's --t-font-monospace-family. See docs/styling.md + theming.md.
 addStyles(/* css */`
+  /* The conversation reads as the "secondary sidebar" it's docked into (left dock +
+     its header section share these libadwaita --secondary-sidebar-* colors). */
   #AgentConversation .conversation-surface {
-    color: var(--view-fg-foreground);
-    background: var(--window-bg-color); // FIXME: use view-bg-color
+    color: var(--secondary-sidebar-fg-color);
+    background: var(--secondary-sidebar-bg-color);
   }
 
   /* A message queued while the agent is busy — a right-aligned bubble above the prompt. */

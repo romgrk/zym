@@ -3,8 +3,8 @@
 The git subsystem covers three deliverables, plus extras that grew out of
 them:
 
-1. **Status viewer** — a Source Control panel (`GitPanel`), a sibling tab
-   of the file tree in the left dock. File-level staging.
+1. **Status viewer** — a Source Control panel (`GitPanel`) that opens as a
+   tab in the active center panel. File-level staging.
 2. **Commit interface** — message edited in a normal editor tab, commit on
    save+close.
 3. **Forge links** — GitHub repo/actions/issues/PR open-on-web, PR + CI
@@ -142,10 +142,10 @@ synchronous getters**:
  (+ HEAD watch)  └─ git ls-files -z  (only when the index/HEAD moved) ───────────┘
                                    │  git(cwd, args, cb) — async, never blocks
                                    ▼  parse (pure fns, unit-tested)
-                         this.state = { branch, commit, status, ahead,
+                         this.state = { branch, commit, upstream, status, ahead,
                                         conflicts, fileStatuses, tracked }
                                    │ fire onChange iff signature() changed
-   getBranch()/getHead()/getStatus()/… ◄────┘  cached field reads, no I/O
+   getBranch()/getHead()/getUpstream()/getStatus()/… ◄────┘  cached field reads, no I/O
 ```
 
 - Warmed up **asynchronously** at construction (`warmUp()`): an async
@@ -161,10 +161,12 @@ synchronous getters**:
   branch-switch/commit reaction, plus the 1.5 s poll for working-tree
   edits and staging. On a HEAD event the signature is reset and
   `pollOnce()` runs. `signature()` is computed from the porcelain output —
-  branch, HEAD commit, ahead/behind, conflicts, **per-file
+  branch, HEAD commit, upstream ref, ahead/behind, conflicts, **per-file
   staged/unstaged/untracked state**, and ± totals — so it moves on edits,
   staging (including external `git add`), branch/upstream changes, and any
-  HEAD move (commit/reset/external push).
+  HEAD move (commit/reset/external push). The upstream tracking ref (porcelain
+  v2's `# branch.upstream`, e.g. `origin/main`) is parsed into the state and
+  exposed by **`getUpstream()`** for the panel's `git status` preamble.
 - `getStatus()` totals count tracked `--numstat` adds/dels **plus**
   untracked files as insertions (the branch indicator's `+` relies on
   this). `countNewLines` caps each untracked file at 10 MiB and treats
@@ -193,27 +195,38 @@ completion instead of waiting on the file watch.
 
 ## UI
 
-### Left-dock layout
+### Layout — a center tab
 
-Source Control is a **sibling tab of the file tree** in the left-dock top
-panel. `buildWorkbench` (`AppWindow`) adds only the `  Files` tab
-(`fileIconGlyph`) up front; the ` Git` tab (`Icons.git`, embedded in the
-Adw tab title) is **created lazily** the first time it's revealed
-(`AppWindow.ensureGitPanel`, driven by `git-panel:focus`), so a workbench
-opens no git-subscribing `GitPanel` until the user asks for it
-(`workbench.gitPanel`/`gitTab` are null until then). The panel collapses
-out of the workbench when its last tab closes; the reveal/focus path
-re-attaches it (per-workbench, so each agent workbench has its own).
-`#GitPanel` is the CSS/selector identity.
+Source Control **opens as a tab in the active center panel** (like a normal
+editor tab), via `git-panel:focus` → `AppWindow.revealGitPanel`. The ` Git`
+tab (`Icons.git`, embedded in the Adw tab title) and its `GitPanel` are
+**created lazily** the first time it's revealed (`AppWindow.ensureGitPanel`),
+so a workbench opens no git-subscribing `GitPanel` until the user asks for it
+(`workbench.gitPanel`/`gitTab` are null until then). Revealing again reveals
+the existing tab when it's still hosted (`Panel.containing`); otherwise it
+re-adds it, unparenting any closed page first (the zombie rule — see
+[../panels.md](../panels.md)). The `GitPanel` is owned per-workbench (each
+agent workbench has its own) and reused across close/reopen — closing the tab
+keeps it alive for the next reveal. `#GitPanel` is the CSS/selector identity.
+(The file tree keeps the right-side dock; `git:` was previously a dock tab.)
 
 ### Status viewer — `src/ui/GitPanel.ts`
 
-Component **`GitPanel`** (`#GitPanel`), exposing `root` (a scrollable
-column). Constructed with `{ cwd, git, onOpenFile, onCommit }`; rebuilds
-on `git.onChange` via an async `getChangesAsync` fetch (a generation guard
-drops a result superseded by a newer refresh — no `git status` on the UI
-thread). `setRoot(cwd, git)` re-roots it when an agent moves into a
-worktree.
+Component **`GitPanel`** (`#GitPanel`), whose `root` is a **horizontal
+`Gtk.Paned`**: the change list (`#GitPanelList`, the start child) and — once a
+change is opened — an **embedded live diff** (the end child, taking most of the
+width; see "Embedded diff" below). Constructed with `{ cwd, git, onOpenFile,
+onCommit, buildDiffView }`; rebuilds on `git.onChange` via an async
+`getChangesAsync` fetch (a generation guard drops a result superseded by a newer
+refresh — no `git status` on the UI thread). `setRoot(cwd, git)` re-roots it
+when an agent moves into a worktree.
+
+Above the groups it prints a **`git status`-style preamble** (`statusRow` +
+the pure `gitStatusLines`, read from `getBranch()` / `getUpstream()` /
+`getAheadBehind()`): `On branch <branch>` plus the upstream tracking line
+(ahead / behind / diverged / up-to-date), mirroring git's wording, with the
+parenthetical advice hint (`use "git push"…`) muted. Omitted when there's no
+branch.
 
 - **Staged** group — `RowKind: 'staged'`, per-row unstage, drawn in
   `theme.ui.success`.
@@ -221,13 +234,48 @@ worktree.
   in `theme.ui.error`.
 
 Each group is a small header (label + count) over a `Gtk.ListBox` of file
-rows (file icon + path + a single-letter state badge, `STATE_LETTER`).
-Rows are cursor-navigable (header rows non-selectable). Actions go through
-the command system so they're keybindable while the panel is focused: `s`
-stage, `u` unstage, `A` stage-all/unstage-all toggle, `X` discard, `c c`
-commit — mirroring FileTree's bare-key bindings. Clicking/`o` opens the
-file. In-panel diffs are not shown here; the diff surfaces are the editor
-tab and the gutter.
+rows: the single-letter state badge (`STATE_LETTER`, small + bold with one
+row-spacing of trailing margin) leads, followed by the path in the monospace
+font, both tinted the same staged-green / unstaged-red color. Rows are
+cursor-navigable (header rows non-selectable), each section separated by `2×`
+the row spacing. Actions go through the command system so they're keybindable
+while the **list** is focused (the keys are scoped to `#GitPanelList`, not the
+panel root, so they don't fire inside the embedded diff): `s` stage, `u`
+unstage, `A` stage-all/unstage-all toggle, `X` discard (`git restore` for a
+tracked file, `git clean` for an untracked one), `c c` commit — mirroring
+FileTree's bare-key bindings.
+
+#### Embedded diff
+
+`l` / `enter` / `o` (and a single click on a row) open the selected change in a **live,
+editable working-tree `DiffView`** embedded as the Paned's end child (a vertical
+divider; the diff takes most of the width). The view is built by the host via
+`GitPanelOptions.buildDiffView` (`AppWindow.buildCurrentChangesDiff`, which owns
+the `DocumentRegistry`), so the same multibuffer staging surface as
+`git:diff-current-changes` shows here. It is **rebuilt on each open** (so it
+always reflects the current change set; a generation guard drops a build a newer
+open superseded) and its caret is placed on the opened change's excerpt via
+`DiffView.revealFile(path)` → `TextEditor.revealRow`, which places the excerpt **a
+quarter down the viewport** with **`scroll_to_mark` (aligned)**
+(`EditorModel.scrollCursorToFraction(0.25)`). `scroll_to_mark` defers and validates
+the buffer incrementally until the mark is reached, so it lands accurately on a
+freshly-embedded multibuffer — unlike `scroll_to_iter` / the `getIterLocation`-based
+`setTopBufferRow`, which read an estimate (the header-band block decorations make
+line heights variable) and undershoot before the lines above are validated.
+`revealRow` re-asserts the scroll for a few frames against a late reflow, and the
+diff's `focus()` defers to the view's `map` when it's attached this frame (so a
+click / `l` reliably moves focus into it, not just the caret).
+
+The change list **follows the diff caret**: `DiffView.onCursorFileChanged` fires
+when the caret crosses into another file's excerpt, and the panel selects that
+file's row (`selectRowForPath`, selection only — focus stays in the diff; the
+row stays visibly highlighted via the `#GitPanel row:selected` style). `ctrl-w l`
+moves focus list→diff, `ctrl-w h` moves diff→list, and `q` (normal mode) closes
+the diff back to just the list (`git-panel:focus-diff` / `git-panel:focus-list` /
+`git-panel:close-diff`, scoped `#GitPanel #GitPanelList` / `#GitPanel #TextEditor` /
+`#GitPanel #TextEditor.normal-mode`, mirroring the git-log viewer). With no
+`buildDiffView` wired, `l`/`enter`/`o` fall back to opening the file
+(`onOpenFile`). The diff is disposed with the panel.
 
 The same staging is reachable **from anywhere** (no need to focus the panel)
 via the `space g` leader, registered on `#AppWindow`. The `a`dd / `u`nstage
@@ -313,13 +361,33 @@ cursor, reusing the LSP hover card. It blames just that line
 ### Continuous editable diff
 
 Multi-file staging is done through a **continuous multi-file editable diff
-view** (opened with `space g o` / `space g D`): each changed file's hunks
-are editable inline, hunk staging via the gutter marker + `space h s` /
-`space h u`, commit via `space g c`. It is built on the editor's
-multibuffer substrate — see
+view** (opened with `space g o` / `space g D`, and the GitPanel's embedded
+diff): each changed file's hunks are editable inline, hunk staging via the
+gutter marker + `space h s` / `space h u`, commit via `space g c`. It is
+built on the editor's multibuffer substrate — see
 [../text-editor/multibuffer.md](../text-editor/multibuffer.md). This
 replaced the earlier tab-hosted `GitStagingView`; its original design is
 recorded in [staging-interface.md](staging-interface.md).
+
+Diff-local keys (`#TextEditor.continuous-diff.normal-mode`, more specific than
+vim's `#TextEditor`):
+
+- **`g d`** (`diff:open-file`) opens the file/line under the caret in a real
+  editor tab (via the view's `onActivate`).
+- **`[h` / `]h`** (`diff:prev-hunk` / `diff:next-hunk`, `prevHunk`/`nextHunk`)
+  move the caret across the diff's own changed hunks (a maximal run of
+  added/removed rows). They **override** vim's gutter-based
+  `MoveToPrevious/NextHunk`, which no-ops here (the multibuffer has no gutter).
+- **`space h n`** (`git:hunk-stage-next`, live diff only; **`ctrl-]`** is a
+  single-chord alternative) stages the hunk under the caret then advances to the
+  next — a fast review-and-stage flow. Staging only re-marks rows
+  (worktree-vs-HEAD content is unchanged), so the precomputed next-hunk position
+  survives the async refresh.
+
+All of these route through `AppWindow.activeContinuousDiff()`, which now resolves
+the DiffView **containing keyboard focus** (walking up from the focused widget),
+so they work in the GitPanel's *embedded* diff too — not just a diff that is its
+own center tab.
 
 ### Git log (history) viewer — `src/ui/GitLogView.ts`
 

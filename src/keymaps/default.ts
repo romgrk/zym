@@ -85,10 +85,13 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space g u a': 'git:unstage-all', // "u"nstage "a"ll
   'space g u .': 'git:unstage-current', // "u"nstage the current file
   // Hunk-level staging on the gutter hunk under the cursor (editor only): "s"tage,
-  // "u"nstage (a staged/blue hunk), "r"evert (discard the unstaged change).
+  // "u"nstage (a staged/blue hunk), "r"evert (discard the unstaged change), "n" stage + advance
+  // to the next hunk (the fast review-and-stage flow in the continuous diff; `ctrl-]` is a
+  // single-chord alternative, bound under `#TextEditor.continuous-diff.normal-mode`).
   'space h s': 'git:hunk-stage',
   'space h u': 'git:hunk-unstage',
   'space h r': 'git:hunk-revert',
+  'space h n': 'git:hunk-stage-next',
   // Branch (space g b …): switch / delete / merge / rename.
   'space g b b': 'git:branch-switch', // "b"ranch picker (switch / create)
   'space g b d': 'git:branch-delete',
@@ -175,6 +178,8 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'ctrl-w g j': 'dock:toggle-bottom',
     'ctrl-w g k': 'dock:toggle-top',
     'ctrl-w g l': 'dock:toggle-right', // right dock = Files / Source Control
+    'ctrl-w g a': 'agent-sidebar:toggle', // the agent "secondary sidebar"
+    'ctrl-w g s': 'sidebar:toggle', // the workbench sidebar (left-most column)
 
     // Cycle the active workbench (the user / each agent) — previous / next.
     'super-,': 'workbench:previous',
@@ -200,14 +205,35 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     '.': 'tree:toggle-hidden-files', // show/hide dotfiles
   },
 
-  // Git panel: shared list navigation plus git-specific keys.
-  '#GitPanel': {
-    ...LIST_NAV, // j/k, g g, G, l (l opens the file under the cursor)
+  // Git panel change list: shared list navigation plus git-specific keys. Scoped to the
+  // list (#GitPanelList), NOT the panel root (#GitPanel), so the bare keys don't fire while
+  // the embedded diff editor is focused.
+  '#GitPanelList': {
+    ...LIST_NAV, // j/k, g g, G, l (l opens the selected change's diff via core:right)
+    o: 'git:open-diff', // open the selected change's diff (like `l`)
+    enter: 'git:open-diff',
     s: 'git:stage', // stage the file under the cursor
     u: 'git:unstage', // unstage the file under the cursor
     A: 'git:stage-all', // stage everything (or unstage all when nothing is unstaged)
     X: 'git:discard', // restore (tracked) / delete (untracked) the file under the cursor
     'c c': 'git:commit', // commit: edit the message in a tab, save+close to commit
+  },
+
+  // Move between the panel's two "windows" — the change list and the embedded diff — with vim's
+  // `ctrl-w` direction keys (mirrors the git-log viewer). Override only the INWARD direction on
+  // each side (`ctrl-w l` list→diff, `ctrl-w h` diff→list); the outward direction falls through
+  // to `#AppWindow` pane nav. Both selectors outrank `#AppWindow` by CSS specificity (two ids).
+  '#GitPanel #GitPanelList': {
+    'ctrl-w l': 'git-panel:focus-diff',
+  },
+  '#GitPanel #TextEditor': {
+    'ctrl-w h': 'git-panel:focus-list',
+  },
+  // `q` closes the embedded diff (collapse back to the list). Normal-mode only — so it doesn't
+  // shadow typing 'q' while editing the diff — and 2 ids + a class, so it outranks vim's bare `q`
+  // (macro record) only inside the GitPanel's diff, not in ordinary editors.
+  '#GitPanel #TextEditor.normal-mode': {
+    q: 'git-panel:close-diff',
   },
 
   // Editable diff multibuffer (git:diff-current-changes): fold-style keys expand the elided `⋯`
@@ -232,6 +258,12 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     // `g d` jumps to the file/line under the cursor — Enter now opens the inline comment box
     // (handled directly in DiffView), which sends the row/selection + comment to the agent.
     'g d': 'diff:open-file',
+    // `[h`/`]h` move across the diff's own hunks. They override vim's gutter-based
+    // MoveToPrevious/NextHunk (1 id + 1 class), which no-ops in this gutterless multibuffer.
+    '] h': 'diff:next-hunk',
+    '[ h': 'diff:prev-hunk',
+    // `ctrl-]` is a single-chord alternative to `space h n` (stage the hunk + advance to the next).
+    'ctrl-]': 'git:hunk-stage-next',
   },
 
   // Workbench list (the left sidebar): shared list navigation (l reveals the selected

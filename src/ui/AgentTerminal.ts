@@ -444,10 +444,12 @@ export class AgentTerminal extends Terminal implements Agent {
   }
 
   // Vte inherits the Adwaita view colors by default (see Terminal); override the
-  // background (and foreground) with the theme's editor colors. Themes without
-  // their own background keep the inherited colors.
+  // background (and foreground) with the theme's secondary-sidebar colors, so an
+  // agent session reads as the "secondary sidebar" it's docked into (left dock +
+  // its header section share these). secondarySidebar.{bg,fg} always resolve (they
+  // fall through to libadwaita's --secondary-sidebar-*-color), so this always applies.
   private applyThemeColors() {
-    const { bg, fg } = theme.ui.view;
+    const { bg, fg } = theme.ui.secondarySidebar;
     if (!bg) return;
     this.terminal.setColors(parseColor(fg), parseColor(bg), null);
   }

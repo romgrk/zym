@@ -183,6 +183,10 @@ export class DiffView {
   private lastLineCount = 0; // view buffer line count, to detect line-count-changing edits
   private readonly modifiedHandlers: Array<() => void> = [];
   private readonly modifiedUnsubs: Array<() => void> = [];
+  // Notified when the caret crosses into a different file's excerpt (see onCursorFileChanged);
+  // `lastCursorFile` debounces it to file *changes*, not every cursor move.
+  private readonly cursorFileHandlers: Array<(path: string) => void> = [];
+  private lastCursorFile: string | null = null;
   private readonly disposables = new CompositeDisposable();
   private disposed = false;
 
@@ -252,6 +256,9 @@ export class DiffView {
 
     this.installOverlays(dmb);
     this.installNavigation();
+    // Track which file the caret sits in, to notify onCursorFileChanged subscribers (the GitPanel
+    // keeps its change-list selection in sync). Disposed with the view.
+    this.disposables.add(this.editor.onDidChangeCursorPosition(() => this.emitCursorFile()));
     if (this.editable) {
       // Re-diff after an edit. A LINE-COUNT change (Enter / `o` / dd) reflows the diff and moves
       // the caret relative to the gaps, so re-diff IMMEDIATELY — debouncing it leaves the caret
@@ -380,6 +387,51 @@ export class DiffView {
     document.replaceModelLineRange(startRow, endRow, restored);
     document.save();
     this.gitRepo?.refresh(); // working-tree change counts (Source Control panel); the model edit re-diffs the view
+  }
+
+  // --- hunk navigation -------------------------------------------------------
+
+  /** Move the caret to the start of the next changed hunk and reveal it. `]h` (overrides vim's
+   *  gutter-based MoveToNextHunk, which no-ops in this gutterless multibuffer). Spans files; a
+   *  no-op at the last hunk. */
+  nextHunk(): void {
+    this.moveToHunk(1);
+  }
+
+  /** Move the caret to the start of the previous changed hunk and reveal it. `[h`. */
+  prevHunk(): void {
+    this.moveToHunk(-1);
+  }
+
+  /** Live diff: stage the hunk under the caret, then advance to the next one — a fast
+   *  review-and-stage flow. Staging only re-marks rows (the worktree-vs-HEAD layout is unchanged),
+   *  so the next-hunk position computed now stays valid through the async refresh. */
+  stageHunkAndAdvance(): void {
+    this.stageHunkAtCursor();
+    this.nextHunk();
+  }
+
+  // The view rows that begin a changed hunk: a run of added/removed rows whose preceding row isn't
+  // changed (so a removed-then-added block reads as one hunk; runs split by context are separate).
+  private hunkStartRows(): number[] {
+    const starts: number[] = [];
+    let prevChanged = false;
+    this.dmb.rowKinds.forEach((kind, r) => {
+      const changed = kind === 'added' || kind === 'removed';
+      if (changed && !prevChanged) starts.push(r);
+      prevChanged = changed;
+    });
+    return starts;
+  }
+
+  private moveToHunk(dir: 1 | -1): void {
+    const starts = this.hunkStartRows();
+    if (!starts.length) return;
+    const cur = this.cursorRow();
+    const target = dir === 1 ? starts.find((r) => r > cur) : starts.reverse().find((r) => r < cur);
+    if (target == null) return; // already at the first / last hunk
+    this.editor.model.setCursorBufferPosition({ row: target, column: 0 });
+    this.editor.model.scrollCursorOnscreen(); // reveal if offscreen (minimal scroll, keeps a margin)
   }
 
   private applyStaging(mode: 'stage' | 'unstage'): void {
@@ -600,11 +652,8 @@ export class DiffView {
   // the paint, so the reflow + caret-follow happen with no visible flash. Supersedes a pending
   // debounce.
   //
-  // A `queueMicrotask`/`Promise` is WRONG here: Node drains microtasks only on a libuv turn, which
-  // under node-gtk's GLib main loop can come many paints later (or not until idle), so the re-diff
-  // never ran in the app — the inserted line stayed unreflowed with the caret stranded on the
-  // pre-reflow row (e.g. `O` on an excerpt's first line left the caret where the leading `⋯` fold
-  // marker sat). The frame clock is the only scheduler that fires under the GLib loop before paint.
+  // The frame clock (not queueMicrotask/setTimeout) because it's the only scheduler that fires
+  // *before paint* — required to avoid a visible flash. See docs/index.md "node-gtk event loop".
   private microReDiffTickId = 0;
   private scheduleMicroReDiff(): void {
     if (this.microReDiffTickId || this.disposed) return;
@@ -707,6 +756,33 @@ export class DiffView {
   /** Jump to the file/line under the cursor (the `g d` action — Enter is the comment box now). */
   openFileAtCursor(): void {
     this.activateRow(this.cursorRow());
+  }
+
+  /** Move the caret to the first row of `path`'s excerpt (falling back to the top when the file
+   *  isn't present) and scroll it a quarter down the viewport. Used by the GitPanel's embedded diff
+   *  to jump to the change selected in its list. `revealRow` scrolls via `scroll_to_mark` (deferred
+   *  + validated), not `scroll_to_iter`, which undershoots on a freshly-embedded view. */
+  revealFile(path: string): void {
+    const anchor = this.headerAnchors.find((h) => h.path === path);
+    const row = anchor ? anchor.viewRow : 0;
+    this.editor.revealRow(row);
+  }
+
+  /** Subscribe to the cursor crossing into a different file's excerpt — fires with that file's
+   *  path (the absolute `DiffFile.path`). The GitPanel uses it to keep its change-list selection
+   *  in sync with where the caret sits in the diff. Fires only on a *change* of file, not every
+   *  cursor move. */
+  onCursorFileChanged(callback: (path: string) => void): void {
+    this.cursorFileHandlers.push(callback);
+  }
+
+  // Fire `onCursorFileChanged` when the caret moves into a different file than last reported.
+  private emitCursorFile(): void {
+    if (!this.cursorFileHandlers.length) return;
+    const path = this.fileAtViewRow(this.cursorRow())?.path ?? null;
+    if (path === this.lastCursorFile) return;
+    this.lastCursorFile = path;
+    if (path) for (const cb of this.cursorFileHandlers) cb(path);
   }
 
   // --- comment to agent ------------------------------------------------------
@@ -1045,7 +1121,20 @@ export class DiffView {
   }
 
   focus(): void {
-    this.editor.focus();
+    // A freshly-embedded view (the GitPanel's diff, attached this frame) isn't mapped yet, so
+    // grab_focus would no-op and focus would stay on the list. When that's the case, grab focus
+    // once it maps. One-shot; cleared on dispose if it never maps.
+    const view = this.editor.sourceView;
+    if (view.getMapped()) {
+      this.editor.focus();
+      return;
+    }
+    const scope = new CompositeDisposable();
+    scope.connect(view, 'map', () => {
+      scope.dispose();
+      this.editor.focus();
+    });
+    this.disposables.add(scope);
   }
 
   dispose(): void {

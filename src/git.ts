@@ -95,6 +95,12 @@ export interface GitRepo {
    * Null outside a repo, on a detached HEAD, or when there is no upstream.
    */
   getAheadBehind(): AheadBehind | null;
+  /**
+   * Upstream tracking ref of the current branch (e.g. `origin/main`), or null
+   * outside a repo, on a detached HEAD, or when the branch has no upstream.
+   * Served from the cached poll state.
+   */
+  getUpstream(): string | null;
   /** Whether the index has unmerged (conflicted) entries — a merge/rebase/etc.
    *  in progress with conflicts. False outside a repo. */
   hasConflicts(): boolean;
@@ -211,6 +217,7 @@ export function releaseGitRepo(repo: GitRepo): void {
 interface State {
   branch: string | null;
   commit: string | null;
+  upstream: string | null;
   status: GitStatus | null;
   ahead: AheadBehind | null;
   conflicts: boolean;
@@ -222,6 +229,7 @@ function emptyState(): State {
   return {
     branch: null,
     commit: null,
+    upstream: null,
     status: null,
     ahead: null,
     conflicts: false,
@@ -271,6 +279,9 @@ class CliGitRepo implements GitRepo {
   }
   getAheadBehind(): AheadBehind | null {
     return this.state.ahead;
+  }
+  getUpstream(): string | null {
+    return this.state.upstream;
   }
   hasConflicts(): boolean {
     return this.state.conflicts;
@@ -496,6 +507,7 @@ class CliGitRepo implements GitRepo {
     return {
       branch: parsed.branch,
       commit: parsed.commit,
+      upstream: parsed.upstream,
       status: { added, removed },
       ahead:
         parsed.ahead != null && parsed.behind != null
@@ -633,7 +645,7 @@ function signature(parsed: ParsedStatus, numstat: Map<string, LineDelta>, untrac
     .map((e) => `${e.relPath}:${e.staged ? 'S' : ''}${e.unstaged ? 'U' : ''}${e.untracked ? '?' : ''}${e.conflicted ? '!' : ''}`)
     .sort()
     .join(',');
-  return [parsed.branch, parsed.commit, parsed.ahead, parsed.behind, parsed.conflicts, added, removed, untrackedAdded, files].join('|');
+  return [parsed.branch, parsed.commit, parsed.upstream, parsed.ahead, parsed.behind, parsed.conflicts, added, removed, untrackedAdded, files].join('|');
 }
 
 // Cap per-file untracked reads so a huge new file can't stall a refresh; larger

@@ -2156,6 +2156,28 @@ export class TextEditor implements DocumentHost {
     else this.subs.connect(this.view, 'map', () => this.view.addTickCallback(apply));
   }
 
+  /** Place the caret at the start of `row` and scroll its line `yalign` down the viewport
+   *  (default a quarter from the top) via `scroll_to_mark` (`scrollCursorToFraction`) — which GTK
+   *  defers + validates incrementally until the mark is reached, so it lands accurately on a
+   *  freshly-embedded multibuffer, where the estimate-based `setTopBufferRow` / `scroll_to_iter`
+   *  undershoot. Robust to an unmapped / not-yet-laid-out view (retries on tick / arms on `map`),
+   *  then **re-asserts for a few frames** so a post-layout reflow (the diff's header-band
+   *  decorations sizing, a first live re-diff) can't leave the target stranded. Public so an
+   *  embedder (e.g. the GitPanel's diff) can jump to a row right after attaching the view. */
+  revealRow(row: number, yalign = 0.25): void {
+    this.editorModel.setCursorBufferPosition({ row, column: 0 });
+    let frames = 0;
+    let settled = 0;
+    const apply = () => {
+      if (!this.view.getRealized() || this.view.getHeight() <= 0) return ++frames < 120; // not laid out yet
+      this.editorModel.scrollCursorToFraction(yalign);
+      return ++settled < 6; // re-assert ~6 frames against a late reflow, then stop
+    };
+    if (!apply()) return; // already laid out + settled → done
+    if (this.view.getMapped()) this.view.addTickCallback(apply);
+    else this.subs.connect(this.view, 'map', () => this.view.addTickCallback(apply));
+  }
+
   /** Restore unsaved content (session restore): replace the buffer and keep it
    *  modified. Deferred for a lazily-opened tab. */
   restoreUnsaved(text: string): void {

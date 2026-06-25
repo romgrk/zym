@@ -51,8 +51,8 @@ export const DOCK_SIDES: DockSide[] = ['left', 'right', 'top', 'bottom'];
 export type BottomDock = 'notifications' | 'diagnostics' | 'keymap' | null;
 
 // The widgets that fill a workbench's slots, built by AppWindow.buildWorkbench and
-// handed to the constructor (which docks the center + Source-Control). `bottomDock`
-// is not here — the bottom slot starts empty and is toggled later.
+// handed to the constructor (which docks the center + the Files side dock).
+// `bottomDock` is not here — the bottom slot starts empty and is toggled later.
 export interface WorkbenchContents {
   // The workbench's root directory and the (pooled) git repo for it. Every
   // per-person view — file tree, Source Control, and the chrome/pickers while
@@ -85,12 +85,14 @@ export class Workbench<TOwner = unknown> {
   git: GitRepo;
 
   // The widgets filling this workbench's slots. `center`/`fileTree`/… are built once;
-  // `filesTab`/`gitTab` are reassigned when the left dock is collapsed and re-revealed;
-  // `bottomDock` tracks which panel (if any) is docked at the bottom.
+  // `filesTab` is reassigned when the right dock is collapsed and re-revealed, `gitTab`
+  // when Source Control is (re)opened as a center tab; `bottomDock` tracks which panel
+  // (if any) is docked at the bottom.
   //
   // Source Control (`gitPanel`/`gitTab`) is **lazily created**: it stays null until
   // the user first reveals it (AppWindow.ensureGitPanel), so a workbench doesn't open
-  // a git subscription it may never use.
+  // a git subscription it may never use. The panel opens as a tab in the center, not
+  // a dock slot.
   center: PanelGroup;
   fileTree: FileTree;
   gitPanel: GitPanel | null = null;
@@ -169,11 +171,11 @@ export class Workbench<TOwner = unknown> {
     this.root = this.hLeft;
     this.root.setName('Workbench'); // selector identity for command/keymap rules
 
-    // The user's workbench docks Files/Source-Control in the right slot but starts it
-    // hidden — assigned so the dock toggle (and file-tree: / git-panel: focus) has
-    // something to reveal, yet out of the way until the user asks for it. An agent's
-    // opens terminal-only (the panel is still built, so reveal-on-demand can attach it
-    // later). The bottom slot starts empty.
+    // The user's workbench docks the Files tree in the right slot but starts it
+    // hidden — assigned so the dock toggle (and `file-tree:focus`) has something to
+    // reveal, yet out of the way until the user asks for it. An agent's opens
+    // terminal-only (the panel is still built, so reveal-on-demand can attach it
+    // later). The bottom slot starts empty. (Source Control opens as a center tab.)
     if (options.showSideDock) {
       this.setRight({ root: contents.leftPanel.root });
       this.setDockVisible('right', false); // hidden by default (setRight forced it visible)

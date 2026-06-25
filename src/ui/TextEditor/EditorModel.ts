@@ -1512,6 +1512,28 @@ export class EditorModel {
     this.renderExtraSelections();
   }
 
+  /**
+   * Apply an auto-pair edit at every cursor as one undo step. Auto-pairing
+   * consumes the keystroke, so the view's native insert — and the live
+   * multi-cursor replication that mirrors it onto the extra cursors — never run;
+   * the callback edits each cursor itself, reading its (mark-tracked) head fresh
+   * so earlier insertions/deletions shift later cursors correctly. Replication is
+   * held off for the duration so it can't also mirror the primary's edit and
+   * double-insert.
+   */
+  applyAutoPairEdit(edit: (selection: Selection) => void): void {
+    const wasReplicating = this.replicatingEdit;
+    this.replicatingEdit = true;
+    try {
+      this.transact(() => {
+        for (const selection of this.getSelections()) edit(selection);
+      });
+    } finally {
+      this.replicatingEdit = wasReplicating;
+    }
+    if (this.extraSelections.length) this.renderExtraSelections();
+  }
+
   // --- Multi-cursor reconciliation -------------------------------------------
 
   /**
@@ -1775,6 +1797,19 @@ export class EditorModel {
 
   scrollToCursorPosition(_options?: unknown): void {
     this.scrollCursorOnscreen();
+  }
+
+  /**
+   * Scroll so the cursor's line sits `yalign` down the viewport (0 = top edge, 0.25 = a
+   * quarter down, 0.5 = centered), via `scroll_to_mark` with alignment. Unlike `setTopBufferRow`
+   * / `scroll_to_iter` — which read a `getIterLocation` estimate and undershoot before the lines
+   * above the target are validated (the diff multibuffer's variable-height header bands make the
+   * estimate worse) — `scroll_to_mark` defers and validates incrementally until the mark is
+   * reached, landing accurately even on a not-fully-laid-out view. No-op until realized.
+   */
+  scrollCursorToFraction(yalign: number): void {
+    if (!this.view.getRealized()) return;
+    this.view.scrollToMark(this.buffer.getInsert(), 0, true, 0, yalign);
   }
 
   scrollToBufferPosition(point: PointLike, _options?: unknown): void {

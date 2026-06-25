@@ -16,8 +16,10 @@ import { escapeMarkup } from './proseMarkup.ts';
 
 addStyles(`
   .mb-header {
-    padding: 2px 8px 2px 6px;
-    background-color: var(--t-ui-surface-selected);
+    margin: var(--t-spacing) 0;
+    padding: var(--t-spacing) calc(2 * var(--t-spacing));
+    background-color: rgba(255 255 255 / 16%);
+    border-radius: 5px;
   }
   .mb-header-icon { color: var(--t-ui-text-muted); }
   .mb-header-label { color: var(--t-ui-editor-foreground); }

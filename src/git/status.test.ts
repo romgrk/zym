@@ -9,14 +9,16 @@ test('parseStatus: clean repo on a branch', () => {
   const s = parseStatus(Z('# branch.oid abc1234def', '# branch.head main'));
   assert.equal(s.branch, 'main');
   assert.equal(s.commit, 'abc1234def');
+  assert.equal(s.upstream, null);
   assert.equal(s.ahead, null);
   assert.equal(s.behind, null);
   assert.equal(s.conflicts, false);
   assert.deepEqual(s.entries, []);
 });
 
-test('parseStatus: ahead/behind from branch.ab', () => {
+test('parseStatus: upstream + ahead/behind from branch headers', () => {
   const s = parseStatus(Z('# branch.head main', '# branch.upstream origin/main', '# branch.ab +2 -3'));
+  assert.equal(s.upstream, 'origin/main');
   assert.equal(s.ahead, 2);
   assert.equal(s.behind, 3);
 });
@@ -92,7 +94,7 @@ test('parseStatus: conflicts', () => {
 
 test('parseStatus: empty input', () => {
   const s = parseStatus('');
-  assert.deepEqual(s, { branch: null, commit: null, ahead: null, behind: null, conflicts: false, entries: [] });
+  assert.deepEqual(s, { branch: null, commit: null, upstream: null, ahead: null, behind: null, conflicts: false, entries: [] });
 });
 
 test('parseNumstat: normal + binary', () => {

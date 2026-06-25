@@ -28,6 +28,8 @@ export interface ParsedStatus {
   branch: string | null;
   /** HEAD commit OID, or null on an unborn branch (no commits yet). */
   commit: string | null;
+  /** Upstream tracking ref (e.g. `origin/main`), or null when there is none. */
+  upstream: string | null;
   /** Commits ahead of upstream, or null when there is no upstream. */
   ahead: number | null;
   /** Commits behind upstream, or null when there is no upstream. */
@@ -39,12 +41,14 @@ export interface ParsedStatus {
 
 const H_HEAD = '# branch.head ';
 const H_OID = '# branch.oid ';
+const H_UPSTREAM = '# branch.upstream ';
 const H_AB = '# branch.ab ';
 
 /** Parse `git status --porcelain=v2 --branch -z` (NUL-separated records). */
 export function parseStatus(out: string): ParsedStatus {
   let head: string | null = null;
   let oid: string | null = null;
+  let upstream: string | null = null;
   let ahead: number | null = null;
   let behind: number | null = null;
   let conflicts = false;
@@ -58,6 +62,7 @@ export function parseStatus(out: string): ParsedStatus {
     if (tok[0] === '#') {
       if (tok.startsWith(H_HEAD)) head = tok.slice(H_HEAD.length);
       else if (tok.startsWith(H_OID)) oid = tok.slice(H_OID.length);
+      else if (tok.startsWith(H_UPSTREAM)) upstream = tok.slice(H_UPSTREAM.length);
       else if (tok.startsWith(H_AB)) {
         const m = tok.slice(H_AB.length).match(/^\+(-?\d+)\s+-(-?\d+)$/);
         if (m) {
@@ -105,7 +110,7 @@ export function parseStatus(out: string): ParsedStatus {
         : head;
 
   const commit = oid && oid !== '(initial)' ? oid : null;
-  return { branch, commit, ahead, behind, conflicts, entries };
+  return { branch, commit, upstream, ahead, behind, conflicts, entries };
 }
 
 function entry(

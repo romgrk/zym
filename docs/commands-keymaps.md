@@ -42,6 +42,15 @@ Core pieces:
   letter in the query opts into a case-sensitive match. Toggle via the
   `smartcase` `FuzzyOptions` flag (completion sets it `false` to stay
   case-insensitive).
+- **Binding resolution** — when several bindings match the same keystroke, the
+  winner is chosen by, in order: (1) **priority** (a user keymap layered over the
+  defaults); (2) **focus-chain proximity** — the *nearest scope wins*, so a
+  binding on the focused widget beats one on a farther ancestor (e.g.
+  `#AppWindow`) even if the ancestor's selector is more specific; (3) **selector
+  specificity**, which only disambiguates bindings on the *same* element (e.g.
+  `#TextEditor.continuous-diff.normal-mode` over `#TextEditor.normal-mode`). This
+  is the same "nearest scope wins" rule the chord-preemption logic uses
+  (`preemptsChord`); see `KeymapManager.compareFullMatches`.
 - A command `when` predicate controls applicability: the palette dims (and
   no-ops) commands not currently applicable.
 - Keymap introspection: `KeymapManager.keystrokesForCommand(name, elements)`

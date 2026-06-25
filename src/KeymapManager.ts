@@ -126,10 +126,37 @@ interface KeybindingMatch {
   keybinding: string;
   effect: Effect;
   element: Widget;
+  /** The matched element's position in the focus chain (0 = focused element,
+   *  larger = farther ancestor) — the primary tiebreak after priority, so the
+   *  nearest scope wins. See `compareFullMatches`. */
+  chainIndex: number;
   priority: number;
-  /** The matched rule's CSS specificity — tiebreaks full matches of equal
-   *  priority (more specific selector wins). See `Rule.specificity`. */
+  /** The matched rule's CSS specificity — the *last* tiebreak, disambiguating
+   *  bindings on the same element (e.g. `#TextEditor.continuous-diff.normal-mode`
+   *  over `#TextEditor.normal-mode`). See `Rule.specificity`. */
   specificity: number;
+}
+
+// Order full matches for dispatch, best first. The criteria, in order:
+//   1. priority      — higher wins (a user keymap layered over the defaults).
+//   2. chainIndex    — nearer scope wins: a binding on the focused widget beats
+//                      one on a farther ancestor (e.g. `#AppWindow`) even if the
+//                      ancestor's selector is *more* specific. This is the same
+//                      "nearest scope wins" principle the focus chain already
+//                      encodes (see `preemptsChord`); specificity must not let an
+//                      ancestor steal a key from the focused widget.
+//   3. specificity   — only now does the more specific selector win, breaking
+//                      ties between bindings on the *same* element.
+// A stable sort keeps registration order for anything still tied.
+export function compareFullMatches(
+  a: { priority: number; chainIndex: number; specificity: number },
+  b: { priority: number; chainIndex: number; specificity: number },
+): number {
+  return (
+    b.priority - a.priority ||
+    a.chainIndex - b.chainIndex ||
+    b.specificity - a.specificity
+  );
 }
 
 export class KeymapManager {
@@ -523,12 +550,12 @@ export class KeymapManager {
     // Drop unset markers so they are never treated as commands below.
     const active = matches.filter(m => m.effect !== UNSET);
 
-    // Highest priority first; at equal priority the more specific selector wins
-    // (CSS specificity); ties beyond that keep registration/chain order (stable
-    // sort).
+    // Best match first: priority, then nearest scope in the focus chain, then
+    // selector specificity (see `compareFullMatches`). The chain-proximity step
+    // keeps a focused widget's binding ahead of a more specific ancestor binding.
     const fullMatches = active
       .filter(m => m.match === MATCH.FULL)
-      .sort((a, b) => b.priority - a.priority || b.specificity - a.specificity);
+      .sort(compareFullMatches);
     const partialMatches = active.filter(m => m.match === MATCH.PARTIAL);
 
     // A longer sequence may still complete — wait for the next key. Remember
@@ -541,8 +568,8 @@ export class KeymapManager {
     // this keystroke's own complete binding — a nearer scope wins. That's what
     // lets a focused entry's readline `ctrl-w` fire immediately instead of
     // stalling on the window's `ctrl-w …` pane chord (see `preemptsChord`).
-    const indexIn = (m: KeybindingMatch) => elements.indexOf(m.element);
-    const preempt = preemptsChord(fullMatches.map(indexIn), partialMatches.map(indexIn));
+    const preempt = preemptsChord(
+      fullMatches.map(m => m.chainIndex), partialMatches.map(m => m.chainIndex));
     if (partialMatches.length > 0 && !preempt) {
       if (fullMatches.length > 0) this.deferredFullMatches = fullMatches;
       this.setQueue(keystrokes);
@@ -595,7 +622,7 @@ export class KeymapManager {
           if (!matchesRuleInChain(chain, index, entry.rule))
             continue;
           collectKeybindingMatches(
-            matches, keystrokes, entry.keymap, ctx.widget, entry.priority, entry.rule.specificity);
+            matches, keystrokes, entry.keymap, ctx.widget, index, entry.priority, entry.rule.specificity);
         }
       }
     }
@@ -656,6 +683,7 @@ function collectKeybindingMatches(
   queuedKeystrokes: Key[],
   keymap: Keymap,
   element: Widget,
+  chainIndex: number,
   priority: number,
   specificity: number,
 ): void {
@@ -678,6 +706,7 @@ function collectKeybindingMatches(
         keybinding,
         effect: keymap[keybinding],
         element,
+        chainIndex,
         priority,
         specificity,
       });
@@ -688,6 +717,7 @@ function collectKeybindingMatches(
         keybinding,
         effect: keymap[keybinding],
         element,
+        chainIndex,
         priority,
         specificity,
       });

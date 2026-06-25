@@ -1,10 +1,11 @@
 /*
- * GitPanel — the git status panel (left dock, above the file tree).
+ * GitPanel — the git status panel. Opens as a tab in the active center panel
+ * (via `git-panel:focus` → AppWindow.revealGitPanel), like a normal editor tab.
  *
  * A single list of changed files in three groups — Staged / Changes / Untracked
- * — with a cursor (the selected row) driven by vim-style keys: j/k move, l opens
- * the file, s/u stage/unstage, X discards, and `c c` starts a commit. The mouse
- * works too: a click selects, a double-click opens the file. Reads and
+ * — with a cursor (the selected row) driven by vim-style keys: j/k move, l/enter/o open
+ * the change's diff, s/u stage/unstage, X discards, and `c c` starts a commit. The mouse
+ * works too: a click selects the row and opens its diff. Reads and
  * mutations go through the git facade (`git.ts`, node `git` CLI); the panel refreshes on its
  * own operations and on `GitRepo.onChange` (external edits). Failures surface
  * through `zym.notifications`.
@@ -12,15 +13,13 @@
  * The commit message is edited in a normal editor tab (see AppWindow.onCommit);
  * this widget just presents status. The assembled panel is exposed via `root`.
  */
-import * as Path from 'node:path';
 import { Gtk, Pango } from '../gi.ts';
-import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import { fileIconGlyph } from './fileIcons.ts';
-import type { GitRepo } from '../git.ts';
+import type { DiffView } from './DiffView.ts';
+import type { AheadBehind, GitRepo } from '../git.ts';
 import {
   type GitChange,
   type GitFileState,
@@ -38,10 +37,14 @@ import {
 export interface GitPanelOptions {
   cwd: string;
   git: GitRepo;
-  /** Open the file under the cursor in the editor (the `l` key). */
+  /** Open the file under the cursor in the editor (the fallback when no diff is wired). */
   onOpenFile: (path: string) => void;
   /** Start a commit: edit the message and commit on save (the `c c` chord). */
   onCommit: () => void;
+  /** Build a live, editable working-tree DiffView for the current changes (the host owns the
+   *  document registry). `l`/`enter`/`o` embed it beside the list and reveal the selected change.
+   *  Null when there's nothing to diff. Omitted → `l`/`enter`/`o` fall back to `onOpenFile`. */
+  buildDiffView?: () => Promise<DiffView | null>;
 }
 
 type RowKind = 'staged' | 'unstaged';
@@ -66,45 +69,103 @@ const STATE_LETTER: Record<GitFileState, string> = {
 const STAGED_COLOR = theme.ui.status.success;
 const UNSTAGED_COLOR = theme.ui.status.error;
 
+// Horizontal gap between a row's cells; also the state letter's trailing margin
+// (one extra spacing unit), so the letter sits clear of the path.
+const ROW_SPACING = 6;
+
+// Width the change list keeps once the embedded diff is shown beside it; the diff
+// (the Paned's end child) takes the rest — most of the panel's width.
+const LIST_WIDTH = 300;
+
+/** The `git status`-style header lines for the current branch/upstream state,
+ *  mirroring git's own wording. `muted` marks the parenthetical advice hint. */
+function gitStatusLines(
+  branch: string,
+  upstream: string | null,
+  ab: AheadBehind | null,
+): { text: string; muted?: boolean }[] {
+  const lines: { text: string; muted?: boolean }[] = [{ text: `On branch ${branch}` }];
+  if (!upstream || !ab) return lines; // no upstream → just the branch line, like git
+  const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
+  const { ahead, behind } = ab;
+  if (ahead === 0 && behind === 0) {
+    lines.push({ text: `Your branch is up to date with '${upstream}'.` });
+  } else if (behind === 0) {
+    lines.push({ text: `Your branch is ahead of '${upstream}' by ${commits(ahead)}.` });
+    lines.push({ text: `  (use "git push" to publish your local commits)`, muted: true });
+  } else if (ahead === 0) {
+    lines.push({ text: `Your branch is behind '${upstream}' by ${commits(behind)}, and can be fast-forwarded.` });
+    lines.push({ text: `  (use "git pull" to update your local branch)`, muted: true });
+  } else {
+    lines.push({ text: `Your branch and '${upstream}' have diverged,` });
+    lines.push({ text: `and have ${ahead} and ${behind} different commits each, respectively.` });
+    lines.push({ text: `  (use "git pull" to merge the remote branch into yours)`, muted: true });
+  }
+  return lines;
+}
+
 // Compact, dense rows. The theme background/selection are applied centrally in
-// AppWindow; file rows follow the theme foreground (the badge keeps its own
-// per-status color via Pango markup, which overrides the CSS color).
-addStyles(`
+// AppWindow. Each file row leads with the state letter (its per-status color via
+// Pango markup) followed by the path, which CSS tints to the same staged/unstaged
+// color and renders in the monospace font.
+addStyles(/* css */`
   /* No font-size override: section headers inherit the default label size, the
      same size every other label (file rows, file-tree headers) uses. */
   #GitPanel .git-header {
-    color: var(--t-ui-text-muted);
+    color: var(--t-ui-editor-foreground);
     font-weight: bold;
     padding: 6px 8px 3px 8px;
   }
-  #GitPanel #GitRow label { color: var(--t-ui-editor-foreground); }
-  #GitPanel #GitRow .git-icon { color: var(--t-ui-text-muted); }
+  /* File path: monospace, colored by where the change lives — staged green /
+     unstaged red — so it matches the leading state letter. */
+  #GitPanel #GitRow .git-name { font: var(--t-font-monospace); }
+  #GitPanel #GitRow .git-name.staged { color: var(--t-ui-status-success); }
+  #GitPanel #GitRow .git-name.unstaged { color: var(--t-ui-status-error); }
   #GitPanel row { min-height: 0; }
   #GitPanel #GitRow { padding: 0 8px 0 16px; } /* indent entries under the section header */
-  #GitPanel .git-badge { font-weight: bold; font-feature-settings: "tnum" 1; }
+  /* The state letter: bold, small, tabular figures; its margin-end is set in code
+     (one row-spacing unit) so it sits clear of the path. */
+  #GitPanel .git-badge { font-weight: bold; font-size: var(--t-font-ui-size-small); font-feature-settings: "tnum" 1; }
+  /* The git-status-style preamble (branch + upstream tracking line), shown above
+     the change groups. The parenthetical advice hint is muted, like git's. */
+  #GitPanel .git-status { padding: 6px 8px; }
+  #GitPanel .git-status label { color: var(--t-ui-editor-foreground); }
+  #GitPanel .git-status .git-status-hint { color: var(--t-ui-text-muted); }
   /* The cursor (selected row) is highlighted with the theme selection color, and
      only while the panel is focused — an unfocused panel shows no highlight. */
-  #GitPanel row:selected { background-color: transparent; }
-  #GitPanel:focus-within row:selected {
+  #GitPanel row:selected { 
+    background-color: alpha(var(--window-fg-color), 0.1);
+  }
+  #GitPanelList:focus-within row:selected {
     background-color: var(--t-ui-surface-selected);
   }
 `);
 
 export class GitPanel {
-  readonly root: InstanceType<typeof Gtk.Box>;
+  // A horizontal split: the change list (start) and, once `l`/`enter`/`o` opens a change,
+  // the embedded live DiffView (end, taking most of the width). The end child stays null
+  // until a diff is first shown.
+  readonly root: InstanceType<typeof Gtk.Paned>;
 
   // git/repo are swapped by `setRoot` when an agent re-roots into a worktree.
   private git: GitRepo;
   private repo: string | null; // repository top-level, or null outside a repo
   private readonly onOpenFile: (path: string) => void;
   private readonly onCommit: () => void;
+  private readonly buildDiffView?: () => Promise<DiffView | null>;
   private readonly subs = new CompositeDisposable();
   // Per-poll row controllers: cleared+rebuilt every refresh (rule 9), torn down with `subs`.
   private readonly rowScope = this.subs.nest();
   private gitUnsub?: () => void; // the active git's onChange subscription
   private readonly list: InstanceType<typeof Gtk.ListBox>;
   private readonly scrolled: InstanceType<typeof Gtk.ScrolledWindow>;
-  private readonly iconAttrs: InstanceType<typeof Pango.AttrList>;
+  // The embedded diff (end child), or null when only the list is shown. Disposed +
+  // rebuilt on each open so it always reflects the current change set.
+  private diffView: DiffView | null = null;
+  // Bumped per open so a slow async diff build that resolves after a newer open (or after
+  // dispose) is dropped instead of clobbering the current one.
+  private diffGeneration = 0;
+  private disposed = false;
   // The selectable file rows, in display order (headers excluded), for cursor nav.
   private fileRows: RowInfo[] = [];
   // Bumped per refresh so a slow async `git status` that resolves after a newer
@@ -116,20 +177,28 @@ export class GitPanel {
     this.repo = repoRoot(options.cwd);
     this.onOpenFile = options.onOpenFile;
     this.onCommit = options.onCommit;
-
-    this.iconAttrs = Pango.AttrList.new();
-    this.iconAttrs.insert(Pango.attrFontDescNew(Pango.FontDescription.fromString(ICON_FONT_FAMILY)));
+    this.buildDiffView = options.buildDiffView;
 
     this.list = new Gtk.ListBox();
+    this.list.setName('GitPanelList'); // scopes the bare list keys (so they don't fire in the diff)
     this.list.setSelectionMode(Gtk.SelectionMode.SINGLE); // the selected row is the cursor
 
     this.scrolled = new Gtk.ScrolledWindow();
     this.scrolled.setChild(this.list);
     this.scrolled.setVexpand(true);
+    // Never scroll horizontally: rows fit the panel width (paths ellipsize, the
+    // status preamble wraps) instead of widening the list.
+    this.scrolled.setPolicy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC);
 
-    this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    // Horizontal split: list (start) | embedded diff (end, added on first open). The list
+    // keeps a fixed width on resize; the diff absorbs the rest. No end child yet → the
+    // Paned shows just the list, no handle.
+    this.root = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
     this.root.setName('GitPanel'); // selector identity for command/keymap + CSS
-    this.root.append(this.scrolled);
+    this.root.setStartChild(this.scrolled);
+    this.root.setResizeStartChild(false);
+    this.root.setShrinkStartChild(false);
+    this.root.setShrinkEndChild(false);
 
     this.registerCommands();
     this.gitUnsub = this.git.onChange(() => this.refresh());
@@ -155,6 +224,10 @@ export class GitPanel {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.diffGeneration++; // drop any in-flight diff build
+    this.diffView?.dispose();
+    this.diffView = null;
     this.gitUnsub?.();
     this.subs.dispose();
   }
@@ -167,12 +240,18 @@ export class GitPanel {
       'core:up': { didDispatch: () => this.move(-1), description: 'Move up' },
       'core:top': { didDispatch: () => this.selectIndex(0), description: 'Go to the top' }, // `g g`
       'core:bottom': { didDispatch: () => this.selectIndex(this.fileRows.length - 1), description: 'Go to the bottom' }, // `G`
-      'core:right': { didDispatch: () => this.openSelected(), description: 'Open the selected file' }, // `l` — edit, like the file tree
+      'core:right': { didDispatch: () => this.openSelected(), description: 'Open the selected change in the diff' }, // `l`
+      'git:open-diff': { didDispatch: () => this.openSelected(), description: 'Open the selected change in the diff' }, // `o` / `enter`
       'git:stage': { didDispatch: () => this.act((c) => stage(this.repo!, c.relPath, this.done)), description: 'Stage changes' },
       'git:unstage': { didDispatch: () => this.act((c) => unstage(this.repo!, c.relPath, this.done)), description: 'Unstage changes' },
       'git:stage-all': { didDispatch: () => this.stageAllToggle(), description: 'Stage / unstage all' }, // `A`
       'git:discard': { didDispatch: () => this.discardSelected(), description: 'Discard changes' },
       'git:commit': { didDispatch: () => this.onCommit(), description: 'Commit staged changes' },
+      // Move focus between the list and the embedded diff (vim `ctrl-w h`/`l`); registered on the
+      // root so they resolve from inside the diff editor too.
+      'git-panel:focus-diff': { didDispatch: () => this.diffView?.focus(), description: 'Focus the diff' },
+      'git-panel:focus-list': { didDispatch: () => this.focusList(), description: 'Focus the change list' },
+      'git-panel:close-diff': { didDispatch: () => this.closeDiff(), description: 'Close the diff' }, // `q` in the diff
     });
   }
 
@@ -206,17 +285,71 @@ export class GitPanel {
 
   private openSelected(): void {
     const info = this.selected();
-    if (info) this.open(info.change);
+    if (info) this.showDiff(info.change);
   }
 
-  // Open a change's file. Untracked entries can be whole directories (porcelain
-  // lists them with a trailing slash); opening one isn't implemented yet.
-  private open(change: GitChange): void {
+  // Open the change's diff: reveal the embedded live DiffView (most of the panel's width) with
+  // its caret on this change's excerpt, and focus it. Untracked entries can be whole directories
+  // (porcelain lists them with a trailing slash) — not diffable. With no diff wired (e.g. tests),
+  // fall back to opening the file in the editor. The diff is rebuilt on each open so it always
+  // reflects the current change set; a generation guard drops a build a newer open superseded.
+  private showDiff(change: GitChange): void {
     if (change.relPath.endsWith('/')) {
       zym.notifications.addTrace(`Opening a directory is not implemented: ${change.relPath}`);
       return;
     }
-    this.onOpenFile(change.path);
+    if (!this.buildDiffView) {
+      this.onOpenFile(change.path);
+      return;
+    }
+    const targetPath = change.path;
+    const generation = ++this.diffGeneration;
+    void this.buildDiffView().then((view) => {
+      if (this.disposed || generation !== this.diffGeneration) {
+        view?.dispose(); // a newer open (or panel close) superseded this build — drop it
+        return;
+      }
+      if (!view) {
+        zym.notifications.addTrace('No changes to diff');
+        return;
+      }
+      const hadDiff = this.diffView !== null;
+      this.diffView?.dispose();
+      this.diffView = view;
+      this.root.setEndChild(view.root); // detaches+replaces the old diff
+      if (!hadDiff) this.root.setPosition(LIST_WIDTH); // size the split once; keep a dragged width after
+      // Keep the list selection in step with where the caret sits in the diff.
+      view.onCursorFileChanged((path) => this.selectRowForPath(path));
+      view.revealFile(targetPath);
+      view.focus();
+    }).catch((err) => {
+      zym.notifications.addError('Could not open the diff', { detail: String(err) });
+    });
+  }
+
+  // Focus the change list (the selected row, or the list itself) — the `ctrl-w h` way back
+  // out of the embedded diff.
+  private focusList(): void {
+    (this.list.getSelectedRow() ?? this.list).grabFocus();
+  }
+
+  // Select (highlight, no focus grab) the list row for `path` — driven by the diff caret crossing
+  // into that file, so the list tracks the diff. A file can have two rows (staged + unstaged); the
+  // first match is fine. No-op when it isn't listed.
+  private selectRowForPath(path: string): void {
+    const info = this.fileRows.find((r) => r.change.path === path);
+    if (info) this.list.selectRow(info.row); // selection only — focus stays in the diff
+  }
+
+  // Close the embedded diff (the `q` key inside it): collapse the split back to just the list
+  // and return focus there. Bumps the generation so an in-flight build doesn't re-open it.
+  private closeDiff(): void {
+    if (!this.diffView) return;
+    this.diffGeneration++;
+    this.diffView.dispose();
+    this.diffView = null;
+    this.root.setEndChild(null);
+    this.focusList();
   }
 
   // Restore (tracked) or delete (untracked) the file under the cursor — `X`.
@@ -255,14 +388,14 @@ export class GitPanel {
   /** Rebuild the change list from `changes` (null = not a repo). Tearing the list
    *  down resets focus/selection/scroll, so remember the cursor, focus, and scroll
    *  and reapply them — a poll-driven refresh must leave the view put. Focus is
-   *  only restored when it was inside this panel (never stealing it from the
-   *  editor); the list — not the row — is focused so selection doesn't force a
-   *  scroll-into-view, and the offset is reapplied after layout. */
+   *  only restored when it was inside the LIST (never stealing it from the editor or
+   *  the embedded diff); the list — not the row — is focused so selection doesn't force
+   *  a scroll-into-view, and the offset is reapplied after layout. */
   private applyChanges(changes: GitChange[] | null, generation: number): void {
     if (generation !== this.refreshGeneration) return; // a newer refresh is in flight
 
     const prevKey = this.selectedKey();
-    const keepFocus = this.hasFocusWithin();
+    const keepFocus = this.listHasFocus();
     const scrollValue = this.scrolled.getVadjustment().getValue();
 
     this.rowScope.clear(); // release every previous row's rooted click closure before dropping the rows
@@ -278,6 +411,10 @@ export class GitPanel {
       this.list.append(this.messageRow('Not a git repository'));
       return;
     }
+
+    // A `git status`-style preamble (branch + upstream tracking) above the groups.
+    const status = this.statusRow();
+    if (status) this.list.append(status);
 
     const staged = changes.filter((c) => c.staged);
     const unstaged = changes.filter((c) => c.unstaged && c.state !== 'untracked');
@@ -309,40 +446,42 @@ export class GitPanel {
 
   private addGroup(title: string, changes: GitChange[], kind: RowKind): void {
     this.list.append(this.headerRow(`${title} (${changes.length})`));
+    let lastRow: InstanceType<typeof Gtk.ListBoxRow> | null = null;
     for (const change of changes) {
       const row = this.buildRow(change, kind);
       this.fileRows.push({ change, kind, row });
       this.list.append(row);
+      lastRow = row;
     }
+    lastRow?.setMarginBottom(2 * ROW_SPACING); // separate each section by 2× the row spacing
   }
 
   private buildRow(change: GitChange, kind: RowKind): InstanceType<typeof Gtk.ListBoxRow> {
-    const icon = new Gtk.Label({ label: fileIconGlyph(Path.basename(change.relPath), false) });
-    icon.setAttributes(this.iconAttrs);
-    icon.addCssClass('git-icon'); // muted, less prominent than the filename
-
-    const name = new Gtk.Label({ label: change.relPath, xalign: 0, hexpand: true });
-    name.setEllipsize(Pango.EllipsizeMode.START); // keep the filename end visible
-
     const badgeColor = kind === 'staged' ? STAGED_COLOR : UNSTAGED_COLOR;
     const badge = new Gtk.Label();
     badge.addCssClass('git-badge');
+    badge.setMarginEnd(ROW_SPACING); // one extra spacing unit after the letter
     badge.setMarkup(`<span foreground="${badgeColor}">${STATE_LETTER[change.state]}</span>`);
 
-    const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
+    const name = new Gtk.Label({ label: change.relPath, xalign: 0, hexpand: true });
+    name.setEllipsize(Pango.EllipsizeMode.START); // keep the filename end visible
+    name.addCssClass('git-name'); // monospace, tinted to the staged/unstaged status color
+    name.addCssClass(kind); // 'staged' | 'unstaged' — matches the leading letter's color
+
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: ROW_SPACING });
     box.setName('GitRow');
-    box.append(icon);
+    box.append(badge); // the state letter leads the row, before the path
     box.append(name);
-    box.append(badge);
 
     const row = new Gtk.ListBoxRow();
     row.setChild(box);
     row.setTooltipText(change.relPath);
 
-    // Double-click opens the file (staging is the s/u keys on the cursor).
+    // A single click opens the change's diff (staging is the s/u keys on the cursor). The
+    // `nPress === 1` guard keeps a double-click from opening twice (the 2nd press is ignored).
     const gesture = new Gtk.GestureClick();
     gesture.on('pressed', (nPress: number) => {
-      if (nPress === 2) this.open(change);
+      if (nPress === 1) this.showDiff(change);
     });
     this.rowScope.addController(row, gesture);
     return row;
@@ -381,12 +520,34 @@ export class GitPanel {
     return row;
   }
 
-  /** Whether keyboard focus currently sits anywhere inside this panel. */
-  private hasFocusWithin(): boolean {
+  /** The `git status`-style preamble row (branch + upstream tracking), read from the
+   *  reactive repo state. Null when there is no branch (not a repo / no branch info),
+   *  so the row is simply omitted. Non-selectable, like the group headers. */
+  private statusRow(): InstanceType<typeof Gtk.ListBoxRow> | null {
+    const branch = this.git.getBranch();
+    if (!branch) return null;
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    box.addCssClass('git-status');
+    for (const line of gitStatusLines(branch, this.git.getUpstream(), this.git.getAheadBehind())) {
+      const label = new Gtk.Label({ label: line.text, xalign: 0 });
+      label.setWrap(true); // wrap to the panel width rather than widening the list
+      if (line.muted) label.addCssClass('git-status-hint');
+      box.append(label);
+    }
+    const row = new Gtk.ListBoxRow();
+    row.setChild(box);
+    row.setSelectable(false);
+    row.setActivatable(false);
+    return row;
+  }
+
+  /** Whether keyboard focus currently sits inside the change list (not the embedded diff) —
+   *  so a poll-driven rebuild only re-grabs focus when it was the list's, never the diff's. */
+  private listHasFocus(): boolean {
     const win = this.root.getRoot() as { getFocus?: () => InstanceType<typeof Gtk.Widget> | null } | null;
     let current: InstanceType<typeof Gtk.Widget> | null = win?.getFocus?.() ?? null;
     while (current) {
-      if (current === this.root) return true;
+      if (current === this.scrolled) return true;
       current = current.getParent();
     }
     return false;

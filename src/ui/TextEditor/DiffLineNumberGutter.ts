@@ -24,13 +24,20 @@ const COLOR = theme.ui.editor.lineNumber;
 // unchanged rows aligned. Read-only diffs (commit/branch/file) aren't live and omit this section.
 const STAGED_COLOR = theme.ui.status.info;
 const UNSTAGED_COLOR = theme.ui.status.warning;
-const MARKER_GLYPH = '▌';
+// The marker is ONE narrow glyph in a PROPORTIONAL font (the gutter is otherwise monospace), so the
+// colored band is only as wide as that glyph's advance — far narrower than a monospace cell. The
+// glyph itself is hidden: on a change foreground == background paints a solid band; on an unchanged
+// row the same glyph is drawn near-transparent so its advance still reserves the identical width and
+// the line numbers stay column-aligned.
+const MARKER_FONT = 'Sans';
+const MARKER_CHAR = " ";
 
-/** Leading gutter cell: a colored bar for a staged/unstaged change, else a blank of equal width. */
+/** Leading gutter cell: a slim color band for a staged/unstaged change (a hidden narrow glyph,
+ *  fg == bg), else that same glyph drawn near-transparent (same advance → unchanged rows align). */
 function markerMarkup(state: StagedState): string {
-  if (!state) return ' ';
-  const color = state === 'staged' ? STAGED_COLOR : UNSTAGED_COLOR;
-  return `<span foreground="${color}">${MARKER_GLYPH}</span>`;
+  const color = state === 'staged' ? STAGED_COLOR : state === 'unstaged' ? UNSTAGED_COLOR : null;
+  const attrs = color ? `background="${color}" foreground="${color}"` : `alpha="1%"`;
+  return `<span font_family="${MARKER_FONT}" ${attrs}>${MARKER_CHAR}</span>`;
 }
 
 /** Split a `#rrggbb(aa)` color into a Pango `background` color + a `background_alpha` percentage
@@ -107,14 +114,15 @@ export class DiffLineNumberGutter {
   }
 }
 
-/** Markup for one number column: a leading space then the (right-aligned) number, and — for the NEW
- *  column (`trailing`) — a TRAILING space separating the number from the code that follows. The old
- *  column omits the trailing space: the new column's own leading space is the gap between the two
- *  number columns. The whole run carries the cell background so an added/removed tint reads as a
- *  solid band, the spaces included. `label` is already padded to the column width (a blank side —
- *  added has no old #, removed no new — is all spaces of that width), so the columns stay aligned. */
-function cellMarkup(label: string, bg: string | null, trailing: boolean): string {
-  const content = trailing ? ` ${label} ` : ` ${label}`;
+/** Markup for one number column: the (right-aligned) number wrapped in a leading AND trailing space
+ *  — so the two columns are separated by a clear gap (old's trailing + new's leading) and the new
+ *  column's trailing space separates it from the code. Both columns pad symmetrically, so an
+ *  added/removed tint reads as a band evenly padded around the number (the old column used to omit
+ *  its trailing space, which cramped the removed-line tint right up against the digit). The whole run
+ *  carries the cell background, the spaces included. `label` is already padded to the column width (a
+ *  blank side — added has no old #, removed no new — is all spaces of that width), so columns align. */
+function cellMarkup(label: string, bg: string | null): string {
+  const content = ` ${label} `;
   if (!bg) return `<span foreground="${COLOR}">${content}</span>`;
   const { rgb, alphaPct } = pangoBackground(bg);
   return `<span background="${rgb}" background_alpha="${alphaPct}%" foreground="${COLOR}">${content}</span>`;
@@ -142,9 +150,9 @@ class CombinedDiffLineNumberRenderer extends GtkSource.GutterRendererText {
     this.yalign = this.headerRows.has(line) ? 1 : 0;
     // The leading staged/unstaged marker bar exists only on a live diff; read-only diffs drop it.
     const marker = this.live ? markerMarkup(this.stagedState?.[line] ?? null) : '';
-    const oldCell = cellMarkup(this.oldLabels?.[line] ?? '', this.oldBg?.[line] ?? null, false);
-    const newCell = cellMarkup(this.newLabels?.[line] ?? '', this.newBg?.[line] ?? null, true);
-    this.setMarkup(`${marker}${oldCell}${newCell}`, -1); // [marker] old (no trailing) then new (trailing space → code)
+    const oldCell = cellMarkup(this.oldLabels?.[line] ?? '', this.oldBg?.[line] ?? null);
+    const newCell = cellMarkup(this.newLabels?.[line] ?? '', this.newBg?.[line] ?? null);
+    this.setMarkup(`${marker}${oldCell}${newCell}`, -1); // [marker] old then new, each space-padded (new's trailing space → code)
   }
 }
 registerClass(CombinedDiffLineNumberRenderer);
@@ -207,10 +215,15 @@ export class CombinedDiffLineNumberGutter {
    *  on a short line crops). */
   private primeWidth(oldLabels: string[], newLabels: string[]): void {
     const w = (labels: string[]) => labels.reduce((max, l) => Math.max(max, l.length), 1);
-    // Mirror the rendered run `[▌] old new ` — the marker bar only on a live diff, then ` <old>` (no
-    // trailing) and ` <new> ` (trailing space → code).
-    const marker = this.renderer.live ? MARKER_GLYPH : '';
-    this.renderer.setText(`${marker} ${'0'.repeat(w(oldLabels))} ${'0'.repeat(w(newLabels))} `, -1);
+    // Mirror the rendered run `[marker] old  new ` — the slim marker space only on a live diff, then
+    // each number wrapped in a leading+trailing space (old's trailing + new's leading = the inter-
+    // column gap, new's trailing = the gap to the code). GtkSourceGutterRendererText sizes from the
+    // set text but DROPS trailing whitespace when measuring, so that final code-gap space wouldn't be
+    // reserved and the new number would butt against / be cropped by the code. End with a non-space
+    // sentinel (one monospace cell == a space's advance) so the gap is measured in too. Markup (not
+    // plain text) so the marker's proportional-font glyph is measured at its true (narrow) advance.
+    const marker = this.renderer.live ? markerMarkup(null) : '';
+    this.renderer.setMarkup(`${marker} ${'0'.repeat(w(oldLabels))}  ${'0'.repeat(w(newLabels))}0`, -1);
     this.renderer.queueResize();
   }
 

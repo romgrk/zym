@@ -35,7 +35,10 @@ default (no flag).
   (add cursor above/below; `escape` collapses). Extra-caret rendering
   (reverse-video block tags in normal/visual; host-drawn beam carets in insert);
   multi-cursor operations undo as one step; insert is incrementally replicated
-  to every cursor live (`blockwise.test.ts`, `multicursor.test.ts`).
+  to every cursor live (`blockwise.test.ts`, `multicursor.test.ts`). Bracket
+  auto-pairing consumes the keystroke (suppressing native insert + its
+  replication), so `autoPair.ts` applies the pair/type-over/backspace at every
+  cursor itself via `EditorModel.applyAutoPairEdit` (`autoPair.test.ts`).
 - Polish: `=`/`==` auto-indent (tree-sitter indent source — `syntax/indent.ts` +
   `EditorModel.setIndentSource`), matching-bracket highlight
   (`syntax/bracketMatch.ts`; ignores strings/comments/regex; enclosing pair when

@@ -45,14 +45,27 @@ What already exists and is reused, not rebuilt:
   `cycleWorkbench(±1)` (bound to `super-,` / `super-.`) steps the active
   workbench through `[user, …agents]` (the workbench-list order), wrapping.
   Detached workbenches stay alive, so a terminal's scrollback / open editors
-  survive a switch. An agent's workbench opens terminal-only — `showSideDock`
-  is false for agents, so Files/Source-Control isn't docked on open; the panel
-  is still built (so `this.workbench.fileTree`/`gitPanel` stay valid and
-  `file-tree:focus`/git commands can reveal it). The terminal auto-opens on
-  creation (`openAgent` → `buildWorkbench(agent, cwd)`); `closeAgent` drops it
-  from `workbenches` and disposes its editors / file tree / git panel /
-  bottom-dock panels (no leak). Each agent workbench is serialized as a
-  `WorkspaceState` and relaunched resumed on session restore (work-area
+  survive a switch. An agent's widget (`AgentTerminal`/`AgentConversation`) does
+  **not** live in its workbench at all: it's shown in a window-level **secondary
+  sidebar** (`src/ui/AgentSidebar.ts`) — a full-height column *outside* the header
+  bar, between the WorkbenchList and the content, themed with the libadwaita
+  `secondarySidebar` colors. Like WorkbenchList it carries its **own** `Adw` header
+  (an `Adw.ToolbarView` top bar showing the agent name), so the header lines up with
+  the agent column for free — no width-sync against the window header (whose padding
+  never aligned). It's **uncloseable**: it's a `Gtk.Stack` page, not a tab. Every open
+  agent's widget is a stack page kept alive across switches; `activateWorkbench` flips
+  the visible one (`AgentSidebar.show`) and attaches the column to its split
+  (`agentPaned`, at `AGENT_SIDEBAR_WIDTH`, resizable) — or detaches it for the user
+  workbench, which has no agent. The workbench center stays free as the work/review
+  area. `showSideDock` is still false for agents, so Files/Source-Control isn't docked
+  on open but the panel is built (so `this.workbench.fileTree`/`gitPanel` stay valid and
+  `file-tree:focus`/git commands can reveal it in the **right** slot). `openAgent` adds
+  the widget to the sidebar stack; `closeAgent` removes it (`AgentSidebar.removeAgent`)
+  and disposes it + the workbench's editors / file tree / git panel / bottom-dock panels
+  (no leak). The agent column is a top-level **focus zone** (`focusZones`), so geometry-
+  based `ctrl-w h/l` reaches it, and `agent-sidebar:toggle` (`ctrl-w g a`) hides/shows it
+  (`agentSidebarHidden` — a no-op + toast on the user workbench). Each agent workbench is
+  serialized as a `WorkspaceState` and relaunched resumed on session restore (work-area
   file-tab layout still deferred).
 - **`src/ui/AgentTerminal.ts`** *(the `claude-tui` kind)* — a `Terminal`
   subclass that spawns the agent CLI (`agent.command` config, default
@@ -150,11 +163,10 @@ What already exists and is reused, not rebuilt:
   titled combobox pre-selected to the current root with the prompt focused; and
   `new-worktree` (`agent:new-worktree`) drops the control entirely under a "Launch
   agent in new worktree:" title (pinned to a fresh worktree).
-- **`AppWindow`** — `openAgent(prompt?)` / `showAgent` (reattaches a persisted
-  widget, gated on `getRoot()` so a desynced tab map can't strand or rip it),
-  `agentChildren` (agent → center tab), `agent:new` / `agent:picker` commands,
-  focus→`selectAgent`, and retiring an agent from the registry when its
-  **exited** tab is closed.
+- **`AppWindow`** — `openAgent(prompt?)` (hosts the agent in the `AgentSidebar` stack)
+  / `showAgent`, `agent:new` / `agent:picker` commands, focus→`selectAgent`. An agent is
+  "viewed" (clears its attention blink) whenever its workbench is active — its widget is
+  the shown one in the agent sidebar — rather than via a center tab.
 
 ## Feature: agent profiles & customization
 
