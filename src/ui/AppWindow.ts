@@ -172,6 +172,8 @@ export class AppWindow {
   // of the window. Owns the `WorkbenchList` (`this.sidebar.list`); it's the start child
   // of `sidebarPaned`, whose width this window toggles on collapse/expand.
   private readonly sidebar: Sidebar;
+  private sidebarHidden = false; // user toggle (sidebar:toggle, `ctrl-w g s`); detaches the column entirely
+  private sidebarShownWidth = SIDEBAR_WIDTH; // split position captured on hide, re-applied on show
   // Commit-message editor tabs: the message file each is bound to, so closing the
   // tab can commit (git-style: write the message, save, close to commit).
   private readonly commitEditors = new Map<Widget, { repo: string; msgPath: string; amend: boolean }>();
@@ -538,6 +540,25 @@ export class AppWindow {
   // button toggles between icons-only and icons+text and forwards the new state here.
   private setSidebarCollapsed(collapsed: boolean): void {
     this.sidebarPaned.setPosition(collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH);
+  }
+
+  // Toggle the workbench sidebar's visibility (sidebar:toggle, `ctrl-w g s`). Mirrors
+  // toggleAgentSidebar: detach/attach the top-level split's start child — rather than
+  // toggling `visible` — so an absent column leaves no stray handle, restoring its last
+  // width (collapsed or expanded) on show. Steers focus to the center when it hides out
+  // from under focus, into the list when freshly revealed.
+  private toggleSidebar(): void {
+    const focusWasInside = this.isFocusWithin(this.sidebar.root);
+    this.sidebarHidden = !this.sidebarHidden;
+    if (this.sidebarHidden) {
+      this.sidebarShownWidth = this.sidebarPaned.getPosition();
+      this.sidebarPaned.setStartChild(null);
+      if (focusWasInside) this.focusActivePane(); // it hid out from under focus
+    } else {
+      this.sidebarPaned.setStartChild(this.sidebar.root);
+      this.sidebarPaned.setPosition(this.sidebarShownWidth);
+      this.sidebar.list.focus(); // freshly revealed — focus into it
+    }
   }
 
   // Apply restored window geometry. Size only takes effect before the window is
@@ -1780,6 +1801,7 @@ export class AppWindow {
       'dock:toggle-top': { didDispatch: () => this.toggleDockSide('top'), description: 'Toggle the top dock' },
       'dock:toggle-bottom': { didDispatch: () => this.toggleDockSide('bottom'), description: 'Toggle the bottom dock' },
       'agent-sidebar:toggle': { didDispatch: () => this.toggleAgentSidebar(), description: 'Toggle the agent sidebar' },
+      'sidebar:toggle': { didDispatch: () => this.toggleSidebar(), description: 'Toggle the workbench sidebar' },
       'theme:select': { didDispatch: () => this.selectTheme(), description: 'Select the editor theme' },
     });
   }

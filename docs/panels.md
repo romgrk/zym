@@ -58,6 +58,12 @@ widget.
   content yet, so toggling them is a no-op + toast until a plugin contributes a
   panel there. (The agent widget is *not* a dock — it's the window-level agent
   sidebar; see `AgentSidebar` above.)
+- The window-level **workbench sidebar** (the left-most `#WorkbenchSidebar`
+  column, also not a dock) has its own visibility toggle `sidebar:toggle`
+  (`ctrl-w g s`), handled in `AppWindow.toggleSidebar`. Like the agent sidebar,
+  it detaches/attaches the top-level split's start child (rather than toggling
+  `visible`) so the absent column leaves no stray handle, restoring its last
+  width (collapsed or expanded) on show.
 - **Default state**: the user workbench's right dock (Files/Source-Control) is
   *assigned but hidden* at startup — the `Workbench` constructor calls `setRight`
   then `setDockVisible('right', false)`, so the dock toggle / `file-tree:` /
