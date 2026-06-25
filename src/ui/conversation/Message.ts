@@ -34,6 +34,8 @@ addStyles(/* css */`
     // border: 1px solid var(--border-color);
   }
   #Message.is-thinking .message-bubble { 
+    border: none;
+    box-shadow: none;
     background: transparent;
     opacity: 0.55;
     font-style: italic;
