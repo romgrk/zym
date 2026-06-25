@@ -600,11 +600,8 @@ export class DiffView {
   // the paint, so the reflow + caret-follow happen with no visible flash. Supersedes a pending
   // debounce.
   //
-  // A `queueMicrotask`/`Promise` is WRONG here: Node drains microtasks only on a libuv turn, which
-  // under node-gtk's GLib main loop can come many paints later (or not until idle), so the re-diff
-  // never ran in the app — the inserted line stayed unreflowed with the caret stranded on the
-  // pre-reflow row (e.g. `O` on an excerpt's first line left the caret where the leading `⋯` fold
-  // marker sat). The frame clock is the only scheduler that fires under the GLib loop before paint.
+  // The frame clock (not queueMicrotask/setTimeout) because it's the only scheduler that fires
+  // *before paint* — required to avoid a visible flash. See docs/index.md "node-gtk event loop".
   private microReDiffTickId = 0;
   private scheduleMicroReDiff(): void {
     if (this.microReDiffTickId || this.disposed) return;

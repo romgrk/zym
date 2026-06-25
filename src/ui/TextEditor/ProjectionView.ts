@@ -641,12 +641,9 @@ export class ProjectionView {
     if (resync) this.needsResync = true;
     if (this.syncScheduled) return;
     this.syncScheduled = true;
-    // MUST be a macrotask, NOT queueMicrotask: under node-gtk's GLib main loop microtasks never
-    // fire (only on a libuv turn), so a microtask-deferred remap would never run in the app —
-    // the projection would stay stale after an undo / cross-view edit until the next edit forced
-    // a synchronous resegment (the "corrected after another edit" symptom). setTimeout(0) runs on
-    // the next loop turn under both the GLib loop and the headless test runner. The source has
-    // mutated by then (its default insert/delete handler ran), so re-reading source text is valid.
+    // setTimeout (macrotask), NOT queueMicrotask — see docs/index.md "node-gtk event loop". It runs
+    // on the next loop turn (GLib loop and headless runner alike), by when the source has mutated
+    // (its default insert/delete handler ran), so re-reading source text is valid.
     setTimeout(() => {
       this.syncScheduled = false;
       const resync = this.needsResync;

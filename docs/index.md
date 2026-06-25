@@ -133,6 +133,17 @@ See [git/index.md](git/index.md).
 If you need to run a process, do not use `node:child_process`.
 See [process-runner.md](process-runner.md).
 
+## node-gtk event loop
+
+Unconfirmed gotcha: JS microtasks (`queueMicrotask` / Promise jobs) may not drain
+promptly under node-gtk's GLib main loop. Evidence is mixed — `node-gtk`'s
+`loop.cc` flushes them in `loop_source_prepare` every iteration, and
+`queueMicrotask`-deferred multi-cursor edit replication (`EditorModel`) works in
+the app — yet `ProjectionView`/`DiffView` saw microtask-deferred work stay stale
+until later activity and switched to `setTimeout` / the GTK frame clock. Cause
+unresolved; if work you defer doesn't seem to run promptly in the app, suspect
+this and prefer a macrotask (or the frame clock when it must land before a paint).
+
 ## LSP integration
 
 A GTK-free `src/lsp/` core drives editors through an `LspDocument` interface, fed

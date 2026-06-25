@@ -1512,6 +1512,28 @@ export class EditorModel {
     this.renderExtraSelections();
   }
 
+  /**
+   * Apply an auto-pair edit at every cursor as one undo step. Auto-pairing
+   * consumes the keystroke, so the view's native insert — and the live
+   * multi-cursor replication that mirrors it onto the extra cursors — never run;
+   * the callback edits each cursor itself, reading its (mark-tracked) head fresh
+   * so earlier insertions/deletions shift later cursors correctly. Replication is
+   * held off for the duration so it can't also mirror the primary's edit and
+   * double-insert.
+   */
+  applyAutoPairEdit(edit: (selection: Selection) => void): void {
+    const wasReplicating = this.replicatingEdit;
+    this.replicatingEdit = true;
+    try {
+      this.transact(() => {
+        for (const selection of this.getSelections()) edit(selection);
+      });
+    } finally {
+      this.replicatingEdit = wasReplicating;
+    }
+    if (this.extraSelections.length) this.renderExtraSelections();
+  }
+
   // --- Multi-cursor reconciliation -------------------------------------------
 
   /**
