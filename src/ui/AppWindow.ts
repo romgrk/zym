@@ -2781,10 +2781,13 @@ export class AppWindow {
       'git:push': {
         // After a successful push, GitHub re-runs the PR's checks; schedule a CI
         // refresh ~10s out. The service stays busy until then, so the CI segment
-        // shows the in-progress (loading) look in the meantime.
-        didDispatch: () =>
-          this.runGit(() => this.workbench.git.push(), 'Push', () => this.headerBar.github.scheduleRefresh(10000)),
-        description: 'Push to the remote',
+        // shows the in-progress (loading) look in the meantime. The first push of a
+        // new branch sets its upstream to this remote (the fork's), per `git.remotes.origin`.
+        didDispatch: () => {
+          const remote = (zym.config.get('git.remotes.origin') as string) || 'origin';
+          this.runGit(() => this.workbench.git.push(remote), 'Push', () => this.headerBar.github.scheduleRefresh(10000));
+        },
+        description: 'Push to the remote (sets the upstream on a new branch)',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:branch-switch': {

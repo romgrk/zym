@@ -27,7 +27,7 @@
  * the entry — holds focus. `/` jumps to the search; Enter/Down/Escape return to the
  * list. The assembled widget is exposed via `root`.
  */
-import { Gtk, Pango } from '../gi.ts';
+import { Adw, Gtk, Pango } from '../gi.ts';
 import { addStyles } from '../styles.ts';
 import { ICON_FONT_FAMILY, fonts } from '../fonts.ts';
 import { zym } from '../zym.ts';
@@ -451,6 +451,7 @@ export class GitLogView {
         'git-log:open': { didDispatch: () => this.openSelected(), description: 'Open the selected commit in a diff' },
         'git-log:search': { didDispatch: () => this.search.grabFocus(), description: 'Filter the commit list' },
         'git-log:copy-sha': { didDispatch: () => this.copySelectedSha(), description: 'Copy the selected commit short hash' },
+        'git-log:revert': { didDispatch: () => this.revertSelected(), description: 'Revert the selected commit' },
       }),
     );
     // `git-log:focus-list` / `git-log:focus-diff` are registered on the view ROOT (not a
@@ -509,6 +510,40 @@ export class GitLogView {
     if (!commit) return;
     clipboard.write(commit.shortSha);
     zym.notifications.addInfo(`Copied ${commit.shortSha}`);
+  }
+
+  /** Revert the selected commit (`R`): confirm, then create a new commit undoing it.
+   *  Reverting modifies HEAD (and can conflict), so it's gated behind a confirmation. */
+  private revertSelected(): void {
+    const row = this.listBox.getSelectedRow();
+    const commit = row ? this.filtered[row.getIndex()] : undefined;
+    if (!commit) return;
+    const dialog = new Adw.AlertDialog({
+      heading: 'Revert commit',
+      body: `Create a new commit that undoes ${commit.shortSha}?\n\n${commit.subject}`,
+    });
+    dialog.addResponse('cancel', 'Cancel');
+    dialog.addResponse('revert', 'Revert');
+    dialog.setResponseAppearance('revert', Adw.ResponseAppearance.SUGGESTED);
+    dialog.setDefaultResponse('revert');
+    dialog.setCloseResponse('cancel');
+    dialog.on('response', (response: string) => {
+      if (response === 'revert') void this.revert(commit);
+    });
+    dialog.present(this.root);
+  }
+
+  /** Run the revert, then reload the list so the new commit shows. A revert that hits
+   *  conflicts fails (non-zero exit) and is surfaced with git's stderr for the user. */
+  private async revert(commit: CommitSummary): Promise<void> {
+    const result = await this.git.revert(commit.sha);
+    if (this.disposed) return;
+    if (result.isOk()) {
+      zym.notifications.addSuccess(`Reverted ${commit.shortSha}`);
+      this.load(); // the revert added a commit — refresh the list (and re-select the top)
+    } else {
+      zym.notifications.addError('Revert failed', { detail: result.unwrapErr().message.trim() });
+    }
   }
 
   // --- Embedded diff -----------------------------------------------------------
