@@ -17,30 +17,6 @@ Two mechanisms, picked per widget:
   (`useMarkup: true`), for a single label mixing styles across its text
   (`GitBranchButton`). CSS can't style a label sub-run; markup can.
 
-## Hot-reload
-
-Editing a file's `addStyles(...)` CSS updates the running app live — no restart.
-`src/styles.ts` records the source file behind every `addStyles` call (via the
-call stack), watches it with chokidar, and on change **re-runs that one module**
-(cache-busted dynamic `import`) so its `addStyles` calls reinstall the new CSS,
-then drops the providers from the previous run. New sheets go up before the old
-come down (no unstyled flash); a module load/eval error mid-edit (e.g. a syntax
-error) **rolls back** to the last working sheets and logs a `[styles]` warning
-instead of installing nothing.
-
-- **On by default.** Opt out with `ZYM_STYLE_HOT_RELOAD=0` (also `false`/`no`/
-  `off`). The chokidar watcher is only created at `installStyles()` (display
-  ready), so headless tests that never activate install no watchers.
-- **Re-running the module re-runs its whole top level**, so a style-bearing file
-  must be side-effect-free beyond `addStyles` + declarations (component files
-  are — only POC entry points aren't, and those aren't watched). Imports the
-  module pulls in are shared from cache, not re-evaluated, so interpolated
-  values (`${theme.spacing}`, module constants) reload correctly.
-- **Only static `addStyles` is hot-reloaded.** Keyed `styles.set` and plugin
-  `styles.addRemovable` sheets are not. `styles.ts`'s own framework sheets opt
-  out via `styles.addStatic` — re-importing `styles.ts` would fork the
-  `StyleManager` singleton, so it must never be watched.
-
 ## Selectors & classes
 
 A component's styling identity is `addCssClass('WidgetName')` → `.WidgetName`
@@ -256,3 +232,8 @@ context sets. Used by the empty-panel welcome cheatsheet.
 Adjacent header controls that form one logical control are joined with the
 GTK `.linked` class on their container `Gtk.Box` (spacing 0): `GithubButtons`
 (PR + CI) and `WorkbenchStatus` (diagnostics + LSP).
+
+## Hot-reload
+
+Editing a file's `addStyles(...)` CSS updates the running app live — no restart.
+**On by default.** Opt out with `ZYM_STYLE_HOT_RELOAD=0`.

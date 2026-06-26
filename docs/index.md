@@ -7,22 +7,10 @@ mirror the header structure (`git/index.md` for the git section,
 `text-editor/lsp-integration.md` for LSP, etc.); a header with more than one
 subheader becomes a directory with an `index.md`.
 
-### Tasks
-
-Most important tasks:
-
-- agent UI
-- styling/theming
-  - finish removing custom tokens
-  - implement kyntell theme
-- git (for reviewing agent work): 
-  - [~] Improve diff viewer interface
-  - git:discard-all (only per-file discard exists today).
-  - git:undo-commit (reset --soft HEAD~1).
-  - [x] git:revert a commit (from the git log viewer — `R`).
-  - [x] First push of a new branch → auto -u origin <branch> (set upstream).
-  - conflict resolution
-- pickers: improve UI/UX, attach to panel when applicable
+Do not document conventions or workarounds with inline code comments. Anything 
+that needs to be known globally should be in the `docs/`. Inline code comments
+can explain briefly, but should point to the documentation. In general, knowledge
+should only be stated once; further mentions should point to other documents.
 
 ## Architecture
 
@@ -53,8 +41,7 @@ See [commands-keymaps.md](commands-keymaps.md).
 
 ## Styling & theming
 
-UI styling is in GTK CSS. Editing a file's `addStyles(...)` CSS hot-reloads live
-(watched + re-run on change; on by default, `ZYM_STYLE_HOT_RELOAD=0` to opt out).
+UI styling is in GTK CSS. Editing a file's `addStyles(...)` CSS hot-reloads.
 Before writing styles or classnames, see [styling.md](styling.md).
 
 The theme system is being reworked. Avoid using it as much as possible. Only use
@@ -135,17 +122,6 @@ See [git/index.md](git/index.md).
 
 If you need to run a process, do not use `node:child_process`.
 See [process-runner.md](process-runner.md).
-
-## node-gtk event loop
-
-Unconfirmed gotcha: JS microtasks (`queueMicrotask` / Promise jobs) may not drain
-promptly under node-gtk's GLib main loop. Evidence is mixed — `node-gtk`'s
-`loop.cc` flushes them in `loop_source_prepare` every iteration, and
-`queueMicrotask`-deferred multi-cursor edit replication (`EditorModel`) works in
-the app — yet `ProjectionView`/`DiffView` saw microtask-deferred work stay stale
-until later activity and switched to `setTimeout` / the GTK frame clock. Cause
-unresolved; if work you defer doesn't seem to run promptly in the app, suspect
-this and prefer a macrotask (or the frame clock when it must land before a paint).
 
 ## LSP integration
 
@@ -238,6 +214,19 @@ change attribution within a shared tree. See [agents.md](agents.md),
 Open, cross-kind: agent profiles/customization, richer management UX, reviewing an
 agent's diff (needs the editor Diff renderer first), and worktree lifecycle
 (keep/merge/discard).
+
+## node-gtk
+
+This project is the flagship demo for `node-gtk`, and bugs in `node-gtk` should be
+surfaced and fixed at the source. Workarounds for `node-gtk` should not be allowed.
+
+Unconfirmed gotcha: JS microtasks may not drain promptly under node-gtk's GLib main 
+loop. Evidence is mixed — `node-gtk`'s `loop.cc` flushes them in `loop_source_prepare` 
+every iteration, and `queueMicrotask`-deferred multi-cursor edit replication 
+(`EditorModel`) works in the app — yet `ProjectionView`/`DiffView` saw 
+microtask-deferred work stay stale until later activity and switched to `setTimeout` 
+/ the GTK frame clock. Cause unresolved; if work you defer doesn't seem to run promptly in the app, suspect
+this and prefer a macrotask (or the frame clock when it must land before a paint).
 
 ## Tasks & runners
 
