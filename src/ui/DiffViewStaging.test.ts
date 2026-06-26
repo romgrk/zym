@@ -19,7 +19,7 @@ import { Gtk } from '../gi.ts';
 import { zym } from '../zym.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { DiffView } from './DiffView.ts';
-import { invalidateRepoRoot } from '../git.ts';
+import { invalidateRepoRoot, type GitRepo } from '../git.ts';
 
 Gtk.init();
 zym.lsp.configure({ enable: false });
@@ -69,6 +69,64 @@ function open(committed: string, worktree: string) {
   };
   return { repo, file, registry, mbv, caretOnKind };
 }
+
+/** A live DiffView wired to a controllable HEAD (the staging path only reads getHead/onChange/
+ *  refresh). `head` lets a test advance HEAD and then drive `onGitChange` like the real onChange. */
+function openWithHead(committed: string, worktree: string) {
+  const { repo, file } = gitRepo(committed, worktree);
+  const registry = new DocumentRegistry();
+  let head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+  const advanceHead = () => (head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim());
+  const git = { getHead: () => head, onChange: () => () => {}, refresh: () => {} } as unknown as GitRepo;
+  const mbv = new DiffView({
+    editable: true,
+    live: true,
+    documents: registry,
+    cwd: repo,
+    git,
+    files: [{ path: file, oldText: committed, newText: worktree }],
+  });
+  return { repo, file, mbv, advanceHead, gitChange: () => (mbv as any).onGitChange() };
+}
+
+test('commit: a HEAD move re-bases the diff so a fully-committed view empties', async () => {
+  const { repo, mbv, advanceHead, gitChange } = openWithHead('a\nb\nc\n', 'a\nCHANGED\nc\n');
+  assert.ok(await waitFor(() => rowKinds(mbv).includes('added')), 'the change shows before the commit');
+
+  // Commit the whole worktree, advance HEAD, then signal the repo change like onChange would.
+  execFileSync('git', ['add', 'f.ts'], { cwd: repo });
+  execFileSync('git', ['commit', '-q', '-m', 'change'], { cwd: repo });
+  advanceHead();
+  gitChange();
+
+  // The re-fetched HEAD blob now equals the worktree, so the file drops out of the diff entirely.
+  assert.ok(
+    await waitFor(() => !rowKinds(mbv).includes('added') && !rowKinds(mbv).includes('removed')),
+    'after committing every change the live diff is empty',
+  );
+  assert.deepEqual(rowKinds(mbv), [], 'no rows remain');
+  mbv.dispose();
+});
+
+test('commit: a partial commit re-bases to only the remaining changes', async () => {
+  // HEAD a,c,e; worktree adds X (after a) and Y (after c) — two separate hunks.
+  const { repo, mbv, advanceHead, gitChange } = openWithHead('a\nc\ne\n', 'a\nX\nc\nY\ne\n');
+  await waitFor(() => stagedState(mbv).some((s) => s !== null));
+  assert.deepEqual(stateOf(mbv, 'added'), ['unstaged', 'unstaged'], 'both hunks show before the commit');
+
+  // Stage + commit only the first hunk (X); Y stays in the worktree.
+  mbv.editor.model.setCursorBufferPosition({ row: rowKinds(mbv).indexOf('added'), column: 0 });
+  mbv.stageHunkAtCursor();
+  assert.ok(await waitFor(() => indexBlob(repo) === 'a\nX\nc\ne\n'), 'X is staged');
+  execFileSync('git', ['commit', '-q', '-m', 'commit X'], { cwd: repo });
+  advanceHead();
+  gitChange();
+
+  // X is now in HEAD, so only Y remains — and reads unstaged against the new HEAD/index.
+  assert.ok(await waitFor(() => stateOf(mbv, 'added').length === 1), 'only one hunk remains after the commit');
+  assert.deepEqual(stateOf(mbv, 'added'), ['unstaged'], 'the remaining hunk (Y) is unstaged vs the new HEAD');
+  mbv.dispose();
+});
 
 test('staging: changed rows read unstaged until the index catches up', async () => {
   const { repo, mbv } = open('a\nb\nc\n', 'a\nCHANGED\nc\n');

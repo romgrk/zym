@@ -111,8 +111,14 @@ Single-file editing plus both multibuffer surfaces run on the
     the live new-side `Document` (`replaceModelLineRange`, one undo) and saves —
     so the diff, any open editor, and the LSP stay in sync (a `git apply` on disk
     would desync the in-memory Document). Partial-file (per-hunk) staging/revert
-    works; external index moves refresh via `git.onChange`. Tested by
-    `DiffViewStaging.test.ts` (real temp-repo round-trip).
+    works. On `git.onChange` the view reacts by what moved (tracked via
+    `getHead()`): a mere **index move** (external `git add`/reset) only re-reads the
+    index + repaints markers (no geometry reflow). A **HEAD move** (commit, amend,
+    reset, checkout) **re-bases** the diff — each file's base (old) blob is
+    re-fetched from the new HEAD, so a file now equal to the worktree produces no
+    hunks and drops out (`buildDiffMultiBuffer` skips no-change files); committing
+    every change empties the view, a partial commit leaves only the remainder.
+    Tested by `DiffViewStaging.test.ts` (real temp-repo round-trip).
   - **Commit** — `space g c` → `git:start-commit` opens
     `.git/COMMIT_EDITMSG` in a tab (save+close commits).
   - `space g o` opens the diff multibuffer (the `GitStagingView`
