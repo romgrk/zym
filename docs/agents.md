@@ -264,6 +264,11 @@ typed **`/rename`** client-side (headless claude lacks it) — see
 config-shaped seam) runs a prompt to completion via the process runner and
 returns text; `src/agents/autoName.ts` wraps it to turn a task prompt into
 `{ name, description }` (pure, lenient `buildNamePrompt`/`parseAgentName`).
+Claude Code persists each `claude -p` run as an ordinary session, so the
+one-shot reads the `session_id` from the result envelope and deletes that
+transcript on completion (`oneshot.ts:discardSessionTranscript`, via
+`agentSessions.ts:transcriptDir`) — otherwise these throwaway naming queries
+would pollute the resume picker below.
 Triggers (`claude-sdk`): on launch when `agent.autoName` is set, and on an empty
 `/rename` on demand. Both name from the **user's own prompt**, never zym's
 scaffolding: `launchPrompt` returns `{ agentPrompt, userPrompt }` — `agentPrompt`
