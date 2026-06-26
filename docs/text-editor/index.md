@@ -263,7 +263,13 @@ are real; `Selection.onDidDestroy` backs per-selection register clipboard. Entry
 points: blockwise `ctrl-v`, occurrence `c o p`, persistent `ctrl-alt-↑/↓`
 add-cursor (`escape` collapses). Extra carets render as reverse-video block tags
 (normal/visual) and host-drawn beam carets (insert), via
-`EditorModel.onExtraCursors` → a caret pool in `TextEditor.ts`. Multi-cursor ops
+`EditorModel.onExtraCursors` → a caret pool in `TextEditor.ts`. The primary block
+caret falls back to the same host-drawn overlay box where there's no glyph to
+reverse-video (empty line / past EOL / EOF) or while unfocused (hollow). All
+host-drawn carets sit on a `Gtk.Fixed` at *window* coords, so — like
+`IndentGuides`/`UnderlineOverlay` — they must be re-placed on scroll
+(`repositionOverlayCarets`, bound to the v/h adjustments); only the reverse-video
+tag caret scrolls natively with the text. Multi-cursor ops
 coalesce into one undo step (`mutateSelections` in one `transact`); insert is
 live-replicated to every cursor on a deferred microtask. Tests:
 `blockwise.test.ts`, `multicursor.test.ts`, `occurrence.test.ts`. Edges needing

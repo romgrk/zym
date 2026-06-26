@@ -451,6 +451,13 @@ export class TextEditor implements DocumentHost {
   // Pool of caret widgets for the extra (multi-cursor) carets, grown on demand
   // and hidden when unused. Driven by `editorModel.onExtraCursors`.
   private readonly extraCarets: InstanceType<typeof Gtk.Box>[] = [];
+  // Buffer-space (scroll-independent) geometry of the overlay carets currently shown, so a
+  // scroll can re-place them. The overlay box lives on a `Gtk.Fixed` at *window* coords,
+  // which the view scrolls out from under it — unlike the reverse-video tag caret, which is
+  // part of the text and scrolls natively. Null / null entry ⇒ no overlay box for that slot
+  // (the common glyph-caret case caches nothing). See `repositionOverlayCarets`.
+  private caretBufferGeom: { x: number; y: number; width: number; height: number } | null = null;
+  private readonly extraCaretGeom: Array<{ x: number; y: number; width: number; height: number; beam: boolean } | null> = [];
   private showcmd = '';
 
   // Buffer-only mode config (null = a normal file editor), and the placeholder
@@ -1624,6 +1631,31 @@ export class TextEditor implements DocumentHost {
       });
     });
 
+    // The overlay carets sit on a `Gtk.Fixed` at window coords that the view scrolls out from
+    // under, so re-place them on every scroll (the reverse-video tag caret scrolls natively).
+    // Rebind on notify::v/hadjustment: the ScrolledWindow swaps in its own adjustments when
+    // the view is parented, so a one-time binding can catch a throwaway adjustment whose
+    // value-changed never fires (mirrors IndentGuides / UnderlineOverlay).
+    const reposition = () => this.repositionOverlayCarets();
+    const bindScroll = (getter: 'getVadjustment' | 'getHadjustment', notify: string) => {
+      let bound: ReturnType<SourceView[typeof getter]> | null = null;
+      const rebind = () => {
+        const adj = this.view[getter]?.();
+        if (!adj || adj === bound) return;
+        if (bound) bound.off('value-changed', reposition); // drop the stale binding first
+        bound = adj;
+        adj.on('value-changed', reposition);
+      };
+      rebind();
+      this.view.on(notify, rebind);
+      this.subs.add(new Disposable(() => {
+        this.view.off(notify, rebind);
+        if (bound) bound.off('value-changed', reposition);
+      }));
+    };
+    bindScroll('getVadjustment', 'notify::vadjustment');
+    bindScroll('getHadjustment', 'notify::hadjustment');
+
     const focus = new Gtk.EventControllerFocus();
     this.subs.connect(focus, 'enter', () => {
       this.editorModel.setFocused(true);
@@ -1652,14 +1684,17 @@ export class TextEditor implements DocumentHost {
     // in installCursorOverlay re-renders once geometry is real.
     if (kind === 'hidden' || !iter || !this.view.getRealized() || this.view.getHeight() <= 0) {
       this.caret.setVisible(false);
+      this.caretBufferGeom = null;
       return;
     }
     // getIterLocation gives the character cell (buffer coords); convert to the
     // view's widget coords (accounts for the gutter and scroll position).
     const cell = (this.view as any).getIterLocation(iter) as { x: number; y: number; width: number; height: number };
-    const [winX, winY] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, cell.x, cell.y);
     // An empty line / EOL has near-zero cell width; fall back to a slim block.
     const width = cell.width > 1 ? cell.width : Math.max(2, Math.round(cell.height * 0.5));
+    // Cache the buffer-space geometry so a later scroll can re-place the box.
+    this.caretBufferGeom = { x: cell.x, y: cell.y, width, height: cell.height };
+    const [winX, winY] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, cell.x, cell.y);
     this.caret.setSizeRequest(width, cell.height);
     this.caretLayer.move(this.caret, winX, winY);
     this.caret.removeCssClass(kind === 'filled' ? 'zym-unfocused-caret' : 'zym-block-caret');
@@ -1687,6 +1722,7 @@ export class TextEditor implements DocumentHost {
       }
       if (!realized) {
         widget.setVisible(false);
+        this.extraCaretGeom[i] = null;
         continue;
       }
       const cell = (this.view as any).getIterLocation(carets[i].iter) as {
@@ -1695,19 +1731,47 @@ export class TextEditor implements DocumentHost {
         width: number;
         height: number;
       };
-      const [winX, winY] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, cell.x, cell.y);
       const beam = carets[i].beam;
       // Secondary insert-mode carets render as a 1px beam (thinner than the main
       // caret) so they read as subordinate, nudged 1px left to sit on the gap
       // between glyphs rather than the cell's left edge.
       const width = beam ? 1 : cell.width > 1 ? cell.width : Math.max(2, Math.round(cell.height * 0.5));
+      // Cache buffer-space geometry so a scroll can re-place this caret (see renderCursorOverlay).
+      this.extraCaretGeom[i] = { x: cell.x, y: cell.y, width, height: cell.height, beam };
+      const [winX, winY] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, cell.x, cell.y);
       widget.setSizeRequest(width, cell.height);
       this.caretLayer.move(widget, beam ? winX - 1 : winX, winY);
       widget.removeCssClass(beam ? 'zym-block-caret' : 'zym-beam-caret');
       widget.addCssClass(beam ? 'zym-beam-caret' : 'zym-block-caret');
       widget.setVisible(true);
     }
-    for (let i = carets.length; i < this.extraCarets.length; i++) this.extraCarets[i].setVisible(false);
+    for (let i = carets.length; i < this.extraCarets.length; i++) {
+      this.extraCarets[i].setVisible(false);
+      this.extraCaretGeom[i] = null;
+    }
+  }
+
+  /**
+   * Re-place the overlay carets after a scroll. The block/hollow overlay box and the
+   * multi-cursor carets live on a `Gtk.Fixed` at *window* coordinates, so they stay put when
+   * the view scrolls beneath them — unlike the reverse-video tag caret, which is part of the
+   * text and scrolls natively. Recompute window coords from the cached buffer-space geometry
+   * (cheap arithmetic in `bufferToWindowCoords`) and move only the boxes that are shown;
+   * a glyph caret caches nothing, so the common case does no work.
+   */
+  private repositionOverlayCarets(): void {
+    if (!this.view.getRealized()) return;
+    if (this.caretBufferGeom) {
+      const g = this.caretBufferGeom;
+      const [winX, winY] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, g.x, g.y);
+      this.caretLayer.move(this.caret, winX, winY);
+    }
+    for (let i = 0; i < this.extraCaretGeom.length; i++) {
+      const g = this.extraCaretGeom[i];
+      if (!g) continue;
+      const [winX, winY] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, g.x, g.y);
+      this.caretLayer.move(this.extraCarets[i], g.beam ? winX - 1 : winX, winY);
+    }
   }
 
   // --- Pending-command preview (showcmd) -------------------------------------
