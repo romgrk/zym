@@ -38,6 +38,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space p r': 'scripts:run', // "p"ackage "r"un — run a package.json script in a terminal
   'space a a': 'agent:picker', // open the agent picker (agents, conversations, new)
   'space a l': 'workbench-list:focus', // focus the workbench sidebar
+  'space a w': 'workbench:picker', // switch to a workbench (the user / an agent)
   'space a n n': 'agent:new', // launch a new agent
   'space a n w': 'agent:new-worktree', // launch in a fresh worktree
   'space a n e': 'agent:new-in-worktree', // launch in an existing worktree

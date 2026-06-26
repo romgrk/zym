@@ -44,6 +44,10 @@ What already exists and is reused, not rebuilt:
   `activateOwner(owner)` resolves a person → their `Workbench`;
   `cycleWorkbench(±1)` (bound to `super-,` / `super-.`) steps the active
   workbench through `[user, …agents]` (the workbench-list order), wrapping.
+  `workbench:picker` (`space a w`, `src/ui/WorkbenchPicker.ts`) fuzzy-jumps to
+  any of that same set in one go — a quick-switcher over the picker UI (parallel
+  to `agent:picker`, but it lists the **user** workbench too and marks the
+  current one), `onSelect` → `activateOwner`.
   Detached workbenches stay alive, so a terminal's scrollback / open editors
   survive a switch. An agent's widget (`AgentTerminal`/`AgentConversation`) does
   **not** live in its workbench at all: it's shown in a window-level **secondary

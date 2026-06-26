@@ -63,6 +63,7 @@ import { openThemePicker } from './ThemePicker.ts';
 import { saveConfig } from '../config/load.ts';
 import { WhichKey } from './WhichKey.ts';
 import { openAgentPicker } from './AgentPicker.ts';
+import { openWorkbenchPicker } from './WorkbenchPicker.ts';
 import { openAgentLauncher, launchPrompt, type LauncherMode } from './AgentLauncher.ts';
 import {
   openBranchPicker,
@@ -1795,6 +1796,18 @@ export class AppWindow {
       // Cycle the active workbench through [user, …agents] (the workbench-list order).
       'workbench:previous': { didDispatch: () => this.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
       'workbench:next': { didDispatch: () => this.cycleWorkbench(1), description: 'Switch to the next workbench' },
+      // Fuzzy-pick a workbench to switch to (the user / each agent) — same set the
+      // cycle steps through; selecting one activates it.
+      'workbench:picker': {
+        didDispatch: () => openWorkbenchPicker(this.overlay, {
+          workbenches: (['user', ...zym.agents.getAgents()] as Array<'user' | Agent>).flatMap((owner) => {
+            const wb = this.workbenches.get(owner);
+            return wb ? [{ owner: wb.owner, cwd: wb.cwd, active: wb === this.workbench }] : [];
+          }),
+          onActivate: (owner) => this.activateOwner(owner),
+        }),
+        description: 'Switch to a workbench (the user or an agent)',
+      },
       // Show/hide each dock side without discarding the panels it holds.
       'dock:toggle-left': { didDispatch: () => this.toggleDockSide('left'), description: 'Toggle the left dock' },
       'dock:toggle-right': { didDispatch: () => this.toggleDockSide('right'), description: 'Toggle the right dock (Files / Source Control)' },
