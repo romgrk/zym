@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { Gtk, GtkSource, Pango } from '../gi.ts';
 import { plugins, registerBuiltinPlugins } from '../plugin/index.ts';
 import { preloadGrammars } from './grammar.ts';
-import { SyntaxController } from './syntax-controller.ts';
+import { SyntaxController } from './SyntaxController.ts';
 
 Gtk.init();
 

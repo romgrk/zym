@@ -177,7 +177,7 @@ export interface ThemeUi {
  * Syntax colors: capture name → foreground color, keyed by the tree-sitter
  * capture names the highlight queries emit (see syntax/grammar.ts). Dotted
  * captures resolve by longest-prefix fallback in the highlighter
- * (syntax-controller's resolveTag): e.g. @keyword.control reuses `keyword`;
+ * (SyntaxController's resolveTag): e.g. @keyword.control reuses `keyword`;
  * @type.builtin reuses `type`. Only list a dotted key to give it a *distinct* color.
  *
  * KEY ORDER MATTERS: one GtkTextTag is created per entry in the theme's `syntax`

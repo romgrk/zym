@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Gtk, GtkSource } from '../gi.ts';
-import { SyntaxController } from './syntax-controller.ts';
+import { SyntaxController } from './SyntaxController.ts';
 import { Document } from '../ui/TextEditor/Document.ts';
 
 Gtk.init();

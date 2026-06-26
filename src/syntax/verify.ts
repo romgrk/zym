@@ -8,7 +8,7 @@
  */
 import { createRequire } from 'node:module';
 import { Adw, GLib, Gtk, GtkSource } from '../gi.ts';
-import { SyntaxController } from './syntax-controller.ts';
+import { SyntaxController } from './SyntaxController.ts';
 import { preloadGrammars } from './grammar.ts';
 
 await preloadGrammars(); // before the GLib loop, like the real entry point

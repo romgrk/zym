@@ -103,7 +103,7 @@ export interface Grammar {
 // header in each .scm). They use Zed's capture names; the highlighter maps those
 // to colors with longest-prefix fallback — e.g. @function.method → @function — so
 // dotted names need no special handling here (see theme/theme.ts and
-// syntax-controller's resolveTag). Each grammar's `highlightsPath` (a `GrammarDef`
+// SyntaxController's resolveTag). Each grammar's `highlightsPath` (a `GrammarDef`
 // field) is an absolute path the contributing plugin owns; this module just reads
 // it.
 //

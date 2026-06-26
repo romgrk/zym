@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { Gtk, GtkSource } from '../gi.ts';
 import { plugins, registerBuiltinPlugins } from '../plugin/index.ts';
 import { preloadGrammars, getGrammar, langIdForPath } from './grammar.ts';
-import { SyntaxController } from './syntax-controller.ts';
+import { SyntaxController } from './SyntaxController.ts';
 import { Document } from '../ui/TextEditor/Document.ts';
 
 Gtk.init();

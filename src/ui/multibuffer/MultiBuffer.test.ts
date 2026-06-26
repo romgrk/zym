@@ -12,7 +12,7 @@ import { Gtk, GtkSource } from '../../gi.ts';
 import { plugins, registerBuiltinPlugins } from '../../plugin/index.ts';
 import { preloadGrammars, getGrammar, langIdForPath } from '../../syntax/grammar.ts';
 import { DocumentSyntax } from '../../syntax/DocumentSyntax.ts';
-import { SyntaxController } from '../../syntax/syntax-controller.ts';
+import { SyntaxController } from '../../syntax/SyntaxController.ts';
 import { excerptsToItems, type Excerpt, type Segment } from './MultiBufferModel.ts';
 import { CoordinatesMap } from '../TextEditor/CoordinatesMap.ts';
 import { Screen } from '../TextEditor/Screen.ts';
