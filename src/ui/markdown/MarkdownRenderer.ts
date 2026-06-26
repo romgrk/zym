@@ -1,7 +1,7 @@
 /*
  * MarkdownRenderer — a Gtk.Widget subclass that renders a full markdown document
  * by drawing directly into the GSK render-node scene graph (no child widgets, no
- * Cairo draw func). See docs/ui/markdown-renderer.md.
+ * Cairo draw func).
  *
  * Why a raw widget: the prior MarkdownView stitched a document from many
  * Gtk.Labels, so selection couldn't cross a label boundary (heading → code →

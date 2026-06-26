@@ -19,7 +19,6 @@
     "poc": "node src/poc/fold-highlight.ts",
     "poc:inline": "node src/poc/inline-overlay.ts",
     "poc:peek": "node src/poc/sibling-peek.ts",
-    "poc:md": "node src/poc/markdown-render.ts",
     "poc:mdwidget": "node src/poc/markdown-widget.ts",
     "poc:conversation": "node src/poc/conversation-transcript.ts",
     "poc:combobox": "node src/poc/combobox-gallery.ts",

@@ -2,9 +2,9 @@
 /*
  * POC: render the markdown fixture through the native MarkdownRenderer widget
  * (src/ui/markdown/MarkdownRenderer.ts) — the single Gtk.Widget that draws the
- * whole document via the GSK render-node scene graph. Unlike the MarkdownView POC
- * (poc:md, which stitches Gtk.Labels), here selection / copy / link-clicking span
- * the ENTIRE document: drag from a heading through a code block into a table.
+ * whole document via the GSK render-node scene graph. Selection / copy / link-
+ * clicking span the ENTIRE document: drag from a heading through a code block into
+ * a table.
  *
  * Try it:
  *   - drag to select across blocks; double-click a word; triple-click a block

@@ -1,7 +1,6 @@
 /*
  * markdownModel — parse a markdown string into a flat, render-ready block IR for
- * the native MarkdownRenderer widget (see ./MarkdownRenderer.ts and
- * docs/ui/markdown-renderer.md).
+ * the native MarkdownRenderer widget (see ./MarkdownRenderer.ts).
  *
  * Block structure comes from `marked`'s lexer (token AST, NOT its HTML); we walk
  * the tokens ourselves. Nesting (lists, blockquotes) is FLATTENED here into a

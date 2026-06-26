@@ -1,7 +1,7 @@
 /*
  * MarkdownView — a thin adapter that preserves the prior column-of-labels API
  * (root / setMarkdown / getMarkdown / dispose) on top of the native render-node
- * MarkdownRenderer widget (see ./MarkdownRenderer.ts and docs/ui/markdown-renderer.md).
+ * MarkdownRenderer widget (see ./MarkdownRenderer.ts).
  *
  * The whole document is now ONE Gtk.Widget that paints via the GSK scene graph, so
  * selection / copy / links span every block — the old per-block Gtk.Label approach
