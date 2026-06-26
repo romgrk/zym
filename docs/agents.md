@@ -145,7 +145,10 @@ What already exists and is reused, not rebuilt:
   auto-growing multi-line prompt editor (vim editing, grows to 20 lines then
   scrolls) over a reflowing row of option dropdowns (`Combobox`es) — agent kind,
   model, permission mode, **effort** (`--effort`; the `default` choice omits the
-  flag), and the worktree choice. Each kind's `AgentLaunchOptions`
+  flag), and the worktree choice. Each dropdown labels itself with a floating
+  `title` (Adw.EntryRow-like — a placeholder while empty, floating above the value
+  once set) and auto-sizes to fit its value, so there's no separate caption row.
+  Each kind's `AgentLaunchOptions`
   (`agents/configs.ts` + `claudeOptions.ts`) supplies the option lists and the
   `buildCommand` argv builder, so changing the kind re-populates them. Enter
   launches; the last-used options + an unsent draft persist to the next open.

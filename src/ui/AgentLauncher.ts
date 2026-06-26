@@ -113,6 +113,11 @@ addStyles(/* css */`
     outline: 2px solid alpha(var(--accent-color), 0.6);
     outline-offset: -1px;
   }
+  /* Worktree-picker option styling, forwarded to the (style-agnostic) Combobox via each
+     option's cssClasses: the "create" sentinel reads as an action, "current" is muted.
+     Unscoped so they also apply on the popover's own surface, not just inside the card. */
+  .worktree-create { color: var(--accent-color); font-weight: bold; }
+  .worktree-current { opacity: var(--dim-opacity); }
   /* The prompt uses the large editor font size. */
   .AgentLauncherPrompt .zym-editor,
   .AgentLauncherPrompt .zym-placeholder {
@@ -127,11 +132,6 @@ addStyles(/* css */`
     background-color: var(--view-bg-color);
     border-bottom-left-radius: var(--popover-radius);
     border-bottom-right-radius: var(--popover-radius);
-  }
-  .AgentLauncherField > .field-caption {
-    font-size: var(--t-font-ui-size-small);
-    color: var(--t-ui-text-muted);
-    padding-left: 6px;
   }
   /* Title row above the prompt for the worktree-scoped flows; inset to line up with the
      prompt text and the options row. The worktree combobox sits inline after the label. */
@@ -227,10 +227,11 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const kind0 = savedKind || defaultKind;
   const kindOptions = AGENT_CONFIGS[kind0].options;
 
-  const modelDropdown = disposables.use(new Combobox({ options: kindOptions.models, value: savedModel || kindOptions.defaultModel }));
-  const permissionDropdown = disposables.use(new Combobox({ options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
-  const effortDropdown = disposables.use(new Combobox({ options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort }));
+  const modelDropdown = disposables.use(new Combobox({ title: 'model', options: kindOptions.models, value: savedModel || kindOptions.defaultModel }));
+  const permissionDropdown = disposables.use(new Combobox({ title: 'permission', options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
+  const effortDropdown = disposables.use(new Combobox({ title: 'effort', options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort }));
   const kindDropdown = disposables.use(new Combobox({
+    title: 'agent',
     options: listAgentKinds(),
     value: kind0,
     onChange: (value) => {
@@ -248,10 +249,10 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // new-worktree flow has no dropdown at all (it's pinned to "create"). Specials use
   // sentinel values; the list is searchable; branches load asynchronously.
   const worktreeSpecials = worktreeInTitle
-    ? [{ value: WT_CURRENT, label: 'current' }]
+    ? [{ value: WT_CURRENT, label: 'current', cssClasses: ['worktree-current'] }]
     : [
-        { value: WT_CREATE, label: 'create' },
-        { value: WT_CURRENT, label: 'current' },
+        { value: WT_CREATE, label: 'create', cssClasses: ['worktree-create'] },
+        { value: WT_CURRENT, label: 'current', cssClasses: ['worktree-current'] },
       ];
   // `this-worktree` pre-selects the current root; `existing-worktree` keeps the last-used
   // choice but falls back off a stale "create" (which it doesn't offer). A caller-supplied
@@ -264,7 +265,9 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     : savedWorktree;
   const worktreeDropdown = newWorktree
     ? null
-    : disposables.use(new Combobox({ options: worktreeSpecials, value: worktreeInitial, specialLabels: ['create'], mutedLabels: ['current'] }));
+    // In the options row it carries a floating "worktree" title; the inline title flows
+    // (worktreeInTitle) already label it in their sentence, so it goes untitled there.
+    : disposables.use(new Combobox({ title: mode === 'default' ? 'worktree' : undefined, options: worktreeSpecials, value: worktreeInitial }));
   const repo = repoRoot(cwd);
   if (worktreeDropdown && repo) {
     listBranches(repo, (branches) => {
@@ -307,16 +310,17 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   promptFocus.on('leave', () => panel.removeCssClass('prompt-focused'));
   disposables.addController(promptContainer, promptFocus);
 
-  // A WrapBox so the option fields reflow onto another line on a narrow card rather
-  // than overflowing. Each field carries a caption above its control. The worktree field
-  // only appears here in the default flow (the worktree flows surface it in the title).
+  // A WrapBox so the option fields reflow onto another line on a narrow card rather than
+  // overflowing. Each combobox carries its own floating title (Adw.EntryRow-like) — no
+  // caption row. The worktree field only appears here in the default flow (the worktree
+  // flows surface it in the title).
   const optionsRow = new Adw.WrapBox({ childSpacing: 10, lineSpacing: 8 });
   optionsRow.addCssClass('AgentLauncherOptions');
-  optionsRow.append(field('agent', kindDropdown.root));
-  optionsRow.append(field('model', modelDropdown.root));
-  optionsRow.append(field('permission', permissionDropdown.root));
-  optionsRow.append(field('effort', effortDropdown.root));
-  if (worktreeDropdown && mode === 'default') optionsRow.append(field('worktree', worktreeDropdown.root));
+  optionsRow.append(kindDropdown.root);
+  optionsRow.append(modelDropdown.root);
+  optionsRow.append(permissionDropdown.root);
+  optionsRow.append(effortDropdown.root);
+  if (worktreeDropdown && mode === 'default') optionsRow.append(worktreeDropdown.root);
   panel.append(optionsRow);
 
   const submit = (background: boolean) => {
@@ -382,18 +386,6 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     input.focusInsert(); // ready to type the prompt immediately
     if (draft) input.selectAll(); // a restored draft starts fully selected (keep or overtype)
   }
-}
-
-// A captioned field: a small muted label on top of `control`. Used for the dropdowns
-// (Gtk.DropDown has no built-in label).
-function field(caption: string, control: InstanceType<typeof Gtk.Widget>): InstanceType<typeof Gtk.Box> {
-  const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 3 });
-  box.addCssClass('AgentLauncherField');
-  const label = new Gtk.Label({ xalign: 0, label: caption });
-  label.addCssClass('field-caption');
-  box.append(label);
-  box.append(control);
-  return box;
 }
 
 // The launch prompt for a new agent. The launcher's worktree choice is realized by the

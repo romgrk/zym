@@ -21,6 +21,7 @@
     "poc:peek": "node src/poc/sibling-peek.ts",
     "poc:md": "node src/poc/markdown-render.ts",
     "poc:conversation": "node src/poc/conversation-transcript.ts",
+    "poc:combobox": "node src/poc/combobox-gallery.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --test 'src/**/*.test.ts' 'plugins/**/*.test.ts'",
