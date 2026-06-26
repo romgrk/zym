@@ -74,6 +74,12 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     default: false,
     description: 'Show the source-map minimap gutter on the right of the editor.',
   },
+  'editor.diffLineNumbers': {
+    type: 'boolean',
+    default: false,
+    description:
+      'Show the old|new file line-number gutter in the diff view. The live staging diff keeps its staged/unstaged marker either way.',
+  },
   'editor.locationBar': {
     type: 'boolean',
     default: true,

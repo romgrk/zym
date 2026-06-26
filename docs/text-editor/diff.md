@@ -71,7 +71,10 @@ can always be sent to an agent:
   onto a decoration layer (handling the unterminated-last-line case). Owns the
   `WordRange` type.
 - `src/ui/TextEditor/DiffLineNumberGutter.ts` (`CombinedDiffLineNumberGutter`) —
-  the one gutter renderer drawing both the old and new line-number columns.
+  the one gutter renderer drawing both the old and new line-number columns. The
+  number columns are gated on `editor.diffLineNumbers` (off by default, live-toggled
+  via `zym.config.observe`); when off a read-only diff has no gutter, but the **live**
+  staging diff still shows its staged/unstaged marker band.
 - `src/ui/TextEditor/GitGutter.ts` — the live change-bar gutter shown **while
   editing** a file with uncommitted changes (a separate feature from the diff
   surface; also built on `lineDiff.ts`).

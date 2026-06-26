@@ -247,7 +247,9 @@ export class DiffView {
 
     this.applyDecorations(dmb);
 
-    // ONE gutter renderer drawing both old + new columns (one PangoLayout/line, for perf).
+    // ONE gutter renderer drawing both old + new columns (one PangoLayout/line, for perf). The
+    // number columns are hidden by default (`editor.diffLineNumbers`); a live diff keeps its
+    // staged/unstaged marker regardless.
     this.lineNumbers = new CombinedDiffLineNumberGutter(
       this.editor.sourceView,
       lineLabels(dmb.oldNums),
@@ -257,6 +259,12 @@ export class DiffView {
       headerRows(dmb),
       this.live ? dmb.stagedState : null, // staging markers only on a live diff
       this.live,
+      zym.config.get('editor.diffLineNumbers') === true,
+    );
+    // Live-toggle the number columns without reopening the diff (observe fires immediately, a
+    // no-op re-set of the value already passed above).
+    this.disposables.add(
+      zym.config.observe('editor.diffLineNumbers', (v) => this.lineNumbers?.setShowLineNumbers(v === true)),
     );
 
     this.installOverlays(dmb);

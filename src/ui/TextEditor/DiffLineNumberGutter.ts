@@ -128,6 +128,14 @@ function cellMarkup(label: string, bg: string | null): string {
   return `<span background="${rgb}" background_alpha="${alphaPct}%" foreground="${COLOR}">${content}</span>`;
 }
 
+/** The gutter run when line numbers are hidden (`editor.diffLineNumbers` off): the (live-only)
+ *  staged/unstaged marker plus a one-cell transparent sentinel, or nothing on a read-only diff.
+ *  The sentinel gives the marker a gap to the code AND keeps it measured — a lone marker is a
+ *  whitespace glyph, which GtkSourceGutterRendererText drops when sizing (see `primeWidth`). */
+function markerOnlyMarkup(marker: string): string {
+  return marker ? `${marker}<span alpha="1%">0</span>` : '';
+}
+
 class CombinedDiffLineNumberRenderer extends GtkSource.GutterRendererText {
   // Assigned after construction; read on every draw. Per-row old/new labels + cell backgrounds.
   oldLabels!: string[];
@@ -139,6 +147,11 @@ class CombinedDiffLineNumberRenderer extends GtkSource.GutterRendererText {
   // Whether this is a LIVE diff (the staging surface). Only live diffs carry the leading
   // staged/unstaged marker section; a read-only diff (commit/branch/file) omits it entirely.
   live = false;
+  // Whether to draw the old|new line-number columns (`editor.diffLineNumbers`). When false the
+  // columns are dropped: a read-only diff then has no gutter at all, while a live diff keeps just
+  // the staged/unstaged marker band (a one-cell transparent sentinel gaps it from the code and
+  // reserves its width — a lone marker is whitespace and would otherwise be measured away).
+  showLineNumbers = true;
   // View rows that carry a header-widget band ABOVE them (an excerpt's first row). Their gutter
   // cell is taller by the band, so the number must bottom-align to land on the text instead of
   // floating up beside the filename widget. Other rows top-align (a `⋯` gap band sits BELOW its
@@ -150,6 +163,8 @@ class CombinedDiffLineNumberRenderer extends GtkSource.GutterRendererText {
     this.yalign = this.headerRows.has(line) ? 1 : 0;
     // The leading staged/unstaged marker bar exists only on a live diff; read-only diffs drop it.
     const marker = this.live ? markerMarkup(this.stagedState?.[line] ?? null) : '';
+    // Line numbers hidden: keep only the (live-only) marker band — see `markerOnlyMarkup`.
+    if (!this.showLineNumbers) return void this.setMarkup(markerOnlyMarkup(marker), -1);
     const oldCell = cellMarkup(this.oldLabels?.[line] ?? '', this.oldBg?.[line] ?? null);
     const newCell = cellMarkup(this.newLabels?.[line] ?? '', this.newBg?.[line] ?? null);
     this.setMarkup(`${marker}${oldCell}${newCell}`, -1); // [marker] old then new, each space-padded (new's trailing space → code)
@@ -176,6 +191,7 @@ export class CombinedDiffLineNumberGutter {
     headerRows: Set<number> = new Set(),
     stagedState: StagedState[] | null = null,
     live = false,
+    showLineNumbers = true,
   ) {
     this.view = view;
     this.renderer = new CombinedDiffLineNumberRenderer();
@@ -186,9 +202,19 @@ export class CombinedDiffLineNumberGutter {
     this.renderer.headerRows = headerRows;
     this.renderer.stagedState = stagedState;
     this.renderer.live = live;
+    this.renderer.showLineNumbers = showLineNumbers;
     this.renderer.setXpad(0); // the leading/trailing spaces in the cell markup carry the gutter's only spacing
     (this.view.getGutter(Gtk.TextWindowType.LEFT) as any).insert(this.renderer, 1);
     this.primeWidth(oldLabels, newLabels);
+  }
+
+  /** Toggle the old|new line-number columns (`editor.diffLineNumbers`) live — the staged/unstaged
+   *  marker on a live diff is unaffected. Re-primes the gutter width and repaints. */
+  setShowLineNumbers(show: boolean): void {
+    if (this.renderer.showLineNumbers === show) return;
+    this.renderer.showLineNumbers = show;
+    this.primeWidth(this.renderer.oldLabels ?? [], this.renderer.newLabels ?? []);
+    this.renderer.queueDraw?.();
   }
 
   /** Swap the per-row labels + backgrounds + header rows + staged markers (after a re-diff re-flows
@@ -214,6 +240,13 @@ export class CombinedDiffLineNumberGutter {
   /** Reserve width for the (live-only) marker bar + the widest old + new columns (a number measured
    *  on a short line crops). */
   private primeWidth(oldLabels: string[], newLabels: string[]): void {
+    // Hidden line numbers: reserve only the marker-only run (the live marker + its sentinel cell,
+    // or nothing on a read-only diff) — the number columns aren't drawn.
+    if (!this.renderer.showLineNumbers) {
+      this.renderer.setMarkup(markerOnlyMarkup(this.renderer.live ? markerMarkup(null) : ''), -1);
+      this.renderer.queueResize();
+      return;
+    }
     const w = (labels: string[]) => labels.reduce((max, l) => Math.max(max, l.length), 1);
     // Mirror the rendered run `[marker] old  new ` — the slim marker space only on a live diff, then
     // each number wrapped in a leading+trailing space (old's trailing + new's leading = the inter-
