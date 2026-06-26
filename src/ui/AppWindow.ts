@@ -33,7 +33,7 @@ import { defaultAction, type AgentAction } from '../agents/actions.ts';
 import { openActionRunner } from './ActionPicker.ts';
 import { AgentConversation } from './AgentConversation.ts';
 import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
-import { listResumableSessions, recordSessionWorktree, relativeTime, type AgentSession } from '../agentSessions.ts';
+import { listResumableSessions, recordSessionWorktree, relativeTime, resolveResumeCwd, type AgentSession } from '../agentSessions.ts';
 import { PROJECT_NAME } from './WorkbenchList.ts';
 import { Sidebar } from './Sidebar.ts';
 import { AgentSidebar } from './AgentSidebar.ts';
@@ -1079,10 +1079,21 @@ export class AppWindow {
   // The project roots to look for resumable conversations in: the window cwd plus
   // every git worktree of its repo, so a conversation launched in a worktree (its
   // transcript lives under that worktree's project dir) is found too. Deduped.
+  // The roots the resume picker scans: every worktree of this repo, **main worktree
+  // first** — listResumableSessions treats roots[0] as the prefix anchor for also
+  // recovering transcripts from worktrees that have since been removed. process.cwd()
+  // is kept in case it isn't itself a worktree root (e.g. a subdir / non-repo run).
   private agentSessionRoots(): string[] {
-    const roots = new Set<string>([process.cwd()]);
-    for (const wt of listWorktrees(process.cwd())) roots.add(wt.path);
-    return [...roots];
+    const roots = listWorktrees(process.cwd()).map((wt) => wt.path);
+    if (roots.length === 0) roots.push(process.cwd());
+    if (!roots.includes(process.cwd())) roots.push(process.cwd());
+    return roots;
+  }
+
+  /** This repo's main worktree — where a resume falls back to when the session's
+   *  own (worktree) cwd is gone. */
+  private repoRoot(): string {
+    return this.agentSessionRoots()[0] ?? process.cwd();
   }
 
   // `openAgent` options to resume `session`, restoring its branch/worktree/cwd:
@@ -1092,10 +1103,16 @@ export class AppWindow {
   // worktree via the bridge so the editor re-roots — and to do nothing else, so a
   // resume just restores the view without kicking off work.
   private resumeOptions(session: AgentSession): { cwd?: string; resume: AgentResume; prompt?: string; title: string } {
+    // Spawn where Claude recorded the session; if that worktree is gone, the
+    // transcript is relocated under the main repo and we resume there instead.
+    const cwd = resolveResumeCwd(session, this.repoRoot());
+    const relocated = cwd !== session.cwd;
+    // The dynamic-worktree re-announce only makes sense when we're still in the
+    // original tree — a relocated resume's worktree is gone too, so skip it.
     const moved =
-      session.effectiveCwd && session.effectiveCwd !== session.cwd ? session.effectiveCwd : null;
+      !relocated && session.effectiveCwd && session.effectiveCwd !== session.cwd ? session.effectiveCwd : null;
     return {
-      cwd: session.cwd ?? undefined,
+      cwd,
       resume: { sessionId: session.id },
       prompt: moved
         ? `Call the set_worktree tool with the path ${moved} now, and do nothing else — ` +
@@ -1426,6 +1443,10 @@ export class AppWindow {
     this.terminals.delete(agent.root);
     this.conversations.get(agent.root)?.dispose(); // headless agent: kill child + IPC watchers
     this.conversations.delete(agent.root);
+    // Drop the last-focused pointer if it named this agent — otherwise currentAgent()
+    // would resolve a retired, disposed agent and agent:restart / agent:resume would
+    // act on a ghost. With it cleared, the commands' `when` guards correctly disable.
+    if (this.lastAgent === agent) this.lastAgent = null;
     zym.agents.remove(agent);
   }
 

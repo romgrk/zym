@@ -41,6 +41,9 @@ export interface AgentSession {
    *  `cwd` (Claude's launch dir, where `--resume` must run). When it differs from
    *  `cwd`, resume nudges the agent to `cd` back here. Null when it never moved. */
   effectiveCwd: string | null;
+  /** Absolute path of the transcript JSONL on disk. Lets a resume relocate the
+   *  transcript when the session's original cwd (a removed worktree) is gone. */
+  transcript: string;
   /** Last-activity time (the transcript's mtime), epoch ms. */
   modified: number;
 }
@@ -54,18 +57,33 @@ const HEAD_BYTES = 64 * 1024;
 // terminal-title skill's title, distinct from the in-transcript `/rename` title.
 const TITLES_DIR = Path.join(Os.homedir(), '.claude', 'terminal_titles');
 
+/** Where Claude Code keeps every project's transcripts (one dir per encoded cwd). */
+const PROJECTS_DIR = Path.join(Os.homedir(), '.claude', 'projects');
+
+/** Claude's encoding of a cwd into a project-dir name: every non-alphanumeric char
+ *  → `-`, one dash per char (so `/`, `.` and `_` all collapse to `-`). Lossy, so it
+ *  is one-way — recover the real cwd from a transcript's `cwd` field, not the name. */
+function encodeCwd(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
 /** Claude Code's transcript directory for `cwd`. Claude encodes the cwd into the
  *  dir name by replacing every non-alphanumeric character with `-`, one dash per
  *  char — so a worktree at `…/zym/.claude/worktrees/x` becomes
  *  `-…-zym--claude-worktrees-x` (note the `/.` → `--`). */
 export function transcriptDir(cwd: string): string {
-  const encoded = cwd.replace(/[^a-zA-Z0-9]/g, '-');
-  return Path.join(Os.homedir(), '.claude', 'projects', encoded);
+  return Path.join(PROJECTS_DIR, encodeCwd(cwd));
 }
 
 /** Resumable sessions for `cwd`, most-recently-active first. */
 export function listAgentSessions(cwd: string): AgentSession[] {
-  const dir = transcriptDir(cwd);
+  return listSessionsInDir(transcriptDir(cwd));
+}
+
+/** Every session transcript in one project dir, most-recently-active first. The
+ *  per-session `project` (for stripping the terminal-title prefix) is taken from the
+ *  session's own recorded cwd, so this works for any dir — not just one we encoded. */
+function listSessionsInDir(dir: string): AgentSession[] {
   let entries: string[];
   try {
     entries = Fs.readdirSync(dir);
@@ -73,7 +91,6 @@ export function listAgentSessions(cwd: string): AgentSession[] {
     return []; // no transcripts for this project
   }
 
-  const project = Path.basename(cwd);
   const sessions: AgentSession[] = [];
   for (const name of entries) {
     if (!name.endsWith('.jsonl')) continue;
@@ -86,11 +103,13 @@ export function listAgentSessions(cwd: string): AgentSession[] {
     }
     if (!stat.isFile() || stat.size === 0) continue;
     const id = name.slice(0, -'.jsonl'.length);
+    const cwd = readSessionCwd(file);
     sessions.push({
       id,
-      ...resolveLabel(file, id, project, stat.size),
-      cwd: readSessionCwd(file),
+      ...resolveLabel(file, id, cwd ? Path.basename(cwd) : '', stat.size),
+      cwd,
       effectiveCwd: readWorktreeSidecar(dir, id),
+      transcript: file,
       modified: stat.mtimeMs,
     });
   }
@@ -101,16 +120,52 @@ export function listAgentSessions(cwd: string): AgentSession[] {
 /** Resumable sessions across several project roots (e.g. the repo's worktrees),
  *  most-recently-active first, deduped by id. Each transcript lives under the cwd
  *  Claude was launched in, so a worktree-launched conversation only appears when
- *  its worktree is among `roots` — hence the picker passes every worktree. */
+ *  its worktree is among `roots`.
+ *
+ *  `roots[0]` is taken as the repo's **main** worktree (see AppWindow.agentSessionRoots):
+ *  we additionally scan every project dir whose encoded name is that root or a
+ *  child/sibling of it (`<encodedMain>` / `<encodedMain>-…`). That recovers
+ *  conversations from worktrees that have since been **removed** — their transcripts
+ *  outlive the worktree, but their dir is no longer a live root to pass in. The
+ *  separator guard (`-` after the prefix) keeps `…/zym` from matching `…/zymfoo`. */
 export function listResumableSessions(roots: string[]): AgentSession[] {
+  const dirs = new Set<string>(roots.map(transcriptDir));
+  const mainRoot = roots[0];
+  if (mainRoot) {
+    const prefix = encodeCwd(mainRoot);
+    let names: string[];
+    try { names = Fs.readdirSync(PROJECTS_DIR); } catch { names = []; }
+    for (const name of names)
+      if (name === prefix || name.startsWith(`${prefix}-`)) dirs.add(Path.join(PROJECTS_DIR, name));
+  }
+
   const byId = new Map<string, AgentSession>();
-  for (const root of roots) {
-    for (const session of listAgentSessions(root)) {
+  for (const dir of dirs) {
+    for (const session of listSessionsInDir(dir)) {
       const existing = byId.get(session.id);
       if (!existing || session.modified > existing.modified) byId.set(session.id, session);
     }
   }
   return [...byId.values()].sort((a, b) => b.modified - a.modified);
+}
+
+/** The cwd to spawn `claude --resume <session>` in. Normally the cwd Claude
+ *  recorded (where it resolves the transcript). When that cwd is gone — a removed
+ *  worktree — the transcript is relocated under `mainRoot`'s project dir so the
+ *  resume resolves there, and `mainRoot` is returned. Best-effort: on any failure
+ *  it still returns `mainRoot`, so a resume never spawns into a missing directory. */
+export function resolveResumeCwd(session: AgentSession, mainRoot: string): string {
+  if (session.cwd && Fs.existsSync(session.cwd)) return session.cwd;
+  try {
+    const dest = Path.join(transcriptDir(mainRoot), `${session.id}.jsonl`);
+    if (session.transcript !== dest && !Fs.existsSync(dest)) {
+      Fs.mkdirSync(Path.dirname(dest), { recursive: true });
+      Fs.copyFileSync(session.transcript, dest);
+    }
+  } catch {
+    /* best effort — fall through to mainRoot regardless */
+  }
+  return mainRoot;
 }
 
 // Sidecar (next to the transcript) recording a worktree the agent moved into
