@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { excerptsToItems, GAP_LABEL, type Excerpt, type Segment } from './MultiBufferModel.ts';
-import { ViewProjection } from '../TextEditor/ViewProjection.ts';
+import { CoordinatesMap } from '../TextEditor/CoordinatesMap.ts';
 
 // The excerpt LAYOUT (header / segment / gap / blank) composed with the unified
-// ViewProjection coordinate substrate — no GTK. The coordinate math itself is covered by
-// ViewProjection.test.ts; here we check the multibuffer's item layout + that it resolves
+// CoordinatesMap coordinate substrate — no GTK. The coordinate math itself is covered by
+// CoordinatesMap.test.ts; here we check the multibuffer's item layout + that it resolves
 // view rows back to sources (the place a stitched coordinate bug must surface).
 
 const FILES: Record<string, string[]> = {
@@ -15,7 +15,7 @@ const FILES: Record<string, string[]> = {
 const resolve = (s: Segment): string[] => FILES[s.documentKey].slice(s.startRow, s.endRow + 1);
 const seg = (documentKey: string, startRow: number, endRow: number): Segment =>
   ({ documentKey, startRow, endRow, editable: false, kind: 'real' });
-const build = (excerpts: Excerpt[]): ViewProjection => ViewProjection.build(excerptsToItems(excerpts), resolve);
+const build = (excerpts: Excerpt[]): CoordinatesMap => CoordinatesMap.build(excerptsToItems(excerpts), resolve);
 
 test('single excerpt, single segment: text + row mapping', () => {
   const p = build([{ header: 'a.ts', segments: [seg('a.ts', 1, 3)] }]);
@@ -109,14 +109,14 @@ test('widget-header mode emits ONLY segments (headers + gaps are widgets, not bu
     items.map((i) => (i.type === 'block' ? `block:${i.block.kind}` : `seg:${i.segment.startRow}`)),
     ['seg:0', 'seg:4', 'seg:0'],
   );
-  const p = ViewProjection.build(items, resolve);
+  const p = CoordinatesMap.build(items, resolve);
   assert.equal(p.screenText, 'l0\nl1\nl4\nB0'); // l0, l1, l4, B0 — no headers/blank/gap rows
   assert.deepEqual(p.documentRowAtScreenRow(0), { documentKey: 'a.ts', documentRow: 0 }, 'first row is a source row, not a header');
 });
 
 test('empty excerpt list yields empty text', () => {
   assert.deepEqual(excerptsToItems([]), []);
-  const p = ViewProjection.build([], resolve);
+  const p = CoordinatesMap.build([], resolve);
   assert.equal(p.screenText, '');
   assert.equal(p.screenRowCount, 0);
 });

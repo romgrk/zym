@@ -7,11 +7,11 @@
  * `rowsToItems` (context/added → editable new-side rows, removed → read-only phantom old-side
  * rows). It also returns the per-row diff KIND the surface paints as added/removed backgrounds.
  *
- * Pure + GTK-free: the surface materializes a `ViewProjection` over the sources, paints each
+ * Pure + GTK-free: the surface materializes a `CoordinatesMap` over the sources, paints each
  * side from its own grammar (`ExcerptSyntaxProjection`), and applies the decorations from
  * `rowKinds`. Eliding here keeps the diff readable without needing live folds.
  */
-import type { Item } from '../TextEditor/ViewProjection.ts';
+import type { Item } from '../TextEditor/CoordinatesMap.ts';
 import { diffRows, rowsToItems, type DiffRow } from './diffSegments.ts';
 import { diffLines } from '../../util/lineDiff.ts';
 import * as Path from 'node:path';
@@ -36,7 +36,7 @@ export type DiffRowKind = 'header' | 'blank' | 'gap' | 'context' | 'added' | 're
 export type StagedState = 'staged' | 'unstaged' | null;
 
 export interface DiffMultiBuffer {
-  /** The ordered projection items for `ViewProjection.build`. */
+  /** The ordered projection items for `CoordinatesMap.build`. */
   items: Item[];
   /** Per projection row (0-based), aligned with the materialized view. */
   rowKinds: DiffRowKind[];

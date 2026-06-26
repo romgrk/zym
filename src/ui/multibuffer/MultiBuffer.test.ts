@@ -14,8 +14,8 @@ import { preloadGrammars, getGrammar, langIdForPath } from '../../syntax/grammar
 import { DocumentSyntax } from '../../syntax/DocumentSyntax.ts';
 import { SyntaxController } from '../../syntax/syntax-controller.ts';
 import { excerptsToItems, type Excerpt, type Segment } from './MultiBufferModel.ts';
-import { ViewProjection } from '../TextEditor/ViewProjection.ts';
-import { ProjectionView } from '../TextEditor/ProjectionView.ts';
+import { CoordinatesMap } from '../TextEditor/CoordinatesMap.ts';
+import { Screen } from '../TextEditor/Screen.ts';
 import { buildDiffMultiBuffer } from './diffMultiBuffer.ts';
 import { ExcerptSyntaxProjection } from './ExcerptSyntaxProjection.ts';
 
@@ -46,7 +46,7 @@ function source(text: string, path: string): DocumentSyntax {
 
 /** Build the multibuffer buffer + paint it through a projection-mode SyntaxController. */
 function paintMultibuffer(excerpts: Excerpt[], lines: Record<string, string[]>, sources: Map<string, DocumentSyntax>) {
-  const projection = ViewProjection.build(excerptsToItems(excerpts), (s) => lines[s.documentKey].slice(s.startRow, s.endRow + 1));
+  const projection = CoordinatesMap.build(excerptsToItems(excerpts), (s) => lines[s.documentKey].slice(s.startRow, s.endRow + 1));
   const buffer = new GtkSource.Buffer();
   buffer.setText(projection.screenText, -1);
   const view = new GtkSource.View({ buffer });
@@ -115,9 +115,9 @@ test('each excerpt uses its own grammar (ts keyword vs json string)', () => {
   json.dispose();
 });
 
-test('a ProjectionView-backed multibuffer (the SearchResultsView path) materializes + paints', () => {
+test('a Screen-backed multibuffer (the SearchResultsView path) materializes + paints', () => {
   if (!hasJs) return;
-  // Mirrors SearchResultsView: a ProjectionView over the source BUFFERS materializes the view
+  // Mirrors SearchResultsView: a Screen over the source BUFFERS materializes the view
   // buffer; the painter highlights it through an ExcerptSyntaxProjection over the PV's map.
   const aBuf = new GtkSource.Buffer(); aBuf.setText('// a\nconst aaa = 1;\nfunction fa() {}\n', -1);
   const bBuf = new GtkSource.Buffer(); bBuf.setText('const bbb = 2;\nlet ccc = 3;\n', -1);
@@ -127,7 +127,7 @@ test('a ProjectionView-backed multibuffer (the SearchResultsView path) materiali
     { header: 'a.ts', segments: [seg('/a.ts', 1, 2)] },
     { header: 'b.ts', segments: [seg('/b.ts', 0, 1)] },
   ];
-  const pv = new ProjectionView(excerptsToItems(excerpts), new Map([['/a.ts', aBuf], ['/b.ts', bBuf]]));
+  const pv = new Screen(excerptsToItems(excerpts), new Map([['/a.ts', aBuf], ['/b.ts', bBuf]]));
   const buffer = pv.buffer;
   assert.equal(
     buffer.getText(buffer.getStartIter(), buffer.getEndIter(), true),
@@ -173,7 +173,7 @@ test('the diff multibuffer highlights both the new (context/added) and old (remo
   const dmb = buildDiffMultiBuffer([{ path: '/x.ts', oldText, newText }]);
   const newSyn = source(newText, '/x.ts');
   const oldSyn = source(oldText, '/x.ts');
-  const pv = new ProjectionView(
+  const pv = new Screen(
     dmb.items,
     new Map([['new:/x.ts', newSyn.sourceBuffer], ['old:/x.ts', oldSyn.sourceBuffer]]),
   );

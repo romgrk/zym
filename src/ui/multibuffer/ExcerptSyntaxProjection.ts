@@ -6,7 +6,7 @@
  * ONE highlighter on the buffer (no tag collision) and every excerpt is highlighted by its
  * own grammar — the keystone Phase 0 unlocked (one parse per Document, many projections).
  *
- * Coordinates come from the unified `ViewProjection` (the same substrate the single-file
+ * Coordinates come from the unified `CoordinatesMap` (the same substrate the single-file
  * editor uses): `segmentRunsInScreenRange` gives the source slices to paint, `blockRows` the
  * header / gap rows to style.
  */
@@ -14,22 +14,22 @@ import { Gtk, Pango } from '../../gi.ts';
 import { theme } from '../../theme/theme.ts';
 import type { DocumentSyntax } from '../../syntax/DocumentSyntax.ts';
 import type { SyntaxProjection, SyntaxSlice } from '../../syntax/SyntaxProjection.ts';
-import type { ViewProjection } from '../TextEditor/ViewProjection.ts';
+import type { CoordinatesMap } from '../TextEditor/CoordinatesMap.ts';
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
 
 export class ExcerptSyntaxProjection implements SyntaxProjection {
   private headerTag: any = null;
   private gapTag: any = null;
-  // A GETTER, not a captured instance: a re-diff (`ProjectionView.rebuild`) swaps in a NEW
-  // ViewProjection, so the painter must read the live one each paint or it highlights with
+  // A GETTER, not a captured instance: a re-diff (`Screen.rebuild`) swaps in a NEW
+  // CoordinatesMap, so the painter must read the live one each paint or it highlights with
   // stale coordinates (shifted highlighting after an edit).
-  private readonly getProjection: () => ViewProjection;
+  private readonly getProjection: () => CoordinatesMap;
   private readonly sources: Map<string, DocumentSyntax>;
 
   // Note: explicit field assignment (not constructor parameter properties) — Node runs .ts
   // in strip-only mode, which rejects parameter properties at runtime.
-  constructor(getProjection: () => ViewProjection, sources: Map<string, DocumentSyntax>) {
+  constructor(getProjection: () => CoordinatesMap, sources: Map<string, DocumentSyntax>) {
     this.getProjection = getProjection;
     this.sources = sources;
   }

@@ -1,5 +1,5 @@
 /*
- * ViewProjection — the unified per-view coordinate substrate behind every TextEditor (the
+ * CoordinatesMap — the unified per-view coordinate substrate behind every TextEditor (the
  * keystone of docs/text-editor/multibuffer.md, Phase 2). It models what one
  * GtkSource.View shows as an ordered list of ITEMS — `segment`s (a contiguous row range of
  * some document) and `block`s (synthesized header / gap / blank rows) — and provides the
@@ -17,7 +17,7 @@
  * items; folds are just another transform on top (hard problem #3) — so a fold and an
  * excerpt boundary live in one coordinate stack instead of two mechanisms.
  *
- * Pure + GTK-free so the coordinate math is unit-tested in isolation (ViewProjection.test.ts)
+ * Pure + GTK-free so the coordinate math is unit-tested in isolation (CoordinatesMap.test.ts)
  * — the place a stitched-coordinate or fold-composition bug must surface. The materialize +
  * reverse-sync (2b), edit write-through (2c), and live-fold (2d) layers sit on TOP of this.
  *
@@ -117,7 +117,7 @@ function lastLE(starts: number[], value: number): number {
   return lo;
 }
 
-export class ViewProjection {
+export class CoordinatesMap {
   /** The concatenated buffer text (segments + blocks), pre-fold. */
   readonly bufferText: string;
   /** Number of buffer rows (== buffer line count). */
@@ -160,11 +160,11 @@ export class ViewProjection {
   }
 
   /**
-   * Build a ViewProjection from an ordered item list. `resolveLines(segment)` returns the
+   * Build a CoordinatesMap from an ordered item list. `resolveLines(segment)` returns the
    * document rows the segment covers. The single-file case is `build([{type:'segment',
    * segment:{documentKey, startRow:0, endRow:lastRow, editable:true, kind:'real'}}], …)`.
    */
-  static build(items: Item[], resolveLines: ResolveLines): ViewProjection {
+  static build(items: Item[], resolveLines: ResolveLines): CoordinatesMap {
     const rows: string[] = [];
     const rowInfo: RowInfo[] = [];
     const segments: Segment[] = [];
@@ -196,7 +196,7 @@ export class ViewProjection {
       bufferRowStart[r] = off;
       off += cpLength(rows[r]) + 1; // +1 for the row's trailing '\n'
     }
-    return new ViewProjection(items, segments, rows, rowInfo, bufferRowStart);
+    return new CoordinatesMap(items, segments, rows, rowInfo, bufferRowStart);
   }
 
   // --- folds (buffer↔screen transform) -------------------------------------

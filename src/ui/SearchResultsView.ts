@@ -12,7 +12,7 @@
  *     jump to the file.
  *   - EDITABLE (project search → edit-in-place / replace-all, G6): each source is a LIVE
  *     `Document` from the registry, so an edit writes through to the file's model — updating
- *     any open tab live and saving via the Document. The `ProjectionView` routes each edit to
+ *     any open tab live and saving via the Document. The `Screen` routes each edit to
  *     its source (in-place; a row-count change re-segments analytically) and coordinates undo
  *     across the touched files as one step. Block (header/gap) rows reject edits; in NORMAL
  *     mode Enter still jumps to the file, in INSERT mode it's a newline.
@@ -24,8 +24,8 @@ import { TextEditor } from './TextEditor/TextEditor.ts';
 import { Document } from './TextEditor/Document.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { DocumentSyntax } from '../syntax/DocumentSyntax.ts';
-import { ViewProjection, type Item } from './TextEditor/ViewProjection.ts';
-import { ProjectionView } from './TextEditor/ProjectionView.ts';
+import { CoordinatesMap, type Item } from './TextEditor/CoordinatesMap.ts';
+import { Screen } from './TextEditor/Screen.ts';
 import { excerptsToItems, type Excerpt, type Segment, type MatchRange } from './multibuffer/MultiBufferModel.ts';
 import { ExcerptSyntaxProjection } from './multibuffer/ExcerptSyntaxProjection.ts';
 import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
@@ -72,7 +72,7 @@ export class SearchResultsView {
   readonly root: InstanceType<typeof Gtk.Widget>;
   readonly editor: TextEditor;
   private readonly sources = new Map<string, SourceEntry>();
-  private readonly projectionView: ProjectionView;
+  private readonly projectionView: Screen;
   private readonly onActivate?: (location: { path: string; row: number }) => void;
   private readonly editable: boolean;
   private readonly registry?: DocumentRegistry;
@@ -91,8 +91,8 @@ export class SearchResultsView {
   private disposed = false;
 
   /** The LIVE coordinate map (re-segmentation swaps the underlying projection, so always read
-   *  it through the ProjectionView rather than caching it). */
-  private get projection(): ViewProjection {
+   *  it through the Screen rather than caching it). */
+  private get projection(): CoordinatesMap {
     return this.projectionView.view;
   }
 
@@ -105,7 +105,7 @@ export class SearchResultsView {
     }
 
     // Resolve each unique source once (live Document when editable, else a disk snapshot), then
-    // back the editor with a ProjectionView over those source buffers — the SAME substrate the
+    // back the editor with a Screen over those source buffers — the SAME substrate the
     // single-file editor uses. The painter highlights each excerpt from its source's own parse
     // via the ExcerptSyntaxProjection over the PV's (live) coordinate map.
     this.excerpts = this.buildExcerpts(options.excerpts, options.cwd);
@@ -113,7 +113,7 @@ export class SearchResultsView {
     const sourceBuffers = new Map([...this.sources].map(([key, entry]) => [key, entry.buffer] as const));
     // Headers + gaps are widget bands (not buffer rows), so the item list carries only real source
     // segments. A collapsed excerpt contributes just its first row (see `currentItems`).
-    this.projectionView = new ProjectionView(this.currentItems(), sourceBuffers);
+    this.projectionView = new Screen(this.currentItems(), sourceBuffers);
     const syntaxMap = new Map([...this.sources].map(([key, entry]) => [key, entry.syntax] as const));
     const painter = new ExcerptSyntaxProjection(() => this.projectionView.view, syntaxMap);
 
@@ -451,7 +451,7 @@ export class SearchResultsView {
     this.disposables.dispose();
     this.bands.clear();
     this.gutter.dispose();
-    // The editor owns the ProjectionView (via its MultiBufferDocument); disposing the editor
+    // The editor owns the Screen (via its MultiBufferDocument); disposing the editor
     // detaches the PV's source-buffer signal handlers, before the sources are released below.
     this.editor.dispose();
     for (const entry of this.sources.values()) {

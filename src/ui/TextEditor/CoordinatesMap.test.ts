@@ -1,5 +1,5 @@
 /*
- * ViewProjection coordinate-substrate tests (Phase 2a, docs/text-editor/multibuffer.md).
+ * CoordinatesMap coordinate-substrate tests (Phase 2a, docs/text-editor/multibuffer.md).
  * Pure + GTK-free: the place a stitched-coordinate or fold-composition bug must surface in
  * isolation. Covers the three correctness pillars: (1) the single-file IDENTITY path, (2)
  * the multi-source segment map, (3) the fold transform composed on top — plus editability
@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ViewProjection, type Item } from './ViewProjection.ts';
+import { CoordinatesMap, type Item } from './CoordinatesMap.ts';
 
 const rowsOf = (text: string): string[] => text.split('\n');
 
@@ -32,7 +32,7 @@ function fileItem(documentKey: string, lastRow: number): Item {
 test('single full-file segment is the identity path', () => {
   const text = 'const x = 1;\nconst y = 2;\n';
   const { resolve, rows } = resolverFor({ 'f.ts': text });
-  const p = ViewProjection.build([fileItem('f.ts', rows['f.ts'].length - 1)], resolve);
+  const p = CoordinatesMap.build([fileItem('f.ts', rows['f.ts'].length - 1)], resolve);
 
   assert.equal(p.isIdentity, true);
   assert.equal(p.bufferText, text, 'projection round-trips the file exactly');
@@ -49,7 +49,7 @@ test('single full-file segment is the identity path', () => {
 
 test('identity projection rejects a foreign source key', () => {
   const { resolve, rows } = resolverFor({ 'f.ts': 'a\nb\n' });
-  const p = ViewProjection.build([fileItem('f.ts', rows['f.ts'].length - 1)], resolve);
+  const p = CoordinatesMap.build([fileItem('f.ts', rows['f.ts'].length - 1)], resolve);
   assert.equal(p.documentToScreen('other.ts', 0, 0), null);
 });
 
@@ -66,7 +66,7 @@ test('multi-source projection maps each row to its source (and blocks)', () => {
     { type: 'block', block: { kind: 'header', text: 'b.ts' } },
     { type: 'segment', segment: { documentKey: 'b.ts', startRow: 0, endRow: 1, editable: false, kind: 'real' } },
   ];
-  const p = ViewProjection.build(items, resolve);
+  const p = CoordinatesMap.build(items, resolve);
 
   // 0:a.ts 1:const aaa 2:function fa 3:<blank> 4:b.ts 5:const bbb 6:let ccc
   assert.equal(p.isIdentity, false);
@@ -97,7 +97,7 @@ test('multi-source projection maps each row to its source (and blocks)', () => {
 test('a fold collapses projection rows into a placeholder and translates around it', () => {
   const text = 'L0\nL1\nL2\nL3\nL4\n';
   const { resolve, rows } = resolverFor({ f: text });
-  const p = ViewProjection.build([fileItem('f', rows['f'].length - 1)], resolve);
+  const p = CoordinatesMap.build([fileItem('f', rows['f'].length - 1)], resolve);
 
   // Collapse rows 1..3 (L1,L2,L3) into "[3]". Projection offsets: row1 start = 3,
   // end of row3 content = 11 (L3 start 9 + len 2).
@@ -137,7 +137,7 @@ test('fold composes with the multi-source map', () => {
     { type: 'block', block: { kind: 'header', text: 'b.ts' } },
     { type: 'segment', segment: { documentKey: 'b.ts', startRow: 0, endRow: 1, editable: false, kind: 'real' } },
   ];
-  const p = ViewProjection.build(items, resolve);
+  const p = CoordinatesMap.build(items, resolve);
 
   // Collapse B's two body rows. Projection offset of b's first row (view row 5) = 43;
   // end of its last row's content = 70.
@@ -169,7 +169,7 @@ test('editability gates blocks, phantoms, cross-source ranges, and folds', () =>
     { type: 'segment', segment: { documentKey: 'base', startRow: 0, endRow: 0, editable: false, kind: 'phantom' } },
     { type: 'segment', segment: { documentKey: 'f2', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
   ];
-  const p = ViewProjection.build(items, resolve);
+  const p = CoordinatesMap.build(items, resolve);
   // rows: 0:f1(header) 1:a 2:b 3:old(phantom) 4:c 5:d
 
   assert.equal(p.isScreenPositionEditable(0, 0), false, 'header block is not editable');
@@ -188,7 +188,7 @@ test('an adjacent two-source range is not editable (would span sources)', () => 
     { type: 'segment', segment: { documentKey: 'f1', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
     { type: 'segment', segment: { documentKey: 'f2', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
   ];
-  const p = ViewProjection.build(items, resolve); // rows: 0:a 1:b 2:c 3:d
+  const p = CoordinatesMap.build(items, resolve); // rows: 0:a 1:b 2:c 3:d
   assert.equal(p.isScreenRangeEditable(0, 1), true, 'within f1');
   assert.equal(p.isScreenRangeEditable(2, 3), true, 'within f2');
   assert.equal(p.isScreenRangeEditable(1, 2), false, 'spans f1 → f2');
@@ -204,7 +204,7 @@ test('fold offsets are codepoint-accurate across astral characters', () => {
     { type: 'block', block: { kind: 'header', text: 'h' } },
     { type: 'segment', segment: { documentKey: 's', startRow: 0, endRow: 2, editable: true, kind: 'real' } },
   ];
-  const p = ViewProjection.build(items, resolve);
+  const p = CoordinatesMap.build(items, resolve);
   // rows: 0:"h" 1:"x😀y" 2:"z" 3:""  — projection offsets in codepoints: h@0, x😀y@2, z@6.
 
   // Column 3 on the astral row is *after* "y" (codepoints, not UTF-16 units).

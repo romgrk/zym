@@ -4,7 +4,7 @@
  *
  * `diffRows` is the per-row line diff: each row carries its op (`eq`/`ins`/`del`) and BOTH the
  * old and new source-line indices (so the surface can show old|new line numbers and window the
- * diff). `rowsToItems` turns a contiguous run of those rows into `ViewProjection` items —
+ * diff). `rowsToItems` turns a contiguous run of those rows into `CoordinatesMap` items —
  * `eq`/`ins` → editable `real` rows over the NEW source (context + added), `del` → read-only
  * `phantom` rows over the OLD blob (removed) — merging contiguous same-side rows into segments.
  * `diffSegments` composes them for a whole file.
@@ -13,7 +13,7 @@
  * are real, non-editable view rows over the base — not EOL virtual text. Pure + GTK-free.
  */
 import { diffLines, type DiffOp } from '../../util/lineDiff.ts';
-import type { Item, Segment } from '../TextEditor/ViewProjection.ts';
+import type { Item, Segment } from '../TextEditor/CoordinatesMap.ts';
 
 /** One diff row: its op + the old/new source-line index it sits at (the irrelevant side
  *  holds the current cursor, for stable windowing — `eq` advances both, `ins` new, `del` old). */
@@ -24,7 +24,7 @@ export interface DiffRow {
 }
 
 export interface DiffProjection {
-  /** Segments for `ViewProjection.build` (new-side editable real + old-side phantom). */
+  /** Segments for `CoordinatesMap.build` (new-side editable real + old-side phantom). */
   items: Item[];
   /** The diff op of each projection row, in order — for decorations / fold-unchanged. */
   ops: DiffOp[];

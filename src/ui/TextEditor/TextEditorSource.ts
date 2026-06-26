@@ -6,7 +6,7 @@
  * Two implementations, so `TextEditor` has ONE first-class backing (no scratch shim, no
  * `externalBuffer`/`syntaxProjection`/`undoTarget` injection):
  *   - `Document` — a single file/source (file-backed, or a file-less buffer-only input).
- *   - `MultiBufferDocument` — N sources stitched through one `ProjectionView` (the search-results
+ *   - `MultiBufferDocument` — N sources stitched through one `Screen` (the search-results
  *     / continuous-diff surfaces). `isMultiSource` is true; the file/LSP bits are inert.
  */
 import type { SourceBuffer } from '../../gi.ts';
@@ -18,7 +18,7 @@ import type { LspDocument } from '../../lsp/LspManager.ts';
 import type { DocumentHost } from './Document.ts';
 
 export interface TextEditorSource extends FoldHost, UndoTarget {
-  /** True when N sources are stitched through one `ProjectionView` (the multibuffer surfaces):
+  /** True when N sources are stitched through one `Screen` (the multibuffer surfaces):
    *  the editor then suppresses its own line numbers / LSP / git gutter / folding and paints via
    *  the `syntaxProjection`. False for a normal (single-source) file or buffer-only editor. */
   readonly isMultiSource: boolean;

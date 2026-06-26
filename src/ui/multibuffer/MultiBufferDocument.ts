@@ -1,18 +1,18 @@
 /*
  * MultiBufferDocument — the `TextEditorSource` backing for a multibuffer surface (search results /
- * continuous diff). It wraps the surface's multi-source `ProjectionView` + its `SyntaxProjection`
+ * continuous diff). It wraps the surface's multi-source `Screen` + its `SyntaxProjection`
  * painter so a plain `TextEditor` renders N stitched sources as a first-class case — no scratch
  * `Document` shim, no `externalBuffer`/`syntaxProjection`/`undoTarget` injection.
  *
  * `isMultiSource` is true, so the editor suppresses its own line numbers / LSP / git gutter /
  * folding (the surface supplies its own gutter + overlays). The file/LSP members are inert; the
- * fold/translation surface + undo delegate to the `ProjectionView` (which coordinates the touched
+ * fold/translation surface + undo delegate to the `Screen` (which coordinates the touched
  * sources' undo as one transaction). The surface owns building/retargeting the PV; this object owns
  * disposing it (via the editor's teardown calling `dispose`).
  */
 import type { SourceBuffer } from '../../gi.ts';
 import type { Point } from '../../text/Point.ts';
-import type { ProjectionView } from '../TextEditor/ProjectionView.ts';
+import type { Screen } from '../TextEditor/Screen.ts';
 import type { SyntaxProjection } from '../../syntax/SyntaxProjection.ts';
 import type { TextEditorSource } from '../TextEditor/TextEditorSource.ts';
 
@@ -24,9 +24,9 @@ export class MultiBufferDocument implements TextEditorSource {
   readonly isLoaded = true;
   readonly lspDocument = null;
   readonly syntaxProjection: SyntaxProjection;
-  private readonly pv: ProjectionView;
+  private readonly pv: Screen;
 
-  constructor(pv: ProjectionView, syntaxProjection: SyntaxProjection) {
+  constructor(pv: Screen, syntaxProjection: SyntaxProjection) {
     this.pv = pv;
     this.syntaxProjection = syntaxProjection;
   }

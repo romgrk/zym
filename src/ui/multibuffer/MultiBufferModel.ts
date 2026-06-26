@@ -1,16 +1,16 @@
 /*
  * MultiBufferModel — the multibuffer's excerpt LAYOUT (docs/text-editor/multibuffer.md). It
  * models a multi-file surface as a list of **excerpts** (a filename header + ordered source
- * **segments**) and flattens them into the ordered `Item[]` that `ViewProjection` (the unified
+ * **segments**) and flattens them into the ordered `Item[]` that `CoordinatesMap` (the unified
  * coordinate substrate) materializes: a blank separator between excerpts, a header row, each
  * segment's rows, and a `⋯` gap row between non-adjacent segments of one file.
  *
  * The coordinate math (view ↔ source, painting runs, block-row styling) now lives in
- * `ViewProjection` — this is just the multibuffer-specific item layout on top of it; the
+ * `CoordinatesMap` — this is just the multibuffer-specific item layout on top of it; the
  * `MultiBufferProjection` class that used to own the coordinate map was retired when the
  * single-file editor and the multibuffer were unified onto one substrate (Phase 3a).
  */
-import type { Item, Segment as ProjectionSegment } from '../TextEditor/ViewProjection.ts';
+import type { Item, Segment as ProjectionSegment } from '../TextEditor/CoordinatesMap.ts';
 
 /** A contiguous slice of one source, projected into the multibuffer. Re-exported from the
  *  unified substrate so excerpt builders keep a stable import here. */
@@ -45,7 +45,7 @@ export interface ExcerptLayoutOptions {
 }
 
 /**
- * Flatten `excerpts` into the ordered projection items `ViewProjection.build` consumes.
+ * Flatten `excerpts` into the ordered projection items `CoordinatesMap.build` consumes.
  * Block-header layout per excerpt: a blank separator before all but the first, a header row,
  * then each segment's rows with a `⋯` gap row between non-adjacent segments of the same
  * excerpt. Widget-header layout drops the blank + header rows (see `ExcerptLayoutOptions`).

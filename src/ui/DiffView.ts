@@ -3,7 +3,7 @@
  * (docs/text-editor/multibuffer.md, Phase 3b / G5). Each changed file is a filename header
  * then its diff windowed like a real diff (changed hunks + context, long unchanged runs elided
  * to a `⋯` gap; see `buildDiffMultiBuffer`): context + added rows over the NEW side, removed
- * rows over the OLD/HEAD blob, all stitched into one `ViewProjection`. Per-side syntax
+ * rows over the OLD/HEAD blob, all stitched into one `CoordinatesMap`. Per-side syntax
  * highlighting (`ExcerptSyntaxProjection`), added/removed backgrounds (`applyDiffDecorations`),
  * old|new line gutters, and Enter/double-click → jump to the file.
  *
@@ -12,7 +12,7 @@
  *   - EDITABLE (G5): the NEW side is a LIVE `Document` from the registry, so editing a
  *     context/added row writes through to the file's model (open tab + save); removed (phantom,
  *     old-side) rows reject edits. After an edit settles, the diff is RE-COMPUTED and the view
- *     re-flowed via `ProjectionView.retarget` — a minimal-churn splice (no whole-buffer
+ *     re-flowed via `Screen.retarget` — a minimal-churn splice (no whole-buffer
  *     re-materialize), so phantom rows appear/disappear without a flash or a caret jump.
  */
 import { Gdk, Gtk, GtkSource, type SourceBuffer } from '../gi.ts';
@@ -21,8 +21,8 @@ import { TextEditor } from './TextEditor/TextEditor.ts';
 import { Document } from './TextEditor/Document.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { DocumentSyntax } from '../syntax/DocumentSyntax.ts';
-import { ProjectionView } from './TextEditor/ProjectionView.ts';
-import { ViewProjection } from './TextEditor/ViewProjection.ts';
+import { Screen } from './TextEditor/Screen.ts';
+import { CoordinatesMap } from './TextEditor/CoordinatesMap.ts';
 import { ExcerptSyntaxProjection } from './multibuffer/ExcerptSyntaxProjection.ts';
 import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { applyDiffDecorations } from './TextEditor/applyDiffDecorations.ts';
@@ -138,7 +138,7 @@ export class DiffView {
   private readonly files: DiffFile[];
   private readonly cwd?: string;
   private readonly sources = new Map<string, SourceEntry>();
-  private readonly projectionView: ProjectionView;
+  private readonly projectionView: Screen;
   private lineNumbers: CombinedDiffLineNumberGutter | null = null;
   // Header + `⋯` gap widgets (BlockDecoration bands). Reconciled (not torn down) on each re-diff:
   // a re-flow moves them and changes their text (gap counts, leading-gap subtitle), but reusing the
@@ -195,7 +195,7 @@ export class DiffView {
   private readonly disposables = new CompositeDisposable();
   private disposed = false;
 
-  private get projection(): ViewProjection {
+  private get projection(): CoordinatesMap {
     return this.projectionView.view;
   }
 
@@ -222,7 +222,7 @@ export class DiffView {
 
     const sourceBuffers = new Map([...this.sources].map(([key, e]) => [key, e.buffer] as const));
     const syntaxMap = new Map([...this.sources].map(([key, e]) => [key, e.syntax] as const));
-    this.projectionView = new ProjectionView(dmb.items, sourceBuffers);
+    this.projectionView = new Screen(dmb.items, sourceBuffers);
 
     // One editor, natively backed by the multi-source projection (no buffer-mode shim): the
     // `MultiBufferDocument` supplies the view buffer, the per-excerpt syntax painter, and undo
@@ -1230,7 +1230,7 @@ export class DiffView {
     this.reviewHandlers.length = 0;
     this.bands.clear();
     this.lineNumbers?.dispose();
-    // The editor owns the ProjectionView (via its MultiBufferDocument) and disposes it below.
+    // The editor owns the Screen (via its MultiBufferDocument) and disposes it below.
     for (const entry of this.sources.values()) {
       // Editable new side: drop the shared ref (a file also open in a tab survives + keeps its
       // unsaved edit). Read-only / base blobs: this view owns the parse.

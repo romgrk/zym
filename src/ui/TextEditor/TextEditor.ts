@@ -229,7 +229,7 @@ export interface TextEditorOptions {
    *  `onReleaseDocument`; when omitted, the editor owns a private scratch document. */
   document?: Document;
   /** A multi-source backing (the search-results / continuous-diff surfaces): a
-   *  `MultiBufferDocument` over one `ProjectionView`. Mutually exclusive with `document`; the
+   *  `MultiBufferDocument` over one `Screen`. Mutually exclusive with `document`; the
    *  editor owns it (disposes it on teardown) and renders it as a first-class multi-source case. */
   source?: TextEditorSource;
   /** Called on teardown for a registry-owned `document` (drop this view's ref). */
@@ -452,7 +452,7 @@ export class TextEditor implements DocumentHost {
   // Buffer-only mode config (null = a normal file editor), and the placeholder
   // label shown over the empty buffer (only built when a placeholder is given).
   private readonly bufferMode: BufferEditorOptions | null;
-  // The backing stitches N sources through one ProjectionView (a multibuffer surface): the editor
+  // The backing stitches N sources through one Screen (a multibuffer surface): the editor
   // suppresses its own line numbers / minimap / LSP / git gutter / folding and paints via the
   // source's `syntaxProjection`. `embedded` is the wider "not a normal file editor" flag
   // (buffer-only OR peek OR multi-source) driving the compact presentation.
@@ -533,7 +533,7 @@ export class TextEditor implements DocumentHost {
     // views, released on teardown), or a private scratch `Document` (a file-less buffer-only input).
     this.document = options.source ?? options.document ?? new Document();
     this.releaseDocument = options.document ? (options.onReleaseDocument ?? null) : null;
-    // The view buffer comes from the backing — a `ProjectionView` over one full-file segment for a
+    // The view buffer comes from the backing — a `Screen` over one full-file segment for a
     // single source, or over N stitched sources for a multibuffer (identical seam either way).
     this.buffer = this.document.createView();
     // `embedded` = no single-file backing (a buffer-only input OR a multi-source surface): the
@@ -556,7 +556,7 @@ export class TextEditor implements DocumentHost {
     // The buffer/cursor model the custom vim layer drives.
     this.editorModel = new EditorModel(this.view, this.buffer);
     // Undo/redo run on the backing (this view's buffer has native undo off): the document model for
-    // a single source, or — for a multibuffer — its `ProjectionView`, coordinating the sources.
+    // a single source, or — for a multibuffer — its `Screen`, coordinating the sources.
     this.editorModel.setUndoTarget(this.document);
     // The [...] placeholder is atomic + non-editable, and search runs over the whole
     // document — give the model access to the syntax controller's folds.

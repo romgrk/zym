@@ -1,16 +1,16 @@
 /*
  * diffMultiBuffer tests (Phase 3b / G5 foundation) — pure, no GTK. Assembles a continuous
- * multi-file diff into ViewProjection items + per-row diff kinds, composed with the unified
- * ViewProjection to prove interleaving, editability (new editable / removed phantom), and the
+ * multi-file diff into CoordinatesMap items + per-row diff kinds, composed with the unified
+ * CoordinatesMap to prove interleaving, editability (new editable / removed phantom), and the
  * row-kind alignment the surface uses for decorations.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDiffMultiBuffer } from './diffMultiBuffer.ts';
-import { ViewProjection, type Segment } from '../TextEditor/ViewProjection.ts';
+import { CoordinatesMap, type Segment } from '../TextEditor/CoordinatesMap.ts';
 
-function project(dmb: ReturnType<typeof buildDiffMultiBuffer>): ViewProjection {
-  return ViewProjection.build(dmb.items, (s: Segment) => dmb.sources.get(s.documentKey)!.slice(s.startRow, s.endRow + 1));
+function project(dmb: ReturnType<typeof buildDiffMultiBuffer>): CoordinatesMap {
+  return CoordinatesMap.build(dmb.items, (s: Segment) => dmb.sources.get(s.documentKey)!.slice(s.startRow, s.endRow + 1));
 }
 
 test('widget mode: no header/blank/gap block rows — headers + gaps are anchors, not buffer text', () => {

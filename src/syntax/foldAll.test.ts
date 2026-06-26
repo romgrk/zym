@@ -1,5 +1,5 @@
 /*
- * Regression tests for foldAll / unfoldAll (SyntaxController) over the ProjectionView fold
+ * Regression tests for foldAll / unfoldAll (SyntaxController) over the Screen fold
  * substrate. Guards two bugs found in GUI testing:
  *   1. nested `zm` drove folds from stale view-line snapshots → the outer fold ate past its
  *      footer into the next statement (and was O(folds²) slow);

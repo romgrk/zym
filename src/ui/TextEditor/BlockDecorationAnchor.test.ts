@@ -125,7 +125,7 @@ test('collapse/expand ALSO preserves the anchor — it splices (retarget), not m
   const { mbv, buffer } = setupSearch();
   const anchor = anchorAt(buffer, 3); // b.ts header at "one"
   assert.equal(anchor.textOf(), 'one');
-  // collapseAll() re-flows via ProjectionView.retarget (a minimal splice), so the mark rides it:
+  // collapseAll() re-flows via Screen.retarget (a minimal splice), so the mark rides it:
   // collapsing a.ts to one row deletes "beta"/"gamma", and the b.ts header follows up to row 1.
   mbv.collapseAll();
   assert.deepEqual(mbv.editor.getText().split('\n'), ['alpha', 'one'], 'collapsed form');
@@ -134,7 +134,7 @@ test('collapse/expand ALSO preserves the anchor — it splices (retarget), not m
   mbv.dispose();
 });
 
-test('only a true materialize (ProjectionView.rebuild / reload) drops the anchor — the lone re-project point', () => {
+test('only a true materialize (Screen.rebuild / reload) drops the anchor — the lone re-project point', () => {
   const { mbv, buffer } = setupSearch();
   const anchor = anchorAt(buffer, 3);
   assert.equal(anchor.textOf(), 'one');

@@ -1,7 +1,7 @@
 /*
- * ProjectionView — the per-view materialization + sync layer that sits on top of
- * ViewProjection (Phase 2b/2c of docs/text-editor/multibuffer.md). It owns ONE view
- * `GtkSource.Buffer`, materialized from a `ViewProjection` over a set of source buffers, and
+ * Screen — the per-view materialization + sync layer that sits on top of
+ * CoordinatesMap (Phase 2b/2c of docs/text-editor/multibuffer.md). It owns ONE view
+ * `GtkSource.Buffer`, materialized from a `CoordinatesMap` over a set of source buffers, and
  * keeps the two in lock-step:
  *
  *   - reverse-sync (source → view): a change in a source buffer is mirrored into the view
@@ -11,7 +11,7 @@
  *
  * This generalizes today's `Document.createView`/`forward`/`propagate` (which sync ONE model
  * buffer to ONE view) to N sources stitched into one view, with the coordinate map +
- * editability gating delegated to `ViewProjection`. The single full-file source is the
+ * editability gating delegated to `CoordinatesMap`. The single full-file source is the
  * IDENTITY case: `screenToDocument`/`documentToScreen` short-circuit, so the sync is a 1:1 mirror —
  * byte-for-byte today's Document behavior, which the headless tests pin down.
  *
@@ -26,7 +26,7 @@
  */
 import { Gtk, GtkSource, type SourceBuffer } from '../../gi.ts';
 import { Point } from '../../text/Point.ts';
-import { ViewProjection, type Item, type Fold } from './ViewProjection.ts';
+import { CoordinatesMap, type Item, type Fold } from './CoordinatesMap.ts';
 import { diffLines } from '../../util/lineDiff.ts';
 
 // node-gtk returns out-param iters directly or as [ok, iter]; normalize to an iter.
@@ -64,13 +64,13 @@ interface Connection {
   cb: (...args: any[]) => any;
 }
 
-export class ProjectionView {
+export class Screen {
   /** The materialized view buffer (what a GtkSource.View shows). */
   readonly buffer: SourceBuffer;
 
   private readonly sources: Map<string, SourceBuffer>;
   private items: Item[];
-  private projection: ViewProjection;
+  private projection: CoordinatesMap;
 
   // Reentrancy guards: a view edit writes through to a source, whose own change signal
   // must NOT echo back into the view (and vice-versa). `viewSuppress` silences the view's
@@ -93,7 +93,7 @@ export class ProjectionView {
 
   /**
    * Build the view buffer from `items` over `sources` (keyed by `Segment.documentKey`). The
-   * normal-editor case is `new ProjectionView([fullFileSegment], new Map([[path, model]]))`.
+   * normal-editor case is `new Screen([fullFileSegment], new Map([[path, model]]))`.
    */
   constructor(items: Item[], sources: Map<string, SourceBuffer>) {
     this.sources = sources;
@@ -102,14 +102,14 @@ export class ProjectionView {
     this.buffer.setEnableUndo(false); // the source models own undo (as Document's views do)
     const table = this.buffer.getTagTable();
     table.add(new Gtk.TextTag({ name: READONLY_TAG, editable: false }));
-    this.projection = ViewProjection.build(items, (seg) => this.sourceLines(seg));
+    this.projection = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
     this.materialize();
     this.wireView();
     for (const [key, buf] of this.sources) this.wireSource(key, buf);
   }
 
   /** The current coordinate map (for the painter / gutter / editability queries). */
-  get view(): ViewProjection {
+  get view(): CoordinatesMap {
     return this.projection;
   }
 
@@ -300,7 +300,7 @@ export class ProjectionView {
    *  Single-source edits use the offset path and never reach here. */
   private resegment(key: string, editRow: number, rowDelta: number): void {
     this.adjustItems(key, editRow, rowDelta);
-    this.projection = ViewProjection.build(this.items, (seg) => this.sourceLines(seg));
+    this.projection = CoordinatesMap.build(this.items, (seg) => this.sourceLines(seg));
   }
 
   // --- reverse-sync (source → view) ------------------------------------------
@@ -654,7 +654,7 @@ export class ProjectionView {
       // segment structure through a row-count change that crosses segment boundaries (an undo
       // over fragmented new-side/phantom segments), so delegate to the owner to re-derive the
       // items from scratch; otherwise (search) retarget the window-adjusted items.
-      if (!resync) this.projection = ViewProjection.build(this.items, (seg) => this.sourceLines(seg));
+      if (!resync) this.projection = CoordinatesMap.build(this.items, (seg) => this.sourceLines(seg));
       else if (this.resyncHandler) this.resyncHandler();
       else this.retarget(this.items);
       // The map is now current — let the owner reconcile projection-dependent chrome (the search
@@ -688,7 +688,7 @@ export class ProjectionView {
    *  segment structure changes (excerpts open/close, or a non-identity source edit). */
   rebuild(items: Item[] = this.items): void {
     this.items = items;
-    this.projection = ViewProjection.build(items, (seg) => this.sourceLines(seg));
+    this.projection = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
     this.materialize();
   }
 
@@ -703,7 +703,7 @@ export class ProjectionView {
    * re-locked read-only afterwards (they shifted).
    */
   retarget(items: Item[]): void {
-    const next = ViewProjection.build(items, (seg) => this.sourceLines(seg));
+    const next = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
     this.viewSuppress = true;
     try {
       this.spliceTo(next.screenText);

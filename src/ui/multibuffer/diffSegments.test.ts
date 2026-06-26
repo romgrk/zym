@@ -1,12 +1,12 @@
 /*
  * diffSegments tests (Phase 3b foundation, docs/text-editor/multibuffer.md) — pure, no GTK.
  * The diff-duality coordinate model: context/added → editable new-side rows, removed →
- * read-only phantom old-side rows, composed with the unified ViewProjection.
+ * read-only phantom old-side rows, composed with the unified CoordinatesMap.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { diffSegments } from './diffSegments.ts';
-import { ViewProjection, type Segment } from '../TextEditor/ViewProjection.ts';
+import { CoordinatesMap, type Segment } from '../TextEditor/CoordinatesMap.ts';
 
 const segs = (items: ReturnType<typeof diffSegments>['items']): Segment[] =>
   items.filter((i) => i.type === 'segment').map((i) => (i as { segment: Segment }).segment);
@@ -39,12 +39,12 @@ test('replace: removed line is phantom over old; added/context editable over new
   ]);
 });
 
-test('composed with ViewProjection: interleaves + gates editability correctly', () => {
+test('composed with CoordinatesMap: interleaves + gates editability correctly', () => {
   const oldLines = ['a', 'b', 'c'];
   const newLines = ['a', 'X', 'c'];
   const { items } = diffSegments(oldLines, newLines, 'new', 'old');
   const resolve = (s: Segment) => (s.documentKey === 'new' ? newLines : oldLines).slice(s.startRow, s.endRow + 1);
-  const p = ViewProjection.build(items, resolve);
+  const p = CoordinatesMap.build(items, resolve);
 
   // view rows: 0:a (context) 1:b (removed/phantom) 2:X (added) 3:c (context)
   assert.equal(p.screenText, 'a\nb\nX\nc');

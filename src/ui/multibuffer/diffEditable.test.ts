@@ -3,14 +3,14 @@
  * editable diff over a LIVE Document on the new side + a base blob on the old side: an in-place
  * edit to a new-side (context/added) row writes through to the Document's model (which would
  * propagate to the file's own tab + save), a removed (phantom, old-side) row rejects edits,
- * and the ProjectionView coordinates undo. The GUI surface (acquiring live Documents, flipping
+ * and the Screen coordinates undo. The GUI surface (acquiring live Documents, flipping
  * the view editable, save) is the remaining wiring; this pins the model-level behavior.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Gtk, GtkSource, type SourceBuffer } from '../../gi.ts';
 import { Document } from '../TextEditor/Document.ts';
-import { ProjectionView } from '../TextEditor/ProjectionView.ts';
+import { Screen } from '../TextEditor/Screen.ts';
 import { buildDiffMultiBuffer } from './diffMultiBuffer.ts';
 
 Gtk.init();
@@ -31,7 +31,7 @@ function setup(oldText: string, newText: string) {
     [`new:${path}`, doc.modelBuffer],
     [`old:${path}`, oldBuf],
   ]);
-  const pv = new ProjectionView(dmb.items, sources);
+  const pv = new Screen(dmb.items, sources);
   return { path, doc, oldBuf, pv };
 }
 
@@ -52,7 +52,7 @@ test('editing a removed (phantom old-side) row is rejected — the base blob is 
   assert.equal(doc.getText(), 'a\nX\nc\n', 'new-side Document unchanged');
 });
 
-test('the ProjectionView coordinates undo of a diff edit', () => {
+test('the Screen coordinates undo of a diff edit', () => {
   const { path, doc, pv } = setup('a\nb\nc\n', 'a\nX\nc\n');
   const xRow = pv.view.screenRowForDocument(`new:${path}`, 1)!; // the added `X` (new row 1)
   pv.beginUserAction();

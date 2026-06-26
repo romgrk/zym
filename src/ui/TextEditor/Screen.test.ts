@@ -1,5 +1,5 @@
 /*
- * ProjectionView tests (Phase 2b/2c, docs/text-editor/multibuffer.md). The IDENTITY case
+ * Screen tests (Phase 2b/2c, docs/text-editor/multibuffer.md). The IDENTITY case
  * (single full-file source) must reproduce Document's view↔model sync byte-for-byte — these
  * mirror Document.test.ts's sync contract, but through the new projection-backed materializer
  * (the substrate that Phase 2e swaps Document onto). Plus: multi-source materialization,
@@ -8,12 +8,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Gtk, GtkSource, type SourceBuffer } from '../../gi.ts';
-import { ProjectionView } from './ProjectionView.ts';
-import type { Item } from './ViewProjection.ts';
+import { Screen } from './Screen.ts';
+import type { Item } from './CoordinatesMap.ts';
 import { diffSegments } from '../multibuffer/diffSegments.ts';
 import { Point } from '../../text/Point.ts';
 
-// ProjectionView owns GtkSource buffers, so this needs GTK.
+// Screen owns GtkSource buffers, so this needs GTK.
 Gtk.init();
 
 const asIter = (res: any): any => (Array.isArray(res) ? res[res.length - 1] : res);
@@ -32,7 +32,7 @@ const fileItem = (key: string, lastRow: number): Item =>
 
 function identitySetup(text: string) {
   const src = srcBuffer(text);
-  const pv = new ProjectionView([fileItem('f', src.getLineCount() - 1)], new Map([['f', src]]));
+  const pv = new Screen([fileItem('f', src.getLineCount() - 1)], new Map([['f', src]]));
   const synced = () => textOf(pv.buffer) === textOf(src);
   return { src, pv, synced };
 }
@@ -100,7 +100,7 @@ function multiSetup() {
     { type: 'block', block: { kind: 'header', text: 'b.ts' } },
     { type: 'segment', segment: { documentKey: 'b.ts', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
   ];
-  const pv = new ProjectionView(items, new Map([['a.ts', a], ['b.ts', b]]));
+  const pv = new Screen(items, new Map([['a.ts', a], ['b.ts', b]]));
   return { a, b, pv };
 }
 
@@ -178,7 +178,7 @@ function editableMulti() {
     { type: 'segment', segment: { documentKey: 'a', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
     { type: 'segment', segment: { documentKey: 'b', startRow: 0, endRow: 1, editable: true, kind: 'real' } },
   ];
-  const pv = new ProjectionView(items, new Map([['a', a], ['b', b]]));
+  const pv = new Screen(items, new Map([['a', a], ['b', b]]));
   return { a, b, pv }; // view rows: 0:a0 1:a1 2:b0 3:b1
 }
 
@@ -245,7 +245,7 @@ function twoExcerptsOfOneFile() {
     { type: 'block', block: { kind: 'blank', text: '' } },
     { type: 'segment', segment: { documentKey: 'f', startRow: 6, endRow: 8, editable: true, kind: 'real' } },
   ];
-  const pv = new ProjectionView(items, new Map([['f', f]]));
+  const pv = new Screen(items, new Map([['f', f]]));
   // view rows: 0:F 1:l1 2:l2 3:l3 4:<blank> 5:l6 6:l7 7:l8
   return { f, pv };
 }
@@ -375,7 +375,7 @@ test('retarget: minimal-churn item swap keeps unchanged rows (decorations surviv
   const seg = (a: number, b: number): Item =>
     ({ type: 'segment', segment: { documentKey: 'f', startRow: a, endRow: b, editable: true, kind: 'real' } });
   const gap: Item = { type: 'block', block: { kind: 'gap', text: '⋯' } };
-  const pv = new ProjectionView([seg(0, 2)], new Map([['f', f]]));
+  const pv = new Screen([seg(0, 2)], new Map([['f', f]]));
   assert.equal(textOf(pv.buffer), 'l0\nl1\nl2');
 
   // A decoration on view row 0; it must survive both a grow and a shrink.
@@ -404,7 +404,7 @@ test('retarget to a recomputed diff matches a fresh build (re-diff on edit)', ()
   const oldBuf = srcBuffer('a\nb\nc\n');
   const keys = () => new Map([['new:f', newBuf], ['old:f', oldBuf]] as const);
   const items0 = diffSegments(['a', 'b', 'c', ''], ['a', 'b', 'c', ''], 'new:f', 'old:f').items;
-  const pv = new ProjectionView(items0, keys());
+  const pv = new Screen(items0, keys());
   assert.equal(textOf(pv.buffer), 'a\nb\nc\n', 'no diff yet → just the new side (trailing empty row)');
 
   // The new side was edited (b→B): update the source as a write-through would, then re-diff.
@@ -416,7 +416,7 @@ test('retarget to a recomputed diff matches a fresh build (re-diff on edit)', ()
 
   // Retarget must produce exactly what a fresh materialization of the same items would (the
   // removed `b` now shows as a phantom old-side row; `B` is the added new-side row).
-  const fresh = new ProjectionView(items1, keys());
+  const fresh = new Screen(items1, keys());
   assert.equal(textOf(pv.buffer), textOf(fresh.buffer), 'retarget result == fresh build');
   assert.ok((textOf(pv.buffer) as string).includes('b'), 'the removed line reappeared as a phantom row');
   fresh.dispose();

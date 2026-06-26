@@ -3,8 +3,8 @@
  * docs/text-editor/multibuffer.md). A `SearchResultsView({ editable: true })` backs each
  * source with a live `Document` from the registry, so editing a result row writes through to
  * the file's model (visible to any open tab, persisted by save), block (header) rows reject
- * edits, undo routes through the coordinating `ProjectionView`, and a row-count-changing edit
- * re-segments analytically. Complements ProjectionView.test.ts (the substrate) by exercising
+ * edits, undo routes through the coordinating `Screen`, and a row-count-changing edit
+ * re-segments analytically. Complements Screen.test.ts (the substrate) by exercising
  * the full editor funnel (vim → setTextInBufferRange → write-through) over real files.
  */
 import { test, before } from 'node:test';
@@ -211,7 +211,7 @@ test('editable search: a delete that actually reaches into the next excerpt is s
   mbv.dispose();
 });
 
-test('editable search: undo routes through the coordinating ProjectionView', () => {
+test('editable search: undo routes through the coordinating Screen', () => {
   const { a, registry, mbv, edit } = setup();
   edit(0, 0, 'AA'); // view row 0 = "alpha" → "AAalpha"
   assert.equal(registry.find(a)!.getText(), 'AAalpha\nbeta\ngamma\n');
@@ -281,7 +281,7 @@ test('editable search: replace-all across files is one undo step (G6)', () => {
     ],
   });
   // The same path SearchController.replaceAll drives: one transact over the whole scan, so the
-  // write-throughs to BOTH files coalesce into one ProjectionView transaction.
+  // write-throughs to BOTH files coalesce into one Screen transaction.
   let count = 0;
   mbv.editor.model.scan(/foo/g, ({ replace }) => {
     replace('BAR');

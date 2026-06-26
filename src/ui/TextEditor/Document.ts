@@ -29,13 +29,13 @@ import { CompositeDisposable } from '../../util/eventKit.ts';
 import { Point } from '../../text/Point.ts';
 import type { LspDocument, DocumentEdit } from '../../lsp/LspManager.ts';
 import { DocumentSyntax } from '../../syntax/DocumentSyntax.ts';
-import { ProjectionView } from './ProjectionView.ts';
-import type { Item } from './ViewProjection.ts';
+import { Screen } from './Screen.ts';
+import type { Item } from './CoordinatesMap.ts';
 import type { SyntaxProjection } from '../../syntax/SyntaxProjection.ts';
 import type { TextEditorSource } from './TextEditorSource.ts';
 import type { TextIter } from './iter.ts';
 
-// The stable source key for this document's model in each view's ProjectionView. A normal
+// The stable source key for this document's model in each view's Screen. A normal
 // file is single-source, so the key is arbitrary but must match the projection's segment.
 const SOURCE_KEY = 'model';
 
@@ -81,11 +81,11 @@ export class Document implements TextEditorSource {
 
   // The headless authority: text + the single undo stack. Never attached to a view.
   private readonly model: SourceBuffer;
-  // Each open view onto this document, keyed by its view buffer. A ProjectionView owns the
+  // Each open view onto this document, keyed by its view buffer. A Screen owns the
   // view buffer + its sync (write-through view→model, reverse-sync model→view) + folds, over
   // a single full-file editable segment of the model (the identity case). The Document is
   // just the shared source.
-  private readonly pvs = new Map<SourceBuffer, ProjectionView>();
+  private readonly pvs = new Map<SourceBuffer, Screen>();
   private syncing = false;
 
   // The shared tree-sitter parse for this document (model coords), created lazily on
@@ -144,7 +144,7 @@ export class Document implements TextEditorSource {
       for (const callback of this.modifiedHandlers) callback();
     });
     // A model change (a view's write-through, or undo/redo) → tell the LSP (document-level:
-    // one didChange off the model). Each view's ProjectionView mirrors the change into its
+    // one didChange off the model). Each view's Screen mirrors the change into its
     // own view buffer itself (reverse-sync), so there's no manual propagate here. Signals
     // fire pre-mutation, so the offset / deleted text describe the pre-edit state.
     this.subs.connect(this.model, 'insert-text', (iter: TextIter, text: string) => {
@@ -237,11 +237,11 @@ export class Document implements TextEditorSource {
 
   // --- Views -----------------------------------------------------------------
 
-  /** Open a new view onto this document: a ProjectionView over the model (one full-file
+  /** Open a new view onto this document: a Screen over the model (one full-file
    *  editable segment), materialized + kept in sync. Returns its view buffer. Detach with
    *  `removeView` on the view's teardown. */
   createView(): SourceBuffer {
-    const pv = new ProjectionView([this.fullFileItem()], new Map([[SOURCE_KEY, this.model]]));
+    const pv = new Screen([this.fullFileItem()], new Map([[SOURCE_KEY, this.model]]));
     pv.buffer.setHighlightSyntax(true); // the painter turns this off once it owns highlighting
     this.pvs.set(pv.buffer, pv);
     return pv.buffer;
@@ -324,13 +324,13 @@ export class Document implements TextEditorSource {
     });
   }
 
-  // --- View sync + folds (delegated to each view's ProjectionView) -----------
-  // Each view is a ProjectionView over the model (one full-file editable segment — the
+  // --- View sync + folds (delegated to each view's Screen) -----------
+  // Each view is a Screen over the model (one full-file editable segment — the
   // identity case): it owns write-through (view→model), reverse-sync (model→view), and its
   // folds. The Document forwards the FoldHost + translation surface SyntaxController /
   // TextEditor use to the PV for the given view buffer (identity when the view has no folds).
 
-  private pvFor(buffer: SourceBuffer): ProjectionView | null {
+  private pvFor(buffer: SourceBuffer): Screen | null {
     return this.pvs.get(buffer) ?? null;
   }
 

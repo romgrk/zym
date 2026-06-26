@@ -3,7 +3,7 @@
  * rests on: a decoration is declared once against a SOURCE anchor; its view position then rides the
  * primitive's mark across edits with NO further set() call; the editor re-projects it only on a
  * re-materialize; and set() reconciles add/remove/move by id. Drives a real SearchResultsView
- * editor (so `blockDecorations()` is wired to a live ProjectionView).
+ * editor (so `blockDecorations()` is wired to a live Screen).
  *
  * Bands need a mapped view to actually PLACE their overlay (headless views aren't mapped), so these
  * assert the ANCHOR (the decoration's resolved/tracked line via the primitive's mark), which is what
