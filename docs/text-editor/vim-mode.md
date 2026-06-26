@@ -32,7 +32,7 @@ default (no flag).
   when an operator runs, so `g o` is cheap on large buffers. `ctrl-l` (vim `:noh`)
   drops the highlights — the re-target gesture, since `ctrl-l` then `g o` arms the
   cursor word again. Persistent; disarm with `g o`/`alt-/` again (→ amber search) or
-  `Escape`. `g .` re-arms the last pattern. The old `o`/`O` operator-modifier
+  `escape`. `g .` re-arms the last pattern. The old `o`/`O` operator-modifier
   (`c o p`) is removed. Built on
   `OccurrenceManager` (lazy-armed pattern → `MarkerLayer` on demand) + the host's
   `SearchController` over a `VimState` bridge (`occurrence.test.ts`). See

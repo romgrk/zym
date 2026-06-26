@@ -126,7 +126,7 @@ Single-file editing plus both multibuffer surfaces run on the
   Ripgrep runs through the process runner (`projectSearch.ts`, see
   `docs/process-runner.md`). `file:save` routes to the active multibuffer.
 - **Cross-source undo/redo** — `ProjectionView` is the `UndoTarget`;
-  re-entrant user actions; a multi-file edit is one Ctrl-Z.
+  re-entrant user actions; a multi-file edit is one `ctrl-z`.
 - **Multibuffer interaction** — vim works (real editor); expand-context
   (diff); copy is clean (headers AND gaps are widget bands in both
   surfaces, never buffer rows, so a yank across excerpts carries only

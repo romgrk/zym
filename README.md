@@ -112,7 +112,7 @@ Selectors target a **zym component** by name with an `#id`: `#AppWindow`,
 
 A binding's value may also pass arguments to its command, using
 `{ "command": "...", "args": [...] }` instead of a bare string. For example,
-`Alt+1`…`Alt+8` are a single parameterized command:
+`alt-1`…`alt-8` are a single parameterized command:
 
 ```json
 { "#Panel": { "alt-3": { "command": "tab:go-to", "args": [2] } } }
@@ -121,7 +121,7 @@ A binding's value may also pass arguments to its command, using
 Use the value `"unset!"` to release a keystroke for a selector so it falls
 through to the widget instead of triggering a binding. Widgets that take literal
 text input (entries, the terminal, the editor in insert mode) carry a
-`.has-text-input` class, and a single rule frees `Space` there even though it's
+`.has-text-input` class, and a single rule frees `space` there even though it's
 the global leader prefix:
 
 ```json
@@ -153,7 +153,7 @@ Each posted notification shows up in two places:
   history (severity icon, message, optional detail, and the time it was posted).
 
 On a toast, `detail`/`description` and any buttons beyond the first are dropped —
-they belong to the log. The log is hidden until toggled with `Space` `n`; while
+they belong to the log. The log is hidden until toggled with `space n`; while
 it's focused, `c` clears the history and `q` hides it (commands
 `notifications:toggle-log` and `notifications:clear`, also reachable from the
 command picker). Window actions
@@ -169,10 +169,10 @@ When the agent process exits the pane is *not* torn down — a "process exited"
 notice is printed and the agent stays listed, flipped to an `exited` status, so
 you can read its final output.
 
-- `Space` `a` `a` opens the agent quick-switcher (`agent:switch`), a fuzzy picker
+- `space a a` opens the agent quick-switcher (`agent:switch`), a fuzzy picker
   over the running agents. Typing a prompt and choosing **Start agent** launches a
   fresh agent seeded with that prompt.
-- `Space` `a` `n` launches a new agent (`agent:new`). The argv comes from the
+- `space a n` launches a new agent (`agent:new`). The argv comes from the
   `agent.command` config (default `['claude']`).
 
 Running agents appear in the workbench list:

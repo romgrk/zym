@@ -204,7 +204,7 @@ signal params — `get-child-position`'s `GdkRectangle*`).
    (`space l p`, toggles) in `AppWindow.peekDefinition` fetches the LSP
    definition (`zym.lsp.goto`) and shows a full-width nested read-only
    `TextEditor` below the symbol's line, height-capped with internal
-   scroll, Escape to close. Two paths: if the definition's file is already
+   scroll, `escape` to close. Two paths: if the definition's file is already
    open, peek a live read-only `TextEditor` onto its shared `Document`
    (`revealPeekRow` + `wrapPeekBody`); otherwise a read-only snapshot
    slice read from disk (`buildDefinitionPeek` — highlighted slice +

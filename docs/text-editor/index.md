@@ -242,8 +242,8 @@ All built (`src/ui/TextEditor/`):
 `SearchController` (incremental literal/regex over `EditorModel.scan`,
 decoration highlights, next/previous, replace-current/all with regex backrefs) +
 `SearchBar` (floating top-right; search+replace entries, 3-way case button,
-regex toggle with inline regex highlighting; **Alt+S** case, **Alt+R** regex;
-Enter/Shift+Enter step, Ctrl+Enter replace-all). Vim `/` `?` `n` `N` wired;
+regex toggle with inline regex highlighting; **`alt-s`** case, **`alt-r`** regex;
+`enter`/`shift-enter` step, `ctrl-enter` replace-all). Vim `/` `?` `n` `N` wired;
 smartcase default. Tests: `SearchController.test.ts`. Not yet (low priority):
 `*`/`#` word search, history, operator-pending search-as-motion.
 
@@ -278,7 +278,7 @@ undo in a couple of steps; replication covers inserts + single-line backspaces
   motions skip/reveal folded rows.
 - **Buffer-only editor mode** — `new TextEditor({ buffer: {...} })`: no file I/O
   / LSP / line-numbers / minimap; keeps vim + syntax + search; placeholder,
-  `getText`/`setText`, Ctrl+Enter → `onSubmit`. For the Git commit-message
+  `getText`/`setText`, `ctrl-enter` → `onSubmit`. For the Git commit-message
   editor.
 - **Column-unit reconciliation** — columns are **codepoints** (matching
   `GtkTextIter` + `lsp/position.ts`). Tree-sitter `SyntaxController.iterAt`

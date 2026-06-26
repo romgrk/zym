@@ -124,7 +124,7 @@ handler (rule 2). Native leak = `app.run()` frame dominates CPU with JS idle
   (rule 9). Same class, still open: `NotificationToasts` (toast card click) and
   other recycled widgets with controllers.
 - **Project-search results view → whole editor graph leaked per query** —
-  `SearchResultsView.installNavigation` attached Enter / double-click
+  `SearchResultsView.installNavigation` attached `enter` / double-click
   `EventController`s to its source view with raw `addController`, and `dispose()`
   never removed them. Each handler closure captures `this`, so node-gtk's
   rooted-closure pin (the toggle-ref never downgrades when a connected handler's

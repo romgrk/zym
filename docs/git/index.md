@@ -418,7 +418,7 @@ ahead-behind / HEAD sha) over a live `file:`/`author:`/word **search**
 - **Navigation / preview** — `j`/`k`, `g g`/`G` move the selection and
   **live-preview** that commit's diff in the right pane (debounced
   ~90 ms + generation-guarded, so a fast scroll only builds the commit it
-  settles on). `o`/`Enter`/`l` load it and move focus *into* the diff. The
+  settles on). `o`/`enter`/`l` load it and move focus *into* the diff. The
   diff is built by `buildCommitDiffView` (shared with `git:diff-commit`,
   vs the commit's first parent), so it gets the fold/expand-context commands
   (`z o`/`z R`/`z m`) for free. `y y` (`git-log:copy-sha`) yanks the selected

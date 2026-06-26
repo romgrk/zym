@@ -5,6 +5,17 @@ are named behaviors registered against widgets; keymaps bind keystroke
 sequences to command names; both resolve along the focused widget's
 ancestor chain.
 
+## Canonical form
+
+Write every keystroke exactly as the keymap data spells it
+(`Key.fromDescription`): lowercase, presses space-separated, a modifier joined to
+its key with `-` (combined order `super-ctrl-alt-shift`), named keys as their
+lowercase keyval name (`space`, `enter`, `escape`, `tab`, `up`/`down`,
+`kp_enter`) — e.g. `space ctrl-w g s`, `ctrl-]`, `alt-1`. This one form is used
+everywhere a binding appears: `keymaps/default.ts`, the app's UI (`keycap()`,
+keymap panel, command palette, which-key — all render it verbatim), and these
+docs. Never `Ctrl+W`, `<space>`, `C-w`, or `SPC`.
+
 Core pieces:
 
 - **`src/CommandManager.ts`** — `commands.add(selectorOrWidget, map)`;
@@ -32,7 +43,7 @@ Core pieces:
 
 ## Behavior
 
-- Space is the leader key; `.has-text-input` releases `space` in entries,
+- `space` is the leader key; `.has-text-input` releases `space` in entries,
   the terminal, and insert mode.
 - The window is always in the active-element chain, so window-level
   bindings fire even when nothing is focused.

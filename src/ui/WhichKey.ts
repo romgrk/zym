@@ -1,6 +1,6 @@
 /*
  * WhichKey — a transient hint showing the continuations available after a
- * keymap prefix (e.g. the keys you can press after `Space`). It subscribes to
+ * keymap prefix (e.g. the keys you can press after `space`). It subscribes to
  * `zym.keymaps.onPendingChanged`: when a prefix is queued it shows, after a
  * short delay, a card listing each remaining key and the command it runs; when
  * the sequence completes or breaks it hides.
@@ -83,9 +83,11 @@ export class WhichKey {
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 });
 
     const key = new Gtk.Label({ xalign: 0, useMarkup: true });
+    // Show the continuation keys in their canonical form — exactly as the keymap
+    // spells them (`g s`, `ctrl-w`). See docs/commands-keymaps.md.
     key.setMarkup(
       `<span foreground="${KEY_COLOR}" weight="bold" font_family="${fonts.monospaceFamily}">` +
-        `${escapeMarkup(prettyKeys(binding.keys))}</span>`,
+        `${escapeMarkup(binding.keys)}</span>`,
     );
     box.append(key);
 
@@ -110,13 +112,4 @@ export class WhichKey {
       this.timer = null;
     }
   }
-}
-
-// `g l` → `g l`, `ctrl-w` → `ctrl+w` (continuation keys; left lowercase since
-// they're literal next presses).
-function prettyKeys(keys: string): string {
-  return keys
-    .split(/\s+/)
-    .map((seq) => seq.split('-').join('+'))
-    .join(' ');
 }

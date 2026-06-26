@@ -222,8 +222,9 @@ pull named icons from the *system* theme (`Gtk.Image(iconName)`).
 ## Keybinding badges
 
 Render a keybinding as a chip with `keycap(keys)` (`src/ui/Keycap.ts`): a
-monospace `.keycap` pill labelled with the binding in **canonical form** — the
-keymap's keystroke string verbatim (`space f f`, `ctrl-w v`). Its border and
+monospace `.keycap` pill labelled with the binding in its **canonical form**
+(see [commands-keymaps.md](commands-keymaps.md)) — the keymap's keystroke string
+verbatim (`space f f`, `ctrl-w v`). Its border and
 background derive from `currentColor`, so it adopts whatever text color its
 context sets. Used by the empty-panel welcome cheatsheet.
 

@@ -30,7 +30,7 @@ All files under `src/ui/TextEditor/`.
 - **`CompletionController.ts`** — the coordinator. Triggers in **insert
   mode** only: word typing re-queries on the editor's `onDidChangeText`
   (debounced 60ms, `MIN_PREFIX = 1`); a source trigger character before the
-  cursor (e.g. `.`) opens even with no prefix; Ctrl+Space forces it. Queries
+  cursor (e.g. `.`) opens even with no prefix; `ctrl-space` forces it. Queries
   all sources and ranks with the picker's fzy scorer (`fuzzyMatch`,
   `maxTypos: 1` — a subsequence, and a single typo, still matches): source
   `priority` dominates, then fuzzy score, then `sortText`/label as
@@ -42,16 +42,16 @@ All files under `src/ui/TextEditor/`.
 
   A **capture-phase** key controller drives the popup (so it consumes keys
   only while open; vim sees them otherwise):
-  - **Tab / Shift-Tab / Down / Up / Ctrl+N / Ctrl+P cycle a live
+  - **`tab` / `shift-tab` / `down` / `up` / `ctrl-n` / `ctrl-p` cycle a live
     preview**: the selected candidate is written straight into the buffer
     (popup stays open), and the cycle loops through `-1` (nothing selected
-    → original typed text) back around. Tab still indents when the popup is
+    → original typed text) back around. `tab` still indents when the popup is
     closed.
-  - **Enter / KP-Enter commits** — the preview is already in the buffer, so
+  - **`enter` / `kp_enter` commits** — the preview is already in the buffer, so
     commit just closes the popup, then applies the item's `additionalEdits`
-    (resolving them first if needed). With nothing selected, Enter falls
+    (resolving them first if needed). With nothing selected, `enter` falls
     through (normal newline) and closes the popup.
-  - **Ctrl+E dismisses. Esc is left to vim** (it exits insert mode); the
+  - **`ctrl-e` dismisses. `escape` is left to vim** (it exits insert mode); the
     host dismisses on any leave-insert via `onDidActivateMode`.
 
   The preview machinery reconstructs each candidate against a fixed **base

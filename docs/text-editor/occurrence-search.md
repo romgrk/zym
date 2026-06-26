@@ -88,7 +88,7 @@ scoped.
   because a confirmed search stays highlighted, so the rule has no hidden state —
   `g o` arms the search exactly when you can see it. (A cursor-on-hit DWIM was
   considered and rejected as too implicit.)
-- **Disarm** — `g o`/`alt-/` again (→ amber search view), or **`Escape`**
+- **Disarm** — `g o`/`alt-/` again (→ amber search view), or **`escape`**
   (reset-normal-mode disarms; no new binding needed). Occurrence is *persistent*: it
   survives motions/operators until one of these clears it.
 

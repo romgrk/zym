@@ -147,10 +147,10 @@ What already exists and is reused, not rebuilt:
   model, permission mode, **effort** (`--effort`; the `default` choice omits the
   flag), and the worktree choice. Each kind's `AgentLaunchOptions`
   (`agents/configs.ts` + `claudeOptions.ts`) supplies the option lists and the
-  `buildCommand` argv builder, so changing the kind re-populates them. Enter
+  `buildCommand` argv builder, so changing the kind re-populates them. `enter`
   launches; the last-used options + an unsent draft persist to the next open.
-  ctrl-tab / ctrl-shift-tab cycle focus forward / backward through the card's
-  controls in tab order (the Tab the prompt editor swallows), driven by GTK's
+  `ctrl-tab` / `ctrl-shift-tab` cycle focus forward / backward through the card's
+  controls in tab order (the `tab` the prompt editor swallows), driven by GTK's
   own `childFocus` traversal so it follows the layout; bound in the window's
   capture-phase keymap so they're swallowed before Adw.TabView's built-in
   ctrl-tab cycles a background panel group's tab.
