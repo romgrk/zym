@@ -19,21 +19,21 @@ import { iconSpan } from './icons.ts';
 addStyles(/* css */`
   /* Right-aligned muted detail column (single-line rows). Highlights still show
      through the dimming. */
-  #PickerRow > .picker-detail {
+  .PickerRow > .picker-detail {
     margin-left: 1em;
     opacity: 0.5;
   }
   /* Second line of a stacked row (e.g. the file picker's directory): muted and a
      touch smaller, sitting tight under the main label. Descendant (not child)
      selector — with a leading icon the lines nest one level deeper. */
-  #PickerRow .picker-detail-line {
+  .PickerRow .picker-detail-line {
     opacity: 0.5;
     font-size: 0.9em;
   }
   /* Leading icon column (file-type / state glyph), centred against the row. Margins
      (not padding — padding ate into the glyph's own box): a left inset plus a wider
      gap to the text, tuned so the icons line up under the prompt icon. */
-  #PickerRow > .picker-row-icon {
+  .PickerRow > .picker-row-icon {
     margin-left: ${theme.spacing}px;
     margin-right: ${theme.spacing * 2}px;
   }
@@ -83,12 +83,12 @@ function iconWidget(parts: RowParts): InstanceType<typeof Gtk.Label> | null {
 function withIconColumn(parts: RowParts, content: InstanceType<typeof Gtk.Widget>): InstanceType<typeof Gtk.Widget> {
   const icon = iconWidget(parts);
   if (!icon) {
-    content.setName('PickerRow');
+    content.addCssClass('PickerRow');
     if (parts.dim) content.setOpacity(0.4);
     return content;
   }
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 });
-  row.setName('PickerRow');
+  row.addCssClass('PickerRow');
   row.append(icon);
   row.append(content);
   if (parts.dim) row.setOpacity(0.4);

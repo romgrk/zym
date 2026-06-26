@@ -42,18 +42,18 @@ export interface ProjectSearchViewOptions {
 }
 
 addStyles(`
-  #ProjectSearchView .project-search-header {
+  .ProjectSearchView .project-search-header {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
-  #ProjectSearchView .project-search-row { margin-bottom: var(--t-spacing); }
-  #ProjectSearchView .project-search-row:last-child { margin-bottom: 0; }
-  #ProjectSearchView .project-search-toggles button {
+  .ProjectSearchView .project-search-row { margin-bottom: var(--t-spacing); }
+  .ProjectSearchView .project-search-row:last-child { margin-bottom: 0; }
+  .ProjectSearchView .project-search-toggles button {
     min-width: 0;
     min-height: 0;
     padding: 2px 8px;
   }
-  #ProjectSearchView .project-search-status { color: var(--t-ui-text-muted); padding: 12px; }
+  .ProjectSearchView .project-search-status { color: var(--t-ui-text-muted); padding: 12px; }
 `);
 
 // How long to wait after the last keystroke before re-running ripgrep. Each search rebuilds the
@@ -99,7 +99,7 @@ export class ProjectSearchView {
 
     // --- Row 1: the query entry + the case/word/regex toggles.
     this.entry = new Gtk.SearchEntry({ placeholderText: 'Search the project…' });
-    this.entry.setName('ProjectSearchEntry'); // selector identity for the entry's own keymap
+    this.entry.addCssClass('ProjectSearchEntry');
     this.entry.addCssClass('has-text-input'); // release the `space` leader so it types
     this.entry.setHexpand(true);
 
@@ -147,7 +147,7 @@ export class ProjectSearchView {
     this.content.append(this.status);
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('ProjectSearchView');
+    this.root.addCssClass('ProjectSearchView');
     this.root.append(header);
     this.root.append(this.content);
 
@@ -294,7 +294,7 @@ export class ProjectSearchView {
 
   private registerCommands(): void {
     // The search entry's own key: drop focus from the field into the results, keeping the query
-    // (bound to `#ProjectSearchEntry` in the central keymap — Down / Enter).
+    // (bound to `.ProjectSearchEntry` in the central keymap — Down / Enter).
     this.subs.add(
       zym.commands.add(this.entry, {
         'project-search:focus-results': {

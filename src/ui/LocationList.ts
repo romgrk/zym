@@ -10,7 +10,7 @@
  * Each row shows an optional leading Nerd Font glyph, the muted location
  * (`file:line`) first, then the content text. Navigation is the project's
  * vim-style list convention (`j`/`k`, `g g`/`G`, `l`/Enter to open), bound to
- * `#LocationList` in the central keymap and backed by the `core:*` commands
+ * `.LocationList` in the central keymap and backed by the `core:*` commands
  * registered here.
  */
 import { Gtk, Pango } from '../gi.ts';
@@ -44,12 +44,12 @@ export interface LocationListOptions {
 // Row glyphs render a touch smaller than the text (Pango relative size).
 const ICON_SIZE = '85%';
 addStyles(`
-  #LocationList .locationlist-location { color: var(--t-ui-text-muted); }
-  #LocationList .locationlist-empty { color: var(--t-ui-text-muted); padding: 12px; }
+  .LocationList .locationlist-location { color: var(--t-ui-text-muted); }
+  .LocationList .locationlist-empty { color: var(--t-ui-text-muted); padding: 12px; }
   /* Selected row: theme selection color while the list is active (focused), a
      muted (faded) version of it otherwise. */
-  #LocationList list row:selected { background-color: alpha(var(--t-ui-surface-selected), 0.4); }
-  #LocationList:focus-within list row:selected { background-color: var(--t-ui-surface-selected); }
+  .LocationList list row:selected { background-color: alpha(var(--t-ui-surface-selected), 0.4); }
+  .LocationList:focus-within list row:selected { background-color: var(--t-ui-surface-selected); }
 `);
 
 export class LocationList {
@@ -77,7 +77,7 @@ export class LocationList {
     this.empty.addCssClass('locationlist-empty');
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('LocationList'); // selector identity for the shared keymap + CSS
+    this.root.addCssClass('LocationList');
     this.root.append(this.scrolled);
     this.root.append(this.empty);
 
@@ -138,7 +138,7 @@ export class LocationList {
   }
 
   private registerCommands(): void {
-    // The keymap (`#LocationList`) binds j/k/g g/G/l to these — shared by every
+    // The keymap (`.LocationList`) binds j/k/g g/G/l to these — shared by every
     // LocationList instance.
     this.subs.add(
       zym.commands.add(this.root, {

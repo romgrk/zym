@@ -25,12 +25,12 @@ import type { EditorModel } from './EditorModel.ts';
 // chrome to a transparent positioner for content that draws its own card (the completion
 // list). The platform theme supplies the border-radius / shadow.
 addStyles(`
-  #EditorPopover > contents {
+  .EditorPopover > contents {
     background-color: var(--t-ui-surface-popover);
     color: var(--t-ui-editor-foreground);
     padding: 6px 8px;
   }
-  #EditorPopover.is-bare > contents {
+  .EditorPopover.is-bare > contents {
     background: none;
     box-shadow: none;
     border: none;
@@ -77,7 +77,7 @@ export class EditorPopover {
     this.child = child;
     this.chrome = opts.chrome ?? 0;
     this.popover = new Gtk.Popover();
-    this.popover.setName('EditorPopover'); // styling hook: #EditorPopover (see styling.md)
+    this.popover.addCssClass('EditorPopover');
     this.popover.setChild(child);
     this.popover.setAutohide(false); // don't grab — dismissal is driven by the editor
     this.popover.setCanFocus(false); // never move focus off the view (keeps keys flowing)

@@ -8,7 +8,7 @@
  *
  * The window is always included as the final element — even when nothing is
  * focused (e.g. no editor is open, so focus has nowhere to land). Otherwise
- * window-scoped bindings like `#AppWindow` pane navigation would silently stop
+ * window-scoped bindings like `.AppWindow` pane navigation would silently stop
  * working whenever focus is lost.
  */
 import type { Gtk } from '../gi.ts';

@@ -20,15 +20,15 @@ import { addStyles } from '../styles.ts';
 type Widget = InstanceType<typeof Gtk.Widget>;
 
 addStyles(/* css */`
-  #AgentSidebar, #AgentSidebar .agent-sidebar-header {
+  .AgentSidebar, .AgentSidebar .agent-sidebar-header {
     background: var(--secondary-sidebar-bg-color);
     color: var(--secondary-sidebar-fg-color);
   }
   /* The edge toward the content uses the secondary-sidebar border color (its Paned
      handle is hidden, so this border is the divider). The seam under its own header
      uses the theme border, matching the window header bar beside it. */
-  #AgentSidebar { border-right: 1px solid var(--secondary-sidebar-border-color); }
-  #AgentSidebar .agent-sidebar-header { border-bottom: 1px solid var(--border-color); }
+  .AgentSidebar { border-right: 1px solid var(--secondary-sidebar-border-color); }
+  .AgentSidebar .agent-sidebar-header { border-bottom: 1px solid var(--border-color); }
 `);
 
 export class AgentSidebar {
@@ -58,7 +58,7 @@ export class AgentSidebar {
     header.packStart(this.title);
 
     this.root = new Adw.ToolbarView();
-    this.root.setName('AgentSidebar'); // selector identity (#AgentSidebar)
+    this.root.addCssClass('AgentSidebar');
     this.root.addTopBar(header);
     this.root.setContent(this.stack);
   }

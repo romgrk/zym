@@ -62,7 +62,7 @@ function ciMarkup(ci: CiStatus): string {
 // without this it sits ~2× wider than the single-button GitBranchButton. Trim the
 // horizontal padding (leaving the vertical default) to match that compactness.
 addStyles(`
-  #GithubButtons button { padding-left: 8px; padding-right: 8px; }
+  .GithubButtons button { padding-left: 8px; padding-right: 8px; }
 `);
 
 export interface GithubButtonsOptions {
@@ -131,7 +131,7 @@ export class GithubButtons {
     this.ciButton.on('clicked', () => this.onShowChecks?.());
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-    this.root.setName('GithubButtons'); // selector identity for command/keymap rules
+    this.root.addCssClass('GithubButtons');
     this.root.addCssClass('linked');
     this.root.setValign(Gtk.Align.CENTER);
     this.root.append(this.prButton);
@@ -159,7 +159,7 @@ export class GithubButtons {
   // --- commands --------------------------------------------------------------
 
   private registerCommands(): void {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'github:repository-open': { didDispatch: () => this.openOrNotify(this.repoUrl, 'GitHub repository'), description: 'Open the repository on GitHub' },
       'github:actions-open': { didDispatch: () => this.openOrNotify(this.actionsUrl, 'GitHub repository'), description: 'Open GitHub Actions' },
       'github:issues-open': { didDispatch: () => this.openOrNotify(this.issuesUrl, 'GitHub repository'), description: 'Open GitHub issues' },

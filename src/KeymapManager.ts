@@ -39,7 +39,7 @@ const UNSET = 'unset!';
 // whether or not the entry is in a modal — it's about focus proximity, the same
 // "nearest scope wins" principle the focus chain already encodes. A chord at the
 // same element as (or nearer than) the complete binding still blocks, so
-// same-scope sequences (vim `y` vs `y s`, the `#AppWindow` `space …` leader)
+// same-scope sequences (vim `y` vs `y s`, the `.AppWindow` `space …` leader)
 // keep deferring. With no complete match there's nothing to preempt with.
 export function preemptsChord(fullIndices: number[], partialIndices: number[]): boolean {
   if (fullIndices.length === 0) return false;
@@ -132,15 +132,15 @@ interface KeybindingMatch {
   chainIndex: number;
   priority: number;
   /** The matched rule's CSS specificity — the *last* tiebreak, disambiguating
-   *  bindings on the same element (e.g. `#TextEditor.continuous-diff.normal-mode`
-   *  over `#TextEditor.normal-mode`). See `Rule.specificity`. */
+   *  bindings on the same element (e.g. `.TextEditor.continuous-diff.normal-mode`
+   *  over `.TextEditor.normal-mode`). See `Rule.specificity`. */
   specificity: number;
 }
 
 // Order full matches for dispatch, best first. The criteria, in order:
 //   1. priority      — higher wins (a user keymap layered over the defaults).
 //   2. chainIndex    — nearer scope wins: a binding on the focused widget beats
-//                      one on a farther ancestor (e.g. `#AppWindow`) even if the
+//                      one on a farther ancestor (e.g. `.AppWindow`) even if the
 //                      ancestor's selector is *more* specific. This is the same
 //                      "nearest scope wins" principle the focus chain already
 //                      encodes (see `preemptsChord`); specificity must not let an

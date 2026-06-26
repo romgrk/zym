@@ -9,7 +9,7 @@
  *
  * The input is a buffer-only `TextEditor` (full vim editing); `enter` submits the
  * prompt and `alt-enter` inserts a newline, via commands bound on the prompt
- * container (keymap scoped to `#AgentConversation .conversation-prompt #TextEditor`).
+ * container (keymap scoped to `.AgentConversation .conversation-prompt .TextEditor`).
  *
  * It implements the tool-agnostic `Agent` surface (../agents/types.ts), so it is a
  * first-class workbench owner registered in `zym.agents` — the chrome reads
@@ -63,13 +63,13 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 addStyles(/* css */`
   /* The conversation reads as the "secondary sidebar" it's docked into (left dock +
      its header section share these libadwaita --secondary-sidebar-* colors). */
-  #AgentConversation .conversation-surface {
+  .AgentConversation .conversation-surface {
     color: var(--secondary-sidebar-fg-color);
     background: var(--secondary-sidebar-bg-color);
   }
 
   /* A message queued while the agent is busy — a right-aligned bubble above the prompt. */
-  #AgentConversation .conversation-pending {
+  .AgentConversation .conversation-pending {
     background: var(--t-ui-surface-selected);
     border-radius: 10px;
     padding: 6px 10px;
@@ -78,7 +78,7 @@ addStyles(/* css */`
 
   /* The input + its status strip, as a borderless rounded card with its own bg.
      No top margin — the card sits flush under the transcript (no gap above). */
-  #AgentConversation .conversation-input-card {
+  .AgentConversation .conversation-input-card {
     margin: 0 calc(2 * var(--t-spacing)) calc(2 * var(--t-spacing)) calc(2 * var(--t-spacing));
     border-radius: var(--card-radius);
     background: var(--card-bg-color);
@@ -89,54 +89,54 @@ addStyles(/* css */`
     transition: outline-color 200ms ease-in-out, outline-width 200ms ease-in-out, outline-offset 200ms ease-in-out;
   }
   /* Ring the whole card while the prompt editor (not the footer dropdown) holds focus. */
-  #AgentConversation .conversation-input-card.prompt-focused {
+  .AgentConversation .conversation-input-card.prompt-focused {
     outline: 2px solid alpha(var(--accent-color), 0.6);
     outline-offset: -1px;
   }
 
   /* Let the card's background show through the editor (no separate editor bg). */
-  #AgentConversation .conversation-prompt,
-  #AgentConversation .conversation-prompt scrolledwindow,
-  #AgentConversation .conversation-prompt textview,
-  #AgentConversation .conversation-prompt textview text {
+  .AgentConversation .conversation-prompt,
+  .AgentConversation .conversation-prompt scrolledwindow,
+  .AgentConversation .conversation-prompt textview,
+  .AgentConversation .conversation-prompt textview text {
     background: transparent;
   }
-  #AgentConversation .conversation-prompt { padding: 0; }
+  .AgentConversation .conversation-prompt { padding: 0; }
 
-  #AgentConversation .conversation-footer {
+  .AgentConversation .conversation-footer {
     padding: 6px 12px;
   }
 
   /* The footer metadata (model name · context tokens) reads as muted secondary text. */
-  #AgentConversation .conversation-footer-label { color: var(--t-ui-text-muted); }
+  .AgentConversation .conversation-footer-label { color: var(--t-ui-text-muted); }
 
   /* The permission-mode dropdown, colored per mode (like Claude Code). */
-  #AgentConversation .conversation-mode { min-height: 0; }
-  #AgentConversation .conversation-mode.is-default { color: var(--t-ui-text-muted); }
-  #AgentConversation .conversation-mode.is-acceptEdits { color: var(--t-ui-status-success); }
-  #AgentConversation .conversation-mode.is-auto { color: var(--t-ui-status-warning); }
-  #AgentConversation .conversation-mode.is-plan { color: var(--t-ui-status-info); }
+  .AgentConversation .conversation-mode { min-height: 0; }
+  .AgentConversation .conversation-mode.is-default { color: var(--t-ui-text-muted); }
+  .AgentConversation .conversation-mode.is-acceptEdits { color: var(--t-ui-status-success); }
+  .AgentConversation .conversation-mode.is-auto { color: var(--t-ui-status-warning); }
+  .AgentConversation .conversation-mode.is-plan { color: var(--t-ui-status-info); }
 
   /* The floating "copy message" button, pinned top-right of the transcript viewport. */
-  #AgentConversation .conversation-copy { margin: 10px; padding: 2px 6px; min-height: 0; min-width: 0; opacity: 0.5; }
-  #AgentConversation .conversation-copy:hover { opacity: 1; }
+  .AgentConversation .conversation-copy { margin: 10px; padding: 2px 6px; min-height: 0; min-width: 0; opacity: 0.5; }
+  .AgentConversation .conversation-copy:hover { opacity: 1; }
 
   /* A single wrapped, left-aligned row (interrupted / error / system / resume). */
-  #AgentConversation .conversation-row { padding: 6px 0; }
+  .AgentConversation .conversation-row { padding: 6px 0; }
   /* Tool-use header text (tool rows / subagent / monitor / answered question). */
-  #AgentConversation .conversation-tool-header { opacity: 0.85; }
+  .AgentConversation .conversation-tool-header { opacity: 0.85; }
   /* Trailing dot marking a non-zero Bash exit (the icon + command colour stay put). */
-  #AgentConversation .bash-error-dot { padding-left: 8px; }
-  #AgentConversation .conversation-system { opacity: 0.6; font-style: italic; }
+  .AgentConversation .bash-error-dot { padding-left: 8px; }
+  .AgentConversation .conversation-system { opacity: 0.6; font-style: italic; }
   /* The resume boundary divider: centered, muted, italic. */
-  #AgentConversation .conversation-resume { opacity: var(--dim-opacity); font-style: italic; }
-  #AgentConversation .conversation-error { color: var(--t-ui-status-error); }
+  .AgentConversation .conversation-resume { opacity: var(--dim-opacity); font-style: italic; }
+  .AgentConversation .conversation-error { color: var(--t-ui-status-error); }
   /* An unrecognised stream event, dumped as raw JSON so nothing is silently lost.
      The warning is carried by the ToolRow warning status (icon + header tint). */
-  #AgentConversation .conversation-unknown-body { opacity: 0.75; }
+  .AgentConversation .conversation-unknown-body { opacity: 0.75; }
 
   /* Truncated tool-output preview tucked under a row. */
-  #AgentConversation .conversation-result {
+  .AgentConversation .conversation-result {
     opacity: 0.7;
     background: var(--card-bg-color);
     padding: 4px 8px;
@@ -144,7 +144,7 @@ addStyles(/* css */`
     border-radius: 4px;
   }
   /* A Task (subagent) report renders as a fuller markdown card. */
-  #AgentConversation .conversation-task-result {
+  .AgentConversation .conversation-task-result {
     background: var(--card-bg-color);
     padding: 6px 10px;
     margin-top: 4px;
@@ -152,21 +152,21 @@ addStyles(/* css */`
   }
 
   /* The pushed subagent/monitor page's header (back button + title). */
-  #AgentConversation .conversation-page-header { padding: 6px; border-bottom: 1px solid var(--border-colo); }
+  .AgentConversation .conversation-page-header { padding: 6px; border-bottom: 1px solid var(--border-colo); }
 
   /* The fallback permission card + its allow/deny buttons (cards.ts). */
-  #AgentConversation .conversation-perm {
+  .AgentConversation .conversation-perm {
     padding: 8px;
     border: 1px solid var(--t-ui-status-info);
     border-radius: 6px;
   }
-  #AgentConversation .conversation-perm-buttons { margin-top: 4px; }
-  #AgentConversation .conversation-perm-detail { opacity: 0.8; }
+  .AgentConversation .conversation-perm-buttons { margin-top: 4px; }
+  .AgentConversation .conversation-perm-detail { opacity: 0.8; }
 
   /* The monospace bits (tool detail, results, JSON dumps) follow the font store. */
-  #AgentConversation .conversation-perm-detail,
-  #AgentConversation .conversation-result,
-  #AgentConversation .conversation-unknown-body { font-family: var(--t-font-monospace-family); }
+  .AgentConversation .conversation-perm-detail,
+  .AgentConversation .conversation-result,
+  .AgentConversation .conversation-unknown-body { font-family: var(--t-font-monospace-family); }
 `);
 
 // The enter/alt-enter keymap is global (selector-scoped to our prompt), registered
@@ -176,14 +176,14 @@ function registerPromptKeymapOnce(): void {
   if (promptKeymapRegistered) return;
   promptKeymapRegistered = true;
   zym.keymaps.add('agent-conversation', {
-    '#AgentConversation .conversation-prompt #TextEditor': {
+    '.AgentConversation .conversation-prompt .TextEditor': {
       enter: 'conversation:submit-prompt',
       'alt-enter': 'conversation:prompt-newline',
     },
     // shift-tab cycles the permission mode; ctrl-c interrupts the running turn —
     // both anywhere in the conversation. ctrl-c falls through to its default (copy)
     // when nothing is running (the command aborts the binding).
-    '#AgentConversation': {
+    '.AgentConversation': {
       'shift-tab': 'conversation:cycle-permission-mode',
       'ctrl-c': 'conversation:interrupt',
     },
@@ -496,7 +496,7 @@ export class AgentConversation implements Agent {
 
     // A NavigationView so a subagent's transcript can push its own page.
     this.root = new Adw.NavigationView();
-    this.root.setName('AgentConversation');
+    this.root.addCssClass('AgentConversation');
     this.root.add(Adw.NavigationPage.new(mainBox, 'Conversation'));
 
     this.installCommands(); // after this.root exists (commands register on it)

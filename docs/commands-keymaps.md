@@ -18,8 +18,10 @@ Core pieces:
   that is also a complete binding, e.g. `y` vs `y s`), CAPTURE-phase
   controller on the window.
 - **`src/util/selectors.ts`** — selectors match the widget's GTK name
-  (`getName()`): `#Component` (a zym component), a type tag (`GtkText`),
-  and `.class` / `:not(.class)` fragments.
+  (`getName()` — a type tag like `GtkText`) and its CSS classes
+  (`getCssClasses()`): a zym component is targeted by its class
+  (`.Component`), with `.class` / `:not(.class)` fragments; `#id` still
+  matches the name for any raw GTK widget that sets one.
 - **`src/keymaps/default.ts`** + **`load.ts`** — the built-in keymap as
   data, plus an optional user `~/.config/zym/keymap.json` layered at
   higher priority, validated at load.
@@ -46,9 +48,9 @@ Core pieces:
   winner is chosen by, in order: (1) **priority** (a user keymap layered over the
   defaults); (2) **focus-chain proximity** — the *nearest scope wins*, so a
   binding on the focused widget beats one on a farther ancestor (e.g.
-  `#AppWindow`) even if the ancestor's selector is more specific; (3) **selector
+  `.AppWindow`) even if the ancestor's selector is more specific; (3) **selector
   specificity**, which only disambiguates bindings on the *same* element (e.g.
-  `#TextEditor.continuous-diff.normal-mode` over `#TextEditor.normal-mode`). This
+  `.TextEditor.continuous-diff.normal-mode` over `.TextEditor.normal-mode`). This
   is the same "nearest scope wins" rule the chord-preemption logic uses
   (`preemptsChord`); see `KeymapManager.compareFullMatches`.
 - A command `when` predicate controls applicability: the palette dims (and

@@ -43,23 +43,31 @@ instead of installing nothing.
 
 ## Selectors & classes
 
-A component's styling identity is `setName('WidgetName')` → `#WidgetName`
-(PascalCase, mirrors the file/class name). Everything hangs off that id;
-**never prefix classes with `zym-`** — the id scope already namespaces
+A component's styling identity is `addCssClass('WidgetName')` → `.WidgetName`
+(PascalCase, mirrors the file/class name). Everything hangs off that class;
+**never prefix classes with `zym-`** — the component scope already namespaces
 them. Four patterns, in preference order:
 
-- **`#WidgetName`** — the component's own root; the primary hook for its
+- **`.WidgetName`** — the component's own root; the primary hook for its
   look.
-- **`#WidgetName tagName`** — a GTK-rendered sub-node by its CSS node name
+- **`.WidgetName tagName`** — a GTK-rendered sub-node by its CSS node name
   (`label`, `button`, `image`, `tabbar`, …), when the tag uniquely
   identifies it.
-- **`#WidgetName .part`** — a sub-node a tag *can't* single out (a widget
+- **`.WidgetName .part`** — a sub-node a tag *can't* single out (a widget
   with several `label`s). Give it a short, unprefixed element class, scoped
-  under the id: `#MultiBufferHeader .icon`, `#FileTree .header`.
+  under the component class: `.MultiBufferHeader .icon`, `.FileTree .header`.
 - **`.is-…` / `.has-…`** — boolean state classes toggled at runtime, read
-  off any of the above: `#Panel.active-empty`, `#Picker.has-prompt`,
-  `#Terminal .view.is-normal`. Adjectives only — no value-bearing classes
+  off any of the above: `.Panel.active-empty`, `.Picker.has-prompt`,
+  `.Terminal .view.is-normal`. Adjectives only — no value-bearing classes
   (`.is-mode-normal`, not `.mode2`).
+
+These were GTK *names* (`#WidgetName` id selectors) historically. They're CSS
+classes now: component instances aren't unique (many `.Panel`s, `.TextEditor`s
+coexist), so an id was never the right model — and because `addStyles` installs
+at `STYLE_PROVIDER_PRIORITY_APPLICATION` (above libadwaita's theme provider), a
+class selector still wins the cascade without leaning on id specificity. The
+same `.WidgetName` is the command/keymap selector too (see
+[commands-keymaps.md](commands-keymaps.md)).
 
 Reuse GTK/libadwaita's own utility classes directly (`flat`, `linked`,
 `circular`, `dim-label`, `heading`, `activatable`, …); don't reinvent them
@@ -104,8 +112,8 @@ The font store `src/fonts.ts` (`fonts`) is the single source of the app's
 UI and monospace fonts. Each is the `core.uiFont` / `core.monospaceFont`
 config value (a Pango description) when set, else the live GNOME interface
 font — the store follows both. It publishes them as **reactive CSS
-variables on `#AppWindow`** (re-set on every change). A root
-`#AppWindow { font-family: var(--t-font-ui-family) }` baseline makes **all
+variables on `.AppWindow`** (re-set on every change). A root
+`.AppWindow { font-family: var(--t-font-ui-family) }` baseline makes **all
 UI text follow the UI font by inheritance** — so only monospace surfaces
 need a rule.
 

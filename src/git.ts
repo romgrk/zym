@@ -162,10 +162,14 @@ export interface GitRepo {
   fetch(): Promise<GitOpResult>;
   /** `git pull --ff-only`. */
   pull(): Promise<GitOpResult>;
-  /** `git push`. */
-  push(): Promise<GitOpResult>;
+  /** `git push`. The first push of a branch with no upstream tracking ref sets it
+   *  (`-u <remote> <branch>`, `remote` defaulting to `origin`), so later push/pull
+   *  need no arguments; a branch that already tracks an upstream gets a plain push. */
+  push(remote?: string): Promise<GitOpResult>;
   /** Commit the message in `messageFile` (`git commit -F`); `amend` rewrites HEAD. */
   commit(messageFile: string, amend?: boolean): Promise<GitOpResult>;
+  /** Revert a commit, creating a new commit that undoes `sha` (`git revert --no-edit`). */
+  revert(sha: string): Promise<GitOpResult>;
   /** Stash the working-tree changes (`git stash push`). */
   stash(): Promise<GitOpResult>;
   /** Pop / apply / drop a stash by ref ("stash@{N}"). */
@@ -341,11 +345,24 @@ class CliGitRepo implements GitRepo {
   pull(): Promise<GitOpResult> {
     return this.mutate((root, done) => cli.git(root, ['pull', '--ff-only'], done));
   }
-  push(): Promise<GitOpResult> {
-    return this.mutate((root, done) => cli.git(root, ['push'], done));
+  push(remote = 'origin'): Promise<GitOpResult> {
+    return this.mutate((root, done) => {
+      // A branch that already tracks an upstream gets a plain `git push`.
+      if (this.state.upstream) return cli.git(root, ['push'], done);
+      // No upstream yet — the first push of this branch. Resolve the branch name
+      // authoritatively (`--show-current` is empty on a detached HEAD, where there's
+      // nothing to track) and set the upstream (`-u <remote> <branch>`) so later
+      // push/pull need no arguments; a detached HEAD falls back to a plain push.
+      cli.currentBranch(root, (branch) =>
+        cli.git(root, branch ? ['push', '--set-upstream', remote, branch] : ['push'], done),
+      );
+    });
   }
   commit(messageFile: string, amend = false): Promise<GitOpResult> {
     return this.mutate((root, done) => cli.commit(root, messageFile, done, amend));
+  }
+  revert(sha: string): Promise<GitOpResult> {
+    return this.mutate((root, done) => cli.revertCommit(root, sha, done));
   }
   stash(): Promise<GitOpResult> {
     return this.mutate((root, done) => cli.stashPush(root, done));

@@ -6,14 +6,15 @@
  * then walks a focused widget's ancestor chain to decide whether a rule applies.
  *
  * Adaptations for zym:
- *   - both an `#id` selector and a bare tag are matched against the widget's GTK
- *     name (`getName()`); `:not()`/class fragments match its CSS classes
+ *   - an `#id` selector and a bare tag are both matched against the widget's GTK
+ *     name (`getName()`); `.class` / `:not()` fragments match its CSS classes
  *     (`getCssClasses()`). A widget's name defaults to its node-gtk type name
- *     (e.g. "GtkText", "GtkSourceView"), but zym components override it with
- *     their JS class name (`widget.setName('Panel')` — e.g. the editor view is
- *     a `GtkSourceView` renamed to `TextEditor`). The convention is to target a
- *     zym component with `#id` (`#Panel`, `#TextEditor.insert-mode`) and a raw
- *     GTK widget by its type tag (e.g. `GtkText`);
+ *     (e.g. "GtkText", "GtkSourceView"). zym components carry their identity as a
+ *     CSS class instead (`widget.addCssClass('Panel')` — e.g. the editor view, a
+ *     `GtkSourceView`, gets the `TextEditor` class), so the convention is to
+ *     target a zym component with `.class` (`.Panel`, `.TextEditor.insert-mode`)
+ *     and a raw GTK widget by its type tag (e.g. `GtkText`); `#id` still matches
+ *     any widget that sets a name;
  *   - the debug `console.log` at module load was removed and `translateTag`
  *     reduced to an identity passthrough (the Atom `atom-*` tag aliases don't
  *     map onto GTK widget names) — it stays as the extension point for aliases.

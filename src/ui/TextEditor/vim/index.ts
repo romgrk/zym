@@ -4,7 +4,7 @@
  * `attachVim` builds one VimState per editor and registers its commands against
  * that editor's view *instance* (so a keystroke dispatches to the right editor's
  * VimState). The keymaps are registered once, globally, scoped by mode CSS class
- * (`#TextEditor.normal-mode` / `.insert-mode`); the KeymapManager matches a
+ * (`.TextEditor.normal-mode` / `.insert-mode`); the KeymapManager matches a
  * focused view against them and dispatches the bound command, which the per-view
  * command bundle resolves to `vimState.operationStack.run(<OperationClass>)`.
  *
@@ -553,7 +553,7 @@ function registerKeymapsOnce(): void {
     // Mode-entry keys (i/a) are normal-only; v/V activate visual from normal too.
     // Surround sequences (ys/ds/cs) start here; their operator targets resolve
     // through the operator-pending text-object bindings below.
-    '#TextEditor.normal-mode': {
+    '.TextEditor.normal-mode': {
       ...toKeymap(MODE_BINDINGS),
       ...toKeymap(VISUAL_BINDINGS),
       ...toKeymap(SURROUND_BINDINGS),
@@ -578,7 +578,7 @@ function registerKeymapsOnce(): void {
       ...toKeymap(WEB_SEARCH_BINDINGS),
     },
     // Motions and operators apply in normal, operator-pending, and visual modes.
-    '#TextEditor:not(.insert-mode)': {
+    '.TextEditor:not(.insert-mode)': {
       ...toKeymap(NON_INSERT_BINDINGS),
       ...REPEAT_FIND_COMMANDS,
       ...REPEAT_COMMANDS,
@@ -588,7 +588,7 @@ function registerKeymapsOnce(): void {
     },
     // In visual mode: v/V switch wise (or toggle off), text objects select, and
     // `/`/`?` extend the selection to a search match.
-    '#TextEditor.visual-mode': {
+    '.TextEditor.visual-mode': {
       ...toKeymap(VISUAL_BINDINGS),
       ...toKeymap(VISUAL_COMMAND_BINDINGS),
       ...toKeymap(TEXT_OBJECT_BINDINGS),
@@ -597,16 +597,16 @@ function registerKeymapsOnce(): void {
       ...toKeymap(WEB_SEARCH_BINDINGS),
     },
     // Operator targets in operator-pending mode: text objects and `d/foo` search.
-    '#TextEditor.operator-pending-mode': {
+    '.TextEditor.operator-pending-mode': {
       ...toKeymap(TEXT_OBJECT_BINDINGS),
       ...toKeymap(SEARCH_MOTION_BINDINGS),
     },
     // Escape returns to normal mode from insert, operator-pending, and visual.
-    '#TextEditor:not(.normal-mode)': {
+    '.TextEditor:not(.normal-mode)': {
       escape: 'vim-mode-plus:activate-normal-mode',
     },
     // Insert-mode editing commands (ctrl-w/u/r/a).
-    '#TextEditor.insert-mode': toKeymap(INSERT_BINDINGS),
+    '.TextEditor.insert-mode': toKeymap(INSERT_BINDINGS),
   });
 
   // `j`/`k` → display-line motion in normal & visual mode, at a higher priority so
@@ -615,8 +615,8 @@ function registerKeymapsOnce(): void {
   zym.keymaps.add(
     'vim-mode-plus-display-lines',
     {
-      '#TextEditor.normal-mode': toKeymap(DISPLAY_LINE_DEFAULTS),
-      '#TextEditor.visual-mode': toKeymap(DISPLAY_LINE_DEFAULTS),
+      '.TextEditor.normal-mode': toKeymap(DISPLAY_LINE_DEFAULTS),
+      '.TextEditor.visual-mode': toKeymap(DISPLAY_LINE_DEFAULTS),
     },
     1,
   );

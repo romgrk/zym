@@ -1,6 +1,6 @@
 /*
  * Sidebar — the full-height workbench column at the very left of the window
- * (outside, left of the header bar): the `#WorkbenchSidebar` box wrapping the
+ * (outside, left of the header bar): the `.WorkbenchSidebar` box wrapping the
  * workbench list (`WorkbenchList`), exposed as `root`. It is the start child of
  * the top-level split the host (AppWindow) owns; the host wires the collapse/expand
  * width via the list's `onToggleCollapsed` callback.
@@ -14,7 +14,7 @@ import { WorkbenchList, type WorkbenchListOptions } from './WorkbenchList.ts';
 export type SidebarOptions = WorkbenchListOptions;
 
 export class Sidebar {
-  // The full-height sidebar column (`#WorkbenchSidebar`) wrapping the workbench list —
+  // The full-height sidebar column (`.WorkbenchSidebar`) wrapping the workbench list —
   // the start child of the host's top-level split.
   readonly root: InstanceType<typeof Gtk.Box>;
   // The workbench list filling the sidebar column (user row + running agents). Exposed
@@ -25,7 +25,7 @@ export class Sidebar {
     this.list = new WorkbenchList(options);
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('WorkbenchSidebar'); // selector identity for CSS
+    this.root.addCssClass('WorkbenchSidebar');
     this.root.addCssClass('sidebar-pane');
     this.list.root.setHexpand(true);
     this.list.root.setVexpand(true); // fill the sidebar (height + width)

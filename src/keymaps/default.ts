@@ -2,9 +2,9 @@
  * default.ts — the built-in keymap, as declarative data.
  *
  * Shape: `{ selector: { keystroke: 'command:name' } }`, exactly the input
- * `zym.keymaps.add` takes. A zym component is targeted by its name with an
- * `#id` selector (`#Panel`, `#FileTree`, `#TextEditor.insert-mode`, …); a raw GTK
- * widget by its type tag (`GtkText`). The keystroke's command must be
+ * `zym.keymaps.add` takes. A zym component is targeted by its CSS class
+ * (`.Panel`, `.FileTree`, `.TextEditor.insert-mode`, …); a raw GTK widget by its
+ * type tag (`GtkText`). The keystroke's command must be
  * registered by some component (commands live with their owner — e.g. Panel
  * registers `tab:*`, AppWindow registers `pane:*`/`file:*`). This table is the
  * single place to read or change the app's key bindings; `load.ts` registers it
@@ -21,7 +21,7 @@ import type { CommandRef } from '../KeymapManager.ts';
 type Binding = string | CommandRef;
 
 // Space-leader bindings: a `space` prefix then a mnemonic (Spacemacs-style).
-// Registered on `#AppWindow` (an ancestor of everything), so the leader is
+// Registered on `.AppWindow` (an ancestor of everything), so the leader is
 // available globally; text-input contexts release `space` with `unset!` (see
 // below) so it still types literally there.
 const SPACE_COMMANDS: Record<string, string> = {
@@ -87,7 +87,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   // Hunk-level staging on the gutter hunk under the cursor (editor only): "s"tage,
   // "u"nstage (a staged/blue hunk), "r"evert (discard the unstaged change), "n" stage + advance
   // to the next hunk (the fast review-and-stage flow in the continuous diff; `ctrl-]` is a
-  // single-chord alternative, bound under `#TextEditor.continuous-diff.normal-mode`).
+  // single-chord alternative, bound under `.TextEditor.continuous-diff.normal-mode`).
   'space h s': 'git:hunk-stage',
   'space h u': 'git:hunk-unstage',
   'space h r': 'git:hunk-revert',
@@ -160,7 +160,7 @@ const LIST_NAV: Record<string, Binding> = {
 };
 
 export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
-  '#AppWindow': {
+  '.AppWindow': {
     // Vim-style split (pane) management.
     'ctrl-w v': 'pane:split-right',
     'ctrl-w s': 'pane:split-down',
@@ -190,15 +190,15 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
 
   // LSP hover on the symbol under the cursor. Bound only in normal mode so it
   // doesn't shadow typing 'K' while inserting.
-  '#TextEditor.normal-mode': {
+  '.TextEditor.normal-mode': {
     K: 'lsp:hover',
   },
 
   // Tab switching, routed to whichever panel holds focus.
-  '#Panel': TAB_BINDINGS,
+  '.Panel': TAB_BINDINGS,
 
   // File tree: shared list navigation plus tree-specific keys.
-  '#FileTree': {
+  '.FileTree': {
     ...LIST_NAV, // j/k, g g, G, l (l enters a directory / opens a file)
     h: 'core:left', // collapse a directory / go to parent
     ',': 'tree:toggle-untracked-files', // show/hide files not tracked by git
@@ -206,9 +206,9 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   },
 
   // Git panel change list: shared list navigation plus git-specific keys. Scoped to the
-  // list (#GitPanelList), NOT the panel root (#GitPanel), so the bare keys don't fire while
+  // list (.GitPanelList), NOT the panel root (.GitPanel), so the bare keys don't fire while
   // the embedded diff editor is focused.
-  '#GitPanelList': {
+  '.GitPanelList': {
     ...LIST_NAV, // j/k, g g, G, l (l opens the selected change's diff via core:right)
     o: 'git:open-diff', // open the selected change's diff (like `l`)
     enter: 'git:open-diff',
@@ -222,38 +222,38 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // Move between the panel's two "windows" — the change list and the embedded diff — with vim's
   // `ctrl-w` direction keys (mirrors the git-log viewer). Override only the INWARD direction on
   // each side (`ctrl-w l` list→diff, `ctrl-w h` diff→list); the outward direction falls through
-  // to `#AppWindow` pane nav. Both selectors outrank `#AppWindow` by CSS specificity (two ids).
-  '#GitPanel #GitPanelList': {
+  // to `.AppWindow` pane nav. Both selectors outrank `.AppWindow` by CSS specificity (two classes vs one).
+  '.GitPanel .GitPanelList': {
     'ctrl-w l': 'git-panel:focus-diff',
   },
-  '#GitPanel #TextEditor': {
+  '.GitPanel .TextEditor': {
     'ctrl-w h': 'git-panel:focus-list',
   },
   // `q` closes the embedded diff (collapse back to the list). Normal-mode only — so it doesn't
   // shadow typing 'q' while editing the diff — and 2 ids + a class, so it outranks vim's bare `q`
   // (macro record) only inside the GitPanel's diff, not in ordinary editors.
-  '#GitPanel #TextEditor.normal-mode': {
+  '.GitPanel .TextEditor.normal-mode': {
     q: 'git-panel:close-diff',
   },
 
   // Editable diff multibuffer (git:diff-current-changes): fold-style keys expand the elided `⋯`
-  // unchanged lines. More specific than the vim `#TextEditor` bindings, so these win; `z z`/
+  // unchanged lines. More specific than the vim `.TextEditor` bindings, so these win; `z z`/
   // `z t`/`z b` (scroll) aren't bound here and still fall through to vim.
   // Project-search results multibuffer: per-file (excerpt) collapse. `z a` toggles the file under
-  // the cursor; `z M`/`z R` collapse/expand all. More specific than vim's `#TextEditor`, so these win.
-  '#TextEditor.search-results': {
+  // the cursor; `z M`/`z R` collapse/expand all. More specific than vim's `.TextEditor`, so these win.
+  '.TextEditor.search-results': {
     'z a': 'search:toggle-collapse',
     'z M': 'search:collapse-all',
     'z R': 'search:expand-all',
   },
   // Scoped to `.normal-mode` so the `z`/`g` prefixes don't shadow typing those characters while
   // inserting (this surface is editable) — same reason `K: lsp:hover` is normal-mode only.
-  '#TextEditor.continuous-diff.normal-mode': {
+  '.TextEditor.continuous-diff.normal-mode': {
     'z o': 'diff:expand-context', // reveal more unchanged lines at the nearest gap
     'z R': 'diff:expand-all', // reveal all unchanged lines (show the full files)
     'z m': 'diff:collapse-context', // re-collapse expanded context
     // Hunk staging (`space h s`/`u` → git:hunk-stage/git:hunk-unstage) is the unified binding from
-    // `#AppWindow`; it routes here automatically (this embedded editor registers no gutter
+    // `.AppWindow`; it routes here automatically (this embedded editor registers no gutter
     // variant). Bare `s`/`u` are left to vim (substitute / undo) since this surface is editable.
     // `g d` jumps to the file/line under the cursor — Enter now opens the inline comment box
     // (handled directly in DiffView), which sends the row/selection + comment to the agent.
@@ -268,7 +268,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
 
   // Workbench list (the left sidebar): shared list navigation (l reveals the selected
   // agent's terminal) plus lifecycle keys acting on the selected agent.
-  '#WorkbenchList': {
+  '.WorkbenchList': {
     ...LIST_NAV, // j/k, g g, G, l (l reveals the selected agent's terminal)
     r: 'agent:restart', // restart the selected agent (resume its conversation)
     R: 'agent:rename', // rename the selected agent
@@ -281,23 +281,24 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // Location lists (LSP diagnostics, project-wide search, …): shared navigation
   // Location lists (LSP diagnostics, project-wide search, …): shared navigation
   // (l opens the location under the cursor).
-  '#LocationList': LIST_NAV,
+  '.LocationList': LIST_NAV,
 
   // Git log (history) viewer — bound to the list (not the whole view) so the bare
   // keys don't type into the search field above it. Shared list navigation (which
   // also live-previews the diff in the right pane) plus o/Enter to open the selected
   // commit's diff and focus it (l does the same via core:right), and `/` to filter.
-  '#GitLogList': {
+  '.GitLogList': {
     ...LIST_NAV, // j/k, g g, G, l (l opens the selected commit)
     o: 'git-log:open',
     enter: 'git-log:open',
     '/': 'git-log:search',
     'y y': 'git-log:copy-sha', // yank the selected commit's short hash
+    R: 'git-log:revert', // revert the selected commit (confirms first)
   },
 
   // The git log's filter field: Down/Enter/Escape drop focus into the results list
-  // (the bare list keys are scoped to #GitLogList, so they type here as normal).
-  '#GitLogSearch': {
+  // (the bare list keys are scoped to .GitLogList, so they type here as normal).
+  '.GitLogSearch': {
     down: 'git-log:focus-list',
     enter: 'git-log:focus-list',
     'kp_enter': 'git-log:focus-list',
@@ -309,19 +310,19 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // TextEditor is taken by vim (escape included), the way out of the embedded editor has
   // to be a chord; `ctrl-w h`/`l` reuse the window-nav vocabulary. We override only the
   // INWARD direction on each side (`ctrl-w l` list→diff, `ctrl-w h` diff→list); the
-  // outward `ctrl-w h`/`ctrl-w l` fall through to `#AppWindow` pane nav, so this reads as
-  // a nested split, not a special case. Both selectors outrank `#AppWindow` by CSS
-  // specificity (two ids vs one).
-  '#GitLogView #GitLogList': {
+  // outward `ctrl-w h`/`ctrl-w l` fall through to `.AppWindow` pane nav, so this reads as
+  // a nested split, not a special case. Both selectors outrank `.AppWindow` by CSS
+  // specificity (two classes vs one).
+  '.GitLogView .GitLogList': {
     'ctrl-w l': 'git-log:focus-diff',
   },
-  '#GitLogView #TextEditor': {
+  '.GitLogView .TextEditor': {
     'ctrl-w h': 'git-log:focus-list',
   },
 
   // The project-search query field: Down/Enter drop focus into the results multibuffer,
   // keeping the query (so you can browse/edit without reaching for the mouse).
-  '#ProjectSearchEntry': {
+  '.ProjectSearchEntry': {
     down: 'project-search:focus-results',
     enter: 'project-search:focus-results',
     'kp_enter': 'project-search:focus-results',
@@ -330,7 +331,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // The notification log: while it has focus, bare keys act on the history
   // (vim-tree style). `c` clears it; `q` hides it (same command as the leader
   // toggle). The log takes no literal text input, so single keys are safe.
-  '#NotificationLog': {
+  '.NotificationLog': {
     c: 'notifications:clear',
     q: 'notifications:toggle-log',
   },
@@ -358,11 +359,11 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // partial-match timeout) to see if a second follows; if not, it falls through
   // to the agent CLI as a normal EOF. Bound on the agent terminal only — a plain
   // shell terminal keeps `ctrl-d` as its immediate EOF.
-  '#AgentTerminal': {
+  '.AgentTerminal': {
     'ctrl-d ctrl-d': 'agent:close',
   },
   // The headless claude-sdk conversation: same double-`ctrl-d` to close.
-  '#AgentConversation': {
+  '.AgentConversation': {
     'ctrl-d ctrl-d': 'agent:close',
   },
   '.zym-terminal.terminal-insert': {
@@ -375,7 +376,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   },
 
   // Plugin manager: vim-style list navigation plus expand/toggle.
-  '#PluginManagerPanel': {
+  '.PluginManagerPanel': {
     j:     'plugin-manager:focus-next',
     k:     'plugin-manager:focus-prev',
     o:     'plugin-manager:toggle-expander',
@@ -386,7 +387,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   // reaches the focused control natively — toggling the focused check/radio and
   // typing literal spaces in a note entry. (Matches the card root from any focused
   // descendant; the `is-open` state is dropped once the question is answered.)
-  '#Question.is-open': { space: 'unset!' },
+  '.Question.is-open': { space: 'unset!' },
 
   // Any widget that takes literal text input carries the `.has-text-input` class
   // (text entries, the terminal / agent terminal, the editor in insert mode).

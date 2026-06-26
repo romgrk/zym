@@ -298,7 +298,7 @@ export function installStyles(): void {
 // floating popover.
 //
 // The base spacing unit (margins / gaps between content chrome) is the theme's
-// `spacing` token, emitted as `--t-spacing` on `#AppWindow` below.
+// `spacing` token, emitted as `--t-spacing` on `.AppWindow` below.
 //
 // Font sizes are NOT defined here — they come from the font store (fonts.ts) as
 // `--t-font-<role>-size-{small,large}` (role = `ui` | `monospace`). See docs/styling.md → Fonts.

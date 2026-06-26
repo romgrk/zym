@@ -124,7 +124,7 @@ export class SearchResultsView {
     if (!this.editable) this.editor.model.setReadOnly(true);
     this.bands = this.editor.blockDecorations();
     // Scope the per-excerpt collapse keymap (`z a`/`z M`/`z R`) to this surface — more specific than
-    // vim's `#TextEditor`, so it wins while other `z` motions fall through.
+    // vim's `.TextEditor`, so it wins while other `z` motions fall through.
     this.editor.sourceView.addCssClass('search-results');
     this.root = this.editor.root;
 

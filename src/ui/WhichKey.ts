@@ -23,7 +23,7 @@ const MAX_ROWS = 8; // entries per column before spilling into the next
 const KEY_COLOR = theme.ui.text.accent;
 
 addStyles(`
-  #WhichKey {
+  .WhichKey {
     background-color: var(--popover-bg-color);
     border: 1px solid var(--border-color);
     border-radius: var(--popover-radius);
@@ -65,7 +65,7 @@ export class WhichKey {
   private show(pending: PendingBinding[]): void {
     this.hide();
     const grid = new Gtk.Grid({ columnSpacing: 24, rowSpacing: 2 });
-    grid.setName('WhichKey');
+    grid.addCssClass('WhichKey');
     grid.setHalign(Gtk.Align.CENTER);
     grid.setValign(Gtk.Align.END);
 

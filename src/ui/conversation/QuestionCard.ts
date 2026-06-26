@@ -27,16 +27,16 @@ type Answer = { header: string; labels: string[]; notes?: string };
 addStyles(/* css */`
   /* AskUserQuestion: an interactive choice card (info-tinted while open). Once
      answered the card becomes a tool row (see QuestionCard.submit) — no border. */
-  #Question .question-card {
+  .Question .question-card {
     padding: calc(2 * var(--t-spacing));
     border: 1px solid var(--t-ui-status-info);
     border-radius: var(--card-radius);
   }
-  #Question .question-prompt { margin-bottom: calc(2 * var(--t-spacing)); font-size: var(--t-font-ui-size-large); }
-  #Question .question-switcher button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
-  #Question .question-hint { opacity: 0.5; font-size: var(--t-font-ui-size-small); }
-  #Question .is-focused { background: var(--t-ui-surface-selected); }
-  #Question .question-note { padding-left: calc(4 * var(--t-spacing)); }
+  .Question .question-prompt { margin-bottom: calc(2 * var(--t-spacing)); font-size: var(--t-font-ui-size-large); }
+  .Question .question-switcher button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
+  .Question .question-hint { opacity: 0.5; font-size: var(--t-font-ui-size-small); }
+  .Question .is-focused { background: var(--t-ui-surface-selected); }
+  .Question .question-note { padding-left: calc(4 * var(--t-spacing)); }
 `);
 
 interface Option {
@@ -68,8 +68,8 @@ export class QuestionCard {
     this.qs = req.questions;
     this.onAnswer = onAnswer;
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8 });
-    this.root.setName('Question')
-    this.root.addCssClass('is-open'); // released on answer; the keymap scopes `space` to #Question.is-open
+    this.root.addCssClass('Question');
+    this.root.addCssClass('is-open'); // released on answer; the keymap scopes `space` to .Question.is-open
     this.root.setFocusable(true);
 
     this.container = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8 });

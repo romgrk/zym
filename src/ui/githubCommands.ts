@@ -26,12 +26,12 @@ export interface GithubCommandsDeps {
   toast: (message: string) => void;
 }
 
-/** Register the window-level `github:*` commands on `#AppWindow`. */
+/** Register the window-level `github:*` commands on `.AppWindow`. */
 export function registerGithubCommands(d: GithubCommandsDeps): Disposable {
   const inRepo = () => d.git().getBranch() !== null;
   const onEditorInRepo = () =>
     zym.workspace.getActiveTextEditor()?.currentFile != null && d.github.getRepo() !== null;
-  return zym.commands.add('#AppWindow', {
+  return zym.commands.add('.AppWindow', {
     'github:issue-picker': { didDispatch: () => openGithubIssuePicker(d.overlay, d.cwd()), description: 'Open a GitHub issue…', when: inRepo },
     'github:failed-ci-picker': { didDispatch: () => openGithubFailedCIPicker(d.overlay, d.cwd()), description: 'Open a failed CI check…', when: inRepo },
     'github:ci-checks': { didDispatch: () => openGithubCIChecksPicker(d.overlay, d.cwd()), description: 'Show CI checks for this branch…', when: inRepo },

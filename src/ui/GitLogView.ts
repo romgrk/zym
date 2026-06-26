@@ -15,7 +15,7 @@
  * embedded directly, so this view owns its lifecycle (disposed on swap + on close).
  * Because the diff is a vim `TextEditor` whose normal-mode `escape` is taken, leaving
  * it back to the list needs a dedicated key: `ctrl-w h` (the commit list sits to the
- * left) → `git-log:focus-list`, scoped to `#GitLogView #TextEditor` so it only binds
+ * left) → `git-log:focus-list`, scoped to `.GitLogView .TextEditor` so it only binds
  * inside this viewer. The command is registered on the view root, reachable from both
  * the search field and the embedded diff.
  *
@@ -23,11 +23,11 @@
  * `file:x` matches a changed path, `author:y` matches the author, and any bare word
  * matches the subject; all terms must match (AND). To keep the bare list keys (j/k/…)
  * from typing into the search field, those bindings are scoped to the list widget
- * (`#GitLogList`) rather than the whole view, so they only fire while the list — not
+ * (`.GitLogList`) rather than the whole view, so they only fire while the list — not
  * the entry — holds focus. `/` jumps to the search; Enter/Down/Escape return to the
  * list. The assembled widget is exposed via `root`.
  */
-import { Gtk, Pango } from '../gi.ts';
+import { Adw, Gtk, Pango } from '../gi.ts';
 import { addStyles } from '../styles.ts';
 import { ICON_FONT_FAMILY, fonts } from '../fonts.ts';
 import { zym } from '../zym.ts';
@@ -77,58 +77,58 @@ interface Filters {
 // base inset (2× the spacing token) so the chrome lines up.
 addStyles(`
   /* Left column: the commit list, set off from the diff pane by a border. */
-  #GitLogView .gitlog-list-column { border-right: 1px solid var(--border-color); }
-  #GitLogView .gitlog-header {
+  .GitLogView .gitlog-list-column { border-right: 1px solid var(--border-color); }
+  .GitLogView .gitlog-header {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
-  #GitLogView .gitlog-branch { font-weight: bold; }
-  #GitLogView .gitlog-branch-icon { color: var(--t-ui-text-muted); }
-  #GitLogView .gitlog-details { color: var(--t-ui-text-muted); }
-  #GitLogView .gitlog-search-box {
+  .GitLogView .gitlog-branch { font-weight: bold; }
+  .GitLogView .gitlog-branch-icon { color: var(--t-ui-text-muted); }
+  .GitLogView .gitlog-details { color: var(--t-ui-text-muted); }
+  .GitLogView .gitlog-search-box {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
-  #GitLogView .gitlog-empty { color: var(--t-ui-text-muted); padding: 12px; }
-  #GitLogList row {
+  .GitLogView .gitlog-empty { color: var(--t-ui-text-muted); padding: 12px; }
+  .GitLogList row {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
-  #GitLogView .gitlog-subject { color: var(--t-ui-editor-foreground); }
+  .GitLogView .gitlog-subject { color: var(--t-ui-editor-foreground); }
   /* Row gaps (the box itself has no spacing): subject → meta is half a spacing unit,
      meta → badges a full one. */
-  #GitLogView .gitlog-meta { color: var(--t-ui-text-muted); margin-top: calc(0.5 * var(--t-spacing)); }
-  #GitLogView .gitlog-refs { margin-top: var(--t-spacing); }
+  .GitLogView .gitlog-meta { color: var(--t-ui-text-muted); margin-top: calc(0.5 * var(--t-spacing)); }
+  .GitLogView .gitlog-refs { margin-top: var(--t-spacing); }
   /* Ref badges: *other* branches/tags pointing at a commit (the current branch is
      not shown), on their own row under the meta line. A faint tint + matching border
      per kind: local branches read as info, remote-tracking branches as warning, tags
      as success. */
-  #GitLogView .gitlog-ref {
+  .GitLogView .gitlog-ref {
     font-size: var(--t-font-ui-size-small);
     padding: 0 6px;
     border-radius: 6px;
     border: 1px solid transparent;
   }
-  #GitLogView .gitlog-ref-branch {
+  .GitLogView .gitlog-ref-branch {
     color: var(--t-ui-status-info);
     background-color: alpha(var(--t-ui-status-info), 0.12);
     border-color: alpha(var(--t-ui-status-info), 0.4);
   }
-  #GitLogView .gitlog-ref-remote {
+  .GitLogView .gitlog-ref-remote {
     color: var(--t-ui-status-warning);
     background-color: alpha(var(--t-ui-status-warning), 0.12);
     border-color: alpha(var(--t-ui-status-warning), 0.4);
   }
-  #GitLogView .gitlog-ref-tag {
+  .GitLogView .gitlog-ref-tag {
     color: var(--t-ui-status-success);
     background-color: alpha(var(--t-ui-status-success), 0.12);
     border-color: alpha(var(--t-ui-status-success), 0.4);
   }
   /* Selected row: full selection color while focused, a muted version otherwise. */
-  #GitLogList row:selected { background-color: alpha(var(--t-ui-surface-selected), 0.4); }
-  #GitLogView:focus-within #GitLogList row:selected { background-color: var(--t-ui-surface-selected); }
+  .GitLogList row:selected { background-color: alpha(var(--t-ui-surface-selected), 0.4); }
+  .GitLogView:focus-within .GitLogList row:selected { background-color: var(--t-ui-surface-selected); }
   /* Right pane: the embedded diff (or a placeholder while nothing is selected). */
-  #GitLogView .gitlog-diff-placeholder { color: var(--t-ui-text-muted); padding: 12px; }
+  .GitLogView .gitlog-diff-placeholder { color: var(--t-ui-text-muted); padding: 12px; }
 `);
 
 // Badge order within a row: local branches first, then tags, then remote-tracking
@@ -199,7 +199,7 @@ export class GitLogView {
     // --- Search field (between header and body): live `file:`/`author:`/word filter,
     // wrapped in a padded, bottom-bordered box that sets it off from the list.
     this.search = new Gtk.SearchEntry({ placeholderText: 'file:path author:name search…' });
-    this.search.setName('GitLogSearch'); // selector identity for the entry's own keymap
+    this.search.addCssClass('GitLogSearch');
     this.search.addCssClass('has-text-input'); // release the `space` leader so it types
     this.search.on('search-changed', () => this.applyFilter());
 
@@ -209,7 +209,7 @@ export class GitLogView {
 
     // --- Body: a plain list of commits.
     this.listBox = new Gtk.ListBox();
-    this.listBox.setName('GitLogList'); // selector identity for the list-only keymap + CSS
+    this.listBox.addCssClass('GitLogList');
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
     this.listBox.on('row-activated', (row: any) => this.activate(row.getIndex()));
 
@@ -239,7 +239,7 @@ export class GitLogView {
     // --- One tab, split: list | diff. The list keeps its width on window resize; the
     // diff absorbs the extra space. Neither child collapses to nothing.
     this.root = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
-    this.root.setName('GitLogView'); // CSS identity (the list keymap targets #GitLogList)
+    this.root.addCssClass('GitLogView');
     this.root.setStartChild(listColumn);
     this.root.setEndChild(this.diffPane);
     this.root.setPosition(LIST_WIDTH);
@@ -440,7 +440,7 @@ export class GitLogView {
   private registerCommands(): void {
     // List navigation is registered on the list widget so it dispatches only while
     // the list — not the search entry — is focused. Bindings (j/k/g g/G/l, o/Enter, /)
-    // live in the central keymap under `#GitLogList`.
+    // live in the central keymap under `.GitLogList`.
     this.subs.add(
       zym.commands.add(this.listBox, {
         'core:down': { didDispatch: () => this.move(1), description: 'Move down' },
@@ -451,12 +451,13 @@ export class GitLogView {
         'git-log:open': { didDispatch: () => this.openSelected(), description: 'Open the selected commit in a diff' },
         'git-log:search': { didDispatch: () => this.search.grabFocus(), description: 'Filter the commit list' },
         'git-log:copy-sha': { didDispatch: () => this.copySelectedSha(), description: 'Copy the selected commit short hash' },
+        'git-log:revert': { didDispatch: () => this.revertSelected(), description: 'Revert the selected commit' },
       }),
     );
     // `git-log:focus-list` / `git-log:focus-diff` are registered on the view ROOT (not a
     // leaf), so they dispatch from anywhere inside the viewer. They model the list and the
     // diff as two nested windows: `ctrl-w l` steps from the list INTO the diff, `ctrl-w h`
-    // steps back; the OUTWARD directions are left to the global `#AppWindow` pane nav. The
+    // steps back; the OUTWARD directions are left to the global `.AppWindow` pane nav. The
     // search field also reaches focus-list (Enter/Down/Escape drop into the list).
     this.subs.add(
       zym.commands.add(this.root, {
@@ -509,6 +510,40 @@ export class GitLogView {
     if (!commit) return;
     clipboard.write(commit.shortSha);
     zym.notifications.addInfo(`Copied ${commit.shortSha}`);
+  }
+
+  /** Revert the selected commit (`R`): confirm, then create a new commit undoing it.
+   *  Reverting modifies HEAD (and can conflict), so it's gated behind a confirmation. */
+  private revertSelected(): void {
+    const row = this.listBox.getSelectedRow();
+    const commit = row ? this.filtered[row.getIndex()] : undefined;
+    if (!commit) return;
+    const dialog = new Adw.AlertDialog({
+      heading: 'Revert commit',
+      body: `Create a new commit that undoes ${commit.shortSha}?\n\n${commit.subject}`,
+    });
+    dialog.addResponse('cancel', 'Cancel');
+    dialog.addResponse('revert', 'Revert');
+    dialog.setResponseAppearance('revert', Adw.ResponseAppearance.SUGGESTED);
+    dialog.setDefaultResponse('revert');
+    dialog.setCloseResponse('cancel');
+    dialog.on('response', (response: string) => {
+      if (response === 'revert') void this.revert(commit);
+    });
+    dialog.present(this.root);
+  }
+
+  /** Run the revert, then reload the list so the new commit shows. A revert that hits
+   *  conflicts fails (non-zero exit) and is surfaced with git's stderr for the user. */
+  private async revert(commit: CommitSummary): Promise<void> {
+    const result = await this.git.revert(commit.sha);
+    if (this.disposed) return;
+    if (result.isOk()) {
+      zym.notifications.addSuccess(`Reverted ${commit.shortSha}`);
+      this.load(); // the revert added a commit — refresh the list (and re-select the top)
+    } else {
+      zym.notifications.addError('Revert failed', { detail: result.unwrapErr().message.trim() });
+    }
   }
 
   // --- Embedded diff -----------------------------------------------------------

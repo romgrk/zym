@@ -1,6 +1,6 @@
 /*
  * Message — a single conversation message: a user / assistant / thinking turn. The
- * outer container (#Message) owns the gutter around the turn; inside, a
+ * outer container (.Message) owns the gutter around the turn; inside, a
  * `.message-bubble` carries the surface (background + radius) around a MarkdownView.
  * Shared by the main AgentConversation and the subagent pages (SubagentView) so every
  * turn looks and aligns the same. Callers mount `root` as a transcript entry and
@@ -15,25 +15,25 @@ import { MarkdownView } from '../markdown/MarkdownView.ts';
 export type MessageKind = 'user' | 'assistant' | 'thinking';
 
 addStyles(/* css */`
-  /* The container owns the gutter around the bubble (#Message is NOT the bubble). */
-  #Message {
+  /* The container owns the gutter around the bubble (.Message is NOT the bubble). */
+  .Message {
     padding: 0 calc(2 * var(--t-spacing));
   }
   /* User and assistant share the bubble shape (radius + inner padding); only the
      background colour differs. The prose is capped to a reading measure in code
      (MarkdownView max-width-chars) — GTK CSS has no max-width. */
-  #Message .message-bubble {
+  .Message .message-bubble {
     padding: calc(2 * var(--t-spacing));
     border-radius: 10px;
   }
-  #Message.is-user .message-bubble {
+  .Message.is-user .message-bubble {
     background: color-mix(in srgb, var(--card-bg-color), var(--accent-color) 50%);
   }
-  #Message.is-assistant .message-bubble {
+  .Message.is-assistant .message-bubble {
     // background: var(--card-bg-color);
     // border: 1px solid var(--border-color);
   }
-  #Message.is-thinking .message-bubble { 
+  .Message.is-thinking .message-bubble { 
     border: none;
     box-shadow: none;
     background: transparent;
@@ -52,8 +52,8 @@ export class Message {
   constructor(kind: MessageKind) {
     this.kind = kind;
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('Message');
-    this.root.addCssClass(`is-${kind}`); // surfaces the kind for the #Message.is-<kind> styling
+    this.root.addCssClass('Message');
+    this.root.addCssClass(`is-${kind}`); // surfaces the kind for the .Message.is-<kind> styling
 
     const bubble = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     bubble.addCssClass('card');

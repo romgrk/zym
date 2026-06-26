@@ -110,7 +110,7 @@ export class PanelGroup {
     this.options = options;
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('PanelGroup'); // selector identity for command/keymap rules
+    this.root.addCssClass('PanelGroup');
     this.root.setHexpand(true);
     this.root.setVexpand(true);
 

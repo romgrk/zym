@@ -25,10 +25,10 @@ addStyles(`
     margin: var(--t-spacing);
     padding: 6px 8px;
   }
-  #DiffCommentInput { margin: var(--t-spacing) calc(2 * var(--t-spacing)); }
+  .DiffCommentInput { margin: var(--t-spacing) calc(2 * var(--t-spacing)); }
   /* Let the card background show through the editor. */
-  #DiffCommentInput textview,
-  #DiffCommentInput textview text { background: transparent; }
+  .DiffCommentInput textview,
+  .DiffCommentInput textview text { background: transparent; }
   /* Footer text — muted, sits below the body. The card's "Pending" label uses the UI font. */
   .diff-comment-hint { color: var(--t-ui-text-muted); padding-top: 4px; }
   .diff-comment-card-label { color: var(--t-ui-editor-foreground); }
@@ -54,14 +54,14 @@ function registerKeymapOnce(): void {
   if (keymapRegistered) return;
   keymapRegistered = true;
   zym.keymaps.add('diff-comment', {
-    '#DiffCommentInput #TextEditor': {
+    '.DiffCommentInput .TextEditor': {
       enter: 'diff-comment:submit',
       'alt-enter': 'diff-comment:newline',
       'ctrl-enter': 'diff-comment:start-review',
     },
     // Cancel from NORMAL mode (`q`/`escape`). In insert mode `escape` is vim's
     // insert→normal (so a single `escape` doesn't reach a cancel binding).
-    '#DiffCommentInput #TextEditor.normal-mode': {
+    '.DiffCommentInput .TextEditor.normal-mode': {
       q: 'diff-comment:cancel',
       escape: 'diff-comment:cancel',
     },
@@ -131,7 +131,7 @@ export class DiffCommentBox {
     footer.append(this.badge);
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('DiffCommentInput');
+    this.root.addCssClass('DiffCommentInput');
     this.root.addCssClass('diff-comment-box');
     this.root.append(this.input.root);
     this.root.append(footer);

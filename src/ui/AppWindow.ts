@@ -168,7 +168,7 @@ export class AppWindow {
   // closed, or the user closes the tab (see pruneActionTerminals / disposeChild).
   private readonly actionTerminals = new Map<Widget, { agent: Agent; actionId: string; terminal: Terminal; child: PanelChild }>();
 
-  // The workbench sidebar: the full-height `#WorkbenchSidebar` column at the very left
+  // The workbench sidebar: the full-height `.WorkbenchSidebar` column at the very left
   // of the window. Owns the `WorkbenchList` (`this.sidebar.list`); it's the start child
   // of `sidebarPaned`, whose width this window toggles on collapse/expand.
   private readonly sidebar: Sidebar;
@@ -344,7 +344,7 @@ export class AppWindow {
     toolbarView.setContent(this.contentOverlay);
     this.toastOverlay.setChild(toolbarView);
 
-    // Workbench sidebar: a full-height column (`#WorkbenchSidebar`) at the very left of
+    // Workbench sidebar: a full-height column (`.WorkbenchSidebar`) at the very left of
     // the window, *outside* the header bar. The Sidebar owns the WorkbenchList; its
     // agent callbacks route into the active-workbench machinery, and the list's robot
     // button forwards collapse/expand here to resize the split below.
@@ -407,7 +407,7 @@ export class AppWindow {
     applyNotificationStyles();
 
     this.window = new Adw.ApplicationWindow({ application: app });
-    this.window.setName('AppWindow'); // selector identity for command/keymap rules
+    this.window.addCssClass('AppWindow');
     this.window.setTitle(PROJECT_NAME); // OS taskbar label — the project, not the bare "node"
     this.window.setDefaultSize(DEFAULT_WIDTH, DEFAULT_HEIGHT);
     this.window.setContent(this.overlay);
@@ -1768,13 +1768,13 @@ export class AppWindow {
   // --- Pane switching (demo of the ported command/keymap managers) -----------
 
   // Vim-style window (split) management. Handlers only; bindings (ctrl-w v/s/c,
-  // ctrl-w h/j/k/l, ctrl-w w) live in the central keymap under `#AppWindow`.
+  // ctrl-w h/j/k/l, ctrl-w w) live in the central keymap under `.AppWindow`.
   //
   // Directional focus stays within the center; at the left edge `pane:focus-left`
   // falls back to the file-tree dock, and from the file tree `pane:focus-right`
   // returns to it.
   private registerPaneCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'pane:split-right': { didDispatch: () => this.splitPane('right'), description: 'Split the pane to the right' },
       'pane:split-down': { didDispatch: () => this.splitPane('down'), description: 'Split the pane downward' },
       'pane:close': { didDispatch: () => this.closePane(), description: 'Close the active pane' },
@@ -1869,7 +1869,7 @@ export class AppWindow {
   // --- LSP commands ----------------------------------------------------------
 
   private registerLspCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'lsp:go-to-definition': { didDispatch: () => void this.goto('definition'), description: 'Go to definition' },
       'lsp:peek-definition': { didDispatch: () => void this.peekDefinition(), description: 'Peek definition (inline)' },
       'lsp:go-to-declaration': { didDispatch: () => void this.goto('declaration'), description: 'Go to declaration' },
@@ -2302,7 +2302,7 @@ export class AppWindow {
   // Window-level file/edit operations, surfaced in the command palette and (for
   // most) on the space leader. Handlers only; bindings live in the central keymap.
   private registerWindowCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'file:open': { didDispatch: () => this.openDialog(), description: 'Open a file (dialog)' },
       'file:find': {
         didDispatch: () => openFilePicker(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
@@ -2669,7 +2669,7 @@ export class AppWindow {
           this.openAgent({ prompt: agentPrompt, userPrompt, command, cwd, kind, background });
         },
       });
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'terminal:new': { didDispatch: () => this.openTerminal(), description: 'Open a new terminal' },
       'scripts:run': {
         didDispatch: () => openScriptRunner(this.overlay, this.workbench.cwd, (name) => this.runScript(name)),
@@ -2750,7 +2750,7 @@ export class AppWindow {
   // blocking), so the branch button's spinner reflects progress automatically;
   // the result is surfaced as a toast.
   private registerGitCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       // Staging from anywhere (not just the Source Control panel): the current
       // editor file, or the whole tree. These shell out to git directly — like the
       // panel's row actions — then refresh the cached repo so the gutter and branch
@@ -2781,10 +2781,13 @@ export class AppWindow {
       'git:push': {
         // After a successful push, GitHub re-runs the PR's checks; schedule a CI
         // refresh ~10s out. The service stays busy until then, so the CI segment
-        // shows the in-progress (loading) look in the meantime.
-        didDispatch: () =>
-          this.runGit(() => this.workbench.git.push(), 'Push', () => this.headerBar.github.scheduleRefresh(10000)),
-        description: 'Push to the remote',
+        // shows the in-progress (loading) look in the meantime. The first push of a
+        // new branch sets its upstream to this remote (the fork's), per `git.remotes.origin`.
+        didDispatch: () => {
+          const remote = (zym.config.get('git.remotes.origin') as string) || 'origin';
+          this.runGit(() => this.workbench.git.push(remote), 'Push', () => this.headerBar.github.scheduleRefresh(10000));
+        },
+        description: 'Push to the remote (sets the upstream on a new branch)',
         when: () => this.workbench.git.getBranch() !== null,
       },
       'git:branch-switch': {
@@ -2903,7 +2906,7 @@ export class AppWindow {
   // only; bindings (`space n`, and `c` while the log is focused) live in the
   // central keymap.
   private registerNotificationCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'notifications:toggle-log': { didDispatch: () => this.toggleNotificationLog(), description: 'Toggle the notification log' },
       'notifications:clear': { didDispatch: () => zym.notifications.clear(), description: 'Clear notifications' },
       // Run the default action of the most recent notification that has one.
@@ -2945,7 +2948,7 @@ export class AppWindow {
   // config.json, or the user keymap.json in an editor tab. Handlers only; the
   // `space , …` bindings live in the central keymap.
   private registerConfigCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'config:open-editor': { didDispatch: () => openConfigEditor(this.window), description: 'Open preferences' },
       'config:open-as-text': { didDispatch: () => this.openFile(configPath()), description: 'Open config.json' },
       'keymap:open-as-text': { didDispatch: () => this.openFile(ensureUserKeymap()), description: 'Edit the user keymap (keymap.json)' },
@@ -2955,7 +2958,7 @@ export class AppWindow {
   // Session: save or restore the workspace session explicitly. Autosave covers the
   // common case; these are manual controls (command palette / keymap).
   private registerSessionCommands() {
-    zym.commands.add('#AppWindow', {
+    zym.commands.add('.AppWindow', {
       'session:save': {
         didDispatch: () => {
           this.sessionController.saveNow();

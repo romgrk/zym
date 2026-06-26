@@ -41,7 +41,7 @@ addStyles(/* css */`
   /* The unsaved-changes marker (a small dot) next to the project title — warning-colored. */
   .zym-modified-dot { color: var(--t-ui-status-warning); }
   
-  #WorkbenchRow {
+  .WorkbenchRow {
     padding: calc(0.4 * var(--t-spacing)) calc(2 * var(--t-spacing));
   }
   .Workbenchrow--icon {
@@ -53,7 +53,7 @@ addStyles(/* css */`
   }
   
   /* Per-row edited-files count — a flat, muted button (click opens the files). */
-  #WorkbenchRow .workbenchrow-files {
+  .WorkbenchRow .workbenchrow-files {
     min-width: 0;
     min-height: 0;
     padding: 0 2px;
@@ -64,12 +64,12 @@ addStyles(/* css */`
   /* The edited-files count: the editor foreground dimmed via opacity rather than
      the theme's muted gray, which sat too dark to read on the sidebar. Hover
      brightens the files button fully. */
-  #WorkbenchRow .workbenchrow-files label {
+  .WorkbenchRow .workbenchrow-files label {
     color: var(--t-ui-editor-foreground);
     opacity: 0.55;
     font-size: var(--t-font-ui-size-small);
   }
-  #WorkbenchRow .workbenchrow-files:hover label { opacity: 1; }
+  .WorkbenchRow .workbenchrow-files:hover label { opacity: 1; }
 `);
 
 export interface WorkbenchListOptions {
@@ -149,7 +149,7 @@ export class WorkbenchList {
     // scrollable workbench list, so the bar matches the window header beside it and
     // the view manages the seam (and undershoot shadow) between header and list.
     this.root = new Adw.ToolbarView();
-    this.root.setName('WorkbenchList'); // selector identity + CSS (#WorkbenchList)
+    this.root.addCssClass('WorkbenchList');
     this.root.addTopBar(this.buildHeader());
 
     this.scrolled = new Gtk.ScrolledWindow();
@@ -308,7 +308,7 @@ export class WorkbenchList {
     revealer.setChild(content);
 
     const row = new Gtk.ListBoxRow();
-    row.setName('WorkbenchRow')
+    row.addCssClass('WorkbenchRow');
     row.setChild(revealer);
     return { entry, row, revealer, unsubs, removing: false };
   }
@@ -419,7 +419,7 @@ export class WorkbenchList {
     else this.options.onActivate?.(entry.agent);
   }
 
-  // --- Keyboard navigation (vim bare keys while #WorkbenchList is focused) --------
+  // --- Keyboard navigation (vim bare keys while .WorkbenchList is focused) --------
 
   private registerCommands(): void {
     zym.commands.add(this.root, {

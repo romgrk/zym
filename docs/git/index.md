@@ -189,9 +189,15 @@ Every repo mutation goes through a **named method on `GitRepo`** that
 marks the repo busy (the branch indicator spins), runs the git/gh command,
 then refreshes and reports `(ok, stderr)` via `GitOpDone`:
 
-- git: `fetch`, `pull`, `push`, `commit(messageFile)`, `stash`,
-  `stashPop/Apply/Drop(ref)`,
-  `switchBranch/createBranch/deleteBranch/mergeBranch/renameBranch(name)`
+- git: `fetch`, `pull`, `push(remote?)`, `commit(messageFile)`,
+  `revert(sha)`, `stash`, `stashPop/Apply/Drop(ref)`,
+  `switchBranch/createBranch/deleteBranch/mergeBranch/renameBranch(name)`.
+  `push` does a plain `git push` when the branch already tracks an upstream;
+  on the **first push of a new branch** (no upstream tracking ref) it resolves
+  the branch name (`git branch --show-current`, empty on a detached HEAD →
+  plain push) and sets the upstream with `-u <remote> <branch>` (`remote`
+  defaults to `origin`, wired from `git.remotes.origin`). `revert` runs
+  `git revert --no-edit <sha>`.
 - gh: `checkoutPullRequest(number)` — wraps github.ts's `gh pr checkout`.
 
 The UI calls these (e.g. `git.switchBranch(name, report)`) and never
@@ -417,6 +423,11 @@ ahead-behind / HEAD sha) over a live `file:`/`author:`/word **search**
   vs the commit's first parent), so it gets the fold/expand-context commands
   (`z o`/`z R`/`z m`) for free. `y y` (`git-log:copy-sha`) yanks the selected
   commit's short hash to the system clipboard.
+- **Revert** — `R` (`git-log:revert`) reverts the selected commit: an Adwaita
+  confirmation, then `GitRepo.revert` → `git revert --no-edit <sha>` (a new
+  "Revert …" commit), and the list reloads (top commit re-selected). A revert
+  that hits conflicts fails with git's stderr surfaced — resolving it is the
+  normal conflict flow.
 - **List ↔ diff focus** — the list and the diff are two nested "windows":
   `ctrl-w l` steps from the list into the diff (`git-log:focus-diff`),
   `ctrl-w h` steps back out (`git-log:focus-list`). Both commands are
@@ -483,8 +494,9 @@ read via `zym.config.get`:
 | `git.remotes.origin`   | string | `"origin"`   | Remote name for your fork (push).                        |
 
 Used by forge resolution (upstream → origin order) and as the natural
-defaults for push/pull targets. More knobs (default push remote,
-auto-fetch interval) can be added as we iterate.
+defaults for push/pull targets — `git:push` sets a new branch's upstream to
+`git.remotes.origin` (the fork). More knobs (default push remote, auto-fetch
+interval) can be added as we iterate.
 
 ## Shared concerns
 

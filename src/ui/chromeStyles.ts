@@ -38,7 +38,7 @@ export function applyNotificationStyles(): void {
   for (const [type, color] of Object.entries(colors)) {
     rules.push(`.notification-${type} .notification-icon { color: ${color}; }`);
     rules.push(`.NotificationToast.notification-${type} { border-left: 4px solid ${color}; }`);
-    rules.push(`#NotificationRow.notification-${type} { border-left: 3px solid ${color}; padding-left: 6px; }`);
+    rules.push(`.NotificationRow.notification-${type} { border-left: 3px solid ${color}; padding-left: 6px; }`);
   }
 
   styles.set(rules.join('\n'), { key: 'notification-colors' });

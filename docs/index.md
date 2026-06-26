@@ -19,8 +19,8 @@ Most important tasks:
   - [~] Improve diff viewer interface
   - git:discard-all (only per-file discard exists today).
   - git:undo-commit (reset --soft HEAD~1).
-  - git:revert a commit (free once the log picker exists).
-  - First push of a new branch → auto -u origin <branch> (set upstream).
+  - [x] git:revert a commit (from the git log viewer — `R`).
+  - [x] First push of a new branch → auto -u origin <branch> (set upstream).
   - conflict resolution
 - pickers: improve UI/UX, attach to panel when applicable
 

@@ -31,12 +31,12 @@ const SOURCE_ORDER = ['default-keymap', 'user-keymap'];
 const COLUMNS = ['Keys', 'Command', 'Selector', 'Source'];
 
 addStyles(`
-  #KeymapPanel .keymap-th {
+  .KeymapPanel .keymap-th {
     font-weight: bold;
     opacity: 0.5;
     padding-bottom: 0.3em;
   }
-  #KeymapPanel .keymap-muted { opacity: 0.55; }
+  .KeymapPanel .keymap-muted { opacity: 0.55; }
 `);
 
 function escapeMarkup(text: string): string {
@@ -72,7 +72,7 @@ export class KeymapPanel {
     this.grid.setMarginEnd(12);
 
     this.root = new Gtk.ScrolledWindow();
-    this.root.setName('KeymapPanel'); // selector identity for keymap + CSS
+    this.root.addCssClass('KeymapPanel');
     this.root.setChild(this.grid);
     this.root.setVexpand(true);
 

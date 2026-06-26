@@ -36,11 +36,11 @@ export interface ComboboxConfig {
 }
 
 addStyles(/* css */`
-  #ComboboxEntry.combobox-button { caret-color: transparent; }
-  #ComboboxEntry > image { opacity: 0.7; }
-  #ComboboxPopover > contents { padding: 0; }
-  #ComboboxList { background: transparent; }
-  #ComboboxItem { padding: 0.4em 0.7em; }
+  .ComboboxEntry.combobox-button { caret-color: transparent; }
+  .ComboboxEntry > image { opacity: 0.7; }
+  .ComboboxPopover > contents { padding: 0; }
+  .ComboboxList { background: transparent; }
+  .ComboboxItem { padding: 0.4em 0.7em; }
   .combobox-special { color: var(--accent-color); font-weight: bold; }
   .combobox-muted { opacity: 0.55; }
 `);
@@ -79,18 +79,18 @@ export class Combobox {
     // Single entry, always in the layout. In closed state it has `combobox-button`
     // so it looks like a button (no caret). Opening removes that class.
     this.entry = new Gtk.Entry();
-    this.entry.setName('ComboboxEntry');
+    this.entry.addCssClass('ComboboxEntry');
     this.entry.addCssClass('has-text-input');
     this.entry.addCssClass('combobox-button');
     this.entry.setIconFromIconName(Gtk.EntryIconPosition.SECONDARY, 'pan-down-symbolic');
     this.entry.setIconActivatable(Gtk.EntryIconPosition.SECONDARY, false);
 
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('Combobox');
+    this.root.addCssClass('Combobox');
     this.root.append(this.entry);
 
     this.listBox = new Gtk.ListBox();
-    this.listBox.setName('ComboboxList');
+    this.listBox.addCssClass('ComboboxList');
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
     this.listBox.setFocusable(false); // the entry keeps focus; we drive the highlight
     this.scrolled = new Gtk.ScrolledWindow();
@@ -100,7 +100,7 @@ export class Combobox {
     this.scrolled.setPolicy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC);
 
     this.popover = new Gtk.Popover();
-    this.popover.setName('ComboboxPopover');
+    this.popover.addCssClass('ComboboxPopover');
     this.popover.setAutohide(false); // keep focus on the entry while filtering
     this.popover.setHasArrow(false);
     this.popover.setPosition(Gtk.PositionType.BOTTOM);
@@ -271,7 +271,7 @@ export class Combobox {
 
   private buildItem(opt: ComboOption): InstanceType<typeof Gtk.ListBoxRow> {
     const label = new Gtk.Label({ xalign: 0 });
-    label.setName('ComboboxItem');
+    label.addCssClass('ComboboxItem');
     label.setText(opt.label);
     label.setEllipsize(Pango.EllipsizeMode.END); // keep rows within the trigger width
     this.styleLabel(label, opt.label);

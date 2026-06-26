@@ -50,7 +50,7 @@ export class NotificationToasts {
     // The stack sits in the bottom-right corner at its natural size, so it never
     // covers (or steals clicks from) the rest of the overlay.
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8 });
-    this.root.setName('NotificationToasts'); // CSS identity (#NotificationToasts)
+    this.root.addCssClass('NotificationToasts');
     this.root.setHalign(Gtk.Align.END);
     this.root.setValign(Gtk.Align.END);
     this.root.setMarginEnd(12);

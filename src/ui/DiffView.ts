@@ -228,8 +228,8 @@ export class DiffView {
     this.bands = this.editor.blockDecorations();
     this.root = this.editor.root;
     DiffView.byRoot.set(this.root, this); // discoverable via `forRoot` for command routing
-    // Scope the expand-context keymap to this surface: `#TextEditor.continuous-diff` is more
-    // specific than vim's `#TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
+    // Scope the expand-context keymap to this surface: `.TextEditor.continuous-diff` is more
+    // specific than vim's `.TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
     // still fall through to vim.
     this.editor.sourceView.addCssClass('continuous-diff');
 

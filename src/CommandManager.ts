@@ -61,8 +61,12 @@ export class CommandManager {
 
   get(element: Widget, command: string): CommandEffect | undefined {
     const effect = this.resolve(element, command);
-    if (effect === undefined)
-      console.warn(`Command '${command}' is not registered for ${element.getName()}`);
+    if (effect === undefined) {
+      // Identity is a CSS class now; fall back to the GTK type name for raw widgets.
+      const classes = element.getCssClasses();
+      const desc = classes.length ? `.${classes.join('.')}` : element.getName();
+      console.warn(`Command '${command}' is not registered for ${desc}`);
+    }
     return effect;
   }
 

@@ -173,7 +173,7 @@ function registerSearchKeymapsOnce(): void {
   if (searchKeymapsRegistered) return;
   searchKeymapsRegistered = true;
   zym.keymaps.add('editor-search', {
-    '#TextEditor.normal-mode': {
+    '.TextEditor.normal-mode': {
       '/': 'editor:search-forward',
       '?': 'editor:search-backward',
       n: 'editor:search-next',
@@ -197,7 +197,7 @@ function registerEditingKeymapsOnce(): void {
   if (editingKeymapsRegistered) return;
   editingKeymapsRegistered = true;
   zym.keymaps.add('editor-editing', {
-    '#TextEditor.normal-mode': {
+    '.TextEditor.normal-mode': {
       'y d': 'editor:duplicate-line-below',
       'y u': 'editor:duplicate-line-above',
     },
@@ -608,10 +608,10 @@ export class TextEditor implements DocumentHost {
     this.search = new SearchController(this.editorModel, this.textDecorations);
 
     this.root = this.buildEditorArea();
-    // The inner view is the `#TextEditor` selector subject (it holds focus + the
+    // The inner view is the `.TextEditor` selector subject (it holds focus + the
     // mode CSS classes — see EditorModel); the wrapping area gets its own name so
-    // the two don't both answer to `#TextEditor`.
-    this.root.setName('TextEditorArea');
+    // the two don't both answer to `.TextEditor`.
+    this.root.addCssClass('TextEditorArea');
 
     this.installFoldCommands();
     this.installEditingCommands();

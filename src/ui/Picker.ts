@@ -55,16 +55,16 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 // popover background so the editor doesn't show through.
 addStyles(/* css */`
   /* The picker card is monospace; the opt-in .prose-entry overrides to the UI font. */
-  #Picker {
+  .Picker {
     font: var(--t-font-monospace);
     padding: 0;
     border: 1px solid var(--border-color);
     border-radius: var(--popover-radius);
     background-color: var(--window-bg-color);
   }
-  #PickerEntry.prose-entry,
-  #PickerEntry.prose-entry > text { font-family: var(--t-font-ui-family); }
-  #PickerEntry {
+  .PickerEntry.prose-entry,
+  .PickerEntry.prose-entry > text { font-family: var(--t-font-ui-family); }
+  .PickerEntry {
     padding: 0.5em 0.5em;
     border-radius: var(--popover-radius);
     border-bottom-left-radius: 0;
@@ -73,62 +73,62 @@ addStyles(/* css */`
   /* Collapse the leading search icon (it has no .left class — it's just the
      first image child) so the entry text starts at the entry's 1em padding,
      matching the row text inset below. */
-  #PickerEntry > image:first-child {
+  .PickerEntry > image:first-child {
     -gtk-icon-size: 0;
     min-width: 0;
     min-height: 0;
     padding: 0;
     margin: 0;
   }
-  #PickerEntry > text {
+  .PickerEntry > text {
     margin: 0;
     padding: 0;
   }
   /* Leading prompt slot (icon/spinner) overlaid on the entry's left inset; the
      entry text is pushed right to clear it (reserved even when the slot is
      empty, so toggling the spinner never shifts the text). */
-  #PickerPrompt {
+  .PickerPrompt {
     margin-left: ${PROMPT_INSET}px;
   }
-  #PickerEntry.has-prompt {
+  .PickerEntry.has-prompt {
     padding-left: 0;
   }
-  #PickerEntry.has-prompt > text {
+  .PickerEntry.has-prompt > text {
     padding-left: ${PROMPT_INSET + PROMPT_SLOT + PROMPT_GAP}px;
   }
-  #PickerList {
+  .PickerList {
     border-radius: var(--popover-radius);
   }
   /* Drop Adwaita's built-in row padding so only the label's inset applies. */
-  #PickerList row {
+  .PickerList row {
     padding: 0;
   }
-  #PickerRow {
+  .PickerRow {
     padding: 0.5em 1em;
   }
   /* When a leading prompt slot is present (a promptIcon / fetch spinner), the
      entry text is inset to clear it. Inset the match rows by the same amount so a
      row's text lines up under the typed query rather than under the icon. */
-  #Picker.has-prompt #PickerRow {
+  .Picker.has-prompt .PickerRow {
     padding-left: ${PROMPT_INSET + PROMPT_SLOT + PROMPT_GAP}px;
   }
-  #PickerEmpty {
+  .PickerEmpty {
     padding: 0.5em 1em;
     opacity: 0.55;
   }
   /* An error from an async source (a failed fetch, or an explicit setError):
      shown in place of the matches, tinted with the theme's error color. */
-  #PickerError {
+  .PickerError {
     padding: 0.5em 1em;
     color: var(--t-ui-status-error);
   }
   /* The action row uses the current prompt; set it apart from the matches with a
      separator and the accent color. */
-  #PickerAction {
+  .PickerAction {
     padding: 0.5em 1em;
     color: var(--accent-color);
   }
-  #PickerList row.action-row {
+  .PickerList row.action-row {
     border-top: 1px solid var(--border-color);
   }
 `);
@@ -337,7 +337,7 @@ function normalizeItem(item: string | PickerItem): PickerItem {
 // List navigation goes through the app's command/keymap system rather than a
 // private key controller: each picker registers `core:*` commands on its panel
 // (see `openPicker`), and this once-registered keymap binds the keystrokes to
-// them, scoped to `#Picker`. The KeymapManager's capture-phase controller on the
+// them, scoped to `.Picker`. The KeymapManager's capture-phase controller on the
 // window sees these before the focused entry, so Down/Up/Tab/Escape drive the
 // list instead of moving the entry cursor or walking the focus chain. alt-j/alt-k
 // mirror Down/Up for home-row navigation while typing; Tab / shift-tab cycle like
@@ -347,7 +347,7 @@ function registerPickerKeymapOnce(): void {
   if (pickerKeymapRegistered) return;
   pickerKeymapRegistered = true;
   zym.keymaps.add('picker', {
-    '#Picker': {
+    '.Picker': {
       down: 'core:down',
       KP_Down: 'core:down',
       tab: 'core:down',
@@ -374,7 +374,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
     placeholderText: options.placeholder ?? 'Search…',
   });
   entry.setHexpand(true);
-  entry.setName('PickerEntry');
+  entry.addCssClass('PickerEntry');
   entry.addCssClass('has-text-input'); // release the `space` leader so it types
   if (options.proseEntry) entry.addCssClass('prose-entry');
   // Emacs/readline editing chords (ctrl-a/e, alt-f/b, ctrl-w/u/k, …) on the entry.
@@ -392,7 +392,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   if (options.fetch || options.promptIcon || options.loading) {
     entry.addCssClass('has-prompt');
     const slot = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-    slot.setName('PickerPrompt');
+    slot.addCssClass('PickerPrompt');
     slot.setHalign(Gtk.Align.START);
     slot.setValign(Gtk.Align.CENTER);
     slot.setSizeRequest(PROMPT_SLOT, PROMPT_SLOT);
@@ -444,7 +444,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   // Never scroll horizontally: rows ellipsize to the card's fixed width instead
   // of widening it / exposing a horizontal scrollbar for long labels.
   scrolled.setPolicy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC);
-  scrolled.setName('PickerList');
+  scrolled.addCssClass('PickerList');
 
   // Teardown handles disposed when the card closes (declared up-front so the card's
   // `onClose` can reach them; assigned further down as they're created).
@@ -470,7 +470,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   });
   const panel = card.panel;
   // Mirror the entry's `has-prompt` onto the card so the rows inset to align with
-  // the (icon-offset) entry text — see the `#Picker.has-prompt #PickerRow` rule.
+  // the (icon-offset) entry text — see the `.Picker.has-prompt .PickerRow` rule.
   // Skipped when `disableIconPadding` is set: the caller renders its own per-row
   // icons via `renderRow` and wants standard row padding, not the extra indent.
   if (entry.hasCssClass('has-prompt') && !options.disableIconPadding) panel.addCssClass('has-prompt');
@@ -590,7 +590,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   const showMessage = (text: string, name: string) => {
     const label = new Gtk.Label({ xalign: 0 });
     label.setText(text);
-    label.setName(name);
+    label.addCssClass(name);
     messageRow = new Gtk.ListBoxRow();
     messageRow.setChild(label);
     messageRow.setActivatable(false);
@@ -635,7 +635,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
     if (options.action && query.length > 0 && (!options.actionWhenEmpty || results.length === 0) && (options.action.visible === undefined || options.action.visible(query))) {
       const label = new Gtk.Label({ xalign: 0 });
       label.setText(options.action.label(query));
-      label.setName('PickerAction');
+      label.addCssClass('PickerAction');
       actionRow = new Gtk.ListBoxRow();
       actionRow.setChild(label);
       actionRow.addCssClass('action-row');
@@ -744,7 +744,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
   if (options.preview) listBox.on('row-selected', refreshPreview);
 
   // Drive list navigation through the command/keymap system: register the
-  // picker's `core:*` commands on the panel (named `#Picker`, so the keymap from
+  // picker's `core:*` commands on the panel (named `.Picker`, so the keymap from
   // `registerPickerKeymapOnce` resolves Down/Up/Tab/Escape/alt-j/alt-k to them).
   // The KeymapManager's capture-phase controller runs ahead of the focused entry,
   // so these keys move the selection rather than the entry's cursor.

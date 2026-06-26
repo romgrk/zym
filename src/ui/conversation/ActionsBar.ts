@@ -18,7 +18,7 @@ import type { AgentAction } from '../../agents/actions.ts';
 
 addStyles(/* css */`
   /* 0.5*spacing vertical, 2*spacing horizontal padding around the action buttons. */
-  #ActionsBar { 
+  .ActionsBar { 
     padding: calc(1 * var(--t-spacing)) calc(2 * var(--t-spacing));
   }
 `);
@@ -49,7 +49,7 @@ export class ActionsBar {
     // can't be padded without eating into the wrap geometry).
     this.wrap = new Adw.WrapBox({ childSpacing: 6, lineSpacing: 6 });
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-    this.root.setName('ActionsBar');
+    this.root.addCssClass('ActionsBar');
     this.root.append(this.wrap);
     this.root.setVisible(false);
   }

@@ -18,15 +18,15 @@ import { iconSpan } from '../icons.ts';
 type Widget = InstanceType<typeof Gtk.Widget>;
 
 addStyles(/* css */`
-  #Transcript {
+  .Transcript {
     font-size: 1.05em;
   }
 
-  #Transcript viewport {
+  .Transcript viewport {
     padding: calc(2 * var(--t-spacing)) 0;
   }
 
-  #Transcript .transcript-entry {
+  .Transcript .transcript-entry {
     padding: 0 calc(2 * var(--t-spacing));
     margin-bottom: calc(2 * var(--t-spacing));
   }
@@ -35,7 +35,7 @@ addStyles(/* css */`
      a toggle (a flat header button over a collapsible detail). The container owns
      the horizontal padding; the extra left indent nests tool activity under the
      turn. (The toggle/expand styling lives in ToolRow.ts.) */
-  #Transcript .transcript-entry-tool {
+  .Transcript .transcript-entry-tool {
     padding: 0 calc(2 * var(--t-spacing)) 0 calc(6 * var(--t-spacing));
    }
 
@@ -43,9 +43,9 @@ addStyles(/* css */`
      each file path are all flat buttons, so they share the default button padding +
      metrics and line up. The head reads as a muted title; paths read as links (the
      .link class supplies the accent color). */
-  #Transcript .transcript-file-icon { padding-right: 8px; }
-  #Transcript .transcript-file-head { opacity: 0.85; }
-  #Transcript .transcript-file-path {
+  .Transcript .transcript-file-icon { padding-right: 8px; }
+  .Transcript .transcript-file-head { opacity: 0.85; }
+  .Transcript .transcript-file-path {
     color: var(--window-fg-color);
     font-family: var(--t-font-monospace-family);
   }
@@ -91,7 +91,7 @@ export class Transcript {
       child = clamp;
     }
     this.root = new Gtk.ScrolledWindow({ vexpand: true });
-    this.root.setName('Transcript')
+    this.root.addCssClass('Transcript');
     this.root.setChild(child);
     this.setupAutoScroll();
   }

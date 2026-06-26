@@ -121,7 +121,7 @@ export class AgentTerminal extends Terminal implements Agent {
     // close), so a closed agent leaves nothing running. Backgrounding a tab only
     // detaches the widget (no destroy), so the processes keep running — desired.
     this.terminal.on('destroy', () => this.actionProcesses.stopAll());
-    this.root.setName('AgentTerminal'); // distinct identity from a plain Terminal
+    this.root.addCssClass('AgentTerminal');
     this.applyThemeColors();
 
     // Track the live agent globally. On exit we keep it registered (so it stays

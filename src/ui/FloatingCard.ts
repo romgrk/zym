@@ -77,7 +77,7 @@ export interface CardAnchor {
 export interface FloatingCardOptions {
   /** Overlay to mount the card in (supplied by the caller, e.g. AppWindow's). */
   host: Overlay;
-  /** CSS `#id` for the card; the caller scopes its keymap/styles to this name. */
+  /** CSS class for the card; the caller scopes its keymap/styles to this class. */
   name: string;
   /** Distance from the top of the overlay to the card (default 48, the Picker's).
    *  Ignored when `anchor` is set. */
@@ -140,7 +140,7 @@ export function openFloatingCard(options: FloatingCardOptions): FloatingCardHand
   // halign/valign/margin below — unless `anchor` is set, in which case the
   // get-child-position handler (installed near the end) overrides that.
   const panel = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
-  panel.setName(options.name);
+  panel.addCssClass(options.name);
   panel.addCssClass('floating-card'); // shared drop shadow
   panel.setHalign(Gtk.Align.CENTER);
   panel.setValign(Gtk.Align.START);

@@ -18,14 +18,14 @@ import { resolveSyntaxColor } from '../../theme/theme.ts';
 import { type Crumb } from '../../syntax/breadcrumb.ts';
 
 addStyles(`
-  #LocationBar {
+  .LocationBar {
     padding: 1px 8px;
     background-color: var(--view-bg-color);
     border-bottom: 1px solid var(--t-ui-border);
     font-family: var(--t-font-monospace-family);
   }
-  #LocationBar .path { color: var(--t-ui-text-muted); }
-  #LocationBar .crumbs { color: var(--t-ui-text-muted); }
+  .LocationBar .path { color: var(--t-ui-text-muted); }
+  .LocationBar .crumbs { color: var(--t-ui-text-muted); }
 `);
 
 // The breadcrumb separator: a Nerd Font chevron, dimmed via the .crumbs color.
@@ -55,7 +55,7 @@ export class LocationBar {
 
   constructor(cwd: () => string) {
     this.cwd = cwd;
-    this.box.setName('LocationBar');
+    this.box.addCssClass('LocationBar');
     this.pathLabel.addCssClass('path');
     this.pathLabel.setEllipsize(Pango.EllipsizeMode.MIDDLE);
     this.crumbsLabel.addCssClass('crumbs');

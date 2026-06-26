@@ -217,9 +217,9 @@ export class EditorModel {
     this.buffer = buffer;
     this.undoTarget = buffer; // default: the view buffer's native undo (buffer-only editors)
     // Selector identity for command/keymap rules: the view is the focused widget
-    // and carries the mode CSS classes, so keymaps target it as `#TextEditor`
-    // (e.g. `#TextEditor.normal-mode`) instead of the raw `GtkSourceView` type tag.
-    this.view.setName('TextEditor');
+    // and carries the mode CSS classes, so keymaps target it as `.TextEditor`
+    // (e.g. `.TextEditor.normal-mode`) instead of the raw `GtkSourceView` type tag.
+    this.view.addCssClass('TextEditor');
     this.selection = new Selection(this);
     // Indent with spaces by default; the host overrides via `setIndentation`
     // (config default + per-file detection). Without this a bare GtkSourceView
@@ -1626,7 +1626,7 @@ export class EditorModel {
   //
   // EditorModel doubles as the ported code's `editorElement`: the vim layer
   // drives mode through CSS classes on the view (the KeymapManager matches
-  // selectors like `#TextEditor.normal-mode` against them), gates text input
+  // selectors like `.TextEditor.normal-mode` against them), gates text input
   // per mode, and switches the cursor between block and beam. The CSS methods
   // keep the Atom `editorElement` names so vendored code calls them unchanged.
 

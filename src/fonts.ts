@@ -10,7 +10,7 @@
  * the app's monospace/UI fonts — the `core.monospaceFont` / `core.uiFont` config
  * value when set, else the live GNOME interface font. It publishes them three ways,
  * one per consumer kind:
- *   - **CSS** — reactive custom properties on `#AppWindow` (`--t-font-ui-family`,
+ *   - **CSS** — reactive custom properties on `.AppWindow` (`--t-font-ui-family`,
  *     `--t-font-monospace`, …; see `themeFontCssVariables`-style block in `css()`).
  *     A root `font-family: var(--t-font-ui-family)` baseline makes every widget
  *     follow the UI font by inheritance; monospace surfaces opt in with
@@ -96,19 +96,19 @@ const roundHalf = (pt: number): number => Math.round(pt * 2) / 2;
 /**
  * The application font store — the single place the app's monospace/UI fonts are
  * defined and kept in sync. It publishes them as reactive CSS variables on the root
- * `#AppWindow` (plus a UI-font baseline), and exposes live family names + a
+ * `.AppWindow` (plus a UI-font baseline), and exposes live family names + a
  * font-description for the consumers that can't read CSS:
  *
  *  - **CSS** — read `var(--t-font-monospace)` / `var(--t-font-monospace-family)` /
  *    `var(--t-font-ui-family)` (full list below) in a component's own stylesheet.
- *    Don't inline a family literal. The root `#AppWindow` baseline applies the UI
+ *    Don't inline a family literal. The root `.AppWindow` baseline applies the UI
  *    font to everything by inheritance, so only monospace surfaces need a rule.
  *  - **Pango markup** — read `fonts.monospaceFamily` / `fonts.uiFamily` at render
  *    time, so `face="…"`/`font_family="…"` reflect the current font.
  *  - **Font-description consumers** (e.g. VTE) — `fonts.monospaceDescription()` plus
  *    `fonts.onChange(...)` to re-apply when the font changes.
  *
- * Published CSS variables (on `#AppWindow`, re-set on every change) — the same full
+ * Published CSS variables (on `.AppWindow`, re-set on every change) — the same full
  * set for each role (`ui`, `monospace`):
  *  - `--t-font-<role>-family`, `--t-font-<role>-weight`, `--t-font-<role>-style`
  *  - three sizes — `--t-font-<role>-size-small`, `--t-font-<role>-size` (medium),
@@ -196,9 +196,9 @@ class FontStore {
   }
 
   /** The reactive font sheet: the `--t-font-*` variables + the UI-font baseline,
-   *  both on `#AppWindow` so every descendant inherits the UI font. */
+   *  both on `.AppWindow` so every descendant inherits the UI font. */
   private css(): string {
-    return `#AppWindow {\n${this.variables()}\n  font-family: var(--t-font-ui-family);\n}`;
+    return `.AppWindow {\n${this.variables()}\n  font-family: var(--t-font-ui-family);\n}`;
   }
 
   private variables(): string {

@@ -194,7 +194,7 @@ test('a count applies through the keymap (3l, 2dw)', () => {
 // the live Yank operator.
 function withDuplicateLineBindings(m: ReturnType<typeof focusedEditor>) {
   zym.keymaps.add('editor-editing-test', {
-    '#TextEditor.normal-mode': {
+    '.TextEditor.normal-mode': {
       'y d': 'editor:duplicate-line-below',
       'y u': 'editor:duplicate-line-above',
     },

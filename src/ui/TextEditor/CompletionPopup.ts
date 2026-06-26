@@ -42,7 +42,7 @@ const LABEL_ALIGN_FIX_PX = 3;
 const LABEL_INSET_PX = BORDER_PX + ROW_PADDING_PX + ICON_WIDTH_PX + ICON_MARGIN_PX - LABEL_ALIGN_FIX_PX;
 
 addStyles(`
-  #CompletionPopup {
+  .CompletionPopup {
     background-color: var(--popover-bg-color);
     border: 1px solid var(--border-color);
     border-radius: var(--popover-radius-small);
@@ -50,25 +50,25 @@ addStyles(`
   }
   /* Inner widgets paint nothing — the card's background shows through, and rows
      get no min-height so a single match is exactly one row tall. */
-  #CompletionPopup scrolledwindow,
-  #CompletionPopup list,
-  #CompletionPopup row {
+  .CompletionPopup scrolledwindow,
+  .CompletionPopup list,
+  .CompletionPopup row {
     background-color: transparent;
     min-height: 0;
   }
-  #CompletionPopup row { padding: 1px ${ROW_PADDING_PX}px; }
-  #CompletionPopup row:selected { 
+  .CompletionPopup row { padding: 1px ${ROW_PADDING_PX}px; }
+  .CompletionPopup row:selected { 
     border-radius: 0; 
   }
-  #CompletionPopup .completion-icon { 
+  .CompletionPopup .completion-icon { 
     margin-right: ${ICON_MARGIN_PX}px; 
     opacity: 0.4;
    }
-  #CompletionPopup .completion-label { font: var(--t-font-monospace); }
-  #CompletionPopup .completion-detail { opacity: 0.55; margin-left: 0.5em; }
-  #CompletionPopup .completion-description { opacity: 0.45; margin-left: 0.75em; font-size: 0.9em; }
-  #CompletionPopup separator.completion-divider { background-color: var(--border-color); }
-  #CompletionPopup .completion-doc { padding: 6px 8px; }
+  .CompletionPopup .completion-label { font: var(--t-font-monospace); }
+  .CompletionPopup .completion-detail { opacity: 0.55; margin-left: 0.5em; }
+  .CompletionPopup .completion-description { opacity: 0.45; margin-left: 0.75em; font-size: 0.9em; }
+  .CompletionPopup separator.completion-divider { background-color: var(--border-color); }
+  .CompletionPopup .completion-doc { padding: 6px 8px; }
 `);
 
 export class CompletionPopup {
@@ -126,7 +126,7 @@ export class CompletionPopup {
     this.docScroller.setVisible(false);
 
     this.panel = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-    this.panel.setName('CompletionPopup');
+    this.panel.addCssClass('CompletionPopup');
     this.panel.setHalign(Gtk.Align.START);
     this.panel.setValign(Gtk.Align.START);
     this.panel.overflow = Gtk.Overflow.HIDDEN;
@@ -135,7 +135,7 @@ export class CompletionPopup {
     this.panel.append(this.divider);
     this.panel.append(this.docScroller);
     // A cursor-anchored popover below the word, positioned by EditorPopover. `bare` strips
-    // the popover's chrome (the #CompletionPopup panel is the visual card); `persistent`
+    // the popover's chrome (the .CompletionPopup panel is the visual card); `persistent`
     // re-opens it if GTK pops it down on a cycle's preview edit / list selection (unlike
     // hover/signature, the completion list must survive its own buffer edits).
     this.popover = new EditorPopover(model, view, this.panel, {

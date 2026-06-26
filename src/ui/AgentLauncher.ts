@@ -97,7 +97,7 @@ export interface AgentLauncherOptions {
 // The card reuses the Picker's opaque-card look (libadwaita's `.card` fill is
 // semi-transparent and would show the editor through it).
 addStyles(/* css */`
-  #AgentLauncher {
+  .AgentLauncher {
     font: var(--t-font-monospace);
     border: 1px solid var(--border-color);
     border-radius: var(--popover-radius);
@@ -109,16 +109,16 @@ addStyles(/* css */`
     transition: outline-color 200ms ease-in-out, outline-width 200ms ease-in-out, outline-offset 200ms ease-in-out;
   }
   /* Ring the whole card while the prompt editor has focus. */
-  #AgentLauncher.prompt-focused {
+  .AgentLauncher.prompt-focused {
     outline: 2px solid alpha(var(--accent-color), 0.6);
     outline-offset: -1px;
   }
   /* The prompt uses the large editor font size. */
-  #AgentLauncherPrompt .zym-editor,
-  #AgentLauncherPrompt .zym-placeholder {
+  .AgentLauncherPrompt .zym-editor,
+  .AgentLauncherPrompt .zym-placeholder {
     font: var(--t-font-monospace-large);
   }
-  #AgentLauncherOptions {
+  .AgentLauncherOptions {
     /* No top padding — the prompt's own bottom padding already sets the gap. */
     padding: 0 calc(4 * var(--t-spacing)) calc(4 * var(--t-spacing));
     /* The card is monospace (for the prompt); the option controls read better in the
@@ -128,19 +128,19 @@ addStyles(/* css */`
     border-bottom-left-radius: var(--popover-radius);
     border-bottom-right-radius: var(--popover-radius);
   }
-  #AgentLauncherField > .field-caption {
+  .AgentLauncherField > .field-caption {
     font-size: var(--t-font-ui-size-small);
     color: var(--t-ui-text-muted);
     padding-left: 6px;
   }
   /* Title row above the prompt for the worktree-scoped flows; inset to line up with the
      prompt text and the options row. The worktree combobox sits inline after the label. */
-  #AgentLauncherTitle {
+  .AgentLauncherTitle {
     padding: calc(4 * var(--t-spacing)) calc(4 * var(--t-spacing)) 0;
     font: var(--t-font-ui);
     background-color: var(--view-bg-color);
   }
-  #AgentLauncherTitle > .launcher-title {
+  .AgentLauncherTitle > .launcher-title {
     font-weight: bold;
   }
 `);
@@ -163,20 +163,20 @@ function registerLauncherKeymapOnce(): void {
   // ctrl-tab shortcut (managed scope, so it fires from any focus) cycles a background panel
   // group's tab.
   zym.keymaps.add('agent-launcher', {
-    '#AgentLauncher': {
+    '.AgentLauncher': {
       'ctrl-enter': 'launcher:submit',
       'ctrl-shift-enter': 'launcher:submit-background',
       'ctrl-tab': 'launcher:focus-next',
       'ctrl-shift-tab': 'launcher:focus-previous',
     },
-    '#AgentLauncherPrompt #TextEditor': {
+    '.AgentLauncherPrompt .TextEditor': {
       enter: 'launcher:submit',
       'shift-enter': 'launcher:submit-background',
       'alt-enter': 'launcher:newline',
     },
     // From NORMAL mode, q or escape dismiss the launcher (in insert mode escape is
     // vim's insert→normal, so it doesn't reach this). Mirrors DiffCommentBox.
-    '#AgentLauncherPrompt #TextEditor.normal-mode': {
+    '.AgentLauncherPrompt .TextEditor.normal-mode': {
       q: 'core:cancel',
       escape: 'core:cancel',
     },
@@ -281,7 +281,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // row); new-worktree is just a label.
   if (worktreeInTitle || newWorktree) {
     const title = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-    title.setName('AgentLauncherTitle');
+    title.addCssClass('AgentLauncherTitle');
     const label = new Gtk.Label({ xalign: 0, label: newWorktree ? 'Launch agent in new worktree:' : 'Launch agent in worktree' });
     label.addCssClass('launcher-title');
     title.append(label);
@@ -297,7 +297,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // enter/alt-enter keymap scopes to it. Seeded with any restored draft.
   const input = createInput({ placeholder: 'Prompt for the agent…', initialText: draft, grow: true, maxLines: 20, padding: CARD_PADDING });
   const promptContainer = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-  promptContainer.setName('AgentLauncherPrompt');
+  promptContainer.addCssClass('AgentLauncherPrompt');
   promptContainer.append(input.root);
   panel.append(promptContainer);
 
@@ -311,7 +311,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // than overflowing. Each field carries a caption above its control. The worktree field
   // only appears here in the default flow (the worktree flows surface it in the title).
   const optionsRow = new Adw.WrapBox({ childSpacing: 10, lineSpacing: 8 });
-  optionsRow.setName('AgentLauncherOptions');
+  optionsRow.addCssClass('AgentLauncherOptions');
   optionsRow.append(field('agent', kindDropdown.root));
   optionsRow.append(field('model', modelDropdown.root));
   optionsRow.append(field('permission', permissionDropdown.root));
@@ -363,7 +363,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // Escape closes the card — handled here in the bubble phase so a combobox's own
   // capture-phase Escape (closing its open popover) wins first; only an unhandled Escape
   // (the prompt's normal-mode binding aside, or a closed combobox) bubbles up to dismiss
-  // the card. This is why it isn't a plain `#AgentLauncher` keymap binding (capture phase).
+  // the card. This is why it isn't a plain `.AgentLauncher` keymap binding (capture phase).
   const keys = new Gtk.EventControllerKey();
   keys.on('key-pressed', (keyval: number) => {
     if (keyval !== Gdk.KEY_Escape) return false;
@@ -388,7 +388,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
 // (Gtk.DropDown has no built-in label).
 function field(caption: string, control: InstanceType<typeof Gtk.Widget>): InstanceType<typeof Gtk.Box> {
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 3 });
-  box.setName('AgentLauncherField');
+  box.addCssClass('AgentLauncherField');
   const label = new Gtk.Label({ xalign: 0, label: caption });
   label.addCssClass('field-caption');
   box.append(label);

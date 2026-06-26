@@ -345,6 +345,13 @@ export function commit(root: string, messageFile: string, onDone: GitDone, amend
   git(root, args, onDone);
 }
 
+/** Revert a commit: create a new commit that undoes `sha` (`git revert --no-edit`,
+ *  so it uses git's default "Revert …" message rather than opening an editor). Like a
+ *  merge, it may stop with conflicts (non-zero exit) for the user to resolve. */
+export function revertCommit(root: string, sha: string, onDone: GitDone): void {
+  git(root, ['revert', '--no-edit', sha], onDone);
+}
+
 /** Full message of HEAD (`git log -1 --format=%B`); empty string on an unborn
  *  branch or outside a repo. Used to prefill an amend's message. */
 export function lastCommitMessage(root: string, onDone: (message: string) => void): void {

@@ -22,20 +22,20 @@ type Widget = InstanceType<typeof Gtk.Widget>;
 addStyles(/* css */`
   /* The cat is a calm, de-emphasized mascot — muted (theme chrome) and a touch
      translucent so it never competes with the text. */
-  #PanelEmptyCat { opacity: 0.6; }
-  #PanelEmptyCheatsheet,
-  #PanelEmptyFooter {
+  .PanelEmptyCat { opacity: 0.6; }
+  .PanelEmptyCheatsheet,
+  .PanelEmptyFooter {
     font-family: var(--t-font-monospace-family, monospace);
   }
-  #PanelEmptyCheatsheet { margin-top: 6px; font-size: 1.1em; }
+  .PanelEmptyCheatsheet { margin-top: 6px; font-size: 1.1em; }
   /* The charitable callout is a quiet footnote: title a line above the link. */
-  #PanelEmptyFooter { margin-top: 26px; font-size: 1.05em; }
-  #PanelEmptyFooter .cheat-footer-hint { margin-top: 5px; }
+  .PanelEmptyFooter { margin-top: 26px; font-size: 1.05em; }
+  .PanelEmptyFooter .cheat-footer-hint { margin-top: 5px; }
 `);
 
 // The sleeping cat "logo": a bundled symbolic SVG from the `ImageIcons` catalog,
 // recolored to the text color like any symbolic icon (and muted via
-// #PanelEmptyCat's opacity).
+// .PanelEmptyCat's opacity).
 const CAT_ICON_SIZE = 52;
 
 // A handful of high-value commands. `keys` is the binding in its canonical form —
@@ -72,7 +72,7 @@ export function welcomePanel(): Widget {
   box.setValign(Gtk.Align.CENTER);
 
   const cat = ImageIcons.CAT_SLEEPING(CAT_ICON_SIZE);
-  cat.setName('PanelEmptyCat'); // CSS identity (#PanelEmptyCat) — recolored like a symbolic icon
+  cat.addCssClass('PanelEmptyCat');
   cat.setMarginBottom(20);
   box.append(cat);
 
@@ -80,7 +80,7 @@ export function welcomePanel(): Widget {
   // right-aligned in column 0, the action left-aligned in column 1, so a clean
   // gutter runs down the middle.
   const grid = new Gtk.Grid();
-  grid.setName('PanelEmptyCheatsheet'); // CSS identity (#PanelEmptyCheatsheet)
+  grid.addCssClass('PanelEmptyCheatsheet');
   grid.setRowSpacing(7);
   grid.setColumnSpacing(16);
   grid.setHalign(Gtk.Align.CENTER);
@@ -106,7 +106,7 @@ export function welcomePanel(): Widget {
 // a clickable link to Kuwasha's sponsorship page (GtkLabel opens the URI itself).
 function buildHelpChildren(): InstanceType<typeof Gtk.Box> {
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
-  box.setName('PanelEmptyFooter'); // CSS identity (#PanelEmptyFooter)
+  box.addCssClass('PanelEmptyFooter');
   box.setHalign(Gtk.Align.CENTER);
 
   const title = new Gtk.Label({ label: HELP_CHILDREN_TITLE });

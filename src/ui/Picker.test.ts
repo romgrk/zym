@@ -18,7 +18,8 @@ function item(text: string, extra: Partial<PickerItem> = {}): PickerItem {
 }
 
 // Walk the overlay's widget tree for the picker's list box, then read each row's
-// name (PickerRow / PickerEmpty / PickerError / PickerAction) and its label text.
+// identity CSS class (PickerRow / PickerEmpty / PickerError / PickerAction) and
+// its label text.
 function findListBox(root: any): any {
   let found: any = null;
   const walk = (w: any) => {
@@ -44,7 +45,10 @@ function rows(host: any): Array<{ name: string; text: string }> {
   while (row) {
     const child = row.getChild();
     const label = child instanceof Gtk.Label ? child : child?.getFirstChild?.();
-    out.push({ name: child?.getName?.() ?? '', text: label?.getText?.() ?? '' });
+    // Identity is now a CSS class (`.PickerRow`, `.PickerEmpty`, …); pick the
+    // `Picker*` class off the child.
+    const name = (child?.getCssClasses?.() ?? []).find((c: string) => c.startsWith('Picker')) ?? '';
+    out.push({ name, text: label?.getText?.() ?? '' });
     row = row.getNextSibling();
   }
   return out;

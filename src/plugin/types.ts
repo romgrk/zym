@@ -66,7 +66,7 @@ export interface PluginContext {
   /** Contribute key bindings (same `{ selector: { keystroke: command } }` shape
    *  as the built-in keymap), layered at `priority` (default 0). */
   registerKeymap(keymap: KeymapBySelector, priority?: number): Disposable;
-  /** Register commands on a target (a component `#id` selector or a widget). */
+  /** Register commands on a target (a component `.class` selector or a widget). */
   registerCommands(target: string | Widget, commands: CommandMap): Disposable;
   /** Contribute config-schema entries (full dotted key paths). */
   registerConfig(schema: Record<string, ConfigSchema>): Disposable;

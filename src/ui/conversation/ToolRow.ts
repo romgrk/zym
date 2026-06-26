@@ -30,20 +30,20 @@ type Widget = InstanceType<typeof Gtk.Widget>;
 addStyles(`
   /* The leading tool icon. A size group ties its height to the header button's, so
      the label's own vertical centering keeps the glyph centered on the header row. */
-  #ToolRow .tool-row-icon { padding-right: 8px; }
+  .ToolRow .tool-row-icon { padding-right: 8px; }
   /* The BUTTON + DETAILS expander: the only part that grows + gains the bubble bg. */
-  #ToolRow .tool-row-toggle {
+  .ToolRow .tool-row-toggle {
     border-radius: 8px;
     background: transparent;
     transition: background 150ms ease;
   }
-  #ToolRow .tool-row-toggle.is-expanded { background: var(--t-ui-surface-popover); }
+  .ToolRow .tool-row-toggle.is-expanded { background: var(--t-ui-surface-popover); }
   /* The header button: a standard Adwaita flat button (its own hover tint), just
      left-aligned with no min size and rounded to match the toggle. */
-  #ToolRow .tool-row-button {
+  .ToolRow .tool-row-button {
     padding: 6px 8px; min-height: 0; border-radius: 8px;
   }
-  #ToolRow .tool-row-detail { padding: 0 8px 6px 8px; }
+  .ToolRow .tool-row-detail { padding: 0 8px 6px 8px; }
 `);
 
 /** A tool row's status: warning / error tint the icon + header (via the Adwaita
@@ -86,7 +86,7 @@ export class ToolRow {
 
   constructor(opts: ToolRowOptions) {
     this.root = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-    this.root.setName('ToolRow');
+    this.root.addCssClass('ToolRow');
     // The transcript wraps this in a .transcript-entry-tool box (Transcript.appendToolEntry);
     // the row itself carries no entry class.
 
