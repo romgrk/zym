@@ -31,6 +31,14 @@ should only be stated once; further mentions should point to other documents.
 - Bundled SVGs live in `assets/icons/`, named `*-symbolic.svg` so GTK recolors them to the theme foreground (the suffix is the recolor trigger — `FORCE_SYMBOLIC` won't substitute). `scripts/generate-icons.ts` (run on `postinstall`, or `pnpm run generate-icons`) emits a name→path map to `src/icons.generated.ts` (key drops `-symbolic`), which `src/icons.ts` exposes as `ImageIcons` — `ImageIcons.CAT_SLEEPING(52)` builds a sized, theme-recolored `Gtk.Image`. Add an icon by dropping an `*-symbolic.svg` in the folder and re-running the script.
 - Do not under any circumstance use a Gtk.EventController of any kind without prompting.
 
+### Markdown rendering
+
+Two renderers: `MarkdownView` stitches `Gtk.Label`s per block (simple, but selection
+can't cross block boundaries), while `MarkdownRenderer` is a single `Gtk.Widget`
+subclass that draws the whole document via the GSK render-node scene graph, so
+selection / copy / links span every block uniformly. See
+[ui/markdown-renderer.md](ui/markdown-renderer.md).
+
 ## Commands & keymaps
 
 Named commands dispatched along the focus chain (`CommandManager`) +
