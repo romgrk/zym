@@ -476,7 +476,6 @@ export function openPicker(options: PickerOptions): PickerHandle {
     name: 'Picker',
     anchor: options.anchor,
     dim: true,
-    fade: true,
     onClose: () => {
       subs.dispose(); // sever the entry/list-box signal handlers (rule 2)
       commandsSub?.dispose();

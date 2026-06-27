@@ -22,9 +22,6 @@ const CARD_MARGIN_TOP = 48 * 2;
 /** Min gap kept between an anchored card and the host's edges when clamping. */
 const ANCHOR_MARGIN = 8;
 
-/** Fade-in/out duration (ms) when `fade` is enabled; mirrored in the CSS transition. */
-const FADE_MS = 110;
-
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(v, hi));
 
 /** A widget's bounds in `relativeTo`'s coordinate space, or null if not yet computable
@@ -52,17 +49,6 @@ addStyles(/* css */`
   }
   .floating-card-scrim {
     background-color: alpha(black, 0.35);
-  }
-  /* Open/close fade: GTK tweens the CSS opacity change whenever .fade-out is toggled
-     on the card + scrim, honouring the system reduce-motion / enable-animations
-     setting (it snaps straight to the end value when animations are off). */
-  .floating-card,
-  .floating-card-scrim {
-    transition: opacity ${FADE_MS}ms ease-out;
-  }
-  .floating-card.fade-out,
-  .floating-card-scrim.fade-out {
-    opacity: 0;
   }
 `);
 
@@ -97,8 +83,6 @@ export interface FloatingCardOptions {
   anchor?: CardAnchor;
   /** Dim the rest of the window with a scrim behind the card; clicking it dismisses. */
   dim?: boolean;
-  /** Fade the card (and scrim) in on open and out on close. */
-  fade?: boolean;
   /** Extra teardown run when the card closes (dispose subscriptions, timers). */
   onClose?: () => void;
 }
@@ -158,45 +142,23 @@ export function openFloatingCard(options: FloatingCardOptions): FloatingCardHand
   panel.setMarginTop(options.top ?? CARD_MARGIN_TOP);
   panel.overflow = Gtk.Overflow.HIDDEN;
 
-  // Fade the card + scrim together by toggling `.fade-out`; GTK runs the CSS opacity
-  // transition (see the `.floating-card` rule), honouring the system reduce-motion /
-  // enable-animations setting and snapping straight to the end when animations are off.
-  const setFadedOut = (faded: boolean) => {
-    for (const w of [panel, scrim]) {
-      if (!w) continue;
-      if (faded) w.addCssClass('fade-out');
-      else w.removeCssClass('fade-out');
-    }
-  };
-
   // The overlay positioning callback (set below when `anchor` is used); disconnected
   // on removal so a per-open handler doesn't accumulate on the long-lived host.
   let positionHandler: ((child: any, alloc: any) => boolean) | null = null;
-
-  // The pending fade-in tick callback (see below), tracked so close() can drop it if
-  // the card is dismissed mid-fade — node-gtk roots the closure until removed (rule 2).
-  let fadeInTick: number | null = null;
 
   let closed = false;
   const close = (restoreFocus = true) => {
     if (closed) return;
     closed = true;
     options.onClose?.();
-    const remove = () => {
-      if (fadeInTick !== null) { panel.removeTickCallback(fadeInTick); fadeInTick = null; }
-      if (positionHandler) host.off('get-child-position', positionHandler);
-      // Sever the scrim/focus controllers while their widgets still exist and are
-      // in the tree — before removeOverlay drops them — so node-gtk releases the
-      // rooted closures instead of pinning the whole card subtree.
-      disposables.dispose();
-      host.removeOverlay(panel);
-      if (scrim) host.removeOverlay(scrim);
-      if (restoreFocus) previousFocus?.grabFocus();
-    };
-    // Fade out via the CSS transition, then remove once it has run (the transition has
-    // no completion signal, so wait its known duration).
-    if (options.fade) { setFadedOut(true); setTimeout(remove, FADE_MS); }
-    else remove();
+    if (positionHandler) host.off('get-child-position', positionHandler);
+    // Sever the scrim/focus controllers while their widgets still exist and are
+    // in the tree — before removeOverlay drops them — so node-gtk releases the
+    // rooted closures instead of pinning the whole card subtree.
+    disposables.dispose();
+    host.removeOverlay(panel);
+    if (scrim) host.removeOverlay(scrim);
+    if (restoreFocus) previousFocus?.grabFocus();
   };
 
   // Dismiss when focus moves to another widget in the app (click elsewhere, tab
@@ -265,22 +227,7 @@ export function openFloatingCard(options: FloatingCardOptions): FloatingCardHand
     host.on('get-child-position', positionHandler);
   }
 
-  // Mount fully transparent (`.fade-out`), then drop the class once the card has
-  // painted one frame at opacity 0 so GTK has a prior value to tween from (0 → 1) —
-  // clearing it in the same frame would snap to opaque with no transition. The tick
-  // callback self-removes; close() drops it too if we're dismissed mid-fade.
-  if (options.fade) setFadedOut(true);
   host.addOverlay(panel);
-  if (options.fade) {
-    let frames = 0;
-    fadeInTick = panel.addTickCallback(() => {
-      if (closed) { fadeInTick = null; return false; }
-      if (++frames < 2) return true; // let one frame paint at opacity 0 first
-      setFadedOut(false);
-      fadeInTick = null;
-      return false;
-    });
-  }
 
   return {
     panel,
