@@ -17,8 +17,10 @@
  * lands), so construction never blocks the UI thread.
  *
  * Refreshes are event-driven, fed by two chokidar watches:
- *   - the git dir's `HEAD` + `index` — branch switches, commits, staging, resets,
- *     and merges, the instant they land;
+ *   - git metadata — the worktree's `HEAD` + `index` plus the common dir's `refs/`
+ *     and `packed-refs` — branch switches, commits, staging, resets, merges, and the
+ *     remote-tracking ref moves a `git fetch`/`push` makes (ahead/behind), the
+ *     instant they land;
  *   - the working-tree directories that hold tracked files — an *external* tool or
  *     agent editing a tracked file (or dropping a new file beside one), the case
  *     `HEAD`/`index` can't see and the one this layer used to miss.
@@ -276,8 +278,12 @@ class CliGitRepo implements GitRepo {
   private readonly cwd: string;
   // Worktree root, or null when `cwd` is not inside a repository.
   private readonly root: string | null;
-  // Absolute `.git` directory (for the HEAD monitor); resolved at construction.
+  // Absolute `.git` directory holding this worktree's `HEAD`/`index`; resolved at
+  // construction. For a linked worktree this is `<common>/worktrees/<name>`.
   private gitDir: string | null = null;
+  // Absolute *common* git dir, shared by every linked worktree — where `refs/` and
+  // `packed-refs` live. Equals `gitDir` for the main checkout. Resolved alongside it.
+  private commonDir: string | null = null;
 
   private state: State = emptyState();
   private lastSignature = '';
@@ -440,11 +446,17 @@ class CliGitRepo implements GitRepo {
     void this.pollOnce(); // initial status/numstat/ls-files → populates state + notifies
   }
 
-  /** Resolve the absolute git dir (for the file watch) off the UI thread. */
+  /** Resolve the git dir (worktree `HEAD`/`index`) and the common git dir (shared
+   *  `refs/`/`packed-refs`) for the ref watch, off the UI thread. */
   private async resolveGitDir(): Promise<void> {
-    const result = await runGit(this.root!, ['rev-parse', '--absolute-git-dir']);
+    const result = await runGit(this.root!, ['rev-parse', '--absolute-git-dir', '--git-common-dir']);
     if (this.disposed || result.isErr()) return;
-    this.gitDir = result.unwrap().trim() || null;
+    // rev-parse prints one line per item, in order: absolute git dir, then common
+    // dir (which may be relative to the root — resolve it). They differ only for a
+    // linked worktree; the common dir falls back to the git dir if git omits it.
+    const [gitDir, common] = result.unwrap().trim().split('\n');
+    this.gitDir = gitDir?.trim() || null;
+    this.commonDir = common?.trim() ? Path.resolve(this.root!, common.trim()) : this.gitDir;
     if (this.watching) this.startWatch(); // subscribed before the git dir landed
   }
 
@@ -463,22 +475,33 @@ class CliGitRepo implements GitRepo {
     this.pollId.unref?.();
   }
 
-  // Watch the git dir's `HEAD` + `index` (via chokidar, which handles the atomic
-  // renames git does) so branch switches, commits, staging, resets, and merges
-  // refresh the instant they land, rather than waiting up to 60s for the heartbeat.
-  // The git dir is resolved asynchronously by the warm-up, so this is safe to call
-  // before then (no-op) — the warm-up calls it once the dir lands.
+  // Watch the git metadata that moves repo state (via chokidar, which handles git's
+  // atomic renames) so branch switches, commits, staging, resets, merges, and ref
+  // updates refresh the instant they land, rather than waiting up to 60s for the
+  // heartbeat. The dirs are resolved asynchronously by the warm-up, so this is safe
+  // to call before then (no-op) — the warm-up calls it once they land.
   private startWatch(): void {
     if (this.disposed || this.watcher || !this.gitDir) return;
+    const common = this.commonDir ?? this.gitDir;
     // `HEAD`: branch/commit moves. `index`: staging, reset, merge/conflict state,
-    // and external `git add`. Watching the files (not the dir) skips `index.lock`
-    // churn; chokidar follows git's atomic replace of each.
+    // and external `git add`. `refs/` (recursive) + `packed-refs`: every ref move —
+    // a commit advancing `refs/heads/<branch>`, and crucially the remote-tracking
+    // refs that `git fetch`/`git push` update (ahead/behind) without touching
+    // `HEAD`/`index`, the case this watch used to miss. Refs live in the *common*
+    // dir (shared across linked worktrees); `HEAD`/`index` are per-worktree.
+    // chokidar follows git's atomic replace of each file, and tolerates a not-yet-
+    // existing `packed-refs`.
     this.watcher = chokidarWatch(
-      [Path.join(this.gitDir, 'HEAD'), Path.join(this.gitDir, 'index')],
+      [
+        Path.join(this.gitDir, 'HEAD'),
+        Path.join(this.gitDir, 'index'),
+        Path.join(common, 'refs'),
+        Path.join(common, 'packed-refs'),
+      ],
       { ignoreInitial: true },
     );
     this.watcher.on('all', () => {
-      this.lastSignature = ''; // HEAD/index moved — branch/ahead-behind/staging may differ
+      this.lastSignature = ''; // metadata moved — branch/ahead-behind/staging may differ
       this.requestPoll();
     });
     this.watcher.on('error', () => {}); // transient FS error — recovered by the next refresh()

@@ -156,10 +156,16 @@ synchronous getters**:
   fills it in (subscribers register on the same tick as the acquire,
   before status returns).
 - **Change detection**: two **chokidar** watches plus a slow backstop poll.
-  One watches `<git-dir>/HEAD` + `index` (`startWatch`, attached once the async
-  warm-up resolves the git dir; chokidar handles git's atomic renames) for instant
-  branch-switch / commit / staging / reset / merge reaction — on such an event the
-  signature is reset and `pollOnce()` runs. The other (`syncContentWatch`) watches
+  One watches the git metadata (`startWatch`, attached once the async warm-up
+  resolves the dirs; chokidar handles git's atomic renames): the worktree's
+  `<git-dir>/HEAD` + `index`, **plus the common dir's `refs/` (recursive) +
+  `packed-refs`** for instant branch-switch / commit / staging / reset / merge
+  reaction — and crucially the remote-tracking ref moves a `git fetch`/`push`
+  makes (ahead/behind), which touch neither `HEAD` nor `index` and so were missed
+  before (refs live in the *common* dir, shared across linked worktrees; `HEAD`/
+  `index` are per-worktree, so both dirs are resolved via `rev-parse
+  --absolute-git-dir --git-common-dir`). On such an event the signature is reset
+  and `pollOnce()` runs. The other (`syncContentWatch`) watches
   the **working-tree directories that hold tracked files** — non-recursively
   (`depth: 0`), with `.git` ignored — so an external tool or agent editing a tracked
   file (or dropping a new file beside one) refreshes live, the case `HEAD`/`index`

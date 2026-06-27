@@ -253,6 +253,62 @@ test('a tracked-file edit refreshes via the content watch (no manual refresh)', 
   }
 });
 
+test('an external git fetch refreshes ahead/behind via the ref watch (no manual refresh)', async () => {
+  // `git fetch` moves only the remote-tracking ref (`refs/remotes/origin/main`) +
+  // `FETCH_HEAD` — never `HEAD`/`index`/the working tree. Without the `refs/` watch
+  // the new behind-count would stay stale until the 60s heartbeat. Drive it purely
+  // from the watch — no `refresh()` — with a safety timeout so a miss fails loudly.
+  const bare = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-git-fetch-bare-'));
+  const up = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-git-fetch-up-'));
+  const d = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-git-fetch-'));
+  try {
+    execFileSync('git', ['init', '--bare', '-b', 'main'], { cwd: bare });
+    const gu = (...a: string[]) => execFileSync('git', a, { cwd: up, encoding: 'utf8' });
+    gu('init', '-b', 'main');
+    gu('config', 'user.email', 't@e.x');
+    gu('config', 'user.name', 'T');
+    gu('config', 'commit.gpgsign', 'false');
+    Fs.writeFileSync(Path.join(up, 'a.txt'), '1\n');
+    gu('add', '-A');
+    gu('commit', '-m', 'init');
+    gu('remote', 'add', 'origin', bare);
+    gu('push', '-u', 'origin', 'main');
+
+    execFileSync('git', ['clone', bare, d]);
+    // Upstream advances by a commit and publishes it → the clone is now behind by 1,
+    // but won't know until it fetches.
+    gu('commit', '--allow-empty', '-m', 'remote-commit');
+    gu('push', 'origin', 'main');
+
+    const r = openGitRepo(d);
+    await settled(r);
+    assert.deepEqual(r.getAheadBehind(), { ahead: 0, behind: 0 }, 'starts in sync');
+
+    const fired = new Promise<void>((resolve) => {
+      const un = r.onChange(() => {
+        if (r.getAheadBehind()?.behind === 1) {
+          un();
+          resolve();
+        }
+      });
+      setTimeout(() => {
+        un();
+        resolve();
+      }, 8000).unref?.();
+    });
+
+    // Let the ref watch establish, then fetch externally (refs-only move).
+    await new Promise<void>((res) => setTimeout(res, 300).unref?.());
+    execFileSync('git', ['fetch', 'origin'], { cwd: d });
+
+    await fired;
+    assert.deepEqual(r.getAheadBehind(), { ahead: 0, behind: 1 }, 'ref watch picked up the external fetch');
+    r.dispose();
+  } finally {
+    for (const p of [bare, up, d]) Fs.rmSync(p, { recursive: true, force: true });
+  }
+});
+
 test('outside a repo: null/empty, never throws', () => {
   const plain = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-nogit-'));
   try {
