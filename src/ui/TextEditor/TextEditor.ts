@@ -154,6 +154,12 @@ const CARD_CONTENT_INSET_PX = 9;
 // Settle the autopair `()` insert + cursor move before requesting signature help.
 const SIGNATURE_DEBOUNCE_MS = 40;
 
+// Lazy multibuffer syntax (see docs/text-editor/multibuffer.md): coalesce scroll bursts before
+// re-checking which excerpt sources to parse, and parse a margin beyond the viewport so an
+// excerpt is highlighted by the time it scrolls in (mirrors the painter's VIEWPORT_MARGIN_LINES).
+const LAZY_SYNTAX_THROTTLE_MS = 50;
+const LAZY_SYNTAX_MARGIN_ROWS = 100;
+
 type VimState = ReturnType<typeof attachVim>;
 
 // The vim layer asks for multi-char (search) input through this seam; TextEditor
@@ -376,6 +382,10 @@ export class TextEditor implements DocumentHost {
   // hand. Disposed as a unit; see docs/lifecycle-and-disposal.md. Use `connect()`
   // for signals and `subs.add(...)` for registry Disposables.
   private readonly subs = new CompositeDisposable();
+  // Lazy multibuffer syntax: the scroll adjustment the viewport trigger is bound to (re-bound
+  // when the ScrolledWindow swaps it in), and the throttle for re-checking which sources to parse.
+  private lazySyntaxAdj: any = null;
+  private lazySyntaxThrottleId: ReturnType<typeof setTimeout> | null = null;
 
   // The document this editor is a *view* onto (owns the text model + undo + file I/O +
   // LSP). `this.buffer` is this view's own GtkSource.Buffer, kept in sync by the
@@ -642,10 +652,14 @@ export class TextEditor implements DocumentHost {
     this.installGitGutter();
     this.installSearch();
     if (this.bufferMode) this.installBufferMode(this.bufferMode);
-    // A multibuffer's sources are already parsed — paint its stitched projection directly (there's
-    // no single-language first-parse step to trigger it). The surface re-materializes + repaints on
-    // re-diff via `repaintSyntax`.
-    if (this.multiSource) this.syntax.paint();
+    // A multibuffer paints its stitched projection directly (there's no single-language
+    // first-parse step to trigger it). Its excerpt sources parse lazily as they near the
+    // viewport (installLazyProjectionSyntax) — the initial paint is a no-op until the first
+    // source parses. The surface re-materializes + repaints on re-diff via `repaintSyntax`.
+    if (this.multiSource) {
+      this.syntax.paint();
+      this.installLazyProjectionSyntax();
+    }
     if (this.peekMode) {
       // Read-only viewer onto the shared buffer; start unfocused so it shows no caret
       // until the user clicks into it.
@@ -1772,6 +1786,60 @@ export class TextEditor implements DocumentHost {
    * (cheap arithmetic in `bufferToWindowCoords`) and move only the boxes that are shown;
    * a glyph caret caches nothing, so the common case does no work.
    */
+  /** Drive a multibuffer projection's lazy syntax: parse the excerpt sources whose excerpts
+   *  overlap the viewport, on scroll + first layout, instead of all up front (a broad project
+   *  search / large diff can stitch hundreds of files; parsing each is O(file)). No-op unless the
+   *  source is a multibuffer whose projection supports it (`ensureParsedForRange`). The
+   *  ScrolledWindow swaps the view's vadjustment in after construction, so re-bind on
+   *  notify::vadjustment (mirrors the overlay-caret bindScroll); the adjustment's `changed` fires
+   *  on size-allocate, catching the first real viewport. A parsed source repaints via the
+   *  painter's `onDidReparse` subscription. */
+  private installLazyProjectionSyntax(): void {
+    if (!this.document.syntaxProjection?.ensureParsedForRange) return;
+    const schedule = () => {
+      if (this.lazySyntaxThrottleId || this.disposed) return;
+      this.lazySyntaxThrottleId = setTimeout(() => {
+        this.lazySyntaxThrottleId = null;
+        this.parseVisibleProjectionSources();
+      }, LAZY_SYNTAX_THROTTLE_MS);
+    };
+    const rebind = () => {
+      const adj = this.view.getVadjustment?.();
+      if (!adj || adj === this.lazySyntaxAdj) return;
+      if (this.lazySyntaxAdj) { this.lazySyntaxAdj.off('value-changed', schedule); this.lazySyntaxAdj.off('changed', schedule); }
+      this.lazySyntaxAdj = adj;
+      adj.on('value-changed', schedule); // scroll
+      adj.on('changed', schedule); // size-allocate / content height (first real viewport)
+    };
+    rebind();
+    this.view.on('notify::vadjustment', rebind);
+    this.subs.add(new Disposable(() => {
+      this.view.off('notify::vadjustment', rebind);
+      if (this.lazySyntaxAdj) { this.lazySyntaxAdj.off('value-changed', schedule); this.lazySyntaxAdj.off('changed', schedule); }
+      if (this.lazySyntaxThrottleId) clearTimeout(this.lazySyntaxThrottleId);
+    }));
+    if (this.view.getMapped()) this.parseVisibleProjectionSources();
+    else this.subs.connect(this.view, 'map', () => this.parseVisibleProjectionSources());
+  }
+
+  /** Parse the projection sources whose excerpts overlap the viewport (± a margin). */
+  private parseVisibleProjectionSources(): void {
+    // Unrealized, the model reports the WHOLE buffer as visible — which would parse every source
+    // and defeat the laziness. The triggers all fire post-realize; guard regardless.
+    if (this.disposed || !this.view.getRealized()) return;
+    const top = Math.max(0, this.editorModel.getFirstVisibleScreenRow() - LAZY_SYNTAX_MARGIN_ROWS);
+    const bottom = this.editorModel.getLastVisibleScreenRow() + LAZY_SYNTAX_MARGIN_ROWS;
+    this.ensureProjectionSyntax(top, bottom);
+  }
+
+  /** Parse the multibuffer projection's excerpt syntax for sources overlapping screen rows
+   *  `[from, to]` (lazy-by-viewport). The viewport trigger calls this; exposed for pre-warming a
+   *  range or for tests. No-op for a single-document editor. */
+  ensureProjectionSyntax(from: number, to: number): void {
+    if (from > to) return;
+    this.document.syntaxProjection?.ensureParsedForRange?.(from, to);
+  }
+
   private repositionOverlayCarets(): void {
     if (!this.view.getRealized()) return;
     if (this.caretBufferGeom) {

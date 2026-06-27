@@ -92,6 +92,23 @@ test('per-row old/new line numbers (for the gutters): blank where a side has no 
   assert.deepEqual(dmb.newNums, [null, 1, null, 2, 3, 4], 'added has a new line; removed has none');
 });
 
+test('intra-line word diff: the changed token of a modified line gets word ranges', () => {
+  // `const x = 1;` → `const y = 1;` — only the `x`/`y` token (cols 6..7) changed.
+  const dmb = buildDiffMultiBuffer([{ path: '/a.ts', oldText: 'const x = 1;\n', newText: 'const y = 1;\n' }]);
+  const removed = dmb.rowKinds.indexOf('removed');
+  const added = dmb.rowKinds.indexOf('added');
+  assert.deepEqual(dmb.wordRanges[removed], [[6, 7]], 'the `x` token is the changed span on the removed side');
+  assert.deepEqual(dmb.wordRanges[added], [[6, 7]], 'the `y` token is the changed span on the added side');
+  assert.equal(dmb.wordRanges[dmb.rowKinds.indexOf('context')], null, 'unchanged rows carry no word ranges');
+  assert.equal(dmb.wordRanges.length, dmb.rowKinds.length, 'one word-range slot per view row');
+});
+
+test('intra-line word diff: a wholesale line replacement gets none (the line background suffices)', () => {
+  const dmb = buildDiffMultiBuffer([{ path: '/a.ts', oldText: 'aaa\n', newText: 'bbb\n' }]);
+  assert.equal(dmb.wordRanges[dmb.rowKinds.indexOf('removed')], null, 'no shared content → no word span');
+  assert.equal(dmb.wordRanges[dmb.rowKinds.indexOf('added')], null);
+});
+
 test('multi-file diff: blank separator + per-file headers, kinds aligned across files', () => {
   const dmb = buildDiffMultiBuffer([
     { path: '/a.ts', oldText: 'x\n', newText: 'x\ny\n' }, // add a line

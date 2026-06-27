@@ -18,6 +18,14 @@ import type { CoordinatesMap } from '../TextEditor/CoordinatesMap.ts';
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
 
+/** One excerpt source for the projection: its parse plus, optionally, a thunk that selects the
+ *  grammar + parses it on demand (deferred) — used by the lazy-by-viewport path. Omit
+ *  `ensureParsed` for an always-parsed source. */
+export interface ProjectionSource {
+  syntax: DocumentSyntax;
+  ensureParsed?: () => void;
+}
+
 export class ExcerptSyntaxProjection implements SyntaxProjection {
   private headerTag: any = null;
   private gapTag: any = null;
@@ -25,27 +33,29 @@ export class ExcerptSyntaxProjection implements SyntaxProjection {
   // CoordinatesMap, so the painter must read the live one each paint or it highlights with
   // stale coordinates (shifted highlighting after an edit).
   private readonly getProjection: () => CoordinatesMap;
-  private readonly sources: Map<string, DocumentSyntax>;
+  private readonly sources: Map<string, ProjectionSource>;
+  // Keys whose `ensureParsed` has fired (lazy-by-viewport): each source parses at most once.
+  private readonly parsedKeys = new Set<string>();
 
   // Note: explicit field assignment (not constructor parameter properties) — Node runs .ts
   // in strip-only mode, which rejects parameter properties at runtime.
-  constructor(getProjection: () => CoordinatesMap, sources: Map<string, DocumentSyntax>) {
+  constructor(getProjection: () => CoordinatesMap, sources: Map<string, ProjectionSource>) {
     this.getProjection = getProjection;
     this.sources = sources;
   }
 
   hasContent(): boolean {
-    for (const source of this.sources.values()) if (source.hasTree) return true;
+    for (const source of this.sources.values()) if (source.syntax.hasTree) return true;
     return false;
   }
 
   paintSlices(viewFrom: number, viewTo: number): SyntaxSlice[] {
     const slices: SyntaxSlice[] = [];
     for (const run of this.getProjection().segmentRunsInScreenRange(viewFrom, viewTo)) {
-      const syntax = this.sources.get(run.documentKey);
-      if (!syntax) continue;
+      const source = this.sources.get(run.documentKey);
+      if (!source) continue;
       slices.push({
-        syntax,
+        syntax: source.syntax,
         fromRow: run.fromDocumentRow,
         toRow: run.toDocumentRow,
         sourceStart: run.fromDocumentRow,
@@ -56,8 +66,21 @@ export class ExcerptSyntaxProjection implements SyntaxProjection {
   }
 
   onDidReparse(callback: () => void): () => void {
-    const unsubs = [...new Set(this.sources.values())].map((source) => source.onDidReparse(callback));
+    const syntaxes = new Set([...this.sources.values()].map((s) => s.syntax));
+    const unsubs = [...syntaxes].map((syntax) => syntax.onDidReparse(callback));
     return () => { for (const unsub of unsubs) unsub(); };
+  }
+
+  /** Lazy syntax: parse (once) each source whose excerpt overlaps view rows `[viewFrom, viewTo]`.
+   *  The source's deferred parse then repaints this projection via `onDidReparse`. */
+  ensureParsedForRange(viewFrom: number, viewTo: number): void {
+    for (const run of this.getProjection().segmentRunsInScreenRange(viewFrom, viewTo)) {
+      if (this.parsedKeys.has(run.documentKey)) continue;
+      const source = this.sources.get(run.documentKey);
+      if (!source) continue;
+      this.parsedKeys.add(run.documentKey);
+      source.ensureParsed?.();
+    }
   }
 
   /** Style the header / gap rows (created lazily on `buffer`'s tag table — distinct names

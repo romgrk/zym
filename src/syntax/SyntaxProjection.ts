@@ -33,6 +33,11 @@ export interface SyntaxProjection {
   /** Subscribe to any source reparse (a live-edited source re-projects); returns a
    *  disposer. The painter repaints on fire. */
   onDidReparse(callback: () => void): () => void;
+  /** Lazily parse the sources whose excerpts overlap view rows `[viewFrom, viewTo]` — for a
+   *  multibuffer whose excerpt sources parse on demand as they near the viewport, rather than
+   *  all up front. The editor (`TextEditor`) calls this on viewport change. Idempotent per
+   *  source. Optional: a projection whose sources are always parsed omits it. */
+  ensureParsedForRange?(viewFrom: number, viewTo: number): void;
   /** Style the non-source rows (filename headers, `⋯` gaps) on `buffer` — invoked after a
    *  full repaint. Tag creation/idempotency is the projection's concern. */
   decorate(buffer: any): void;

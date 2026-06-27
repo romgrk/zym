@@ -1,17 +1,19 @@
 /*
  * HeaderBands — the filename "header" shown above each excerpt in a multibuffer, as a
- * real Gtk widget (icon + dimmed directory + bold basename) rather than a row of buffer text.
- * `SearchResultsView` anchors one above each excerpt's first row via `BlockDecorations` (a
- * reserved band, zero buffer footprint), so the filename isn't navigable/selectable text and
- * doesn't occupy a buffer line. Clicking it jumps to the file (the role Enter-on-the-header
- * row used to play).
+ * real Gtk widget rather than a row of buffer text. Two looks share one builder:
+ * `SearchResultsView` shows a file-type icon + dimmed directory + bold basename; `DiffView`
+ * drops the icon and bolds the whole path uniformly, turning it warning-coloured with a
+ * leading dot when the file has unsaved edits, and adds a collapse chevron + `+N −M` stats
+ * (`HeaderWidgetOptions`). The widget isn't navigable/selectable buffer text; the diff places
+ * it OVER a read-only header row (sticky), search anchors it above the first row. Clicking it
+ * jumps to the file.
  */
 import * as Path from 'node:path';
-import { Gtk, Pango } from '../gi.ts';
+import { Gtk } from '../gi.ts';
 import type { CompositeDisposable } from '../util/eventKit.ts';
-import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { addStyles } from '../styles.ts';
 import { fileIconGlyph } from './fileIcons.ts';
+import { Icons, iconLabel } from './icons.ts';
 import { escapeMarkup } from './proseMarkup.ts';
 
 addStyles(/* css */`
@@ -26,6 +28,8 @@ addStyles(/* css */`
   .mb-header-chevron { color: var(--t-ui-text-muted); }
   .mb-header-add { color: var(--t-ui-status-success); }
   .mb-header-del { color: var(--t-ui-status-error); }
+  /* An unsaved (modified) diff file: warning-coloured path led by a warning dot. */
+  .mb-header-modified { color: var(--t-ui-status-warning); }
   /* The header whose (read-only) line the caret sits on (sticky-diff navigation) reads as focused.
      The class lands on the .mb-header element itself (the header widget IS the row). */
   .mb-header.mb-header-focused {
@@ -40,57 +44,76 @@ addStyles(/* css */`
   .mb-gap-clickable:hover { color: var(--t-ui-text-accent); }
 `);
 
-/** Optional diff-surface extras on the header: a collapse `chevron` (`▾` expanded / `▸` collapsed)
- *  and the file's `+N −M` change stats. Omitted by the search surface (no chevron/stats). */
-export interface HeaderExtras {
+/** Per-header look. The defaults reproduce `SearchResultsView`'s header (file-type icon, dimmed
+ *  directory, bold basename); `DiffView` overrides them and adds the collapse chevron + stats. */
+export interface HeaderWidgetOptions {
+  /** Lead the filename with its file-type glyph (default true); the diff header opts out. */
+  icon?: boolean;
+  /** Bold the whole path uniformly instead of dimming the directory and bolding only the
+   *  basename (default false). */
+  boldPath?: boolean;
+  /** A modified (unsaved) file: the path turns warning-coloured and is led by a warning dot,
+   *  replacing the file-type glyph (default false). */
+  modified?: boolean;
+  /** Diff: a leading collapse chevron (`▾` expanded / `▸` collapsed). Omit for none (search). */
   collapsed?: boolean;
+  /** Diff: the file's `+N` added / `−M` removed change stats (omit / 0 = none). */
   added?: number;
   removed?: number;
 }
 
-/** The header widget for one excerpt: `label` is the display path (dir dimmed, basename bold),
- *  `path` selects the file-type icon, `onActivate` fires on click (jump to the file). `extras` adds
- *  the diff's collapse chevron + `+N −M` stats. (A leading `⋯` gap is a SEPARATE gap band — see
- *  `buildGapWidget` — not part of the header.) The header row IS the returned widget. */
+/** The header widget for one excerpt: `label` is the display path, `path` selects the file-type
+ *  icon, `onActivate` fires on click (jump to the file), `options` picks the look (see
+ *  `HeaderWidgetOptions`). A leading `⋯` gap is a SEPARATE gap band (`buildGapWidget`), not part of
+ *  the header. The header row IS the returned widget. */
 export function buildHeaderWidget(
   scope: CompositeDisposable,
   label: string,
   path: string,
   onActivate: () => void,
-  extras?: HeaderExtras,
+  options: HeaderWidgetOptions = {},
 ): InstanceType<typeof Gtk.Widget> {
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
   row.addCssClass('mb-header');
   // Collapse chevron (diff surface): `▾` when the file is expanded, `▸` when collapsed.
-  if (extras?.collapsed !== undefined) {
-    const chevron = new Gtk.Label({ label: extras.collapsed ? '▸' : '▾' });
+  if (options.collapsed !== undefined) {
+    const chevron = new Gtk.Label({ label: options.collapsed ? '▸' : '▾' });
     chevron.addCssClass('mb-header-chevron');
     row.append(chevron);
   }
-  const icon = new Gtk.Label({ label: fileIconGlyph(Path.basename(path), false) });
-  const attrs = Pango.AttrList.new();
-  attrs.insert(Pango.attrFontDescNew(Pango.FontDescription.fromString(ICON_FONT_FAMILY)));
-  icon.setAttributes(attrs);
-  icon.addCssClass('mb-header-icon');
-  row.append(icon);
+  // A modified file is flagged by a warning dot; otherwise the file-type glyph leads the name
+  // (the diff header opts out of the glyph entirely).
+  if (options.modified) {
+    const dot = iconLabel(Icons.modified);
+    dot.addCssClass('mb-header-modified');
+    row.append(dot);
+  } else if (options.icon !== false) {
+    const icon = iconLabel(fileIconGlyph(Path.basename(path), false));
+    icon.addCssClass('mb-header-icon');
+    row.append(icon);
+  }
 
   const name = new Gtk.Label({ xalign: 0, hexpand: true });
-  const dir = Path.dirname(label);
-  const base = Path.basename(label);
-  const dirMarkup = dir && dir !== '.' ? `<span alpha="55%">${escapeMarkup(dir)}/</span>` : '';
-  name.setMarkup(`${dirMarkup}<b>${escapeMarkup(base)}</b>`);
-  name.addCssClass('mb-header-label');
+  if (options.boldPath) {
+    name.setMarkup(`<b>${escapeMarkup(label)}</b>`); // whole path, one uniform highlight
+  } else {
+    const dir = Path.dirname(label);
+    const base = Path.basename(label);
+    const dirMarkup = dir && dir !== '.' ? `<span alpha="55%">${escapeMarkup(dir)}/</span>` : '';
+    name.setMarkup(`${dirMarkup}<b>${escapeMarkup(base)}</b>`);
+  }
+  name.addCssClass(options.modified ? 'mb-header-modified' : 'mb-header-label');
   row.append(name);
 
   // Change stats (diff surface): `+N` added (green), `−M` removed (red).
-  if (extras && (extras.added || extras.removed)) {
-    if (extras.added) {
-      const add = new Gtk.Label({ label: `+${extras.added}` });
+  if (options.added || options.removed) {
+    if (options.added) {
+      const add = new Gtk.Label({ label: `+${options.added}` });
       add.addCssClass('mb-header-add');
       row.append(add);
     }
-    if (extras.removed) {
-      const del = new Gtk.Label({ label: `−${extras.removed}` });
+    if (options.removed) {
+      const del = new Gtk.Label({ label: `−${options.removed}` });
       del.addCssClass('mb-header-del');
       row.append(del);
     }

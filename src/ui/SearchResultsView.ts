@@ -64,6 +64,9 @@ interface SourceEntry {
   lines: string[];
   /** Editable mode: the live Document backing this source (released on dispose). */
   document?: Document;
+  /** Select the grammar + parse this source (deferred); run by the projection when the excerpt
+   *  nears the viewport (lazy syntax). */
+  parse: () => void;
 }
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
@@ -114,7 +117,11 @@ export class SearchResultsView {
     // Headers + gaps are widget bands (not buffer rows), so the item list carries only real source
     // segments. A collapsed excerpt contributes just its first row (see `currentItems`).
     this.screen = new Screen(this.currentItems(), sourceBuffers);
-    const syntaxMap = new Map([...this.sources].map(([key, entry]) => [key, entry.syntax] as const));
+    // Lazy syntax: hand the projection each source's parse thunk (deferred). TextEditor parses
+    // the sources whose excerpts near the viewport — not all matched files up front.
+    const syntaxMap = new Map(
+      [...this.sources].map(([key, entry]) => [key, { syntax: entry.syntax, ensureParsed: entry.parse }] as const),
+    );
     const painter = new ExcerptSyntaxProjection(() => this.screen.view, syntaxMap);
 
     // One editor, natively backed by the multi-source projection (the `MultiBufferDocument` supplies
@@ -355,15 +362,16 @@ export class SearchResultsView {
       this.registry!.release(document);
       return null;
     }
-    // Select the grammar + parse so the painter has captures. A tab already showing this file
-    // had its SyntaxController do this; a file opened only by the search did not — without it,
-    // only the already-open file got highlighted. Idempotent (reuses an existing parse).
-    document.syntax.setLanguageForPath(path);
+    // Select the grammar + parse so the painter has captures — but DEFERRED, on demand when the
+    // excerpt nears the viewport (TextEditor's lazy-syntax driver), so a search across many files
+    // doesn't parse them all up front. A tab already showing this file parsed it already;
+    // `setLanguageForPath` is idempotent (reuses the existing parse).
     return {
       buffer: document.modelBuffer,
       syntax: document.syntax, // owned by the Document; not disposed here
       lines: document.getText().split('\n'),
       document,
+      parse: () => document.syntax.setLanguageForPath(path, { deferParse: true }),
     };
   }
 
@@ -379,8 +387,14 @@ export class SearchResultsView {
     const buffer = new GtkSource.Buffer();
     buffer.setText(text, -1);
     const syntax = new DocumentSyntax(buffer);
-    syntax.setLanguageForPath(path); // synchronous parse (grammars are preloaded)
-    return { buffer, syntax, lines: text.split('\n') };
+    // Parse is DEFERRED until the excerpt nears the viewport (TextEditor's lazy-syntax driver) —
+    // a search across many files shouldn't parse every match up front.
+    return {
+      buffer,
+      syntax,
+      lines: text.split('\n'),
+      parse: () => syntax.setLanguageForPath(path, { deferParse: true }),
+    };
   }
 
   /** Enter (on the focused view) + double-click activate the row under the cursor/pointer.

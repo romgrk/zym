@@ -103,10 +103,21 @@ can always be sent to an agent:
 
 - `src/util/lineDiff.ts` — the minimal Myers O(ND) line diff (degrades to a
   whole-file replace past size bounds), the basis of every diff.
+- `src/util/wordDiff.ts` — the intra-line ("word-by-word") diff: given a
+  removed↔added line pair it reports each side's changed-character spans
+  (`WordRange`, the canonical home) via `diffWordsWithSpace`, then refines them for
+  display — collapsing spans separated only by *noise* (whitespace/punctuation, so a
+  lone matching `(` or `` ` `` can't fragment a changed run) while a real unchanged
+  word still splits them, and promoting an otherwise-whole-line change (only
+  whitespace in its margins) to a full-line highlight. The
+  multibuffer attaches the result per row (`DiffMultiBuffer.wordRanges`, paired
+  within each hunk in `annotateWordDiffs`); read-only and live diffs both carry
+  it. (Was lost when the diff subsystem was consolidated onto the multibuffer and
+  re-wired since.)
 - `src/ui/TextEditor/applyDiffDecorations.ts` — paints full-line
   `added`/`removed` backgrounds and `word-add`/`word-del` intra-line char spans
-  onto a decoration layer (handling the unterminated-last-line case). Owns the
-  `WordRange` type.
+  (`DiffView` feeds it `dmb.wordRanges`) onto a decoration layer (handling the
+  unterminated-last-line case).
 - `src/ui/TextEditor/DiffLineNumberGutter.ts` (`CombinedDiffLineNumberGutter`) —
   the one gutter renderer drawing both the old and new line-number columns. The
   number columns are gated on `editor.diffLineNumbers` (off by default, live-toggled

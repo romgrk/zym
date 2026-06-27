@@ -28,6 +28,15 @@ import { isFunctionNodeType, isClassNodeType, STRING_COMMENT_RE, RUN_FOLD_RE } f
 // Reparse this long after the last edit. One debounce per document (was per view).
 const HIGHLIGHT_DEBOUNCE_MS = 60;
 
+// On first open (and reload), parse only the HEAD of the file synchronously, then run the
+// full parse deferred (scheduleFullParse) — so a large file opens without a full-file parse
+// freeze (the parse is O(file): ~28ms@10k, ~144ms@50k lines). Must comfortably cover the
+// painter's first-paint window (SyntaxController's INITIAL_PAINT_LINES + viewport margin,
+// currently 250 + 80) so the visible region is highlighted on the first frame; at ~3µs/line
+// this bounded parse stays under ~2ms for any file size. See docs/text-editor/index.md
+// ("Scrolling & open performance").
+const INITIAL_PARSE_LINES = 500;
+
 // node-gtk returns `[inRange, iter]` for get_iter_at_* but a bare iter for
 // get_start/end_iter — normalize to an iter.
 function asIter(r: any): any {
@@ -52,6 +61,12 @@ export class DocumentSyntax {
   private _hasAstral = false;
 
   private debounceId: NodeJS.Timeout | null = null;
+  // True while `tree` covers only the head of the file (the bounded first parse); the
+  // deferred full parse — or the next edit reparse — replaces it with a whole-file tree.
+  // While partial, incremental edit tracking is skipped (the tree is about to be discarded).
+  private treeIsPartial = false;
+  // The pending deferred full parse (scheduled after a bounded first parse).
+  private fullParseId: NodeJS.Timeout | null = null;
   // Whether the source changed since the last parse — so setLanguageForPath reparses a
   // reloaded file synchronously (old grammar, but new content), yet still skips the parse
   // for a clean second view attaching to an already-parsed document.
@@ -111,10 +126,11 @@ export class DocumentSyntax {
    * already exists, it keeps that tree (no redundant parse) — the keystone of the
    * shared-parse design.
    *
-   * Synchronous: grammars are preloaded before the main loop, so this only does a
-   * cache lookup + one parse.
+   * Grammars are preloaded before the main loop, so this only does a cache lookup + a
+   * bounded first parse (the file's head, INITIAL_PARSE_LINES); the rest of the file is
+   * parsed deferred (scheduleFullParse) so a large file opens without a parse freeze.
    */
-  setLanguageForPath(path: string): boolean {
+  setLanguageForPath(path: string, opts: { deferParse?: boolean } = {}): boolean {
     const langId = langIdForPath(path);
     const grammar = langId ? getGrammar(langId) : null;
     if (!grammar) {
@@ -127,9 +143,21 @@ export class DocumentSyntax {
     this.resetTree();
     this.grammar = grammar;
     this.parser = createParser(grammar);
-    // Silent: the painter that selected the language repaints its own view explicitly;
-    // sibling views (already painted) must not be force-repainted by a language set.
-    this.reparse({ full: true, silent: true });
+    if (opts.deferParse) {
+      // A multibuffer excerpt source: select the grammar now but parse the WHOLE source
+      // deferred, when the excerpt nears the viewport — not all matched files up front. The
+      // bounded head parse is useless here (excerpts are scattered through the file, not at
+      // its head), so skip it; the painter highlights this source once the deferred parse
+      // emits. See docs/text-editor/multibuffer.md.
+      this.scheduleFullParse();
+    } else {
+      // Parse only the head synchronously so a large file opens instantly; the full parse
+      // follows on the next loop iteration (after the first paint), upgrading every view.
+      // Silent: the painter that selected the language repaints its own view explicitly;
+      // sibling views (already painted) must not be force-repainted by a language set.
+      this.reparse({ full: true, silent: true, maxLines: INITIAL_PARSE_LINES });
+      if (this.treeIsPartial) this.scheduleFullParse();
+    }
     return true;
   }
 
@@ -143,7 +171,9 @@ export class DocumentSyntax {
 
   private resetTree(): void {
     if (this.debounceId) { clearTimeout(this.debounceId); this.debounceId = null; }
+    if (this.fullParseId) { clearTimeout(this.fullParseId); this.fullParseId = null; }
     if (this.tree) { this.tree.delete(); this.tree = null; }
+    this.treeIsPartial = false;
     for (const parser of this.injectionParsers.values()) parser.delete();
     this.injectionParsers.clear();
   }
@@ -151,7 +181,7 @@ export class DocumentSyntax {
   // --- incremental-parse edit tracking ---------------------------------------
 
   private onInsert(location: any, text: string): void {
-    if (!this.tree) return;
+    if (!this.tree || this.treeIsPartial) return; // partial tree is about to be discarded by the full parse
     const startIndex = location.getOffset();
     const startRow = location.getLine();
     const startCol = location.getLineOffset();
@@ -171,7 +201,7 @@ export class DocumentSyntax {
   }
 
   private onDelete(start: any, end: any): void {
-    if (!this.tree) return;
+    if (!this.tree || this.treeIsPartial) return; // partial tree is about to be discarded by the full parse
     const startIndex = start.getOffset();
     this.tree.edit({
       startIndex,
@@ -194,28 +224,52 @@ export class DocumentSyntax {
     if (this.debounceId) clearTimeout(this.debounceId);
     this.debounceId = setTimeout(() => {
       this.debounceId = null;
-      const full = this.fullReparseNext;
+      // A partial tree can't be reparsed incrementally (it doesn't cover the whole source) —
+      // force a full reparse, which also resolves the deferred first-open full parse.
+      const full = this.fullReparseNext || this.treeIsPartial;
       this.fullReparseNext = false;
       this.reparse({ full });
     }, HIGHLIGHT_DEBOUNCE_MS);
   }
 
+  /** Run a deferred whole-file parse on the next loop iteration — a macrotask, so it lands
+   *  after the first paint (not a microtask, per the node-gtk main-loop caveat in
+   *  docs/index.md). Used both after a bounded first parse (open) and for a deferred-parse
+   *  multibuffer source (lazy-by-visibility). Emits a reparse so every painter repaints its
+   *  viewport from the full tree and rebuilds its fold map. Skipped if the tree is already a
+   *  whole-file one (an edit reparse upgraded it first). */
+  private scheduleFullParse(): void {
+    if (this.fullParseId) clearTimeout(this.fullParseId);
+    this.fullParseId = setTimeout(() => {
+      this.fullParseId = null;
+      if (this.disposed || !this.grammar) return;
+      if (this.tree && !this.treeIsPartial) return; // already a whole-file tree
+      this.reparse({ full: true });
+    }, 0);
+  }
+
   /** Reparse the source (incrementally from the edited tree, unless `full`) and notify
    *  the painters. Folds never touch the model, so the model tree is always valid — no
    *  reparse-from-scratch-after-fold dance is needed (that was a view-buffer-parse wart). */
-  private reparse(opts: { full?: boolean; silent?: boolean } = {}): void {
+  private reparse(opts: { full?: boolean; silent?: boolean; maxLines?: number } = {}): void {
     if (this.disposed || !this.grammar || !this.parser) return;
     const buffer = this.source;
-    this.cachedText = buffer.getText(buffer.getStartIter(), buffer.getEndIter(), true);
+    // A bounded first parse (maxLines) reads only the file's head, so a large file parses in
+    // O(viewport) not O(file); the deferred full parse follows. maxLines >= line count ⇒ whole file.
+    const partial = opts.maxLines != null && opts.maxLines < buffer.getLineCount();
+    const endIter = partial ? asIter(buffer.getIterAtLine(opts.maxLines!)) : buffer.getEndIter();
+    this.cachedText = buffer.getText(buffer.getStartIter(), endIter, true);
     // web-tree-sitter reports UTF-16 columns; iterAtLineOffset wants codepoints. They
     // only diverge on astral chars — detect once so the common BMP file pays nothing.
     this._hasAstral = /[\ud800-\udbff]/.test(this.cachedText);
-    const prior = opts.full ? undefined : (this.tree ?? undefined);
+    // A partial parse can't continue from a prior (differently-sized) tree — always full.
+    const prior = opts.full || partial ? undefined : (this.tree ?? undefined);
     const tree = this.parser.parse(this.cachedText, prior);
     if (!tree) return;
     if (this.tree && this.tree !== tree) this.tree.delete();
     this.tree = tree;
-    this.dirty = false; // the tree now reflects the current source text
+    this.treeIsPartial = partial;
+    this.dirty = false; // the tree now reflects the current source text (its head, if partial)
     if (!opts.silent) this.emitReparse();
   }
 

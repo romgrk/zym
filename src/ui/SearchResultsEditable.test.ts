@@ -159,11 +159,18 @@ test('search match: the hit span is highlighted at its mapped view position', ()
   mbv.dispose();
 });
 
-test('editable search: a file opened only by the search gets its grammar parsed (highlighting)', () => {
+test('editable search: a search-only file is parsed lazily, when its excerpt is visible', async () => {
   if (!hasJs) return; // grammars not vendored in this environment
   const { a, b, registry, mbv } = setup(); // neither file was open before the search
-  assert.equal(registry.find(a)!.syntax.hasTree, true, 'a.ts parsed even though no tab opened it');
-  assert.equal(registry.find(b)!.syntax.hasTree, true, 'b.ts parsed even though no tab opened it');
+  // Lazy: a broad search shouldn't parse every matched file up front — nothing parses until
+  // an excerpt nears the viewport.
+  assert.equal(registry.find(a)!.syntax.hasTree, false, 'a.ts not parsed up front (lazy)');
+  assert.equal(registry.find(b)!.syntax.hasTree, false, 'b.ts not parsed up front (lazy)');
+  // Simulate both excerpts entering the viewport (headless: no realized view to drive it).
+  mbv.editor.ensureProjectionSyntax(0, 5);
+  await new Promise((r) => setTimeout(r, 0)); // the deferred parse lands on the next tick
+  assert.equal(registry.find(a)!.syntax.hasTree, true, 'a.ts parsed once its excerpt is visible');
+  assert.equal(registry.find(b)!.syntax.hasTree, true, 'b.ts parsed once its excerpt is visible');
   mbv.dispose();
 });
 

@@ -13,6 +13,7 @@
  */
 import type { Item } from '../TextEditor/CoordinatesMap.ts';
 import { diffRows, rowsToItems, type DiffRow } from './diffSegments.ts';
+import { computeIntraLineDiff, refineWordRanges, type WordRange } from '../../util/wordDiff.ts';
 import { diffLines } from '../../util/lineDiff.ts';
 import * as Path from 'node:path';
 
@@ -40,6 +41,10 @@ export interface DiffMultiBuffer {
   items: Item[];
   /** Per projection row (0-based), aligned with the materialized view. */
   rowKinds: DiffRowKind[];
+  /** Per projection row: the intra-line ("word-by-word") changed-character spans for an
+   *  added/removed row that modifies a counterpart line, or `null` (unchanged row, or a
+   *  wholesale add/remove the full-line background already covers). */
+  wordRanges: (WordRange[] | null)[];
   /** Per projection row: whether the change there is staged / unstaged (the gutter marker), or
    *  `null` for an unchanged / non-stageable row, or any file with no `indexText`. */
   stagedState: StagedState[];
@@ -129,6 +134,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
   const widgetHeaders = opts.headers === 'widget';
   const items: Item[] = [];
   const rowKinds: DiffRowKind[] = [];
+  const wordRanges: (WordRange[] | null)[] = [];
   const stagedState: StagedState[] = [];
   const oldNums: (number | null)[] = [];
   const newNums: (number | null)[] = [];
@@ -140,6 +146,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
   // Emit one row: its kind + the old/new line numbers it carries.
   const block = (kind: DiffRowKind): void => {
     rowKinds.push(kind);
+    wordRanges.push(null);
     stagedState.push(null);
     oldNums.push(null);
     newNums.push(null);
@@ -236,12 +243,15 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
         while (j < recs.length && visible[j]) j++;
         const window = recs.slice(i, j);
         items.push(...rowsToItems(window, nKey, oKey).items);
+        const baseRow = rowKinds.length; // view row of window[0] (before its rows are pushed)
         for (const rec of window) {
           rowKinds.push(OP_KIND[rec.op]);
+          wordRanges.push(null);
           stagedState.push(stagedFor(rec));
           oldNums.push(rec.op === 'ins' ? null : rec.oldRow + 1);
           newNums.push(rec.op === 'del' ? null : rec.newRow + 1);
         }
+        annotateWordDiffs(window, baseRow, oldLines, newLines, wordRanges);
         firstItem = false;
         i = j;
       } else {
@@ -254,7 +264,42 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
     }
   });
 
-  return { items, rowKinds, stagedState, oldNums, newNums, sources, language, headerAnchors, gapAnchors };
+  return { items, rowKinds, wordRanges, stagedState, oldNums, newNums, sources, language, headerAnchors, gapAnchors };
+}
+
+/** Within one visible `window` of rows (its first at view row `baseRow`), pair each hunk's
+ *  removed↔added lines and write their intra-line change spans into `out` at the matching view
+ *  rows. A hunk is a maximal run of changed (non-`eq`) rows; eq/context rows split hunks. Lines
+ *  with no shared content are skipped — the full-line background already says enough. */
+function annotateWordDiffs(
+  window: readonly DiffRow[],
+  baseRow: number,
+  oldLines: readonly string[],
+  newLines: readonly string[],
+  out: (WordRange[] | null)[],
+): void {
+  for (let h = 0; h < window.length; ) {
+    if (window[h].op === 'eq') { h++; continue; }
+    let k = h;
+    const dels: number[] = []; // offsets (within `window`) of this hunk's removed rows
+    const adds: number[] = []; // …and its added rows
+    while (k < window.length && window[k].op !== 'eq') {
+      if (window[k].op === 'del') dels.push(k);
+      else adds.push(k);
+      k++;
+    }
+    for (let p = 0; p < Math.min(dels.length, adds.length); p++) {
+      const oldText = oldLines[window[dels[p]].oldRow];
+      const newText = newLines[window[adds[p]].newRow];
+      const { oldRanges, newRanges, hasCommon } = computeIntraLineDiff(oldText, newText);
+      if (!hasCommon) continue; // wholly different — let the line backgrounds carry it
+      const del = refineWordRanges(oldText, oldRanges);
+      const add = refineWordRanges(newText, newRanges);
+      if (del.length) out[baseRow + dels[p]] = del;
+      if (add.length) out[baseRow + adds[p]] = add;
+    }
+    h = k;
+  }
 }
 
 function gapLabel(count: number): string {

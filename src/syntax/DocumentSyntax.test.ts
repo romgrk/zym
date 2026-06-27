@@ -47,6 +47,35 @@ test('the parse lives on the model and reports captures + folds', () => {
   assert.ok(ds.foldRanges().some((r) => r.startRow === 0 && r.endRow >= 3), 'function fold discovered');
 });
 
+test('a large file parses its head synchronously, the rest deferred', async () => {
+  if (!hasJs) return;
+  const doc = new Document();
+  // > INITIAL_PARSE_LINES (500): a repeated block so keyword captures recur throughout.
+  doc.setText(SAMPLE.repeat(400)); // SAMPLE is 4 lines → 1600 lines
+  const ds = doc.syntax;
+  assert.equal(ds.setLanguageForPath('/x.js'), true);
+  // The head is parsed synchronously (the visible region highlights on the first frame)...
+  assert.ok(ds.captures(0, 50).length > 0, 'head parsed synchronously');
+  // ...but the tail is NOT — the bounded first parse only read the file's head.
+  assert.equal(ds.captures(1500, 1550).length, 0, 'tail deferred (not parsed synchronously)');
+  // The deferred full parse (next loop iteration) upgrades the tree to the whole file.
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(ds.captures(1500, 1550).length > 0, 'tail parsed after the deferred full parse');
+});
+
+test('deferParse selects the grammar now but parses the whole file on the next tick', async () => {
+  if (!hasJs) return;
+  const doc = new Document();
+  doc.setText(SAMPLE);
+  const ds = doc.syntax;
+  // A multibuffer excerpt source: parse is deferred until the excerpt nears the viewport.
+  assert.equal(ds.setLanguageForPath('/x.js', { deferParse: true }), true);
+  assert.equal(ds.hasTree, false, 'no synchronous parse with deferParse');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(ds.hasTree, true, 'whole file parsed on the next tick');
+  assert.ok(ds.captures(0, 3).length > 0, 'captures available after the deferred parse');
+});
+
 test('one parse paints two independent view buffers', () => {
   if (!hasJs) return;
   const doc = new Document();

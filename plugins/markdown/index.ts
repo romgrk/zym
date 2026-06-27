@@ -1,19 +1,18 @@
 /*
  * The Markdown plugin — zym's second plugin, and the proof that adding a
  * language is a small, isolated drop-in. Where the TypeScript plugin exercises
- * the grammar/LSP surface, this one adds detection, an LSP server (marksman),
- * and a config-schema contribution (`markdown.*`) — the `registerConfig` surface
- * TypeScript didn't touch.
+ * the grammar/LSP surface, this one adds detection and a config-schema
+ * contribution (`markdown.*`) — the `registerConfig` surface TypeScript didn't
+ * touch.
  *
- * No tree-sitter grammar is contributed: the bundled `tree-sitter-wasms` pack
- * ships no Markdown grammar, so Markdown files get LSP features (diagnostics,
- * completion, go-to via marksman) without tree-sitter highlighting for now. The
- * day a Markdown wasm is vendored, a `registerGrammar` here lights highlighting
- * up with no other change.
+ * The plugin ships no language server; Markdown features come from detection,
+ * the authoring config above, and the vendored tree-sitter grammars — registered
+ * below only when their wasm/query assets exist (see
+ * docs/text-editor/syntax-injection.md), so a missing asset degrades to plain
+ * text rather than crashing the plugin.
  */
 import * as Fs from 'node:fs';
 import type { Plugin, PluginContext } from '../../src/plugin/types.ts';
-import type { ServerDef } from '../../src/lang/types.ts';
 import type { ConfigSchema } from '../../src/util/Config.ts';
 import { activateImagePreview } from './imagePreview.ts';
 
@@ -37,20 +36,6 @@ export const MD_INJECTIONS = [
   // (a future YAML plugin) — the Markdown plugin deliberately doesn't own YAML.
   { query: '((minus_metadata) @content)', language: 'yaml' },
 ];
-
-// marksman (https://github.com/artempyanykh/marksman) — the de-facto Markdown
-// language server: wiki-links, completion, references, document symbols. A
-// standalone binary (not an npm package, like deno), so no `install` spec — if
-// it isn't on PATH the server is simply skipped, never crash-looped. It works
-// per-file, so `singleFile` lets it activate even outside a project; a
-// `.marksman.toml` or repo root is preferred when present.
-const MARKSMAN: ServerDef = {
-  name: 'marksman',
-  command: 'marksman',
-  args: ['server'],
-  roots: ['.marksman.toml', '.git'],
-  singleFile: true,
-};
 
 // Declared Markdown authoring preferences. They surface in the settings UI (which
 // enumerates the config schema) and give a future Markdown formatter / editing
@@ -84,7 +69,7 @@ const CONFIG: Record<string, ConfigSchema> = {
 export const markdownPlugin: Plugin = {
   id: 'markdown',
   name: 'Markdown',
-  description: 'Markdown: file detection, the marksman language server, and authoring preferences.',
+  description: 'Markdown: file detection, authoring preferences, and inline image preview.',
 
   activate(ctx: PluginContext) {
     ctx.languages.registerLanguage({
@@ -92,7 +77,6 @@ export const markdownPlugin: Plugin = {
       fileTypes: MARKDOWN_FILE_TYPES,
       // `markdown` is already a valid LSP languageId, so no `lspId` override.
     });
-    ctx.languages.registerServer('markdown', MARKSMAN);
     ctx.registerConfig(CONFIG);
 
     // Inline image preview: render `![alt](src)` images below their line.

@@ -52,7 +52,7 @@ function paintMultibuffer(excerpts: Excerpt[], lines: Record<string, string[]>, 
   const view = new GtkSource.View({ buffer });
   const syntax = new SyntaxController(view, buffer, {
     folding: false,
-    projection: new ExcerptSyntaxProjection(() => projection, sources),
+    projection: new ExcerptSyntaxProjection(() => projection, new Map([...sources].map(([k, s]) => [k, { syntax: s }] as const))),
   });
   syntax.paint();
   return { buffer: buffer, projection, syntax };
@@ -137,7 +137,7 @@ test('a Screen-backed multibuffer (the SearchResultsView path) materializes + pa
   const view = new GtkSource.View({ buffer: screen.buffer });
   const syntax = new SyntaxController(view, screen.buffer, {
     folding: false,
-    projection: new ExcerptSyntaxProjection(() => screen.view, new Map([['/a.ts', aSyn], ['/b.ts', bSyn]])),
+    projection: new ExcerptSyntaxProjection(() => screen.view, new Map([['/a.ts', { syntax: aSyn }], ['/b.ts', { syntax: bSyn }]])),
   });
   syntax.paint();
   assert.ok(tokenHasTag(buffer, 1, 'const', 'ts:keyword'), 'a.ts excerpt painted from its own parse');
@@ -180,7 +180,7 @@ test('the diff multibuffer highlights both the new (context/added) and old (remo
   const view = new GtkSource.View({ buffer: screen.buffer });
   const syntax = new SyntaxController(view, screen.buffer, {
     folding: false,
-    projection: new ExcerptSyntaxProjection(() => screen.view, new Map([['new:/x.ts', newSyn], ['old:/x.ts', oldSyn]])),
+    projection: new ExcerptSyntaxProjection(() => screen.view, new Map([['new:/x.ts', { syntax: newSyn }], ['old:/x.ts', { syntax: oldSyn }]])),
   });
   syntax.paint();
   // rows: 0 x.ts 1 const a(ctx,new) 2 const removed(removed,old) 3 const added(added,new) 4 const c(ctx,new)

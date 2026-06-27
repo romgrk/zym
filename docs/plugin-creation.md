@@ -22,7 +22,7 @@ Pick the closest existing plugin as a template:
 - **Two grammars / one server for both** → `plugins/cpp/` (C + C++).
 - **Vendored (non-bundled) grammar** → `plugins/css/` (has
   `build-grammars.sh`).
-- **LSP + config, no grammar** → `plugins/markdown/`.
+- **Config-schema contribution** → `plugins/markdown/`.
 - **Editor decorations, no language layer** → `plugins/color-preview/`
   (`observeTextEditors`).
 

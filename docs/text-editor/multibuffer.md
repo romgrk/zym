@@ -52,6 +52,29 @@ Three layers:
     **linear** document→screen mapping (`sliceIter`) — **NOT fold-aware**
     (see the invariant below).
 
+- **Lazy syntax (generic — search *and* diff).** A broad search / large diff can
+  stitch hundreds of files; parsing each is O(file), so a multibuffer reads +
+  builds each source's geometry up front but **defers the tree-sitter parse**
+  until the excerpt nears the viewport. The policy splits cleanly:
+  - **Projection = what/how.** `ExcerptSyntaxProjection.ensureParsedForRange(from,
+    to)` (a `SyntaxProjection` hook) parses, once each, the sources whose excerpts
+    overlap those view rows. Each source is a `ProjectionSource` carrying its
+    `DocumentSyntax` + an `ensureParsed` thunk; `SearchResultsView` / `DiffView`
+    supply the thunk (`DocumentSyntax.setLanguageForPath(path, { deferParse: true })`
+    — grammar selected now, the whole source parsed on the next tick). The bounded
+    *head* parse used on single-file open is skipped here: excerpts are scattered
+    through a file, not at its head.
+  - **`TextEditor` = when.** `installLazyProjectionSyntax` (multibuffer only) drives
+    `ensureParsedForRange` from the viewport — bound to vertical scroll + the
+    adjustment's `changed` (size-allocate / first real viewport), throttled, plus a
+    one-shot once mapped, guarded on realize (an unrealized view reports the *whole*
+    buffer as visible). `ensureProjectionSyntax(from, to)` exposes it for
+    pre-warming / tests.
+
+  A just-parsed source repaints itself through the painter's `onDidReparse`
+  subscription, so the initial multibuffer paint is a no-op until the first source
+  parses (one tick).
+
 **Surfaces** are thin orchestrators over a normal `TextEditor` natively
 backed by a `MultiBufferDocument`, so vim/search/decorations come free.
 UI classes carry no `MultiBuffer` in their name; that's the model layer

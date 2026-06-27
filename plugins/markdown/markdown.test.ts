@@ -47,19 +47,6 @@ test('detects Markdown by extension; lspLanguageId is markdown', () => {
   assert.equal(reg.lspLanguageId('/d/README.md'), 'markdown');
 });
 
-test('marksman activates single-file (no project markers) and prefers a root', () => {
-  const { reg } = activate();
-  // singleFile: activates with no markers, rooted at the file's directory.
-  const loose = reg.activeServers('/some/where/a.md', { fileExists: () => false });
-  assert.deepEqual(loose.map((a) => a.server.name), ['marksman']);
-  assert.equal(loose[0].rootDir, '/some/where');
-  // With a marker present, the root is the nearest ancestor holding it.
-  const rooted = reg.activeServers('/proj/docs/a.md', {
-    fileExists: (p) => p === '/proj/.marksman.toml',
-  });
-  assert.equal(rooted[0].rootDir, '/proj');
-});
-
 test('contributes a markdown.* config schema with valid enum defaults', () => {
   const { config } = activate();
   for (const key of [

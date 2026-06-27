@@ -120,7 +120,7 @@ bundled plugins:
   plugin vendors injection-only, and `<script>` → the TypeScript
   plugin's tsx grammar (`js`), each a no-op if its guest grammar isn't
   registered.
-- **markdown** — LSP + config + vendored block/inline grammars + image
+- **markdown** — config + vendored block/inline grammars + image
   preview.
 - **css** — CSS/SCSS/Sass; bundled + vendored grammars.
 - **json** — JSON/JSONC.

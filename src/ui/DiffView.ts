@@ -120,6 +120,9 @@ interface SourceEntry {
   syntax: DocumentSyntax;
   /** Editable mode, new side only: the live Document backing it (released on dispose). */
   document?: Document;
+  /** Select the grammar + parse this side (deferred); run by the projection when the hunk nears
+   *  the viewport (lazy syntax). */
+  parse: () => void;
 }
 
 export class DiffView {
@@ -224,7 +227,9 @@ export class DiffView {
     this.dmb = dmb;
 
     const sourceBuffers = new Map([...this.sources].map(([key, e]) => [key, e.buffer] as const));
-    const syntaxMap = new Map([...this.sources].map(([key, e]) => [key, e.syntax] as const));
+    // Lazy syntax: each side parses (deferred) when its hunk nears the viewport — TextEditor's
+    // lazy-syntax driver runs the thunk, not all sides up front.
+    const syntaxMap = new Map([...this.sources].map(([key, e]) => [key, { syntax: e.syntax, ensureParsed: e.parse }] as const));
     this.screen = new Screen(dmb.items, sourceBuffers);
 
     // One editor, natively backed by the multi-source projection (no buffer-mode shim): the
@@ -292,9 +297,16 @@ export class DiffView {
         if (lineCountChanged) this.scheduleMicroReDiff();
         else this.scheduleReDiff();
       });
-      // Surface each new-side file's modified state as one event (for the tab's unsaved marker).
+      // Surface each new-side file's modified state as one event (for the tab's unsaved marker)
+      // and refresh the header bands, so the edited file's path picks up the modified marker.
       for (const entry of this.sources.values()) {
-        if (entry.document) this.modifiedUnsubs.push(entry.document.onModifiedChange(() => this.emitModified()));
+        if (entry.document)
+          this.modifiedUnsubs.push(
+            entry.document.onModifiedChange(() => {
+              this.emitModified();
+              this.installOverlays(this.dmb);
+            }),
+          );
       }
     }
     // Materializing the buffer (setText) leaves the caret at the END; start at the top.
@@ -666,8 +678,13 @@ export class DiffView {
    *  flickers and jumps the text. Instead each handle is reused in place, rebuilding its widget only
    *  when its CONTENT key changed. A no-structure-change re-diff (typing within a line) updates
    *  nothing. */
-  private static headerKey(h: DiffMultiBuffer['headerAnchors'][number], collapsed: boolean): string {
-    return `${h.path}\n${h.label}\n${collapsed ? 'c' : 'e'}\n${h.added}\n${h.removed}`;
+  private static headerKey(h: DiffMultiBuffer['headerAnchors'][number], collapsed: boolean, modified: boolean): string {
+    return `${h.path}\n${h.label}\n${collapsed ? 'c' : 'e'}\n${modified ? 'M' : ''}\n${h.added}\n${h.removed}`;
+  }
+  /** Whether `path`'s live new-side document has unsaved edits (drives the header's modified
+   *  marker). Always false in read-only mode (no document). */
+  private isFileModified(path: string): boolean {
+    return this.sources.get(newKey(path))?.document?.isModified() ?? false;
   }
   private static gapKey(g: DiffMultiBuffer['gapAnchors'][number]): string {
     return `${g.placement}\n${g.label}\n${g.revealRows.join(',')}`;
@@ -678,13 +695,14 @@ export class DiffView {
 
     // File headers are STICKY block decorations placed OVER their (navigable) header row. Keyed by
     // PATH so a file keeps its widget across re-diffs; rebuilt only when its content key (label /
-    // collapse / stats) changes.
+    // collapse / stats / modified) changes.
     const headerSpecs: StickyHeaderSpec[] = dmb.headerAnchors.map((h) => {
       const collapsed = this.collapsedFiles.has(h.path);
+      const modified = this.isFileModified(h.path);
       const scope = new CompositeDisposable();
       return {
         id: `header:${h.path}`,
-        key: DiffView.headerKey(h, collapsed),
+        key: DiffView.headerKey(h, collapsed, modified),
         viewRow: h.viewRow,
         build: () =>
           buildHeaderWidget(
@@ -692,7 +710,9 @@ export class DiffView {
             h.label,
             h.path,
             () => this.onActivate?.({ path: h.path, row: 0 }),
-            { collapsed, added: h.added, removed: h.removed },
+            // Diff look: no file-type icon, bold the whole path, flag unsaved edits (warning + dot),
+            // plus the collapse chevron + `+N −M` stats.
+            { icon: false, boldPath: true, modified, collapsed, added: h.added, removed: h.removed },
           ),
         dispose: () => scope.dispose(), // sever the header click controller when the widget is replaced/removed
       };
@@ -742,22 +762,27 @@ export class DiffView {
     if (entry) this.sources.set(newKey(file.path), entry);
   }
 
-  /** A read-only blob buffer + its own parse (the base side, and both sides when read-only). */
+  /** A read-only blob buffer + its own (deferred) parse (the base side, and both sides when
+   *  read-only). The parse is lazy — run when the hunk nears the viewport (see the projection). */
   private snapshotSource(text: string, path: string): SourceEntry {
     const buffer = new GtkSource.Buffer();
     buffer.setText(text, -1);
     const syntax = new DocumentSyntax(buffer);
-    syntax.setLanguageForPath(path);
-    return { buffer, syntax };
+    return { buffer, syntax, parse: () => syntax.setLanguageForPath(path, { deferParse: true }) };
   }
 
   /** Editable new side: the shared live Document's model buffer + its own parse (no double
-   *  parse). Loads from disk only if not already open (preserving an open tab's unsaved edits). */
+   *  parse, deferred). Loads from disk only if not already open (preserving an open tab's unsaved
+   *  edits). */
   private acquireNewSide(file: DiffFile): SourceEntry {
     const { document } = this.registry!.acquire(file.path);
     if (!document.isLoaded) document.loadFile(file.path);
-    document.syntax.setLanguageForPath(file.path);
-    return { buffer: document.modelBuffer, syntax: document.syntax, document };
+    return {
+      buffer: document.modelBuffer,
+      syntax: document.syntax,
+      document,
+      parse: () => document.syntax.setLanguageForPath(file.path, { deferParse: true }),
+    };
   }
 
   private scheduleReDiff(): void {
@@ -828,6 +853,7 @@ export class DiffView {
     const lines = dmb.rowKinds.map((kind, row) => ({
       kind: kind === 'added' || kind === 'removed' ? kind : 'context',
       text: this.lineText(buffer, row),
+      wordRanges: dmb.wordRanges[row] ?? undefined, // intra-line word-add/word-del spans
     }));
     applyDiffDecorations(this.editor.decorations.layer('diff'), lines, /* terminated */ false);
     // Hide the caret on the read-only header rows — the band reads `.focused` instead. Range spans

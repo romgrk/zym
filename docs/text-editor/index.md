@@ -350,13 +350,21 @@ only lever is the gated custom-widget path (Option C). Current mechanisms:
   (O(file): ~840ms@3k, ~1.45s@8k) it paints the file's head, so open is
   O(viewport) (~70ms, size-independent). Headless keeps the whole-buffer paint
   (tests).
+- **First *parse* is bounded too** (`DocumentSyntax`, `INITIAL_PARSE_LINES`=500) —
+  the synchronous open parse reads only the file's head (covering the first-paint
+  window + margin), then `scheduleFullParse` parses the whole file on the next
+  loop iteration (a macrotask, after the first frame) and emits a reparse so every
+  view repaints + rebuilds folds. So the parse that blocks open is O(viewport)
+  (~1.5ms, flat) instead of O(file) (~28ms@10k, ~144ms@50k lines). While the tree
+  is partial, incremental edit tracking is skipped and the next reparse is forced
+  full; a sibling view that attaches mid-window reuses the partial tree (the shared
+  deferred parse upgrades both). Bench: `src/poc/load-bench.ts`. Small files
+  (≤500 lines) still parse fully in one synchronous pass.
 
 Follow-ups (measured, not done): the highlight cache is **unbounded** (far-region
-eviction cap); the **first tree-sitter parse** is O(file) and blocks open
-(0.4s@20k … 2.5s@100k) — defer past the first frame or large-file guard;
-**startup** ~680ms = module load ~450ms + `preloadGrammars` (all grammars)
-~230ms — lazy per-language load. `UnderlineOverlay` squiggles still redraw per
-frame under diagnostics (marginal).
+eviction cap); **startup** ~680ms = module load ~450ms + `preloadGrammars` (all
+grammars) ~230ms — lazy per-language load. `UnderlineOverlay` squiggles still
+redraw per frame under diagnostics (marginal).
 
 ### Gutter rendering — *done; one composite renderer*
 
