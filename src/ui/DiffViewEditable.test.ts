@@ -395,3 +395,12 @@ test('header rows are cursor-hidden (the caret rests on them but the box is supp
   assert.equal(mbv.editor.decorations.isCursorHiddenAt(at(contentRow)), false, 'a real content row shows the cursor');
   mbv.dispose();
 });
+
+test('cursor-hide: a collapsed file whose header is the last (newline-less) line stays hidden', () => {
+  const { mbv } = setup();
+  mbv.collapseAllFiles(); // single file → its empty header row is now the last buffer line
+  assert.deepEqual(linesOf(mbv), [''], 'collapsed to a single header row');
+  const endIter = asIter(mbv.editor.sourceView.getBuffer().getEndIter());
+  assert.equal(mbv.editor.decorations.isCursorHiddenAt(endIter), true, 'hidden via the end-of-buffer fallback');
+  mbv.dispose();
+});
