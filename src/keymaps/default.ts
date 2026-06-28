@@ -30,6 +30,9 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space o': 'file:find', // fuzzy file picker
   'space f o': 'file:find', // fuzzy file picker
   'space f e': 'file:open-path', // open by path (directory-navigating opener)
+  'space f m': 'file:move', // move the current file to another folder (folder picker)
+  'space f r': 'file:rename', // rename/relocate the current file
+
   'space /': 'project:search', // full-text search (ripgrep) — quick-jump picker
   'space *': 'project:search-results', // selected text → all matches in the search multibuffer
   'space p s': 'project:search-open', // open the project-search multibuffer (search entry + flags)

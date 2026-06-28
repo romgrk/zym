@@ -71,6 +71,8 @@ export interface TextEditorSource extends UndoTarget {
   restoreUnsaved(text: string): void;
   save(): void;
   saveAs(path: string): void;
+  /** Re-point at `path` after the file was moved/renamed on disk (content unchanged). */
+  renameTo(path: string): void;
   hasDiskChange(): boolean;
   isModified(): boolean;
   onTitleChange(callback: () => void): () => void;

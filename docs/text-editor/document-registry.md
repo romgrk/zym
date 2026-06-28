@@ -35,7 +35,8 @@ decorations — for free.
 
 - **`Document`** (`src/ui/TextEditor/Document.ts`) owns: the headless model
   `GtkSource.Buffer` (`setEnableUndo(true)`); per-view buffers via `createView()`
-  (`setEnableUndo(false)`); file I/O (load/save) + disk-watching; modified/dirty
+  (`setEnableUndo(false)`); file I/O (load/save, plus `renameTo` to re-point at a
+  new path — buffer/undo intact — after a move/rename on disk) + disk-watching; modified/dirty
   state; the **document-level LSP** (`lspDocument`) — one
   `didOpen`/`didChange`/`didClose` driven off the model's insert/delete signals,
   no per-view gating. Per-view **folding** also lives here (a fold collapses one

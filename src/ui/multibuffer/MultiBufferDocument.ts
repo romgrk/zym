@@ -67,6 +67,7 @@ export class MultiBufferDocument implements TextEditorSource {
   restoreUnsaved(): void {}
   save(): void {}
   saveAs(): void {}
+  renameTo(): void {}
   hasDiskChange(): boolean {
     return false;
   }

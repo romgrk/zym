@@ -476,6 +476,24 @@ export class Document implements TextEditorSource {
     this.writeFile(path, content);
   }
 
+  /** Re-point this document at `newPath` after the file was moved/renamed on
+   *  disk by something else (the bytes are unchanged, so the buffer, undo
+   *  history, and cursor are kept as-is). Updates the dedup key, tab title, disk
+   *  watch, and the LSP document URI (close-at-old / open-at-new). */
+  renameTo(newPath: string): void {
+    if (newPath === this._currentFile) return;
+    // didClose reads the *old* path (still in `_currentFile`), so it must run
+    // before the reassignment; didOpen, after — re-opening under the new URI.
+    if (this.contentLoaded) zym.lsp.didClose(this.lspDocument);
+    this._currentFile = newPath;
+    this.diskMtimeMs = this.statMtimeMs(newPath);
+    if (this.contentLoaded) {
+      this.watchFile(newPath);
+      zym.lsp.didOpen(this.lspDocument);
+    }
+    this.emitTitleChange();
+  }
+
   private statMtimeMs(path: string): number | null {
     try {
       return Fs.statSync(path).mtimeMs;

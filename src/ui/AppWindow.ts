@@ -47,7 +47,8 @@ import { GitLogView } from './GitLogView.ts';
 import { registerGithubCommands } from './githubCommands.ts';
 import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
-import { openFileOpener } from './FileOpener.ts';
+import { openFileOpener, openFolderPicker, openRenamePicker } from './FileOpener.ts';
+import { tildify } from '../util/tilde.ts';
 import { openScriptRunner, detectPackageManager } from './ScriptRunner.ts';
 import { openWorkspaceSymbolPicker } from './WorkspaceSymbolPicker.ts';
 import { openDocumentSymbolPicker } from './DocumentSymbolPicker.ts';
@@ -2350,6 +2351,16 @@ export class AppWindow {
         didDispatch: () => openFileOpener(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
         description: 'Open a file by path',
       },
+      'file:move': {
+        didDispatch: () => this.moveActiveFile(),
+        description: 'Move the current file to another folder',
+        when: () => this.activeEditor?.currentFile != null,
+      },
+      'file:rename': {
+        didDispatch: () => this.renameActiveFile(),
+        description: 'Rename (or relocate) the current file',
+        when: () => this.activeEditor?.currentFile != null,
+      },
       'project:search': {
         didDispatch: () =>
           openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.openFile(path).restoreCursor(cursor)),
@@ -3362,6 +3373,72 @@ export class AppWindow {
         // Cancelled.
       }
     });
+  }
+
+  /** Move the current file into a folder chosen from the directory-navigating
+   *  picker (folders only), keeping its name. */
+  private moveActiveFile() {
+    const editor = this.activeEditor;
+    const file = editor?.currentFile;
+    if (!editor || !file) return;
+    openFolderPicker(this.overlay, Path.dirname(file), (destDir) =>
+      this.relocateFile(editor, file, Path.join(destDir, Path.basename(file))),
+    );
+  }
+
+  /** Rename (or relocate) the current file by editing its full path in the picker. */
+  private renameActiveFile() {
+    const editor = this.activeEditor;
+    const file = editor?.currentFile;
+    if (!editor || !file) return;
+    openRenamePicker(this.overlay, file, (target) => this.relocateFile(editor, file, target));
+  }
+
+  /** Move/rename `from` → `to` on disk, prompting before clobbering an existing
+   *  file, then hand off to `performRelocate`. A no-op when the destination equals
+   *  the source (e.g. "move here" into the same folder, or rename to the same name). */
+  private relocateFile(editor: TextEditor, from: string, to: string) {
+    if (to === from) return;
+    if (Fs.existsSync(to)) {
+      const dialog = new Adw.AlertDialog({
+        heading: 'Overwrite file?',
+        body: `${tildify(to)} already exists. Replace it?`,
+      });
+      dialog.addResponse('cancel', 'Cancel');
+      dialog.addResponse('overwrite', 'Overwrite');
+      dialog.setResponseAppearance('overwrite', Adw.ResponseAppearance.DESTRUCTIVE);
+      dialog.setDefaultResponse('cancel');
+      dialog.setCloseResponse('cancel');
+      dialog.on('response', (response: string) => {
+        if (response === 'overwrite') this.performRelocate(editor, from, to);
+      });
+      dialog.present(this.window);
+      return;
+    }
+    this.performRelocate(editor, from, to);
+  }
+
+  /** The disk move + editor re-point behind `relocateFile`, run after any overwrite
+   *  confirmation: create missing parent directories (mkdir -p), move the file, then
+   *  re-point the open editor at the new path. Falls back to copy+unlink when rename
+   *  crosses filesystems (EXDEV). */
+  private performRelocate(editor: TextEditor, from: string, to: string) {
+    try {
+      Fs.mkdirSync(Path.dirname(to), { recursive: true });
+      try {
+        Fs.renameSync(from, to);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
+        Fs.copyFileSync(from, to); // cross-device: rename can't, so copy then drop the original
+        Fs.unlinkSync(from);
+      }
+    } catch (error) {
+      zym.notifications.addError('Move failed', { detail: (error as Error).message });
+      return;
+    }
+    editor.renameTo(to); // the open editor follows the file (keeps buffer/undo/cursor)
+    const inPlace = Path.dirname(from) === Path.dirname(to);
+    zym.notifications.addInfo(inPlace ? `Renamed to ${Path.basename(to)}` : `Moved to ${tildify(to)}`);
   }
 
   // --- Window chrome helpers -------------------------------------------------

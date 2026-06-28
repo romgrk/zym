@@ -2118,6 +2118,11 @@ export class TextEditor implements DocumentHost {
   saveAs(path: string) {
     this.document.saveAs(path);
   }
+  /** Re-point at `path` after the open file was moved/renamed on disk (keeps the
+   *  buffer, undo, and cursor); see `Document.renameTo`. */
+  renameTo(path: string) {
+    this.document.renameTo(path);
+  }
   /** True once the open file has been changed or deleted on disk underneath us. */
   hasDiskChange(): boolean {
     return this.document.hasDiskChange();
