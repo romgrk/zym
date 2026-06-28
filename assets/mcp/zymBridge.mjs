@@ -8,8 +8,9 @@
  *     status hooks use (see assets/hooks/agent-status.sh). The editor watches it
  *     and re-roots the agent's workbench (file tree, Source Control, branch).
  *   - `set_actions` writes a list of runnable actions (label + shell command) to
- *     `$ZYM_ACTIONS_FILE` (atomic). The editor surfaces them as buttons in the
- *     conversation and as editor commands the user runs to verify the agent's work.
+ *     `$ZYM_ACTIONS_FILE` (atomic). The editor makes them the agent's workbench
+ *     actions (overwriting the set), surfaced as buttons in the conversation and run
+ *     by the user from `space x` to verify the agent's work.
  *
  * Each tool is advertised only when its IPC file is configured (via the matching
  * env var), so a host that wants only one (e.g. the headless sdk wants actions but
@@ -44,11 +45,11 @@ const SET_ACTIONS = {
   name: 'set_actions',
   description:
     'Register runnable actions the user can trigger to run, test, or review your work ' +
-    'outside this chat (e.g. start the dev server, run the suite, open the app). zym ' +
-    'shows each as a button in the conversation and as an editor command, running its ' +
-    'command in your working directory. Replaces the whole set on each call; pass an ' +
-    'empty `actions` list to clear them. List the most useful action first — it is ' +
-    'the default.',
+    'outside this chat (e.g. open the app). zym shows them as buttons.' +
+    'Make each as convenient and direct as possible: open the app on the screen you changed, run the one ' +
+    'affected test, hit the endpoint you touched — not just a generic "run everything". ' +
+    'Replaces the whole set on each call; pass an empty `actions` list to clear it. List ' +
+    'the most useful action first — it is the default.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -60,7 +61,7 @@ const SET_ACTIONS = {
           properties: {
             label: { type: 'string', description: 'Short label, e.g. "Run dev server".' },
             command: { type: 'string', description: 'Shell command run in your working directory.' },
-            terminal: { type: 'boolean', description: 'Run in a terminal tab (default true); set false if not terminal output is required.' },
+            terminal: { type: 'boolean', description: 'Run in a terminal tab (default true); set false to run in the background when terminal output is not needed.' },
           },
           required: ['label', 'command'],
         },

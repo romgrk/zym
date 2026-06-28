@@ -1,14 +1,14 @@
 /*
- * ActionProcesses — the running background processes of an agent's terminal-less
- * actions (`terminal: false`), keyed by action id. A `claude-tui` / `claude-sdk`
- * host owns one; running such an action spawns its shell command without a
- * terminal widget, holding the process so the action's button can stop it.
+ * ActionProcesses — the running background processes of a workbench's terminal-less
+ * actions (`terminal: false`), keyed by action id. Each `WorkbenchActions` owns
+ * one; running such an action spawns its shell command without a terminal widget,
+ * holding the process so the action's button can stop it.
  *
  * Semantics the feature needs:
  *   - re-running an action terminates its previous process first (one live
  *     process per action id);
  *   - `stop(id)` / the button's close control terminates it on demand;
- *   - `stopAll()` on host teardown so a closed agent leaves nothing running.
+ *   - `stopAll()` on workbench teardown so a closed workbench leaves nothing running.
  *
  * Spawned via `Gio.SubprocessLauncher` (GLib-level posix_spawn — the same family
  * VTE uses, not a Node fork of the big parent), so we get a killable handle and a
@@ -16,8 +16,8 @@
  * capture it); an exit the user didn't trigger surfaces as a notification.
  */
 import Gio from 'gi:Gio-2.0';
-import { zym } from '../zym.ts';
-import type { AgentAction } from './actions.ts';
+import { zym } from '../../zym.ts';
+import type { Action } from '../../actions.ts';
 
 type Subprocess = InstanceType<typeof Gio.Subprocess>;
 
@@ -41,7 +41,7 @@ export class ActionProcesses {
    * previous process for the same action first (restart = replace). The command
    * runs through a login shell so PATH / profile match the terminal path.
    */
-  run(action: AgentAction, cwd: string): void {
+  run(action: Action, cwd: string): void {
     this.stop(action.id); // restart: terminate the previous process first
     const shell = process.env.SHELL || '/bin/bash';
     let proc: Subprocess;

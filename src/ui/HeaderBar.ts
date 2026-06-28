@@ -20,8 +20,9 @@ import { addStyles } from '../styles.ts';
 import { GitBranchButton } from './GitBranchButton.ts';
 import { GithubButtons } from './GithubButtons.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
+import { WorkbenchActionsBar } from './workbench/WorkbenchActionsBar.ts';
 import { openGithubService, type GithubService } from '../github.ts';
-import { type Workbench } from './Workbench.ts';
+import { type Workbench } from './workbench/Workbench.ts';
 import { zym } from '../zym.ts';
 
 // Shared `replaceKey` for the upstream-pull lifecycle, so the "behind" prompt,
@@ -66,6 +67,9 @@ export class HeaderBar {
   readonly github: GithubService;
   private readonly githubButtons: GithubButtons;
   private readonly workbenchStatus: WorkbenchStatus;
+  // The active workbench's actions (docs/workbench.md), shown in the centre title
+  // slot and rebound to the shown workbench's set on every `rebind`.
+  private readonly actions: WorkbenchActionsBar;
 
   private readonly getWorkbench: () => Workbench;
 
@@ -106,19 +110,21 @@ export class HeaderBar {
       ownsPath: options.ownsPath,
       ownsServer: options.ownsServer,
     });
+    this.actions = new WorkbenchActionsBar();
+    this.actions.bind(wb.actions);
 
     this.root = new Adw.HeaderBar();
     this.root.addCssClass('HeaderBar');
     // The branch button and the GitHub PR pill are separate controls.
     this.root.packStart(this.branchButton.root);
     this.root.packStart(this.githubButtons.root);
-    // Per-workbench health signals (diagnostics + LSP) sit at the right edge,
-    // opposite the git/GitHub controls.
+    // Right-aligned: the per-workbench health pill (diagnostics + LSP) at the far edge,
+    // the active workbench's actions just inside it.
     this.root.packEnd(this.workbenchStatus.root);
-    // The project name and the unsaved-changes marker live in the sidebar
-    // (WorkbenchList) header, so the centre title slot would otherwise fall back
-    // to the window title ("node"/project name) — duplicative. Clear it with an
-    // empty widget so the bar shows only its packed controls.
+    this.root.packEnd(this.actions.root);
+    // The project name and unsaved marker live in the sidebar header, so the centre
+    // title slot would otherwise fall back to the duplicative window title; clear it
+    // with an empty widget.
     this.root.setTitleWidget(new Gtk.Box());
   }
 
@@ -126,10 +132,12 @@ export class HeaderBar {
   // upstream-behind watch at the active workbench's git/cwd. Idempotent (the
   // widgets no-op when the repo is unchanged), so it also seeds the initial bind.
   rebind(): void {
-    const { git, cwd } = this.getWorkbench();
+    const workbench = this.getWorkbench();
+    const { git, cwd } = workbench;
     this.branchButton.setRepo(git);
     this.github.rebind(git, cwd);
     this.githubButtons.setRepo(git, cwd);
+    this.actions.bind(workbench.actions); // show the active workbench's actions
     this.upstreamUnsub?.();
     this.lastBehind = git.getAheadBehind()?.behind ?? 0;
     this.upstreamUnsub = git.onChange(() => this.checkUpstream());
@@ -191,6 +199,7 @@ export class HeaderBar {
     this.branchButton.dispose();
     this.githubButtons.dispose();
     this.workbenchStatus.dispose();
+    this.actions.dispose();
     this.github.dispose();
   }
 }

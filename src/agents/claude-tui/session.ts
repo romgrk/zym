@@ -25,7 +25,7 @@ import Gio from 'gi:Gio-2.0';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 import type { AgentDriver, AgentHost, AgentMode, AgentResume } from '../types.ts';
 import { resumeFlags } from '../resume.ts';
-import { parseActions } from '../actions.ts';
+import { parseActions } from '../../actions.ts';
 import { AGENT_SYSTEM_PROMPT } from '../prompts.ts';
 
 const AGENT_MODES = new Set<AgentMode>([

@@ -8,5 +8,6 @@ export const ICON_FILES = {
   CIRCLE_OUTLINE: 'assets/icons/circle-outline-symbolic.svg',
   DOT: 'assets/icons/dot-symbolic.svg',
   LOADING: 'assets/icons/loading-symbolic.svg',
+  MEDIA_PLAYBACK_STOP: 'assets/icons/media-playback-stop-symbolic.svg',
   WARNING: 'assets/icons/warning-symbolic.svg',
 } as const;

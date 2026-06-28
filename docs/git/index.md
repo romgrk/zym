@@ -227,7 +227,7 @@ so a workbench opens no git-subscribing `GitPanel` until the user asks for it
 (`workbench.gitPanel`/`gitTab` are null until then). Revealing again reveals
 the existing tab when it's still hosted (`Panel.containing`); otherwise it
 re-adds it, unparenting any closed page first (the zombie rule — see
-[../panels.md](../panels.md)). The `GitPanel` is owned per-workbench (each
+[../workbench.md](../workbench.md)). The `GitPanel` is owned per-workbench (each
 agent workbench has its own) and reused across close/reopen — closing the tab
 keeps it alive for the next reveal. `#GitPanel` is the CSS/selector identity.
 (The file tree keeps the right-side dock; `git:` was previously a dock tab.)

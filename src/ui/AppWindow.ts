@@ -27,8 +27,8 @@ import { buildDefinitionPeek, wrapPeekBody, LIVE_PEEK_HEIGHT } from './TextEdito
 import { Terminal, terminalTabTitle } from './Terminal.ts';
 import { AgentTerminal, type AgentStatus, type AgentResume } from './AgentTerminal.ts';
 import type { Agent } from '../agents/types.ts';
-import { defaultAction, type AgentAction } from '../agents/actions.ts';
-import { openActionRunner } from './ActionPicker.ts';
+import { ensureProjectActionsFile, type Action } from '../actions.ts';
+import { openActionRunner } from './workbench/ActionPicker.ts';
 import { AgentConversation } from './AgentConversation.ts';
 import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
 import { listResumableSessions, recordSessionWorktree, relativeTime, resolveResumeCwd, type AgentSession } from '../agentSessions.ts';
@@ -45,7 +45,7 @@ import { stage, unstage, stageAll, unstageAll, type GitDone } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { GitLogView } from './GitLogView.ts';
 import { registerGithubCommands } from './githubCommands.ts';
-import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './Workbench.ts';
+import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './workbench/Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
 import { openFileOpener, openFolderPicker, openRenamePicker } from './FileOpener.ts';
 import { tildify } from '../util/tilde.ts';
@@ -95,7 +95,7 @@ import { loadKeymaps, ensureUserKeymap } from '../keymaps/load.ts';
 import { loadConfig, configPath } from '../config/load.ts';
 import { setUserInjectionRules } from '../syntax/grammar.ts';
 import { parseInjectionRules } from '../syntax/userInjections.ts';
-import { CompositeDisposable, Disposable, type DisposableLike } from '../util/eventKit.ts';
+import { CompositeDisposable, Disposable, Emitter, type DisposableLike } from '../util/eventKit.ts';
 import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 
@@ -163,11 +163,15 @@ export class AppWindow {
   // Headless `claude-sdk` agents mounted as center tabs (keyed by their root
   // widget), disposed when their tab closes (see disposeChild).
   private readonly conversations = new Map<Widget, AgentConversation>();
-  // Terminal tabs opened for a `terminal` agent action (set_actions), keyed by the
-  // terminal's root widget. Re-running an action reuses its still-open tab (run the
-  // command in place); the tab is closed when the action is cleared, the agent is
-  // closed, or the user closes the tab (see pruneActionTerminals / disposeChild).
-  private readonly actionTerminals = new Map<Widget, { agent: Agent; actionId: string; terminal: Terminal; child: PanelChild }>();
+  // Terminal tabs opened for a `terminal` workbench action, keyed by the terminal's
+  // root widget. Re-running an action reuses its still-open tab (run the command in
+  // place); the tab is closed when the action is cleared, its workbench is closed, or
+  // the user closes the tab (see pruneActionTerminals / disposeChild).
+  private readonly actionTerminals = new Map<Widget, { workbench: Workbench<'user' | Agent>; actionId: string; terminal: Terminal; child: PanelChild }>();
+  // Fires (with the affected workbench) when a `terminal` action's command starts or
+  // exits, so that workbench's WorkbenchActions can re-emit a running change and the
+  // header bar's run/stop button updates. Driven by each action terminal's onRunningChange.
+  private readonly actionTerminalChanges = new Emitter();
 
   // The workbench sidebar: the full-height `.WorkbenchSidebar` column at the very left
   // of the window. Owns the `WorkbenchList` (`this.sidebar.list`); it's the start child
@@ -310,6 +314,8 @@ export class AppWindow {
         // Restore resized dock extents last, once each side's visibility is settled.
         if (docks.sizes) this.workbench.setDockSizes(docks.sizes);
       },
+      serializeUserActions: () => userWorkbench.actions.serialize(),
+      restoreUserActions: (actions) => userWorkbench.actions.restore(actions),
       serializeAgentWorkspaces: () => this.serializeAgentWorkspaces(),
       restoreAgent: (ws) => this.restoreAgent(ws),
       getActiveWorkspace: () => this.activeWorkspaceIndex(),
@@ -798,21 +804,21 @@ export class AppWindow {
     this.terminals.get(built.widget)!.focus();
   }
 
-  // Open a `terminal` agent action (set_actions) in a dedicated terminal tab in the
-  // agent's own workbench, so its output lands beside the agent. The shell runs the
+  // Open a `terminal` workbench action in a dedicated terminal tab in that
+  // workbench's own center, so its output lands beside the work. The shell runs the
   // command once and the tab stays on its output when it exits (no fresh shell is
   // spawned). Re-running the same action reuses its still-open tab — the command
   // runs again in place — instead of piling up a tab per run. The tab is cleaned up
-  // when the action is cleared (pruneActionTerminals) or the agent is closed.
-  // (Terminal-less actions run as background processes inside the host, not here.)
-  private runAgentActionInTerminal(agent: Agent, action: AgentAction): void {
-    this.showAgent(agent); // activate the agent's workbench — the action runs beside it
+  // when the action is cleared (pruneActionTerminals) or its workbench is closed.
+  // (Terminal-less actions run as background processes in WorkbenchActions, not here.)
+  private runWorkbenchActionInTerminal(workbench: Workbench<'user' | Agent>, action: Action): void {
+    this.activateWorkbench(workbench); // run beside its workbench — switch to it if needed
     const shell = process.env.SHELL || '/bin/bash';
     const command = [shell, '-l', '-c', action.command];
 
     // Reuse the action's existing tab if it's still around (it lingers on its output
     // after the command exits): bring it forward and re-run the command in place.
-    const existing = this.findActionTerminal(agent, action.id);
+    const existing = this.findActionTerminal(workbench, action.id);
     if (existing) {
       existing.child.select();
       existing.terminal.run(command);
@@ -820,41 +826,43 @@ export class AppWindow {
       return;
     }
 
-    const built = this.createTerminalTab(agent.effectiveCwd, {
+    const built = this.createTerminalTab(workbench.cwd, {
       command,
       title: action.label,
       keepOpenOnExit: true, // stay on the output when the command exits; don't respawn a shell
       transient: true, // too short-lived to restore — keep it out of the session
+      // Reflect the command's start/exit so the header run/stop button + icon update.
+      onRunningChange: () => this.actionTerminalChanges.emit('change', workbench),
     });
-    const child = this.workbench.center.add(built.widget, { title: built.title });
+    const child = workbench.center.add(built.widget, { title: built.title });
     built.onAttached?.(child);
     const terminal = this.terminals.get(built.widget)!;
-    this.actionTerminals.set(built.widget, { agent, actionId: action.id, terminal, child });
+    this.actionTerminals.set(built.widget, { workbench, actionId: action.id, terminal, child });
     terminal.focus();
   }
 
-  // The still-open terminal tab for `agent`'s action, or null. (Closed tabs are
+  // The still-open terminal tab for `workbench`'s action, or null. (Closed tabs are
   // dropped from the map by disposeChild, so a hit is always a live tab.)
-  private findActionTerminal(agent: Agent, actionId: string) {
+  private findActionTerminal(workbench: Workbench<'user' | Agent>, actionId: string) {
     for (const entry of this.actionTerminals.values())
-      if (entry.agent === agent && entry.actionId === actionId) return entry;
+      if (entry.workbench === workbench && entry.actionId === actionId) return entry;
     return null;
   }
 
-  // Close the terminal tabs of `agent`'s actions that no longer exist — the agent
-  // re-registered its actions (set_actions) and dropped these, so their dedicated
-  // terminals are stale. Closing the tab tears down the rest via disposeChild.
-  private pruneActionTerminals(agent: Agent): void {
-    const live = new Set(agent.actions.map((a) => a.id));
+  // Close the terminal tabs of `workbench`'s actions that no longer exist — the set
+  // changed (agent set_actions, a reset, or a file edit) and dropped these, so their
+  // dedicated terminals are stale. Closing the tab tears down the rest via disposeChild.
+  private pruneActionTerminals(workbench: Workbench<'user' | Agent>): void {
+    const live = new Set(workbench.actions.actions.map((a) => a.id));
     for (const entry of [...this.actionTerminals.values()])
-      if (entry.agent === agent && !live.has(entry.actionId)) entry.child.close();
+      if (entry.workbench === workbench && !live.has(entry.actionId)) entry.child.close();
   }
 
   // Construct + wire a terminal tab WITHOUT attaching it to a panel. Shared by
   // openTerminal, the script runner, and session restore (a restored terminal is
   // a fresh shell in cwd). `command`/`title` let a caller run something other than
   // a login shell (e.g. a package script).
-  private createTerminalTab(cwd: string, options: { command?: string[]; title?: string; keepOpenOnExit?: boolean; transient?: boolean } = {}): RestoredChild {
+  private createTerminalTab(cwd: string, options: { command?: string[]; title?: string; keepOpenOnExit?: boolean; transient?: boolean; onRunningChange?: () => void } = {}): RestoredChild {
     let child: PanelChild | null = null;
     const terminal = new Terminal({
       cwd,
@@ -862,6 +870,7 @@ export class AppWindow {
       title: options.title,
       keepOpenOnExit: options.keepOpenOnExit,
       transient: options.transient,
+      onRunningChange: options.onRunningChange,
       // The shell exiting (`exit`/Ctrl-D) closes its tab. A `keepOpenOnExit` tab
       // (an agent action) instead stays on its output and never fires this.
       onExit: () => child?.close(),
@@ -914,7 +923,6 @@ export class AppWindow {
     const agent = AGENT_CONFIGS[kind].create({
       cwd, command: options.command, prompt: options.prompt, userPrompt: options.userPrompt, resume: options.resume, title: options.title,
       onOpenFile: (path) => this.openFile(path),
-      onRunInTerminal: (action) => this.runAgentActionInTerminal(agent, action),
     });
     // Track in the kind's map (terminal focus-routing / headless disposal key off these).
     if (agent instanceof AgentTerminal) this.terminals.set(agent.root, agent);
@@ -922,6 +930,11 @@ export class AppWindow {
     // Background launch: build the agent's workbench and start it, but stay on the
     // current workbench and don't focus it (it's listed in the sidebar; switch to it later).
     const workbench = this.buildWorkbench(agent, cwd);
+    // Pipe the agent's `set_actions` straight into its workbench's action set (the
+    // agent keeps no copy). The set is shown as buttons in the window header bar when
+    // this workbench is active; pruning stale terminal tabs is driven off the workbench
+    // set change (wired in buildWorkbench).
+    agent.bindActions(workbench.actions);
     // The agent widget lives in the "secondary sidebar" (a full-height column with its
     // own header) rather than the workbench center — uncloseable (no tab) and themed with
     // the secondarySidebar colors. It's hosted in the sidebar's stack now; activateWorkbench
@@ -937,8 +950,6 @@ export class AppWindow {
     agentSubs.add(new Disposable(agent.onTitleChange(() => {
       if (this.activeAgent === agent) this.agentSidebar.setTitle(agent.title);
     })));
-    // Drop a `terminal` action's dedicated tab when the agent stops registering it.
-    agentSubs.add(new Disposable(agent.onDidChangeActions(() => this.pruneActionTerminals(agent))));
     // Notify when the agent needs attention while the user isn't looking at it.
     let previousStatus = agent.status;
     agentSubs.add(new Disposable(agent.onDidChangeStatus(() => {
@@ -1143,6 +1154,7 @@ export class AppWindow {
         root: workbench.cwd,
         layout: workbench.center.serializeLayout((w) => this.serializeChild(w)),
         fileTree: { expanded: workbench.fileTree.serializeExpanded() },
+        actions: workbench.actions.serialize(),
         agent: state,
       });
     }
@@ -1194,6 +1206,9 @@ export class AppWindow {
     // isn't preserved — we just reopen the file tabs, rooted in this workbench.
     const workbench = this.workbenches.get(agent);
     if (workbench) {
+      // Restore the workbench's live action set (a resuming agent may re-report and
+      // overwrite it on its next set_actions — that's the intended precedence).
+      if (ws.actions) workbench.actions.restore(ws.actions);
       const panel = workbench.center.openPanel;
       for (const tab of fileTabsOf(ws.layout)) {
         if (Fs.existsSync(tab.path)) {
@@ -1424,12 +1439,12 @@ export class AppWindow {
   // the user's workbench if it was active), and retire it from the registry.
   private closeAgent(agent: Agent): void {
     if (!agent.exited) agent.kill();
-    // Drop the agent's action terminals (set_actions tabs in its workbench center);
+    const workbench = this.workbenches.get(agent);
+    // Drop this workbench's action terminals (set_actions tabs in its center);
     // disposeChild won't reach them (they're terminals, not editors).
     for (const entry of [...this.actionTerminals.values()])
-      if (entry.agent === agent) this.disposeChild(entry.terminal.root);
+      if (entry.workbench === workbench) this.disposeChild(entry.terminal.root);
     if (this.workbench.owner === agent) this.activateOwner('user'); // swap away first
-    const workbench = this.workbenches.get(agent);
     this.workbenches.delete(agent); // its workbench (center + Files/Git + bottom + tabs) goes
     if (workbench) {
       // Tear down the editors that lived in this workbench — closing it drops their
@@ -1533,12 +1548,15 @@ export class AppWindow {
     this.editorChildren.delete(widget);
     this.terminals.get(widget)?.dispose(); // sever the Vte focus controller (rule 9)
     this.terminals.delete(widget);
-    // An agent-action terminal: kill any still-running command (e.g. a dev server)
-    // so a closed/cleared action leaves nothing behind, then drop it from the map.
+    // A workbench-action terminal: kill any still-running command (e.g. a dev server)
+    // so a closed/cleared action leaves nothing behind, then drop it from the map and
+    // notify so the run/stop button drops back to "start" (the tab is gone — disposing
+    // the terminal severed its onRunningChange, so emit the change ourselves).
     const actionTerminal = this.actionTerminals.get(widget);
     actionTerminal?.terminal.kill();
     actionTerminal?.terminal.dispose();
     this.actionTerminals.delete(widget);
+    if (actionTerminal) this.actionTerminalChanges.emit('change', actionTerminal.workbench);
     this.conversations.get(widget)?.dispose(); // kill the claude child + IPC watchers
     this.conversations.delete(widget);
     this.updateModifiedMarker(); // a closed editor no longer counts as unsaved
@@ -1622,6 +1640,22 @@ export class AppWindow {
       },
       { showSideDock: owner === 'user' },
     );
+    // The workbench owns its runtime action set (seeded from `<cwd>/.zym/actions.json`,
+    // overwritable by an agent, run from `space x`); wire the terminal-action runner so
+    // a `terminal` action runs in a tab here and reports its run/stop state (it needs
+    // the workbench to host the tab), and prune orphaned action tabs when the set
+    // shrinks. The subscriptions live on plain-JS emitters collected with the workbench
+    // on dispose — hence the explicit `void` discard.
+    workbench.actions.setTerminalRunner({
+      run: (action) => this.runWorkbenchActionInTerminal(workbench, action),
+      stop: (actionId) => this.findActionTerminal(workbench, actionId)?.terminal.kill(),
+      isRunning: (actionId) => (this.findActionTerminal(workbench, actionId)?.terminal.pid ?? null) !== null,
+      onDidChangeRunning: (cb) => {
+        const sub = this.actionTerminalChanges.on('change', (wb) => { if (wb === workbench) cb(); });
+        return () => sub.dispose();
+      },
+    });
+    void workbench.actions.onDidChange(() => this.pruneActionTerminals(workbench));
     this.workbenches.set(owner, workbench);
     return workbench;
   }
@@ -2781,25 +2815,36 @@ export class AppWindow {
       // workbench and retire it from the list (unlike tab:close, which only backgrounds).
       'agent:close': { didDispatch: () => this.closeCurrentAgent(), description: 'Close the agent (terminate it and remove it from the list)', when: () => this.currentAgent() !== null },
       'agent:open-changes': { didDispatch: () => this.openChangesOfCurrentAgent(), description: "Open the agent's edited files", when: () => this.currentAgent() !== null },
-      // Run an action the agent registered (set_actions) — the default one, or one
-      // chosen from a picker. The agent routes it: a `terminal` action opens a
-      // terminal tab, a terminal-less one (re)starts its background process.
-      'agent:action-run-default': {
-        didDispatch: () => {
-          const agent = this.currentAgent();
-          const action = defaultAction(agent?.actions);
-          if (agent && action) agent.runAction(action);
+      // Workbench actions (`space x`) — the active workbench's per-workbench runnable
+      // set (docs/workbench.md). Run by 1-based number (`space x x`/`space x 1`
+      // → the first/default, `space x N` → the Nth), pick from a list, edit the project
+      // file, or reset the live set back to it. A `terminal` action opens a terminal
+      // tab; a terminal-less one (re)starts its background process.
+      'workbench:action-run': {
+        didDispatch: (event) => {
+          const actions = this.workbench.actions;
+          const index = Math.max(1, Math.trunc(Number(event.args?.[0] ?? 1)) || 1);
+          const action = actions.actions[index - 1];
+          if (action) actions.run(action);
         },
-        description: "Run the agent's default action",
-        when: () => (this.currentAgent()?.actions.length ?? 0) > 0,
+        description: 'Run a workbench action by number (first by default)',
+        when: () => this.workbench.actions.actions.length > 0,
       },
-      'agent:action-picker': {
+      'workbench:action-picker': {
         didDispatch: () => {
-          const agent = this.currentAgent();
-          if (agent) openActionRunner(this.overlay, agent.actions, (action) => agent.runAction(action));
+          const actions = this.workbench.actions;
+          openActionRunner(this.overlay, actions.actions, (action) => actions.run(action));
         },
-        description: "Run one of the agent's actions…",
-        when: () => (this.currentAgent()?.actions.length ?? 0) > 0,
+        description: 'Run one of the workbench actions…',
+        when: () => this.workbench.actions.actions.length > 0,
+      },
+      'workbench:action-edit': {
+        didDispatch: () => this.openFile(ensureProjectActionsFile(this.workbench.cwd)),
+        description: 'Edit the workbench actions (.zym/actions.json)',
+      },
+      'workbench:action-reset': {
+        didDispatch: () => this.workbench.actions.reset(),
+        description: 'Reset workbench actions to the project defaults',
       },
       'agent:focus-next': { didDispatch: () => this.focusAdjacentAgent(1), description: 'Focus the next agent' },
       'agent:focus-prev': { didDispatch: () => this.focusAdjacentAgent(-1), description: 'Focus the previous agent' },

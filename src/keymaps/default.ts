@@ -49,8 +49,6 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space a r': 'agent:rename', // rename the current agent
   'space a R': 'agent:resume-conversation', // resume a past conversation (picker)
   'space a b': 'agent:branch', // branch the current agent into a new forked agent
-  'space a x': 'agent:action-run-default', // run the agent's default action (set_actions)
-  'space a X': 'agent:action-picker', // pick one of the agent's actions to run
   // Send editor context to an agent: the second key picks selection (s) or file
   // (f); the third picks the current agent (repeat), one from the picker (a), or
   // a new agent with an editable prompt (n).
@@ -150,6 +148,21 @@ const TAB_BINDINGS: Record<string, Binding> = {
 for (let n = 1; n <= 8; n++)
   TAB_BINDINGS[`alt-${n}`] = { command: 'tab:go-to', args: [n - 1] };
 
+// Workbench actions (`space x …`): the active workbench's runnable set
+// (docs/workbench.md). `space x x` runs the first/default action; `space x 1`
+// … `space x 9` run the Nth (one parameterized `workbench:action-run` with the
+// 1-based index); `o` picks from a list, `e` edits the project file, `r` resets the
+// live set to it. Kept out of the string-only SPACE_COMMANDS map because the numeric
+// bindings carry an `args` payload.
+const WORKBENCH_ACTIONS: Record<string, Binding> = {
+  'space x x': { command: 'workbench:action-run', args: [1] }, // run the first (default) action
+  'space x o': 'workbench:action-picker', // pick an action to run
+  'space x e': 'workbench:action-edit', // edit the workbench actions (.zym/actions.json)
+  'space x r': 'workbench:action-reset', // reset the live set to the project defaults
+};
+for (let n = 1; n <= 9; n++)
+  WORKBENCH_ACTIONS[`space x ${n}`] = { command: 'workbench:action-run', args: [n] };
+
 // Vim-style list navigation, shared by the focusable list widgets (file tree,
 // git panel, agent list). Each widget registers the `core:*` handlers; this is
 // the one place the keystrokes are defined. `l` (core:right) is the per-list
@@ -189,6 +202,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'super-.': 'workbench:next',
 
     ...SPACE_COMMANDS,
+    ...WORKBENCH_ACTIONS,
   },
 
   // LSP hover on the symbol under the cursor. Bound only in normal mode so it

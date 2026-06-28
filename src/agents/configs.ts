@@ -18,7 +18,6 @@ import { createClaudeTuiDriver } from './claude-tui/session.ts';
 import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
 import { claudeSdkLaunchOptions } from './claude-sdk/config.ts';
 import type { Agent, AgentResume } from './types.ts';
-import type { AgentAction } from './actions.ts';
 
 export type AgentKind = 'claude-tui' | 'claude-sdk';
 
@@ -71,9 +70,6 @@ export interface AgentLaunch {
   title?: string;
   /** Open a file the agent touched (sdk conversation rows; tui ignores it). */
   onOpenFile?: (path: string) => void;
-  /** Run a `terminal` action in a terminal tab (the host runs terminal-less ones
-   *  itself as background processes). Both kinds use it. */
-  onRunInTerminal?: (action: AgentAction) => void;
 }
 
 export interface AgentConfig {
@@ -97,13 +93,12 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         resume: l.resume,
         title: l.title,
         driverFactory: createClaudeTuiDriver,
-        onRunInTerminal: l.onRunInTerminal,
       }),
   },
   'claude-sdk': {
     kind: 'claude-sdk',
     options: claudeSdkLaunchOptions,
-    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile, onRunInTerminal: l.onRunInTerminal }),
+    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile }),
   },
 };
 

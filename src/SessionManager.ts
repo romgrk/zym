@@ -24,6 +24,7 @@ import * as Os from 'node:os';
 import * as Path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Disposable } from './util/eventKit.ts';
+import type { Action } from './actions.ts';
 
 /** Current on-disk format version. Bumped only on an incompatible change. */
 export const SESSION_VERSION = 1;
@@ -57,6 +58,9 @@ export interface WorkspaceState {
   root: string;
   layout: PanelNode;
   fileTree?: { expanded: string[] };
+  /** The workbench's live action set at save time (docs/workbench.md),
+   *  restored so a workbench's set survives an editor restart. Omitted when empty. */
+  actions?: Action[];
   /** Present → this workspace is an agent's workbench (relaunch the agent on
    *  restore, resumed to its conversation/worktree). Absent → the user workbench. */
   agent?: AgentTabState;

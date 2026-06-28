@@ -54,8 +54,8 @@ See [theming.md](theming.md).
 A workbench has a current directory, docks and a center panel. Many workbenches can
 exist at once. Every tab group (center editor groups and all docks) is one shared `Panel`
 abstraction, with exactly one active panel defined by keyboard-focus containment.
-Covers the `Panel`/`PanelGroup`/`Workbench` dock model, focus/tab-bar rules. 
-See [panels.md](panels.md).
+Covers the `Panel`/`PanelGroup`/`Workbench` dock model, focus/tab-bar rules, and
+per-workbench runnable actions (`space x`). See [workbench.md](workbench.md).
 
 ## Lifecycle & disposal
 

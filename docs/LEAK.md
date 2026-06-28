@@ -81,7 +81,7 @@ AppWindow `tabCloseHandlers`); file monitors pair `connect` (the `.off()`) with
 
 - **Editor core:** `EditorModel`, `Document`, `Peek`.
 - **Conversation:** `Transcript`, `AgentConversation`, `ToolRow`, `MarkdownView`,
-  `ActionsBar`, `MonitorView`, `SubagentView`, `cards.ts`, `QuestionCard`.
+  `MonitorView`, `SubagentView`, `cards.ts`, `QuestionCard`.
 - **Pickers:** `Picker.openPicker` (one helper → ~20 picker files).
 - **Per-tab:** `GitLogView`, `ProjectSearchView`, `FileTree`, `Terminal`, `AgentTerminal`.
 - **Sessions:** `SdkSession`, claude-tui `ClaudeSession`.

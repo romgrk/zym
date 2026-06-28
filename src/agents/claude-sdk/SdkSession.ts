@@ -27,7 +27,7 @@ import { userTurn, isSystemInit, isThinkingTokens, isResult, type StreamEvent, t
 import type { ReplayEntry } from './transcript.ts';
 import type { AgentMode, AgentResume, AgentStatus } from '../types.ts';
 import { resumeFlags } from '../resume.ts';
-import { parseActions, type AgentAction } from '../actions.ts';
+import { parseActions, type Action } from '../../actions.ts';
 import { AGENT_SYSTEM_PROMPT } from '../prompts.ts';
 
 const AGENT_MODES = new Set<AgentMode>(['default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions']);
@@ -420,7 +420,7 @@ export class SdkSession {
   onUnhandled(cb: (m: { event: unknown }) => void): Disposable { return this.emitter.on('unhandled', cb as (v?: unknown) => void); }
   onPermission(cb: (r: PermissionRequest) => void): Disposable { return this.emitter.on('permission', cb as (v?: unknown) => void); }
   onQuestion(cb: (r: QuestionRequest) => void): Disposable { return this.emitter.on('question', cb as (v?: unknown) => void); }
-  onActions(cb: (m: { actions: AgentAction[] }) => void): Disposable { return this.emitter.on('actions', cb as (v?: unknown) => void); }
+  onActions(cb: (m: { actions: Action[] }) => void): Disposable { return this.emitter.on('actions', cb as (v?: unknown) => void); }
   onCwd(cb: (m: { cwd: string }) => void): Disposable { return this.emitter.on('cwd', cb as (v?: unknown) => void); }
   onExit(cb: (m: { code: number | null; stderr: string }) => void): Disposable { return this.emitter.on('exit', cb as (v?: unknown) => void); }
 

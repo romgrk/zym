@@ -1,6 +1,6 @@
-# Panels & layout
+# Workbench, panels & layout
 
-The workbench is a dock layout (`Workbench`, `src/ui/Workbench.ts`) around a
+The workbench is a dock layout (`Workbench`, `src/ui/workbench/Workbench.ts`) around a
 splittable center (`PanelGroup`, `src/ui/PanelGroup.ts`). The shared building
 block is `Panel` (`src/ui/Panel.ts`): a tab host (Adw.TabBar + Adw.TabView)
 with a friendly empty-state placeholder. Every tab group in the app — the
@@ -173,6 +173,19 @@ panel restores focus to the exact widget that last held it in that tab (e.g.
 an editor's search bar), falling back to the tab's default focus target. Focus
 on the tab's own root drops the entry (so restore re-derives from the tab
 itself).
+
+## Actions
+
+Each `Workbench` owns a set of **runnable actions** (label + shell command — dev
+server, tests, open the app), run via `space x`. The set seeds from the committable
+project file `<cwd>/.zym/actions.json`, can be overwritten by an agent's
+`set_actions` (`reset` re-reads the file), and is saved in the session (lost on
+close). `WorkbenchActions` (`src/ui/workbench/`) owns the set and runs each —
+`terminal` ones in a center tab, the rest as a background process; agents only
+*report* actions, AppWindow pipes them in. The active workbench's set is shown as
+buttons in the window header bar (`WorkbenchActionsBar`).
+
+Keymap (`space x …`): `x` first · `1`–`9` Nth · `o` picker · `e` edit · `r` reset.
 
 ## Remaining / planned
 
