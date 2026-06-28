@@ -17,7 +17,7 @@
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
 import { addStyles } from '../styles.ts';
-import { GitBranchButton } from './GitBranchButton.ts';
+import { GitBranchButton } from './git/GitBranchButton.ts';
 import { GithubButtons } from './GithubButtons.ts';
 import { WorkbenchStatus } from './WorkbenchStatus.ts';
 import { openGithubService, type GithubService } from '../github.ts';

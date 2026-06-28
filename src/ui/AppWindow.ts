@@ -36,14 +36,14 @@ import { PROJECT_NAME } from './WorkbenchList.ts';
 import { Sidebar } from './Sidebar.ts';
 import { AgentSidebar } from './AgentSidebar.ts';
 import { HeaderBar } from './HeaderBar.ts';
-import { GitPanel } from './GitPanel.ts';
+import { GitPanel } from './git/GitPanel.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { Icons } from './icons.ts';
 import { acquireGitRepo, releaseGitRepo, type GitOpResult } from '../git.ts';
-import { git, repoRoot, invalidateRepoRoot, commitMsgPath, listWorktrees, lastCommitMessage } from '../git.ts';
+import { git, repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
 import { stage, unstage, stageAll, unstageAll, type GitDone } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
-import { GitLogView } from './GitLogView.ts';
+import { GitLogView } from './git/GitLogView.ts';
 import { registerGithubCommands } from './githubCommands.ts';
 import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
@@ -69,8 +69,8 @@ import {
   openDeleteBranchPicker,
   openMergeBranchPicker,
   openRenameBranchPicker,
-} from './BranchPicker.ts';
-import { openStashPicker } from './StashPicker.ts';
+} from './git/BranchPicker.ts';
+import { openStashPicker } from './git/StashPicker.ts';
 import { openGithubCIChecksPicker } from './GithubCIChecksPicker.ts';
 import { openPicker, highlightSegment } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
@@ -175,9 +175,6 @@ export class AppWindow {
   private readonly sidebar: Sidebar;
   private sidebarHidden = false; // user toggle (sidebar:toggle, `ctrl-w g s`); detaches the column entirely
   private sidebarShownWidth = SIDEBAR_WIDTH; // split position captured on hide, re-applied on show
-  // Commit-message editor tabs: the message file each is bound to, so closing the
-  // tab can commit (git-style: write the message, save, close to commit).
-  private readonly commitEditors = new Map<Widget, { repo: string; msgPath: string; amend: boolean }>();
   // Maps an editor's root widget to its center tab handle, so a location jump can
   // reveal an already-open file instead of opening a duplicate tab.
   private readonly editorChildren = new Map<Widget, PanelChild>();
@@ -1542,12 +1539,6 @@ export class AppWindow {
     this.conversations.get(widget)?.dispose(); // kill the claude child + IPC watchers
     this.conversations.delete(widget);
     this.updateModifiedMarker(); // a closed editor no longer counts as unsaved
-    // A closed commit-message tab finalizes the commit (if a message was saved).
-    const commitInfo = this.commitEditors.get(widget);
-    if (commitInfo) {
-      this.commitEditors.delete(widget);
-      this.finishCommit(commitInfo.repo, commitInfo.msgPath, commitInfo.amend);
-    }
   }
 
   // Rebuild one closed tab from its serialized state — the reopener `zym.workspace`
@@ -2074,7 +2065,6 @@ export class AppWindow {
       cwd: workbench.cwd,
       git: workbench.git,
       onOpenFile: (path) => this.openFile(path),
-      onCommit: () => this.startCommit(),
       // Build the embedded live diff against THIS workbench's repo (l/enter/o reveals the
       // selected change in it); the panel owns its lifecycle.
       buildDiffView: () => this.buildCurrentChangesDiff(workbench),
@@ -2930,44 +2920,13 @@ export class AppWindow {
   // tab. Closing the tab finalizes it — git-style: write the message, save, close
   // to commit (close without a saved message aborts). Reuses the normal editor.
   // `amend` rewrites HEAD and prefills the tab with the last commit's message.
+  // Commit (`space g c` / the panel's `c c`) or amend (`space g C`): reveal Source Control
+  // and edit the message in its embedded commit editor (a vertical split above the change
+  // list) — no separate tab. The GitPanel owns the message → `git.commit` flow.
   private startCommit(amend = false) {
-    const repo = repoRoot(this.workbench.cwd);
-    if (!repo) return;
-    commitMsgPath(repo, (msgPath) => {
-      const open = (initial: string) => {
-        try {
-          Fs.writeFileSync(msgPath, initial);
-        } catch (error) {
-          zym.notifications.addError('Could not start commit', { detail: (error as Error).message });
-          return;
-        }
-        const editor = this.openFile(msgPath);
-        this.commitEditors.set(editor.root, { repo, msgPath, amend });
-      };
-      // Amend prefills the existing message so the user can edit it; a plain
-      // commit starts blank.
-      if (amend) lastCommitMessage(repo, open);
-      else open('');
-    });
-  }
-
-  // Finalize a commit when its message tab closes: commit the saved message, or
-  // abort if it is empty. Routed through zym.notifications.
-  private finishCommit(repo: string, msgPath: string, amend: boolean) {
-    let message = '';
-    try {
-      message = Fs.readFileSync(msgPath, 'utf8');
-    } catch {
-      // file gone — nothing to commit
-    }
-    if (!message.trim()) {
-      zym.notifications.addInfo('Commit aborted (empty message)');
-      return;
-    }
-    void this.workbench.git.commit(msgPath, amend).then((result) => {
-      if (result.isOk()) zym.notifications.addSuccess(amend ? 'Amended HEAD' : 'Committed');
-      else zym.notifications.addError(amend ? 'Amend failed' : 'Commit failed', { detail: result.unwrapErr().message.trim() });
-    });
+    if (!repoRoot(this.workbench.cwd)) return;
+    this.revealGitPanel();
+    this.workbench.gitPanel?.startCommit(amend);
   }
 
   // Notification log: show/hide the bottom-dock history, and clear it. Handlers

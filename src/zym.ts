@@ -192,6 +192,11 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     maximum: 1440,
     description: 'Background `git fetch` interval in minutes (0 disables).',
   },
+  'help.showKeybindings': {
+    type: 'boolean',
+    default: true,
+    description: 'Show keybinding hints (keycaps) in the UI, e.g. the Source Control commit box.',
+  },
   'session.autosave': {
     type: 'boolean',
     default: true,
