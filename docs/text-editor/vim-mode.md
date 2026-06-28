@@ -11,14 +11,8 @@ default (no flag).
   dot-repeat.
 - find-char (`f`/`F`/`t`/`T`/`;`/`,`), case ops (`gU`/`gu`/`g~`), surround
   (`ys`/`ds`/`cs`), indent/outdent/join.
-  - surround's `f` target is the function *call* (vim-surround style, text-based —
-    not the tree-sitter `af`/`if` definition): `dsf` strips `name(`…`)` (`fn(x)` →
-    `x`, receiver-aware so `obj.fn(x)` → `x`), `csf` deletes only the name and
-    drops into insert mode before the `(` (`fn(x)` → `|(x)`), and `ys{motion}f`
-    wraps the target in `()` then enters insert mode before the `(` (`ysiwf` on
-    `x` → `|(x)`). Implemented by the `FunctionCall` text-object
-    (`vim/text-object.ts`) + the `f`/insert-mode branches in `SurroundBase`
-    (`vim/operator-transform-string.ts`).
+  - surround `f` = function *call* (text-based, not the tree-sitter `af`/`if`):
+    `dsf` `fn(x)`→`x`, `csf` `fn(x)`→`|(x)`, `ysiwf` `x`→`|(x)`.
 - `gv` reselects the last visual selection; `gb` selects the latest
   changed/yanked region (the `` `[ ``/`` `] `` change marks).
 - `]h`/`[h` jump to the next/previous git hunk; `]d`/`[d` to the next/previous
