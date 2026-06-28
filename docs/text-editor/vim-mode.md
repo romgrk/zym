@@ -5,6 +5,10 @@ Custom modal editing ported from Atom's vim-mode-plus, driven by zym's
 `src/ui/TextEditor/vim/`). It replaces `GtkSource.VimIMContext` and is the
 default (no flag).
 
+For an exhaustive, per-mode table of every bound keystroke (and the notable
+standard-vim keys we don't map), see
+[vim-keymap-reference.md](vim-keymap-reference.md).
+
 ## What works
 
 - Motions, operators, text-objects, visual mode, registers, marks, counts,

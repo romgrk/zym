@@ -197,6 +197,9 @@ export interface PickerOptions {
   /** Align the card to a widget (e.g. the active editor) instead of the overlay's
    *  top-centre. Forwarded to the FloatingCard; see `CardAnchor`. */
   anchor?: CardAnchor;
+  /** Dim the rest of the window with a scrim behind the card (default true). Pass false for a
+   *  picker that should sit over the content without darkening it (e.g. the diff file jump). */
+  dim?: boolean;
   placeholder?: string;
   items?: Array<string | PickerItem>;
   /** Initial entry text (e.g. seed an action prompt with the editor selection). */
@@ -475,7 +478,7 @@ export function openPicker(options: PickerOptions): PickerHandle {
     host,
     name: 'Picker',
     anchor: options.anchor,
-    dim: true,
+    dim: options.dim ?? true,
     onClose: () => {
       subs.dispose(); // sever the entry/list-box signal handlers (rule 2)
       commandsSub?.dispose();

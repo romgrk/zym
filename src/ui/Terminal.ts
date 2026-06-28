@@ -56,6 +56,10 @@ export interface TerminalOptions {
   title?: string;
   /** Fired when the shell process exits, with its exit status. */
   onExit?: (status: number) => void;
+  /** Fired whenever the child's running state changes — it spawns or exits — so a
+   *  host can reflect "is the command running" (e.g. a run/stop action button). Fires
+   *  even with `keepOpenOnExit` (where `onExit` is suppressed). */
+  onRunningChange?: () => void;
   /**
    * Keep the terminal open (and silent) when its child exits instead of firing
    * `onExit`: the pane stays on the command's final output with a dim notice, and
@@ -82,6 +86,7 @@ export class Terminal {
   protected readonly terminal: VteTerminal;
 
   private readonly onExit: (status: number) => void;
+  private readonly onRunningChange: () => void;
   private readonly keepOpenOnExit: boolean;
   private readonly transient: boolean;
   // A command staged by `run()` while the previous child is still being killed; it
@@ -102,6 +107,7 @@ export class Terminal {
 
   constructor(options: TerminalOptions = {}) {
     this.onExit = options.onExit ?? (() => {});
+    this.onRunningChange = options.onRunningChange ?? (() => {});
     this.keepOpenOnExit = options.keepOpenOnExit ?? false;
     this.transient = options.transient ?? false;
     this.cwd = options.cwd ?? Os.homedir();
@@ -160,7 +166,7 @@ export class Terminal {
   // output with a dim notice rather than firing `onExit` (which would close the
   // tab) or respawning a shell. Otherwise hand the exit to the host.
   private handleChildExit(status: number): void {
-    this._pid = null; // the child is gone — so a later run() respawns instead of staging
+    this.setPid(null); // the child is gone — so a later run() respawns instead of staging
     if (this.pendingRerun) {
       const command = this.pendingRerun;
       this.pendingRerun = null;
@@ -203,7 +209,7 @@ export class Terminal {
   }
 
   private spawn(argv: string[]) {
-    this._pid = null; // cleared until the (re)spawn reports a new child
+    this.setPid(null); // cleared until the (re)spawn reports a new child
     const envv = Object.entries(process.env).map(([key, value]) => `${key}=${value}`);
 
     this.terminal.spawnAsync(
@@ -225,7 +231,7 @@ export class Terminal {
           this.onExit(127);
           console.error(`Terminal: failed to spawn ${argv[0]}: ${error?.message ?? 'unknown error'}`);
         } else {
-          this._pid = pid; // captured so `kill()` can signal the child
+          this.setPid(pid); // captured so `kill()` can signal the child
         }
       },
     );
@@ -251,6 +257,14 @@ export class Terminal {
    *  and after the child exits). */
   get pid(): number | null {
     return this._pid;
+  }
+
+  // Update the child pid and notify on a real transition (spawn ⇄ exit), so a host
+  // tracking "is the command running" stays in sync. The sole writer of `_pid`.
+  private setPid(pid: number | null): void {
+    if (this._pid === pid) return;
+    this._pid = pid;
+    this.onRunningChange();
   }
 
   focus() {

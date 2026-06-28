@@ -123,8 +123,8 @@ class SurroundBase extends TransformString {
     '<': ['<', '>'],
     '>': ['<', '>'],
     b: ['(', ')'],
-    B: ['{', '}'],
     r: ['[', ']'],
+    k: ['{', '}'], // curly alias (replaces vim-surround's `B`, to match the text objects)
     a: ['<', '>']
   }
 

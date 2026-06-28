@@ -6,10 +6,10 @@
  * (Stashing changes is the separate `git:stash-push` command.)
  */
 import Gtk from 'gi:Gtk-4.0';
-import { openPicker } from './Picker.ts';
-import { Icons } from './icons.ts';
-import { zym } from '../zym.ts';
-import { repoRoot, listStashes, type GitRepo, type GitOpResult } from '../git.ts';
+import { openPicker } from '../Picker.ts';
+import { Icons } from '../icons.ts';
+import { zym } from '../../zym.ts';
+import { repoRoot, listStashes, type GitRepo, type GitOpResult } from '../../git.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 type StashAction = 'pop' | 'apply' | 'drop';

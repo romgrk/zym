@@ -15,7 +15,7 @@ import type Gtk from 'gi:Gtk-4.0';
 import type { TextEditor } from './ui/TextEditor/index.ts';
 import type { TabState } from './SessionManager.ts';
 import { zym } from './zym.ts';
-import type { Workbench } from './ui/Workbench.ts';
+import type { Workbench } from './ui/workbench/Workbench.ts';
 
 export interface OpenFileOptions {
   /** Place the cursor at this `[row, column]` after opening/revealing. */

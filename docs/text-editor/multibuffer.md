@@ -162,7 +162,8 @@ Single-file editing plus both multibuffer surfaces run on the
   yank across excerpts carries only real source lines + blank header lines,
   no copy-time filtering); per-file collapse — `SearchResultsView` (`z a`
   toggle / `z M` all / `z R` none) shows a collapsed file's first source
-  row; `DiffView` (`z a` / `z C` / `z O`) folds it to just its navigable
+  row; `DiffView` (`z c`/`z o` close/open, `z a` toggle, `z r`/`z m` all,
+  `z j`/`z k` next/prev, `z /` picker) folds it to just its navigable
   header row. Gaps + markdown images are SOURCE-anchored block decorations
   via `editor.blockDecorations()`; the diff's per-file headers are `sticky`
   block decorations (above + pinned) reconciled by `StickyHeaders` — see

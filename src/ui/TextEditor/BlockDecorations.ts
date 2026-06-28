@@ -55,6 +55,11 @@ export interface BlockDecorationOptions {
    *  being a text-window child — it neither swallows scroll nor needs an event controller. Used with
    *  `placement: 'on'` (the header covers its read-only row). */
   sticky?: boolean;
+  /** Force a NON-sticky band to span the full viewport width (its slot width-requested to the
+   *  visible width, re-fit on resize) instead of hugging the widget's natural width — so a band
+   *  that scrolls with the text (the `⋯` diff gap) still fills the row like the sticky headers.
+   *  Ignored for sticky bands, which are always full-width. */
+  fullWidth?: boolean;
 }
 
 export interface BlockDecorationHandle {
@@ -79,6 +84,7 @@ interface Block {
   widget: any; // the consumer's widget, parented inside `slot`
   placement: BlockDecorationPlacement;
   sticky: boolean; // pin to the viewport top when scrolled past (see BlockDecorationOptions.sticky)
+  fullWidth: boolean; // span the full viewport width even when non-sticky (see BlockDecorationOptions.fullWidth)
   height: number;
   placed: boolean; // overlay (the slot) added to the view yet (deferred until mapped)
   lastX: number; // last buffer-X the overlay was moved to (sticky bands pin X; skip no-op moves)
@@ -179,6 +185,7 @@ export class BlockDecorations {
       widget: options.widget,
       placement,
       sticky: options.sticky ?? false,
+      fullWidth: options.fullWidth ?? false,
       height: 0,
       placed: false, // set once place() runs; place() skips re-adding an already-parented slot
       lastX: NaN,
@@ -358,6 +365,9 @@ export class BlockDecorations {
     let y = this.bandTop(block, rect);
     if (!block.sticky) {
       // Non-sticky: anchored at the text-window left (buffer x=0), scrolls natively on both axes.
+      // A full-width band still gets its slot fitted to the visible width (re-fit before the no-op
+      // guard so a width-only change — e.g. a resize that leaves Y put — still lands).
+      if (block.fullWidth) this.fitWidth(block);
       if (y === block.lastY) return; // no-op move (avoids churn during the settle window)
       block.lastY = y;
       this.view.moveOverlay(block.slot, 0, y);
@@ -373,15 +383,22 @@ export class BlockDecorations {
     // to the visible width, so the bar spans the viewport and stays put as the text scrolls sideways.
     const hadj = this.view.getHadjustment?.();
     const x = hadj ? Math.round(hadj.getValue()) : 0;
+    this.fitWidth(block);
+    if (x === block.lastX && y === block.lastY) return; // no-op move
+    block.lastX = x;
+    block.lastY = y;
+    this.view.moveOverlay(block.slot, x, y);
+  }
+
+  /** Width-request the slot to the viewport's visible width (full-width / sticky bands), so the band
+   *  spans the row rather than hugging its widget's natural width. Cheap no-op when unchanged. */
+  private fitWidth(block: Block): void {
+    const hadj = this.view.getHadjustment?.();
     const width = hadj ? Math.round(hadj.getPageSize()) : -1;
     if (width > 0 && width !== block.lastWidth) {
       block.slot.setSizeRequest(width, -1);
       block.lastWidth = width;
     }
-    if (x === block.lastX && y === block.lastY) return; // no-op move
-    block.lastX = x;
-    block.lastY = y;
-    this.view.moveOverlay(block.slot, x, y);
   }
 
   /** The overlay's top in buffer coords for a block, by placement: 'below' = under the line, 'above'

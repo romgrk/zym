@@ -54,8 +54,8 @@ See [theming.md](theming.md).
 A workbench has a current directory, docks and a center panel. Many workbenches can
 exist at once. Every tab group (center editor groups and all docks) is one shared `Panel`
 abstraction, with exactly one active panel defined by keyboard-focus containment.
-Covers the `Panel`/`PanelGroup`/`Workbench` dock model, focus/tab-bar rules. 
-See [panels.md](panels.md).
+Covers the `Panel`/`PanelGroup`/`Workbench` dock model, focus/tab-bar rules, and
+per-workbench runnable actions (`space x`). See [workbench.md](workbench.md).
 
 ## Lifecycle & disposal
 
@@ -183,8 +183,10 @@ Custom modal editing ported from Atom's vim-mode-plus over an `EditorModel` shim
 the default (replaced `GtkSource.VimIMContext`). Motions/operators/text-objects,
 visual + blockwise + multi-cursor, occurrence, surround, search via the
 `SearchBar`. The `:` ex-command line is won't-do. See
-[text-editor/vim-mode.md](text-editor/vim-mode.md). Occurrence is unified with
-search (`g o` arms operators on the search matches) —
+[text-editor/vim-mode.md](text-editor/vim-mode.md) (and the exhaustive per-mode
+binding table in
+[text-editor/vim-keymap-reference.md](text-editor/vim-keymap-reference.md)).
+Occurrence is unified with search (`g o` arms operators on the search matches) —
 [text-editor/occurrence-search.md](text-editor/occurrence-search.md).
 
 ### Autocompletion

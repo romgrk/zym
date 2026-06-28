@@ -14,6 +14,7 @@ import type { CompositeDisposable } from '../util/eventKit.ts';
 import { addStyles } from '../styles.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { Icons, iconLabel } from './icons.ts';
+import { NERDFONT } from './nerdfont.ts';
 import { escapeMarkup } from './proseMarkup.ts';
 
 addStyles(/* css */`
@@ -25,7 +26,6 @@ addStyles(/* css */`
   }
   .mb-header-icon { color: var(--t-ui-text-muted); }
   .mb-header-label { color: var(--t-ui-editor-foreground); }
-  .mb-header-chevron { color: var(--t-ui-text-muted); }
   .mb-header-add { color: var(--t-ui-status-success); }
   .mb-header-del { color: var(--t-ui-status-error); }
   /* An unsaved (modified) diff file: warning-coloured path led by a warning dot. */
@@ -37,11 +37,15 @@ addStyles(/* css */`
     outline: 1px solid var(--t-ui-text-accent);
     outline-offset: -1px;
   }
-  .mb-gap { color: var(--t-ui-text-muted); padding: 1px 8px 1px 6px; }
-  /* Every fold marker reads the same grey fill (distinct from the header's selected background),
-     whether a between-windows gap or the leading gap above a file's first content row. */
-  .mb-gap-band { background-color: rgba(128, 128, 128, 0.15); }
-  .mb-gap-clickable:hover { color: var(--t-ui-text-accent); }
+  /* Fold markers (the elided-gap bands) get ~half a line of breathing room above and below (0.5em;
+     GTK CSS has no lh unit), and the header's horizontal inset so they line up under the filename.
+     An OPAQUE grey fill — like a header band, they're never transparent (the text behind must never
+     show through): a solid blend of the editor background toward grey. */
+  .mb-gap { background-color: color-mix(in srgb, var(--t-ui-editor-background), #808080 15%); padding: 0.5em calc(2 * var(--t-spacing)); }
+  /* The marker TEXT reads as the editor foreground dimmed via Adwaita's --dim-opacity (the muted
+     idiom — dim the real foreground, not a grey). It lives on a child label so the dim never touches
+     the band's opaque background. */
+  .mb-gap-text { color: var(--t-ui-editor-foreground); opacity: var(--dim-opacity); }
 `);
 
 /** Per-header look. The defaults reproduce `SearchResultsView`'s header (file-type icon, dimmed
@@ -55,8 +59,11 @@ export interface HeaderWidgetOptions {
   /** A modified (unsaved) file: the path turns warning-coloured and is led by a warning dot,
    *  replacing the file-type glyph (default false). */
   modified?: boolean;
-  /** Diff: a leading collapse chevron (`▾` expanded / `▸` collapsed). Omit for none (search). */
+  /** Diff: a leading collapse chevron (chevron-down expanded / chevron-right collapsed). Omit for
+   *  none (search). */
   collapsed?: boolean;
+  /** Diff: the file was deleted in this change — append a dimmed `(deleted)` after the path. */
+  deleted?: boolean;
   /** Diff: the file's `+N` added / `−M` removed change stats (omit / 0 = none). */
   added?: number;
   removed?: number;
@@ -75,10 +82,13 @@ export function buildHeaderWidget(
 ): InstanceType<typeof Gtk.Widget> {
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
   row.addCssClass('mb-header');
-  // Collapse chevron (diff surface): `▾` when the file is expanded, `▸` when collapsed.
+  // Collapse chevron (diff surface): chevron-down when the file is expanded, chevron-right when
+  // collapsed (the same fold idiom as the syntax gutter; see gutterRenderers.ts). It carries the
+  // SAME colour class as the path label below, so it tracks the filename's colour (incl. the
+  // warning hue on a modified file).
   if (options.collapsed !== undefined) {
-    const chevron = new Gtk.Label({ label: options.collapsed ? '▸' : '▾' });
-    chevron.addCssClass('mb-header-chevron');
+    const chevron = iconLabel(options.collapsed ? NERDFONT.NAV.CHEVRON_RIGHT : NERDFONT.NAV.CHEVRON_DOWN);
+    chevron.addCssClass(options.modified ? 'mb-header-modified' : 'mb-header-label');
     row.append(chevron);
   }
   // A modified file is flagged by a warning dot; otherwise the file-type glyph leads the name
@@ -94,13 +104,15 @@ export function buildHeaderWidget(
   }
 
   const name = new Gtk.Label({ xalign: 0, hexpand: true });
+  // A deleted file gets a dimmed `(deleted)` tag after the path (diff surface).
+  const deleted = options.deleted ? ` <span alpha="55%">(deleted)</span>` : '';
   if (options.boldPath) {
-    name.setMarkup(`<b>${escapeMarkup(label)}</b>`); // whole path, one uniform highlight
+    name.setMarkup(`<b>${escapeMarkup(label)}</b>${deleted}`); // whole path, one uniform highlight
   } else {
     const dir = Path.dirname(label);
     const base = Path.basename(label);
     const dirMarkup = dir && dir !== '.' ? `<span alpha="55%">${escapeMarkup(dir)}/</span>` : '';
-    name.setMarkup(`${dirMarkup}<b>${escapeMarkup(base)}</b>`);
+    name.setMarkup(`${dirMarkup}<b>${escapeMarkup(base)}</b>${deleted}`);
   }
   name.addCssClass(options.modified ? 'mb-header-modified' : 'mb-header-label');
   row.append(name);
@@ -126,22 +138,26 @@ export function buildHeaderWidget(
   return row;
 }
 
-/** A `⋯ N unchanged lines` gap band — a dim fold marker (not a navigable buffer row), anchored
- *  between two diff windows (or above a file's first content row for the elided head) via
- *  `BlockDecorations`. `onActivate` (click) expands more context. */
+/** A gap band — a fold marker (not a navigable buffer row), anchored between two diff windows (or
+ *  above a file's first content row for the elided head) via `BlockDecorations`. `label` is the
+ *  marker text (the diff passes a git-patch `@@ … @@` hunk header, search a bare `⋯`). `onActivate`
+ *  (click) expands more context. The band is an OPAQUE box wrapping the text label so the text's
+ *  `--dim-opacity` never makes the band's background transparent (it must always cover the rows
+ *  behind it). */
 export function buildGapWidget(
   scope: CompositeDisposable,
   label: string,
   onActivate?: () => void,
 ): InstanceType<typeof Gtk.Widget> {
-  const widget = new Gtk.Label({ label, xalign: 0 });
-  widget.addCssClass('mb-gap');
-  widget.addCssClass('mb-gap-band'); // grey fill — the shared fold-marker style
+  const band = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+  band.addCssClass('mb-gap'); // opaque grey fill + padding (the fold-marker band)
+  const text = new Gtk.Label({ label, xalign: 0, hexpand: true });
+  text.addCssClass('mb-gap-text'); // the dimmed marker text (dim lives here, not on the band)
+  band.append(text);
   if (onActivate) {
-    widget.addCssClass('mb-gap-clickable');
     const click = new Gtk.GestureClick();
     click.on('released', () => onActivate());
-    scope.addController(widget, click); // severed when this band's widget is dropped (rule 9)
+    scope.addController(band, click); // severed when this band's widget is dropped (rule 9)
   }
-  return widget;
+  return band;
 }

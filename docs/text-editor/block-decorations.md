@@ -44,13 +44,16 @@ TextEditor
 ```
 
 - **`BlockDecorations` (primitive) is generic.** Public surface:
-  `add({ line, widget, placement, sticky? }) → handle { update({line?,widget?}),
+  `add({ line, widget, placement, sticky?, fullWidth? }) → handle { update({line?,widget?}),
   invalidate(), remove() }`. No header/gap/key/projection/"band" concepts.
   `placement` is `'above'`/`'below'` (a blank band over/under the line, the widget
   floats in it) or `'on'` (the line is grown to the widget height and the widget
   COVERS it — the caret rests on the line). `sticky` (generic: pin to the viewport
   top when the anchor scrolls above it, re-clamped on every scroll) powers the
-  diff's pinned file headers.
+  diff's pinned file headers. `fullWidth` width-requests the slot to the visible
+  width (re-fit on resize) so a NON-sticky band spans the row instead of hugging
+  its widget's natural width — the diff's `⋯` gap bands use it (sticky bands are
+  always full-width, so it's a no-op there).
   This is "whatever block decoration is in the TextEditor."
 - **`BlockDecorationSet` (declarative)** is where reconcile-a-set and
   source-anchoring live — the concern that does NOT belong in the primitive.
@@ -106,8 +109,9 @@ only on a new narrow `Screen.onDidMaterialize` (initial build /
   (its set genuinely changes — elision gaps appear/disappear). Uses
   `{viewRow}` anchors (its first row may be a phantom; it re-`set()`s per
   reDiff anyway). The `⋯` **gaps** (leading file-head gap `'above'` the first
-  content row, between-window gaps `'below'`) + review-comment cards are plain
-  bands; the per-file **headers** are `sticky` bands placed `'on'` their row
+  content row, between-window gaps `'below'`) are `fullWidth` bands (they span the
+  row like the header above them, but scroll with the text); review-comment cards
+  are plain bands; the per-file **headers** are `sticky` bands placed `'on'` their row
   (`placement: 'on', sticky: true`) reconciled by `StickyHeaders` — the widget
   COVERS an empty navigable header row (the caret lands on it) and pins to the
   viewport top when scrolled past — see [diff.md](diff.md).

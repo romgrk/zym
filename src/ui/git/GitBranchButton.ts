@@ -12,12 +12,12 @@
  */
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
-import { ICON_FONT_FAMILY } from '../fonts.ts';
-import { addStyles } from '../styles.ts';
-import { theme } from '../theme/theme.ts';
-import { escapeMarkup } from './proseMarkup.ts';
-import { NERDFONT } from './nerdfont.ts';
-import type { GitRepo } from '../git.ts';
+import { ICON_FONT_FAMILY } from '../../fonts.ts';
+import { addStyles } from '../../styles.ts';
+import { theme } from '../../theme/theme.ts';
+import { escapeMarkup } from '../proseMarkup.ts';
+import { NERDFONT } from '../nerdfont.ts';
+import type { GitRepo } from '../../git.ts';
 
 // Branch glyph, with a warning triangle shown instead while the working tree has
 // merge conflicts. Bundled "Symbols Nerd Font Mono" (see fonts.ts).

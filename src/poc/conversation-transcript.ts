@@ -35,6 +35,7 @@ import { registerBundledFonts, fonts } from '../fonts.ts';
 import { theme } from '../theme/theme.ts';
 import { Disposable } from '../util/eventKit.ts';
 import { AgentConversation } from '../ui/AgentConversation.ts';
+import { WorkbenchActions } from '../ui/workbench/WorkbenchActions.ts';
 import type { Transport } from '../agents/claude-sdk/transport.ts';
 import type { StreamEvent } from '../agents/claude-sdk/protocol.ts';
 import { registerBuiltinPlugins, plugins } from '../plugin/index.ts';
@@ -419,10 +420,18 @@ app.on('activate', () => {
       prompt: 'Give me a tour of the conversation transcript so I can iterate on its styling.',
       createTransport: () => fake,
       onOpenFile: (path) => console.log('[POC] open file:', path),
-      // Terminal actions have no terminal here — just log. Background actions
-      // (terminal: false) still spawn for real so the stop control is exercised.
-      onRunInTerminal: (action) => console.log('[POC] run in terminal:', action.label, '→', action.command),
     });
+    // Actions now live on the workbench: bind a standalone controller; `bindActions`
+    // pipes the agent's set_actions into it (mirroring what AppWindow does). Terminal
+    // actions have no host here (the runner logs); background ones spawn for real.
+    const wbActions = new WorkbenchActions(() => CWD);
+    wbActions.setTerminalRunner({
+      run: (action) => console.log('[POC] run in terminal:', action.label, '→', action.command),
+      stop: () => {},
+      isRunning: () => false,
+      onDidChangeRunning: () => () => {},
+    });
+    agent.bindActions(wbActions);
     // The just-created session's runtime dir (the new entry under SDK_ROOT).
     const after = listSessionDirs();
     for (const d of after) if (!before.has(d)) sessionDir = Path.join(SDK_ROOT, d);

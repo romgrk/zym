@@ -32,6 +32,7 @@ import { applyDiffDecorations } from './TextEditor/applyDiffDecorations.ts';
 import { CombinedDiffLineNumberGutter } from './TextEditor/DiffLineNumberGutter.ts';
 import { buildDiffMultiBuffer, type DiffFile, type DiffMultiBuffer } from './multibuffer/diffMultiBuffer.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
+import { createEmptyMessage } from './createEmptyMessage.ts';
 import { DiffCommentBox, buildCommentCard } from './DiffCommentBox.ts';
 import { formatAgentComment } from './agentComment.ts';
 import type { BlockDecorationSpec, BlockDecorationSet, BlockDecorationAnchor } from './TextEditor/BlockDecorationSet.ts';
@@ -143,6 +144,9 @@ export class DiffView {
 
   readonly root: InstanceType<typeof Gtk.Widget>;
   readonly editor: TextEditor;
+  // The public `root`: a Stack swapping the diff editor ('diff') for an empty state ('empty', shown
+  // when no file has any change). reDiff toggles it.
+  private readonly stack: InstanceType<typeof Gtk.Stack>;
   private readonly files: DiffFile[];
   private readonly cwd?: string;
   private readonly sources = new Map<string, SourceEntry>();
@@ -243,7 +247,21 @@ export class DiffView {
     this.editor = new TextEditor({ source: new MultiBufferDocument(this.screen, painter) });
     if (!this.editable) this.editor.model.setReadOnly(true);
     this.bands = this.editor.blockDecorations();
-    this.root = this.editor.root;
+    // Wrap the editor in a Stack so a diff with no changes shows a friendly empty state instead of a
+    // blank editor (a live diff re-diffs to empty once every change is staged / reverted). The Stack
+    // is the public `root`, so the host tab + `forRoot` command routing see one stable widget.
+    this.stack = new Gtk.Stack();
+    this.stack.addNamed(this.editor.root, 'diff');
+    this.stack.addNamed(
+      createEmptyMessage({
+        icon: 'check-plain-symbolic',
+        title: 'No changes',
+        description: "You're all caught up — there are no changes to show.",
+      }),
+      'empty',
+    );
+    this.stack.setVisibleChildName(dmb.headerAnchors.length === 0 ? 'empty' : 'diff');
+    this.root = this.stack;
     DiffView.byRoot.set(this.root, this); // discoverable via `forRoot` for command routing
     // Scope the expand-context keymap to this surface: `.TextEditor.continuous-diff` is more
     // specific than vim's `.TextEditor`, so `z o`/`z R`/`z m` bind here while `z z` (scroll) etc.
@@ -390,6 +408,24 @@ export class DiffView {
     this.reDiff();
   }
 
+  /** Collapse the file under the cursor to its header (`z c`, vim's close-fold). No-op if already
+   *  collapsed (or the caret isn't in a file). */
+  collapseFileAtCursor(): void {
+    const hit = this.fileAtViewRow(this.cursorRow());
+    if (!hit || this.collapsedFiles.has(hit.path)) return;
+    this.collapsedFiles.add(hit.path);
+    this.reDiff();
+  }
+
+  /** Expand the file under the cursor back to its diff (`z o`, vim's open-fold). No-op if not
+   *  collapsed. */
+  expandFileAtCursor(): void {
+    const hit = this.fileAtViewRow(this.cursorRow());
+    if (!hit || !this.collapsedFiles.has(hit.path)) return;
+    this.collapsedFiles.delete(hit.path);
+    this.reDiff();
+  }
+
   /** Collapse every file to its header — a one-line-per-file overview. */
   collapseAllFiles(): void {
     for (const f of this.files) this.collapsedFiles.add(f.path);
@@ -495,6 +531,26 @@ export class DiffView {
     if (target == null) return; // already at the first / last hunk
     this.editor.model.setCursorBufferPosition({ row: target, column: 0 });
     this.editor.model.scrollCursorOnscreen(); // reveal if offscreen (minimal scroll, keeps a margin)
+  }
+
+  /** Move the caret to the next file's header row and reveal it (`z j`). */
+  nextFile(): void {
+    this.moveToFile(1);
+  }
+
+  /** Move the caret to the previous file's header row and reveal it (`z k`). */
+  previousFile(): void {
+    this.moveToFile(-1);
+  }
+
+  private moveToFile(dir: 1 | -1): void {
+    const headers = this.dmb.headerAnchors.map((h) => h.viewRow).sort((a, b) => a - b);
+    if (!headers.length) return;
+    const cur = this.cursorRow();
+    const target = dir === 1 ? headers.find((r) => r > cur) : [...headers].reverse().find((r) => r < cur);
+    if (target == null) return; // already at the first / last file
+    this.editor.model.setCursorBufferPosition({ row: target, column: 0 });
+    this.editor.model.scrollCursorOnscreen();
   }
 
   private applyStaging(mode: 'stage' | 'unstage'): void {
@@ -675,7 +731,7 @@ export class DiffView {
    *  when its CONTENT key changed. A no-structure-change re-diff (typing within a line) updates
    *  nothing. */
   private static headerKey(h: DiffMultiBuffer['headerAnchors'][number], collapsed: boolean, modified: boolean): string {
-    return `${h.path}\n${h.label}\n${collapsed ? 'c' : 'e'}\n${modified ? 'M' : ''}\n${h.added}\n${h.removed}`;
+    return `${h.path}\n${h.label}\n${collapsed ? 'c' : 'e'}\n${modified ? 'M' : ''}\n${h.added}\n${h.removed}\n${h.deleted ? 'D' : ''}`;
   }
   /** Whether `path`'s live new-side document has unsaved edits (drives the header's modified
    *  marker). Always false in read-only mode (no document). */
@@ -707,8 +763,8 @@ export class DiffView {
             h.path,
             () => this.onActivate?.({ path: h.path, row: 0 }),
             // Diff look: no file-type icon, bold the whole path, flag unsaved edits (warning + dot),
-            // plus the collapse chevron + `+N −M` stats.
-            { icon: false, boldPath: true, modified, collapsed, added: h.added, removed: h.removed },
+            // plus the collapse chevron + `+N −M` stats, and a `(deleted)` tag for a removed file.
+            { icon: false, boldPath: true, modified, collapsed, added: h.added, removed: h.removed, deleted: h.deleted },
           ),
         dispose: () => scope.dispose(), // sever the header click controller when the widget is replaced/removed
       };
@@ -725,6 +781,7 @@ export class DiffView {
         key: DiffView.gapKey(g),
         anchor: { viewRow: g.viewRow },
         placement: g.placement,
+        fullWidth: true, // the `⋯ N unchanged lines` band spans the row (like the file header above it)
         // Clicking the gap reveals a chunk of its elided lines (`fromTop` = which end first).
         build: () => buildGapWidget(scope, g.label, () => this.revealChunk(g.revealRows, g.fromTop)),
         dispose: () => scope.dispose(),
@@ -819,6 +876,8 @@ export class DiffView {
     const anchor = this.projection.screenToDocument(caret.row, caret.column);
     const dmb = this.buildDiff();
     this.dmb = dmb;
+    // No file has any change → show the empty state instead of an empty editor.
+    this.stack.setVisibleChildName(dmb.headerAnchors.length === 0 ? 'empty' : 'diff');
     this.suppressReDiff = true; // retarget's view edits must not re-trigger a re-diff
     try {
       this.screen.retarget(dmb.items);
@@ -915,6 +974,21 @@ export class DiffView {
     const anchor = this.headerAnchors.find((h) => h.path === path);
     const row = anchor ? anchor.viewRow : 0;
     this.editor.revealRow(row);
+  }
+
+  /** The files currently shown in the diff (absolute `path` + display `label`), in view order — for
+   *  the `z /` file picker. */
+  fileList(): { path: string; label: string }[] {
+    return this.dmb.headerAnchors.map((h) => ({ path: h.path, label: h.label }));
+  }
+
+  /** Jump to `path`'s header — caret onto it + scroll into view + focus (the `z /` picker). */
+  goToFile(path: string): void {
+    const anchor = this.dmb.headerAnchors.find((h) => h.path === path);
+    if (!anchor) return;
+    this.editor.model.setCursorBufferPosition({ row: anchor.viewRow, column: 0 });
+    this.revealFile(path); // scroll the header a quarter down (same reveal as the GitPanel jump)
+    this.editor.focus();
   }
 
   /** Subscribe to the cursor crossing into a different file's excerpt — fires with that file's

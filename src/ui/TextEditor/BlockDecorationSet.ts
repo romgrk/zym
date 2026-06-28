@@ -38,6 +38,8 @@ export interface BlockDecorationSpec {
   key: string;
   anchor: BlockDecorationAnchor;
   placement?: BlockDecorationPlacement;
+  /** Span the full viewport width even while scrolling with the text (see `BlockDecorationOptions`). */
+  fullWidth?: boolean;
   build: () => InstanceType<typeof Gtk.Widget>;
   /** Called when THIS spec's built widget is dropped — replaced on a `key` change, removed when
    *  the decoration leaves the set, or on `clear()`. Use it to sever anything node-gtk roots on
@@ -100,7 +102,7 @@ export class BlockDecorationSet {
           prev.dispose = spec.dispose; // adopt the new widget's teardown
         }
       } else {
-        const handle = this.blocks.add({ line, widget: spec.build(), placement: spec.placement });
+        const handle = this.blocks.add({ line, widget: spec.build(), placement: spec.placement, fullWidth: spec.fullWidth });
         this.entries.set(spec.id, { handle, key: spec.key, dispose: spec.dispose });
       }
     }

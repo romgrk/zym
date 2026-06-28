@@ -2045,6 +2045,8 @@ export class TextEditor implements DocumentHost {
       'fold:toggle': { didDispatch: () => this.placeCaretInRevealedFold(this.syntax.toggleFoldAtCursor()), description: 'Toggle the fold at the cursor' },
       'fold:open': { didDispatch: () => this.placeCaretInRevealedFold(this.syntax.setFoldAtCursor(false)), description: 'Open the fold at the cursor' },
       'fold:close': { didDispatch: () => this.syntax.setFoldAtCursor(true), description: 'Close the fold at the cursor' },
+      'fold:open-recursive': { didDispatch: () => this.placeCaretInRevealedFold(this.syntax.setFoldAtCursorRecursive(false)), description: 'Open the fold at the cursor and all folds nested inside it' },
+      'fold:close-recursive': { didDispatch: () => this.syntax.setFoldAtCursorRecursive(true), description: 'Close the fold at the cursor and all folds nested inside it' },
       'fold:open-all': { didDispatch: () => this.syntax.unfoldAll(), description: 'Open all folds' },
       'fold:close-all': { didDispatch: () => this.syntax.foldAll(), description: 'Close all folds' },
     });

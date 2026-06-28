@@ -5,8 +5,8 @@ them:
 
 1. **Status viewer** — a Source Control panel (`GitPanel`) that opens as a
    tab in the active center panel. File-level staging.
-2. **Commit interface** — message edited in a normal editor tab, commit on
-   save+close.
+2. **Commit interface** — message edited in an embedded editor in a vertical
+   split above the change list (`ctrl-enter` commits).
 3. **Forge links** — GitHub repo/actions/issues/PR open-on-web, PR + CI
    status in the header, PR/issue/CI pickers, create/checkout PR. GitHub
    only (via `gh`).
@@ -227,20 +227,23 @@ so a workbench opens no git-subscribing `GitPanel` until the user asks for it
 (`workbench.gitPanel`/`gitTab` are null until then). Revealing again reveals
 the existing tab when it's still hosted (`Panel.containing`); otherwise it
 re-adds it, unparenting any closed page first (the zombie rule — see
-[../panels.md](../panels.md)). The `GitPanel` is owned per-workbench (each
+[../workbench.md](../workbench.md)). The `GitPanel` is owned per-workbench (each
 agent workbench has its own) and reused across close/reopen — closing the tab
 keeps it alive for the next reveal. `#GitPanel` is the CSS/selector identity.
 (The file tree keeps the right-side dock; `git:` was previously a dock tab.)
 
-### Status viewer — `src/ui/GitPanel.ts`
+### Status viewer — `src/ui/git/GitPanel.ts`
 
-Component **`GitPanel`** (`#GitPanel`), whose `root` is a **horizontal
-`Gtk.Paned`**: the change list (`#GitPanelList`, the start child) and — once a
-change is opened — an **embedded live diff** (the end child, taking most of the
-width; see "Embedded diff" below). Constructed with `{ cwd, git, onOpenFile,
-onCommit, buildDiffView }`; rebuilds on `git.onChange` via an async
-`getChangesAsync` fetch (a generation guard drops a result superseded by a newer
-refresh — no `git status` on the UI thread). `setRoot(cwd, git)` re-roots it
+Component **`GitPanel`** (`#GitPanel`), whose `root` is an **outer vertical
+`Gtk.Paned`**: the **embedded commit editor** (the start child, added by `c c`;
+see "Commit interface" below) over the **inner horizontal `Gtk.Paned`**
+(`this.split`, the end child) holding the change list (`#GitPanelList`, its start
+child) and — once a change is opened — an **embedded live diff** (its end child,
+taking most of the width; see "Embedded diff" below). `.GitPanel` lives on the
+outer Paned so it scopes every descendant (list, diff, commit box). Constructed
+with `{ cwd, git, onOpenFile, buildDiffView }`; rebuilds on `git.onChange` via an
+async `getChangesAsync` fetch (a generation guard drops a result superseded by a
+newer refresh — no `git status` on the UI thread). `setRoot(cwd, git)` re-roots it
 when an agent moves into a worktree.
 
 Above the groups it prints a **`git status`-style preamble** (`statusRow` +
@@ -262,10 +265,21 @@ font, both tinted the same staged-green / unstaged-red color. Rows are
 cursor-navigable (header rows non-selectable), each section separated by `2×`
 the row spacing. Actions go through the command system so they're keybindable
 while the **list** is focused (the keys are scoped to `#GitPanelList`, not the
-panel root, so they don't fire inside the embedded diff): `s` stage, `u`
-unstage, `A` stage-all/unstage-all toggle, `X` discard (`git restore` for a
-tracked file, `git clean` for an untracked one), `c c` commit — mirroring
-FileTree's bare-key bindings.
+panel root, so they don't fire inside the embedded diff): `s` stage, `S`
+stage-all (`git add -A`), `u` unstage, `U` unstage-all (`git reset`), `X`
+discard (`git restore` for a tracked file, `git clean` for an untracked one),
+`c c` commit — mirroring FileTree's bare-key bindings. (`S`/`U` replaced the
+earlier `A` stage/unstage-all toggle.)
+
+Below the list (bottom-left of the list column) a **keybinding-hints footer**
+(`KeybindingHints`, `src/ui/KeybindingHints.ts`) shows those bindings (`s`
+stage · `S` stage all · `u` unstage · `U` unstage all · `X` discard · `c c`
+commit) as `Keycap` chips. The chips live in an **`Adw.WrapBox`** so they wrap
+onto more lines when the column is narrow (each keycap stays glued to its action
+word). It's gated on **`help.showKeybindings`** (default `true`) and tracks it
+**reactively** (`config.observe`) — toggling the setting shows/hides it live.
+The commit box shares the same component (`ctrl-enter` commit / `escape`
+cancel).
 
 #### Embedded diff
 
@@ -307,30 +321,48 @@ add <file>`); `space g u a` (`git:unstage-all`, `git reset`) and `space g u .`
 (`git:unstage-current`). They shell out via `git/cli.ts` and then call
 `workbench.git.refresh()` so the gutter and branch indicator update at once.
 
-### Commit interface — edit-in-tab
+### Commit interface — embedded editor
 
-`c c` (`git:commit`) calls `onCommit` → `AppWindow.startCommit()`, which
-opens `.git/COMMIT_EDITMSG` in a **normal editor tab**; **saving + closing
-the tab commits** (`git commit -F .git/COMMIT_EDITMSG`). This reuses the
-full editor (vim, chrome) with zero `TextEditor` changes and keeps the
-message git-native. Result/failures surface through `zym.notifications`;
-on success the lists refresh.
+`c c` (`git:commit`), `space g c` (`git:start-commit`), and the panel's
+own commit all open an **embedded commit editor** — `GitCommitBox`
+(`src/ui/git/GitCommitBox.ts`) — in the **vertical split above the change
+list** (`GitPanel.startCommit`), not a separate tab. It is a buffer-only
+`TextEditor` (full vim, syntax, search; `cssClass` `GitCommitInput`):
+`ctrl-enter` commits, `alt-enter` inserts a newline (plain `enter` stays a
+newline — messages are multi-line), `q`/`escape` (normal mode) cancels.
+On submit the panel writes the message to `.git/COMMIT_EDITMSG` (so hooks
++ config apply) and commits via the coordinated
+`GitRepo.commit(messageFile, amend)`. An empty message aborts (box stays
+open); a failed commit keeps the box so the message isn't lost; only a
+successful commit closes it. Result/failures surface through
+`zym.notifications`; the list refreshes on `onChange`.
 
-**Amend** (`space g C`, `git:commit-amend`) uses the same edit-in-tab flow
+`space g c`/`space g C` (`AppWindow.startCommit`) reveal Source Control and
+delegate to `GitPanel.startCommit(amend)` — the panel owns the message →
+`git.commit` flow; there is no tab-based commit path (`commitEditors` /
+`finishCommit` are gone).
+
+**Amend** (`space g C`, `git:commit-amend`) uses the same embedded editor
 but prefills the message with the last commit's (`lastCommitMessage` →
-`git log -1 --format=%B`) and finalizes with `git commit --amend`. The
-`amend` flag rides through `commitEditors` → `finishCommit` →
-`GitRepo.commit(messageFile, amend)`.
+`git log -1 --format=%B`) and finalizes with `git commit --amend`.
+
+The commit-box keys are scoped to `.GitPanel .GitCommitInput` in
+`keymaps/default.ts`; the diff's `q` (close-diff) carries
+`:not(.GitCommitInput)` so the two editors' keys don't collide. A footer
+renders those bindings via the shared `KeybindingHints`
+(`src/ui/KeybindingHints.ts`) — `Keycap` chips gated reactively on the
+**`help.showKeybindings`** config (default `true`), the same component the
+status list uses.
 
 Not done: sign-off, commit-message length ruler, branch-name placeholder.
 
 ### Branch / stash pickers
 
-- **`src/ui/BranchPicker.ts`** — switch/create (`openBranchPicker`, `space
+- **`src/ui/git/BranchPicker.ts`** — switch/create (`openBranchPicker`, `space
   g b b`), delete (`space g b d`), merge into current (`space g b m`),
   rename (`space g b r`). `GitBranchButton` opens the branch picker on
   click (no popover; the picker is the switcher).
-- **`src/ui/StashPicker.ts`** — push (`space g s s`), and pop/apply/drop
+- **`src/ui/git/StashPicker.ts`** — push (`space g s s`), and pop/apply/drop
   via a picker over `listStashes` (`space g s p`/`a`/`d`).
 - **`GitBranchButton`** — header indicator (branch, ±lines, ↑↓, busy
   spinner).
@@ -411,7 +443,7 @@ the DiffView **containing keyboard focus** (walking up from the focused widget),
 so they work in the GitPanel's *embedded* diff too — not just a diff that is its
 own center tab.
 
-### Git log (history) viewer — `src/ui/GitLogView.ts`
+### Git log (history) viewer — `src/ui/git/GitLogView.ts`
 
 `git:log` opens **one self-contained center tab**: a horizontal `Gtk.Paned`
 with the commit list on the left and the selected commit's read-only diff on

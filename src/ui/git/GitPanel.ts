@@ -10,17 +10,21 @@
  * own operations and on `GitRepo.onChange` (external edits). Failures surface
  * through `zym.notifications`.
  *
- * The commit message is edited in a normal editor tab (see AppWindow.onCommit);
- * this widget just presents status. The assembled panel is exposed via `root`.
+ * `c c` (and `space g c`/`space g C`) commits in an embedded editor shown in a vertical
+ * split above the list (`GitCommitBox`), `ctrl-enter` to commit — no separate tab. The
+ * assembled panel is exposed via `root`.
  */
+import * as Fs from 'node:fs';
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
-import { addStyles } from '../styles.ts';
-import { theme } from '../theme/theme.ts';
-import { zym } from '../zym.ts';
-import { CompositeDisposable } from '../util/eventKit.ts';
-import type { DiffView } from './DiffView.ts';
-import type { AheadBehind, GitRepo } from '../git.ts';
+import { addStyles } from '../../styles.ts';
+import { theme } from '../../theme/theme.ts';
+import { zym } from '../../zym.ts';
+import { CompositeDisposable } from '../../util/eventKit.ts';
+import type { DiffView } from '../DiffView.ts';
+import { GitCommitBox } from './GitCommitBox.ts';
+import { KeybindingHints } from '../KeybindingHints.ts';
+import type { AheadBehind, GitRepo } from '../../git.ts';
 import {
   type GitChange,
   type GitFileState,
@@ -33,15 +37,15 @@ import {
   unstageAll,
   discard,
   clean,
-} from '../git.ts';
+  commitMsgPath,
+  lastCommitMessage,
+} from '../../git.ts';
 
 export interface GitPanelOptions {
   cwd: string;
   git: GitRepo;
   /** Open the file under the cursor in the editor (the fallback when no diff is wired). */
   onOpenFile: (path: string) => void;
-  /** Start a commit: edit the message and commit on save (the `c c` chord). */
-  onCommit: () => void;
   /** Build a live, editable working-tree DiffView for the current changes (the host owns the
    *  document registry). `l`/`enter`/`o` embed it beside the list and reveal the selected change.
    *  Null when there's nothing to diff. Omitted → `l`/`enter`/`o` fall back to `onOpenFile`. */
@@ -75,8 +79,12 @@ const UNSTAGED_COLOR = theme.ui.status.error;
 const ROW_SPACING = 6;
 
 // Width the change list keeps once the embedded diff is shown beside it; the diff
-// (the Paned's end child) takes the rest — most of the panel's width.
+// (the inner Paned's end child) takes the rest — most of the panel's width.
 const LIST_WIDTH = 300;
+
+// Height of the embedded commit-message editor (the outer vertical Paned's start child)
+// when it's first shown; the list/diff take the rest. The divider stays draggable after.
+const COMMIT_BOX_HEIGHT = 140;
 
 /** The `git status`-style header lines for the current branch/upstream state,
  *  mirroring git's own wording. `muted` marks the parenthetical advice hint. */
@@ -143,17 +151,26 @@ addStyles(/* css */`
 `);
 
 export class GitPanel {
-  // A horizontal split: the change list (start) and, once `l`/`enter`/`o` opens a change,
-  // the embedded live DiffView (end, taking most of the width). The end child stays null
-  // until a diff is first shown.
+  // The outer vertical split: the embedded commit-message editor (start, added on demand by
+  // `c c`) over the change-list/diff area (end). Stays a single child — just the area — until
+  // a commit is started. `.GitPanel` lives here so it scopes every descendant (list, diff,
+  // commit box).
   readonly root: InstanceType<typeof Gtk.Paned>;
+
+  // The inner horizontal split: the change list (start) and, once `l`/`enter`/`o` opens a
+  // change, the embedded live DiffView (end, taking most of the width). The end child stays
+  // null until a diff is first shown.
+  private readonly split: InstanceType<typeof Gtk.Paned>;
 
   // git/repo are swapped by `setRoot` when an agent re-roots into a worktree.
   private git: GitRepo;
   private repo: string | null; // repository top-level, or null outside a repo
   private readonly onOpenFile: (path: string) => void;
-  private readonly onCommit: () => void;
   private readonly buildDiffView?: () => Promise<DiffView | null>;
+  // The embedded commit-message editor (the outer Paned's start child), or null when not
+  // committing. Created by `startCommit`, disposed on commit / cancel / panel teardown.
+  private commitBox: GitCommitBox | null = null;
+  private commitAmend = false; // whether the open commit box is amending HEAD
   private readonly subs = new CompositeDisposable();
   // Per-poll row controllers: cleared+rebuilt every refresh (rule 9), torn down with `subs`.
   private readonly rowScope = this.subs.nest();
@@ -177,7 +194,6 @@ export class GitPanel {
     this.git = options.git;
     this.repo = repoRoot(options.cwd);
     this.onOpenFile = options.onOpenFile;
-    this.onCommit = options.onCommit;
     this.buildDiffView = options.buildDiffView;
 
     this.list = new Gtk.ListBox();
@@ -191,15 +207,38 @@ export class GitPanel {
     // status preamble wraps) instead of widening the list.
     this.scrolled.setPolicy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC);
 
-    // Horizontal split: list (start) | embedded diff (end, added on first open). The list
-    // keeps a fixed width on resize; the diff absorbs the rest. No end child yet → the
+    // The list column: the scrolling change list over a bottom-left keybinding-hints footer
+    // (self-gated on `help.showKeybindings`, wrapping when narrow). Keystrokes mirror
+    // `.GitPanelList` in keymaps/default.ts. The list `vexpand`s, so the hints sit at the bottom.
+    const listHints = this.subs.use(new KeybindingHints([
+      ['s', 'stage'],
+      ['S', 'stage all'],
+      ['u', 'unstage'],
+      ['U', 'unstage all'],
+      ['X', 'discard'],
+      ['c c', 'commit'],
+    ]));
+    const listColumn = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    listColumn.append(this.scrolled);
+    listColumn.append(listHints.root);
+
+    // Inner horizontal split: list column (start) | embedded diff (end, added on first open).
+    // The list keeps a fixed width on resize; the diff absorbs the rest. No end child yet → the
     // Paned shows just the list, no handle.
-    this.root = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
+    this.split = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
+    this.split.setStartChild(listColumn);
+    this.split.setResizeStartChild(false);
+    this.split.setShrinkStartChild(false);
+    this.split.setShrinkEndChild(false);
+
+    // Outer vertical split: commit editor (start, added by `c c`) over the list/diff area
+    // (end). No start child yet → it shows just the area, no handle. The area absorbs extra
+    // height; the commit box keeps its size.
+    this.root = new Gtk.Paned({ orientation: Gtk.Orientation.VERTICAL });
     this.root.addCssClass('GitPanel');
-    this.root.setStartChild(this.scrolled);
+    this.root.setEndChild(this.split);
     this.root.setResizeStartChild(false);
     this.root.setShrinkStartChild(false);
-    this.root.setShrinkEndChild(false);
 
     this.registerCommands();
     this.gitUnsub = this.git.onChange(() => this.refresh());
@@ -229,6 +268,8 @@ export class GitPanel {
     this.diffGeneration++; // drop any in-flight diff build
     this.diffView?.dispose();
     this.diffView = null;
+    this.commitBox?.dispose();
+    this.commitBox = null;
     this.gitUnsub?.();
     this.subs.dispose();
   }
@@ -243,11 +284,12 @@ export class GitPanel {
       'core:bottom': { didDispatch: () => this.selectIndex(this.fileRows.length - 1), description: 'Go to the bottom' }, // `G`
       'core:right': { didDispatch: () => this.openSelected(), description: 'Open the selected change in the diff' }, // `l`
       'git:open-diff': { didDispatch: () => this.openSelected(), description: 'Open the selected change in the diff' }, // `o` / `enter`
-      'git:stage': { didDispatch: () => this.act((c) => stage(this.repo!, c.relPath, this.done)), description: 'Stage changes' },
-      'git:unstage': { didDispatch: () => this.act((c) => unstage(this.repo!, c.relPath, this.done)), description: 'Unstage changes' },
-      'git:stage-all': { didDispatch: () => this.stageAllToggle(), description: 'Stage / unstage all' }, // `A`
-      'git:discard': { didDispatch: () => this.discardSelected(), description: 'Discard changes' },
-      'git:commit': { didDispatch: () => this.onCommit(), description: 'Commit staged changes' },
+      'git:stage': { didDispatch: () => this.act((c) => stage(this.repo!, c.relPath, this.done)), description: 'Stage changes' }, // `s`
+      'git:unstage': { didDispatch: () => this.act((c) => unstage(this.repo!, c.relPath, this.done)), description: 'Unstage changes' }, // `u`
+      'git:stage-all': { didDispatch: () => { if (this.repo) stageAll(this.repo, this.done); }, description: 'Stage all changes (git add -A)' }, // `S`
+      'git:unstage-all': { didDispatch: () => { if (this.repo) unstageAll(this.repo, this.done); }, description: 'Unstage all changes' }, // `U`
+      'git:discard': { didDispatch: () => this.discardSelected(), description: 'Discard changes' }, // `X`
+      'git:commit': { didDispatch: () => this.startCommit(), description: 'Commit staged changes' }, // `c c`
       // Move focus between the list and the embedded diff (vim `ctrl-w h`/`l`); registered on the
       // root so they resolve from inside the diff editor too.
       'git-panel:focus-diff': { didDispatch: () => this.diffView?.focus(), description: 'Focus the diff' },
@@ -274,14 +316,6 @@ export class GitPanel {
     const target = this.fileRows[clamped].row;
     this.list.selectRow(target);
     target.grabFocus(); // scrolls the row into view
-  }
-
-  // `A` — stage everything, or unstage everything when nothing is left unstaged.
-  private stageAllToggle(): void {
-    if (!this.repo) return;
-    const hasUnstaged = this.fileRows.some((r) => r.kind === 'unstaged');
-    if (hasUnstaged) stageAll(this.repo, this.done);
-    else unstageAll(this.repo, this.done);
   }
 
   private openSelected(): void {
@@ -317,8 +351,8 @@ export class GitPanel {
       const hadDiff = this.diffView !== null;
       this.diffView?.dispose();
       this.diffView = view;
-      this.root.setEndChild(view.root); // detaches+replaces the old diff
-      if (!hadDiff) this.root.setPosition(LIST_WIDTH); // size the split once; keep a dragged width after
+      this.split.setEndChild(view.root); // detaches+replaces the old diff
+      if (!hadDiff) this.split.setPosition(LIST_WIDTH); // size the split once; keep a dragged width after
       // Keep the list selection in step with where the caret sits in the diff.
       view.onCursorFileChanged((path) => this.selectRowForPath(path));
       view.revealFile(targetPath);
@@ -349,7 +383,73 @@ export class GitPanel {
     this.diffGeneration++;
     this.diffView.dispose();
     this.diffView = null;
-    this.root.setEndChild(null);
+    this.split.setEndChild(null);
+    this.focusList();
+  }
+
+  // --- Commit (embedded editor above the list) -------------------------------
+
+  /** Begin a commit in the embedded editor split above the change list (replacing the
+   *  old open-in-a-new-tab flow). `amend` rewrites HEAD and prefills the last commit
+   *  message. Re-triggering while the box is open just refocuses it (the draft is kept). */
+  startCommit(amend = false): void {
+    if (!this.repo) return;
+    if (this.commitBox) return void this.commitBox.focus();
+    if (amend) lastCommitMessage(this.repo, (msg) => this.openCommitBox(amend, msg));
+    else this.openCommitBox(amend, '');
+  }
+
+  // Build + reveal the commit editor as the outer Paned's start child, then focus it. Guarded
+  // against the async amend-prefill resolving after a dispose or a second open.
+  private openCommitBox(amend: boolean, initialText: string): void {
+    if (this.disposed || this.commitBox) return;
+    this.commitAmend = amend;
+    const box = new GitCommitBox({
+      amend,
+      initialText,
+      onSubmit: (text) => this.submitCommit(text),
+      onCancel: () => this.closeCommit(),
+    });
+    this.commitBox = box;
+    this.root.setStartChild(box.root);
+    this.root.setPosition(COMMIT_BOX_HEIGHT); // size the split; the divider stays draggable after
+    box.focus();
+  }
+
+  // Commit the typed message (`ctrl-enter`). Writes it to `.git/COMMIT_EDITMSG` (so hooks +
+  // config apply, like the old tab flow) and commits via the coordinated `GitRepo.commit`.
+  // An empty message aborts but keeps the box open; a failed commit keeps it too (so the
+  // message isn't lost) — only a successful commit closes it. The list refreshes via onChange.
+  private submitCommit(text: string): void {
+    if (!this.repo) return;
+    if (!text.trim()) return void zym.notifications.addInfo('Commit aborted (empty message)');
+    const repo = this.repo;
+    const amend = this.commitAmend;
+    commitMsgPath(repo, (msgPath) => {
+      try {
+        Fs.writeFileSync(msgPath, text);
+      } catch (error) {
+        zym.notifications.addError('Could not commit', { detail: (error as Error).message });
+        return;
+      }
+      void this.git.commit(msgPath, amend).then((result) => {
+        if (result.isOk()) {
+          zym.notifications.addSuccess(amend ? 'Amended HEAD' : 'Committed');
+          this.closeCommit();
+        } else {
+          zym.notifications.addError(amend ? 'Amend failed' : 'Commit failed', { detail: result.unwrapErr().message.trim() });
+        }
+      });
+    });
+  }
+
+  // Close the embedded commit editor (`escape`/`q`, or after a successful commit): drop it
+  // from the split and return focus to the list.
+  private closeCommit(): void {
+    if (!this.commitBox) return;
+    this.commitBox.dispose();
+    this.commitBox = null;
+    this.root.setStartChild(null);
     this.focusList();
   }
 

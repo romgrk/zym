@@ -26,14 +26,15 @@
  *   hLeft[ left | hCenterRight[ vTop[ top | vBottom[ center | bottom ] ] | right ] ]
  */
 import Gtk from 'gi:Gtk-4.0';
-import { releaseGitRepo, type GitRepo } from '../git.ts';
-import type { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
-import type { FileTree } from './FileTree.ts';
-import type { GitPanel } from './GitPanel.ts';
-import type { KeymapPanel } from './KeymapPanel.ts';
-import type { NotificationLog } from './NotificationLog.ts';
-import type { Panel, PanelChild } from './Panel.ts';
-import type { PanelGroup } from './PanelGroup.ts';
+import { releaseGitRepo, type GitRepo } from '../../git.ts';
+import { WorkbenchActions } from './WorkbenchActions.ts';
+import type { DiagnosticsPanel } from '../../lsp/diagnostics/DiagnosticsPanel.ts';
+import type { FileTree } from '../FileTree.ts';
+import type { GitPanel } from '../git/GitPanel.ts';
+import type { KeymapPanel } from '../KeymapPanel.ts';
+import type { NotificationLog } from '../NotificationLog.ts';
+import type { Panel, PanelChild } from '../Panel.ts';
+import type { PanelGroup } from '../PanelGroup.ts';
 
 const SIDEBAR_WIDTH = 220;
 // Fraction of the center column height a top/bottom dock takes when opened.
@@ -72,6 +73,7 @@ export interface WorkbenchContents {
   keymapDock: Panel;
 }
 
+
 export class Workbench<TOwner = unknown> {
   readonly root: InstanceType<typeof Gtk.Paned>;
 
@@ -83,6 +85,9 @@ export class Workbench<TOwner = unknown> {
   // `cwd`/`git` are reassigned by AppWindow when an agent re-roots into a worktree.
   cwd: string;
   git: GitRepo;
+  // The runtime action set (docs/workbench.md), built here so it reads this
+  // workbench's live `cwd`. Owns its own teardown.
+  readonly actions: WorkbenchActions;
 
   // The widgets filling this workbench's slots. `center`/`fileTree`/… are built once;
   // `filesTab` is reassigned when the right dock is collapsed and re-revealed, `gitTab`
@@ -134,6 +139,9 @@ export class Workbench<TOwner = unknown> {
     this.owner = owner;
     this.cwd = contents.cwd;
     this.git = contents.git;
+    // Read the workbench's live `cwd` (it's reassigned on re-root), so the action set
+    // never snapshots a stale root.
+    this.actions = new WorkbenchActions(() => this.cwd);
     this.center = contents.center;
     this.fileTree = contents.fileTree;
     this.leftPanel = contents.leftPanel;
@@ -206,6 +214,7 @@ export class Workbench<TOwner = unknown> {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.actions.dispose(); // stop any background action processes
     this.fileTree.dispose(); // also holds a git subscription
     this.gitPanel?.dispose();
     this.diagnosticsPanel.dispose();

@@ -27,6 +27,9 @@ export interface DiffFile {
   /** The staged (index) blob, when known — `git show :path`. Drives the per-row staged/unstaged
    *  classification (the gutter marker). Omitted in read-only mode / outside a repo. */
   indexText?: string;
+  /** The file was deleted in this change (git status `D` / gone from the working tree). Surfaced as
+   *  a `(deleted)` tag on the header. Distinct from a file merely emptied of content. */
+  deleted?: boolean;
 }
 
 /** The kind of each projection row, for decorations / gutters. */
@@ -66,12 +69,16 @@ export interface DiffMultiBuffer {
     viewRow: number;
     added: number;
     removed: number;
+    deleted: boolean;
   }>;
-  /** Widget mode only: each `⋯` gap, a decoration band (not a navigable buffer row). A LEADING gap
+  /** Widget mode only: each elided gap, a decoration band (not a navigable buffer row). A LEADING gap
    *  (the elided file head) anchors `'above'` the first content row; a between/trailing gap anchors
-   *  `'below'` the last shown row before the elision. `revealRows` are the new-side rows it elides;
-   *  `fromTop` is the chunk a click reveals first (true = the top chunk, for a between gap; false =
-   *  the bottom chunk nearest the content, for a leading gap). */
+   *  `'below'` the last shown row before the elision. `label` reads git-patch style — the
+   *  `@@ -old +new @@ section` header of the hunk that FOLLOWS the gap (what `git diff` prints right
+   *  above that hunk), or a bare `⋯` for a trailing gap (no hunk follows, as git prints nothing
+   *  there). `revealRows` are the new-side rows it elides; `fromTop` is the chunk a click reveals
+   *  first (true = the top chunk, for a between gap; false = the bottom chunk nearest the content, for
+   *  a leading gap). */
   gapAnchors: Array<{ viewRow: number; label: string; revealRows: number[]; placement: 'above' | 'below'; fromTop: boolean }>;
 }
 
@@ -177,7 +184,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
       // The file's first row is an EMPTY, read-only, NAVIGABLE `block` row — the caret target the
       // collapse toggle keys off — that the surface places the filename widget OVER. Empty text so a
       // cross-file copy carries no header text. `viewRow` is recorded before the row is emitted.
-      headerAnchors.push({ path: file.path, label, viewRow: rowKinds.length, added, removed });
+      headerAnchors.push({ path: file.path, label, viewRow: rowKinds.length, added, removed, deleted: file.deleted ?? false });
       items.push({ type: 'block', block: { kind: 'header', text: '' } });
       block('header');
       // A COLLAPSED file contributes only its header row — no windows, gaps, or decorations.
@@ -205,17 +212,19 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
     // navigable buffer row). A LEADING gap (the elided file head) is its OWN band anchored `'above'`
     // the first content row (the next row to be emitted) — separate from the header; a between/
     // trailing gap anchors `'below'` the last shown row (`rowKinds.length - 1`).
-    const emitGap = (rows: DiffRow[], leading: boolean): void => {
-      const count = rows.length;
+    const emitGap = (rows: DiffRow[], leading: boolean, following: DiffRow[] | null): void => {
       const revealRows = rows.map((r) => r.newRow); // the elided new-side rows (expand-context)
+      // git prints a hunk's `@@ … @@` header right ABOVE the hunk — so the gap shows the FOLLOWING
+      // window's header; a trailing gap (no hunk after it) shows a bare `⋯`, as git prints nothing.
+      const label = following ? windowHunkHeader(following, newLines) : '⋯';
       if (!widgetHeaders) {
-        items.push({ type: 'block', block: { kind: 'gap', text: gapLabel(count) } });
+        items.push({ type: 'block', block: { kind: 'gap', text: label } });
         block('gap');
       } else if (leading) {
         // A click reveals from the BOTTOM (the rows nearest the content below it).
-        gapAnchors.push({ viewRow: rowKinds.length, label: gapLabel(count), revealRows, placement: 'above', fromTop: false });
+        gapAnchors.push({ viewRow: rowKinds.length, label, revealRows, placement: 'above', fromTop: false });
       } else {
-        gapAnchors.push({ viewRow: rowKinds.length - 1, label: gapLabel(count), revealRows, placement: 'below', fromTop: true });
+        gapAnchors.push({ viewRow: rowKinds.length - 1, label, revealRows, placement: 'below', fromTop: true });
       }
     };
 
@@ -257,7 +266,11 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
       } else {
         let j = i;
         while (j < recs.length && !visible[j]) j++;
-        emitGap(recs.slice(i, j), firstItem);
+        // The window that FOLLOWS this gap (its hunk header is what git shows here); null if the gap
+        // trails the last window.
+        let k = j;
+        while (k < recs.length && visible[k]) k++;
+        emitGap(recs.slice(i, j), firstItem, j < recs.length ? recs.slice(j, k) : null);
         firstItem = false;
         i = j;
       }
@@ -302,6 +315,31 @@ function annotateWordDiffs(
   }
 }
 
-function gapLabel(count: number): string {
-  return `⋯ ${count} unchanged line${count === 1 ? '' : 's'}`;
+/** The git-patch hunk header for a visible `window` (one hunk): `@@ -oldStart,oldCount +newStart,newCount @@`
+ *  with the enclosing section appended — exactly what `git diff` prints above the hunk. Counts are the
+ *  hunk's lines on each side (context + change); git omits `,count` when it is 1. */
+function windowHunkHeader(window: DiffRow[], newLines: string[]): string {
+  const oldCount = window.filter((r) => r.op !== 'ins').length; // lines present on the OLD side
+  const newCount = window.filter((r) => r.op !== 'del').length; // lines present on the NEW side
+  const firstOld = window.find((r) => r.op !== 'ins');
+  const firstNew = window.find((r) => r.op !== 'del');
+  const span = (start: number, count: number): string => (count === 1 ? `${start}` : `${start},${count}`);
+  const old = span(firstOld ? firstOld.oldRow + 1 : 0, oldCount);
+  const neu = span(firstNew ? firstNew.newRow + 1 : 0, newCount);
+  const func = firstNew ? enclosingSection(newLines, firstNew.newRow) : '';
+  const header = `@@ -${old} +${neu} @@`;
+  return func ? `${header} ${func}` : header;
+}
+
+// Longest section line shown after the `@@ … @@`, to keep the band one line.
+const SECTION_MAX = 80;
+
+/** The enclosing "section" for the line at `row` — the nearest non-indented, non-blank line above
+ *  it (first char a letter / `_` / `$`): git's DEFAULT function-context heuristic, used when no
+ *  language userdiff driver applies. '' when none is found (e.g. an elided file head). */
+function enclosingSection(lines: string[], row: number): string {
+  for (let i = row - 1; i >= 0; i--) {
+    if (/^[A-Za-z$_]/.test(lines[i])) return lines[i].trimEnd().slice(0, SECTION_MAX);
+  }
+  return '';
 }

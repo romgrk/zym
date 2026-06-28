@@ -54,7 +54,7 @@ export interface AgentHost {
   /** A worktree the agent created but may not have announced (used to warn). Absolute path. */
   onWorktreeCreated(path: string): void;
   /** The agent's registered runnable actions changed (the full set, possibly empty). */
-  onActions(actions: AgentAction[]): void;
+  onActions(actions: Action[]): void;
 }
 
 /** A concrete agent integration: it owns the real argv to spawn and reports live
@@ -80,7 +80,8 @@ export type AgentDriverFactory = (baseCommand: string[], resume?: AgentResume) =
 import Gtk from 'gi:Gtk-4.0';
 import type { TabState } from '../SessionManager.ts';
 import type { WorktreeInfo } from '../git.ts';
-import type { AgentAction } from './actions.ts';
+import type { Action } from '../actions.ts';
+import type { WorkbenchActions } from '../ui/workbench/WorkbenchActions.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 
@@ -101,8 +102,6 @@ export interface Agent {
   readonly status: AgentStatus;
   readonly permissionMode: AgentMode;
   readonly changedFiles: string[];
-  /** The runnable actions the agent has registered (via the set_actions bridge tool). */
-  readonly actions: AgentAction[];
   readonly worktree: WorktreeInfo | null;
   readonly effectiveCwd: string;
   readonly sessionId: string | null;
@@ -115,7 +114,6 @@ export interface Agent {
   onDidChangeStatus(callback: () => void): () => void;
   onDidChangePermissionMode(callback: () => void): () => void;
   onDidChangeFiles(callback: () => void): () => void;
-  onDidChangeActions(callback: () => void): () => void;
   onDidChangeWorktree(callback: () => void): () => void;
   onDidChangeAttention(callback: () => void): () => void;
 
@@ -126,16 +124,12 @@ export interface Agent {
   setViewed(viewed: boolean): void;
   clearUnannouncedWorktree(): void;
   rename(name: string): void;
-  /** Run one of the agent's registered actions: a `terminal` action opens a
-   *  terminal tab; a terminal-less one runs as a background process (re-running
-   *  terminates the previous one). */
-  runAction(action: AgentAction): void;
-  /** Stop a running terminal-less action's process (no-op otherwise). */
-  stopAction(actionId: string): void;
-  /** Whether a terminal-less action currently has a running process. */
-  isActionRunning(actionId: string): boolean;
-  /** Subscribe to the set of running terminal-less actions changing. Returns unsub. */
-  onDidChangeRunningActions(callback: () => void): () => void;
+  /** Bind the agent to its workbench's action set: from here the agent pipes its
+   *  reported `set_actions` straight into the workbench (which owns the runnable set
+   *  — running, the header-bar buttons, and `space x` all go through `WorkbenchActions`).
+   *  The agent keeps no action state of its own. AppWindow calls this once the
+   *  workbench exists. */
+  bindActions(controller: WorkbenchActions): void;
   /** Restart an exited agent in place (no-op while running / unsupported). */
   resume(): void;
   /** Stop the agent's process (keeps the widget listed as `exited`). */

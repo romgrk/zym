@@ -1221,6 +1221,65 @@ export class SyntaxController {
     this.emitFoldsChanged();
   }
 
+  /** Vim `zO`/`zC` — recursively open/close the fold *subtree* at the cursor: the fold the
+   *  cursor is on/in plus every fold nested inside it (unlike `zo`/`zc`, which act one level
+   *  at a time). Scoped `foldAll`/`unfoldAll`: drive from the MODEL fold ranges contained by
+   *  the cursor's fold, translating each to its CURRENT view lines just before toggling. */
+  setFoldAtCursorRecursive(folded: boolean): RevealedRange | null {
+    const region = this.regionAtCursor();
+    if (!region || !this.screen) return null;
+    const ranges = this.docSyntax.foldRanges();
+    const parent = ranges.find((r) => r.startRow === this.documentRow(region.startLine));
+    // Cursor isn't on a known foldable header (placeholder line off-by-one, etc.) — fall back
+    // to the single-level behavior so the key still does something sensible.
+    if (!parent) return this.setFoldAtCursor(folded);
+    const subtree = ranges
+      .filter((r) => r.startRow >= parent.startRow && r.endRow <= parent.endRow)
+      .sort((a, b) => a.startRow - b.startRow || b.endRow - a.endRow);
+
+    let revealed: RevealedRange | null = null;
+    this.foldBatch = true;
+    try {
+      if (folded) {
+        // zC: record every level closed (so reopening the parent re-collapses children), then
+        // physically collapse outermost-first — a nested range is subsumed by its parent.
+        for (const r of subtree) this.desiredClosed.add(r.startRow);
+        const collapsed: Array<{ s: number; e: number }> = [];
+        for (const r of subtree) {
+          if (collapsed.some((c) => r.startRow >= c.s && r.endRow <= c.e)) continue; // nested → subsumed
+          const reg: FoldRegion = {
+            startLine: this.screenRow(r.startRow),
+            endLine: this.screenRow(r.endRow),
+            folded: false,
+            joinFooter: r.joinFooter,
+          };
+          if (reg.endLine <= reg.startLine) continue; // already collapsed (endRow maps onto header)
+          this.toggleFold(reg);
+          collapsed.push({ s: r.startRow, e: r.endRow });
+        }
+      } else {
+        // zO: forget the subtree's closed state FIRST (so expanding the parent doesn't
+        // re-collapse children), then unfold every still-alive fold inside it. Expanding a
+        // parent restores its subsumed children's text, so a snapshot pass is enough.
+        for (const r of subtree) this.desiredClosed.delete(r.startRow);
+        for (const handle of [...this.activeFolds]) {
+          if (!this.screen.isFoldAlive(handle)) continue;
+          const [s] = this.screen.foldDocumentRowSpan(handle);
+          if (s < parent.startRow || s > parent.endRow) continue;
+          const r = this.toggleFold(this.regionForHandle(handle, undefined));
+          if (r && !revealed) revealed = r;
+        }
+      }
+    } finally {
+      this.foldBatch = false;
+    }
+    this.rebuildFoldMap();
+    if (this.translate) this.repaint();
+    this.view.queueDraw();
+    this.emitFoldsChanged();
+    return revealed;
+  }
+
   /** Drop fold handles an enclosing fold has subsumed (their marks are gone), so the
    *  read paths never query a dead handle. */
   private pruneDeadFolds(): void {

@@ -30,7 +30,7 @@ they grow (`agents/claude-sdk.md` already has).
 
 What already exists and is reused, not rebuilt:
 
-- **Per-person workbenches** — `src/ui/Workbench.ts` is a first-class object:
+- **Per-person workbenches** — `src/ui/workbench/Workbench.ts` is a first-class object:
   one person's dock frame (left/right/top/bottom/center) **plus the widgets
   that fill its slots** — its own `center`, `fileTree`, Source-Control,
   `leftPanel`, and the four bottom-dock panels — with an `owner` field naming
@@ -524,8 +524,7 @@ An agent running inside zym can call back into the editor through bundled MCP
 tools (`assets/mcp/zymBridge.mjs`; both kinds get every tool):
 
 - **`set_worktree(path)`**: update the workbench's cwd to this worktree.
-- **`set_actions([{ label, command, terminal? }])`**: register runnable actions 
-   (buttons and commands available in IDE).
+- **`set_actions([{ label, command, terminal? }])`**: overwrite the  **workbench actions**.
 
 ## More ideas
 

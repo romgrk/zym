@@ -31,7 +31,7 @@ test('widget mode: one EMPTY navigable header row per file; gaps stay anchor ban
   assert.equal(dmb.headerAnchors[0].added, 2, 'two added lines');
   assert.equal(dmb.headerAnchors[0].removed, 2, 'two removed lines');
   assert.equal(dmb.gapAnchors.length, 1, 'one between-window gap, as an anchor band');
-  assert.ok(dmb.gapAnchors[0].label.includes('unchanged'), 'gap carries its `⋯ N unchanged lines` label');
+  assert.match(dmb.gapAnchors[0].label, /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/, 'gap carries the following hunk\'s git `@@ … @@` header');
 });
 
 test('widget mode: a collapsed file contributes only its header row', () => {
@@ -182,5 +182,5 @@ test('long unchanged runs are elided to a ⋯ gap; the change + context stay', (
   assert.deepEqual(dmb.rowKinds, ['header', 'context', 'removed', 'added', 'context', 'context', 'context', 'gap']);
   const gap = dmb.items[dmb.items.length - 1] as { type: 'block'; block: { kind: string; text: string } };
   assert.equal(gap.block.kind, 'gap');
-  assert.match(gap.block.text, /^⋯ \d+ unchanged lines$/);
+  assert.equal(gap.block.text, '⋯'); // a TRAILING gap (no hunk follows) — git prints nothing, we show `⋯`
 });

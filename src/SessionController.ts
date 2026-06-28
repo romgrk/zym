@@ -15,9 +15,10 @@
 import * as Fs from 'node:fs';
 import { zym } from './zym.ts';
 import { SESSION_VERSION, type SessionState, type TabState, type WorkspaceState } from './SessionManager.ts';
+import type { Action } from './actions.ts';
 import type { PanelGroup, RestoredChild } from './ui/PanelGroup.ts';
 import type { FileTree } from './ui/FileTree.ts';
-import type { DockSide } from './ui/Workbench.ts';
+import type { DockSide } from './ui/workbench/Workbench.ts';
 
 export interface SessionDocks {
   notificationLog: boolean;
@@ -55,6 +56,11 @@ export interface SessionControllerOptions {
   /** The unsaved contents of currently-modified editors, cached so a restore can
    *  bring the edits back. */
   collectUnsaved?: () => { path: string; text: string }[];
+  /** The user workbench's live action set (docs/workbench.md), for
+   *  serialization; an empty set is omitted from the saved workspace. */
+  serializeUserActions?: () => Action[];
+  /** Apply a restored action set to the user workbench. */
+  restoreUserActions?: (actions: Action[]) => void;
   /** One `WorkspaceState` per open agent workbench (root + layout + `agent`
    *  identity), appended after the user workspace. Empty when no agents. */
   serializeAgentWorkspaces?: () => WorkspaceState[];
@@ -92,6 +98,8 @@ export class SessionController {
       layout: this.opts.center.serializeLayout(this.opts.serializeChild),
       fileTree: { expanded: this.opts.fileTree.serializeExpanded() },
     };
+    const userActions = this.opts.serializeUserActions?.();
+    if (userActions && userActions.length > 0) user.actions = userActions;
     // The user workspace is primary (index 0); each open agent workbench follows.
     const workspaces = [user, ...(this.opts.serializeAgentWorkspaces?.() ?? [])];
     // The focused workbench is restored as the active one; clamp a stale index to a
@@ -159,6 +167,7 @@ export class SessionController {
     this.restoringState = state;
     this.opts.center.restoreLayout(user.layout, (tab) => this.deserialize(tab));
     if (user.fileTree) this.opts.fileTree.restoreExpanded(user.fileTree.expanded);
+    if (user.actions) this.opts.restoreUserActions?.(user.actions);
     if (state.docks) this.opts.applyDocks(state.docks);
     if (state.window) this.opts.applyWindow?.(state.window);
 

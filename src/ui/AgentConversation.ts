@@ -37,7 +37,6 @@ import { ToolRow } from './conversation/ToolRow.ts';
 import { appendToolRow, EDIT_TOOLS } from './conversation/toolRows.ts';
 import { SubagentView, SUBAGENT_GROUP } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
-import { ActionsBar } from './conversation/ActionsBar.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
@@ -49,8 +48,7 @@ import { createOneShotAgent, type OneShotAgent } from '../agents/oneshot.ts';
 import { generateAgentName } from '../agents/autoName.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import type { Agent, AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
-import type { AgentAction } from '../agents/actions.ts';
-import { ActionProcesses } from '../agents/ActionProcesses.ts';
+import type { WorkbenchActions } from './workbench/WorkbenchActions.ts';
 import type { TabState } from '../SessionManager.ts';
 
 // Colors come from the theme as CSS variables (--t-ui-*); the monospace bits read
@@ -213,8 +211,6 @@ export interface AgentConversationOptions {
   userPrompt?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
   onOpenFile?: (path: string) => void;
-  /** Run a `terminal` action in a terminal tab (terminal-less ones run in-process). */
-  onRunInTerminal?: (action: AgentAction) => void;
   /** Override how the underlying session's transport is created — a test/POC seam
    *  to drive the conversation off scripted stream events instead of spawning
    *  `claude` (forwarded verbatim to SdkSession; see src/poc/conversation-transcript.ts). */
@@ -298,19 +294,11 @@ export class AgentConversation implements Agent {
   private readonly monitorView: MonitorView;
   private _slashCommands: string[] = []; // from init; offered by the slash completion source
   private readonly onOpenFile?: (path: string) => void;
-  private readonly onRunInTerminal?: (action: AgentAction) => void;
-  // Runnable actions the agent has registered (set_actions), rendered as a button
-  // bar above the input card; the bar hides when the set is empty.
-  private _actions: AgentAction[] = [];
-  private readonly actionHandlers: Array<() => void> = [];
-  private readonly runningActionHandlers: Array<() => void> = [];
-  private readonly actionsBar: ActionsBar;
-  // Background processes of terminal-less actions; re-rendering the bar on change
-  // toggles each running action's stop control.
-  private readonly actionProcesses = new ActionProcesses(() => {
-    this.actionsBar.refresh();
-    for (const handler of this.runningActionHandlers) handler();
-  });
+  // Actions live on the workbench, not here. The agent's reported `set_actions` is
+  // piped straight into `boundActions` (its workbench's set); the buttons are shown in
+  // the window header bar (`WorkbenchActionsBar`), not the conversation. Null until
+  // `bindActions`.
+  private boundActions: WorkbenchActions | null = null;
 
   // Per-turn streaming state: the open assistant/thinking markdown views and the
   // raw markdown accumulated into each (re-rendered on every delta). Reset per turn.
@@ -361,7 +349,6 @@ export class AgentConversation implements Agent {
     this.baseCommand = options.command;
     this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
-    this.onRunInTerminal = options.onRunInTerminal;
     this.session = new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume, createTransport: options.createTransport });
     this.oneShot = options.oneShot ?? createOneShotAgent();
 
@@ -477,20 +464,14 @@ export class AgentConversation implements Agent {
     this.subagentView = this.subs.use(new SubagentView(this.session, nav, this.cwd, this.onOpenFile));
     this.monitorView = this.subs.use(new MonitorView(this.session, nav));
 
-    // A button bar for the agent's registered actions, just above the input card;
-    // hidden until the agent registers any (see ActionsBar).
-    this.actionsBar = this.subs.use(new ActionsBar({
-      isRunning: (id) => this.actionProcesses.isRunning(id),
-      onRun: (action) => this.runAction(action),
-      onStop: (id) => this.stopAction(id),
-    }));
+    // Workbench actions are shown in the window header bar (WorkbenchActionsBar), not
+    // the conversation — this view only pipes the agent's reports into the set.
 
     const mainBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
     mainBox.addCssClass('conversation-surface');
     mainBox.append(this.tasksPanel.root);
     mainBox.append(this.transcript.root); // the scrollable transcript column
     mainBox.append(this.thinkingReveal); // the thinking spinner sits just above the prompt
-    mainBox.append(this.actionsBar.root);
     mainBox.append(inputCard);
     mainBox.append(this.subagentView.panel.root); // running subagents expand below the input card
     mainBox.append(this.monitorView.panel.root); // running shell monitors, likewise
@@ -613,7 +594,6 @@ export class AgentConversation implements Agent {
   get status(): AgentStatus { return this._status; }
   get permissionMode(): AgentMode { return this._permissionMode; }
   get changedFiles(): string[] { return this._changedFiles.slice(); }
-  get actions(): AgentAction[] { return this._actions.slice(); }
   get effectiveCwd(): string { return this._effectiveCwd; }
   get sessionId(): string | null { return this.session.sessionId; }
   get renamed(): boolean { return this._displayName !== null; }
@@ -696,21 +676,14 @@ export class AgentConversation implements Agent {
 
   onDidChangeStatus(cb: () => void): () => void { return push(this.statusHandlers, cb); }
   onDidChangeFiles(cb: () => void): () => void { return push(this.fileHandlers, cb); }
-  onDidChangeActions(cb: () => void): () => void { return push(this.actionHandlers, cb); }
-  onDidChangeRunningActions(cb: () => void): () => void { return push(this.runningActionHandlers, cb); }
 
-  /** Run an action: `terminal` ones open a terminal tab (`onRunInTerminal`), the
-   *  rest run as a background process (re-running terminates the previous one). */
-  runAction(action: AgentAction): void {
-    if (action.terminal) this.onRunInTerminal?.(action);
-    else this.actionProcesses.run(action, this._effectiveCwd);
+  /** Bind to the workbench's action set so the agent's reported `set_actions` pipes
+   *  into it (`session.onActions` → `boundActions.setFromAgent`). The conversation
+   *  keeps no action state of its own and shows no in-chat bar — the buttons live in
+   *  the header (`WorkbenchActionsBar`). AppWindow calls this once the workbench exists. */
+  bindActions(controller: WorkbenchActions): void {
+    this.boundActions = controller;
   }
-
-  /** Stop a terminal-less action's process (no-op otherwise). */
-  stopAction(actionId: string): void { this.actionProcesses.stop(actionId); }
-
-  /** Whether a terminal-less action currently has a running process. */
-  isActionRunning(actionId: string): boolean { return this.actionProcesses.isRunning(actionId); }
   onTitleChange(cb: () => void): () => void { return push(this.titleHandlers, cb); }
   onDidChangeAttention(cb: () => void): () => void { return push(this.attentionHandlers, cb); }
   onDidChangePermissionMode(cb: () => void): () => void { return push(this.permissionModeHandlers, cb); }
@@ -718,8 +691,7 @@ export class AgentConversation implements Agent {
 
   dispose(): void {
     this.disposed = true; // an in-flight auto-rename must not touch a torn-down view
-    this.actionProcesses.stopAll(); // terminate any terminal-less action processes
-    this.subs.dispose(); // also disposes transcript / subagentView / monitorView / actionsBar (registered via use())
+    this.subs.dispose(); // also disposes transcript / subagentView / monitorView (registered via use())
     this.statusIcon.dispose();
     this.input.dispose();
     this.session.dispose();
@@ -756,12 +728,6 @@ export class AgentConversation implements Agent {
     );
   }
 
-  // Replace the registered-actions set and re-render the button bar.
-  private setActions(actions: AgentAction[]): void {
-    this._actions = actions;
-    this.actionsBar.render(actions);
-    for (const handler of this.actionHandlers) handler();
-  }
 
   private cyclePermissionMode(): void {
     const index = PERMISSION_CYCLE.indexOf(this._permissionMode);
@@ -881,7 +847,9 @@ export class AgentConversation implements Agent {
   private wireSession(): void {
     this.subs.add(
       this.session.onStatus(() => this.setStatus(this.session.status)),
-      this.session.onActions(({ actions }) => this.setActions(actions)),
+      // Pipe the agent's set_actions straight into its workbench's set (bound via
+      // bindActions); the controller's change re-renders the header-bar buttons.
+      this.session.onActions(({ actions }) => this.boundActions?.setFromAgent(actions)),
       this.session.onCwd(({ cwd }) => this.setEffectiveCwd(cwd)),
       this.session.onMode(() => {
         this._permissionMode = this.session.permissionMode;

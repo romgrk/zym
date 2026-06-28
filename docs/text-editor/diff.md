@@ -10,9 +10,17 @@ All diffs render on the continuous, multi-file multibuffer **`DiffView`**
 (`src/ui/DiffView.ts`). It stitches each changed file's old (HEAD/blob) and new
 (working-tree or live `Document`) sides into one scrollable editor via a
 `CoordinatesMap`: changed hunks plus a little context are shown, long unchanged
-runs elide to a `⋯` gap widget, and per-side tree-sitter highlighting,
+runs elide to a git-patch `@@ … @@` hunk-header gap band, and per-side tree-sitter highlighting,
 added/removed backgrounds, and old|new line-number gutters are painted on top.
 It is fully documented in **[multibuffer.md](multibuffer.md)** — start there.
+
+`DiffView.root` is a `Gtk.Stack` swapping the editor for an empty state (an `Adw.StatusPage` built
+by `createEmptyMessage`, `src/ui/createEmptyMessage.ts`) whenever no file has a change — so a live
+diff whose changes are all discarded shows "No changes" rather than a blank editor. `reDiff` toggles
+it on `headerAnchors.length === 0`. `git:diff-current-changes` therefore opens the diff even on a
+clean tree (its empty state) instead of a "no changes" toast — `buildCurrentChangesDiff` returns null
+only outside a repo. (The file *set* is still a snapshot taken at open: `onGitChange` re-diffs those
+files live but doesn't add newly-changed ones — reopen to refresh.)
 
 ## Entry points
 
@@ -54,20 +62,31 @@ over the block primitive (the diff today, project-search next): a surface drives
 reconciled by path from `installOverlays`), and it owns everything generic — the pinning, the
 caret-follow `.focused` highlight, and the `no-cursor` decoration over the header rows. Nothing
 diff-specific lives in it; the surface only supplies the header set + its own widget look. The diff's
-header widget shows a `▾`/`▸` chevron
-+ `+N −M` stats, and **only** the filename (the elided file head is now its own gap band, not a header
-subtitle). `⋯` gaps — the leading file-head gap (`'above'` the first content row) and between-window
-gaps (`'below'` the last shown row) — plus review-comment cards are ordinary (non-sticky)
-`BlockDecorations`.
+header widget shows a Nerd Font collapse chevron (`NERDFONT.NAV.CHEVRON_DOWN` expanded /
+`CHEVRON_RIGHT` collapsed, coloured to match the path) + `+N −M` stats + a dimmed `(deleted)` tag for a
+removed file, and **only** the filename (the elided file head is now its own gap band, not a header
+subtitle). The gap bands read git-patch style: each shows the `@@ -old +new @@ section` header of the
+hunk that FOLLOWS it (byte-identical to what `git diff` prints above that hunk — see `windowHunkHeader`,
+which reuses git's default `,count`-elision and function-context heuristic), or a bare `⋯` for a
+trailing gap (no hunk follows, as git prints nothing there). Markers render in the editor foreground,
+same as the filename. The leading file-head gap (`'above'` the first content row) and between-window
+gaps (`'below'` the last shown row) — plus review-comment cards — are ordinary (non-sticky)
+`BlockDecorations`, the gaps `fullWidth` so they span the row under the header.
 
-**Per-file collapse** — `z a` (`diff:toggle-file`) folds the file under the cursor to just its header
-row; `z C` / `z O` (`diff:collapse-all-files` / `diff:expand-all-files`) fold/unfold every file (a
-one-line-per-file overview). A collapsed file emits only its header row
-(`buildDiffMultiBuffer`'s `collapsed` predicate, keyed by path in `DiffView.collapsedFiles`); the
+**Per-file folding & navigation** (vim-style, keyed by path in `DiffView.collapsedFiles`) — `z c` /
+`z o` (`diff:collapse-file` / `diff:expand-file`) close/open the file under the cursor, `z a`
+(`diff:toggle-file`) toggles it, and `z r` / `z m` (`diff:expand-all-files` / `diff:collapse-all-files`)
+open/close every file (a one-line-per-file overview). `z j` / `z k` (`diff:next-file` / `diff:prev-file`)
+step the caret between file headers; `z /` (`diff:go-to-file`) opens a fuzzy file picker over the diff
+editor (`DiffFilePicker`, like `lsp:document-symbols`) that jumps to the chosen file's header. A
+collapsed file emits only its header row (`buildDiffMultiBuffer`'s `collapsed` predicate); the
 re-derive rides the existing `reDiff()` refresh path and the caret recovers onto the file's header
-row when its own line is folded away. This is orthogonal to the **context** controls (`z o`/`z R`/`z m`,
-which reveal elided unchanged lines *within* an expanded file). The search surface's headers stay
-`BlockDecorations` bands (it has its own per-excerpt collapse).
+row when its own line is folded away. Revealing the elided unchanged lines *within* a file is a
+separate axis: `z .` (`diff:expand-context`) expands the nearest `⋯` gap a chunk at a time, `z >`
+(`diff:expand-all`) reveals the full files, `z <` (`diff:collapse-context`) re-collapses — and
+clicking a `⋯` marker expands it too. (`.` mirrors the dots; `z o` is the file-open now, not the
+context expand.) The search surface's headers stay `BlockDecorations` bands (it has its own
+per-excerpt collapse).
 
 ## Comment & review (any diff)
 

@@ -1,15 +1,15 @@
 /*
- * Action runner — a picker over the runnable actions an agent has registered
- * (via the set_actions bridge tool). Each action is a two-column row (the label
- * on the left, its shell command muted on the right); the chosen action is handed
- * back to the caller, which runs it in a terminal tab. The default action sorts
- * first and is tagged so it reads as the recommended choice.
+ * Action runner — a picker over a workbench's runnable actions (see
+ * docs/workbench.md), the `space x o` list. Each action is a two-column row
+ * (the label on the left, its shell command muted on the right); the chosen action is
+ * handed back to the caller, which runs it. The default action sorts first and is
+ * tagged so it reads as the recommended choice.
  */
-import { openPicker, highlightSegment, type PickerItem } from './Picker.ts';
-import { renderRowSingleLine } from './PickerRow.ts';
-import { Icons } from './icons.ts';
+import { openPicker, highlightSegment, type PickerItem } from '../Picker.ts';
+import { renderRowSingleLine } from '../PickerRow.ts';
+import { Icons } from '../icons.ts';
 import Gtk from 'gi:Gtk-4.0';
-import { defaultAction, type AgentAction } from '../agents/actions.ts';
+import { defaultAction, type Action } from '../../actions.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
@@ -17,7 +17,7 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
  * Open the action runner over `actions`. `onRun` is called with the chosen action;
  * the caller runs its command. The default action is listed first.
  */
-export function openActionRunner(host: Overlay, actions: AgentAction[], onRun: (action: AgentAction) => void): void {
+export function openActionRunner(host: Overlay, actions: Action[], onRun: (action: Action) => void): void {
   const fallback = defaultAction(actions);
   // Default first, then launch order.
   const ordered = [...actions].sort((a, b) => Number(b === fallback) - Number(a === fallback));
@@ -34,10 +34,10 @@ export function openActionRunner(host: Overlay, actions: AgentAction[], onRun: (
 
   openPicker({
     host,
-    placeholder: 'Run agent action…',
+    placeholder: 'Run workbench action…',
     promptIcon: Icons.terminal,
     items,
-    error: items.length === 0 ? 'This agent has registered no actions' : undefined,
+    error: items.length === 0 ? 'This workbench has no actions' : undefined,
     // Label on the left, its shell command muted on the right.
     renderRow: (item, positions) => {
       const split = item.data as number;

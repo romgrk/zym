@@ -159,6 +159,47 @@ test('opening a fold reports its revealed body range (so the caret can land insi
   assert.equal(text(), 'function foo() {\n  const x = 1;\n  return x;\n}\n', 'text restored on open');
 });
 
+test('zC closes the cursor fold recursively: collapses, and reopening keeps children closed', () => {
+  if (!hasJs) return;
+  const { syntax, text, buffer } = setup(CLASS);
+  // Caret on the (fully expanded) class header. zC closes the class AND records m1/m2 closed.
+  buffer.placeCursor(asIter(buffer.getIterAtLine(0)));
+  syntax.setFoldAtCursorRecursive(true);
+  assert.match(text(), /^export class Doc \{\[\d+\]\}\n?$/, `zC collapses the whole class:\n${text()}`);
+  // Reopening the class one level reveals m1/m2 STILL folded — proof zC marked every level
+  // closed (a plain zc on the open class would have left the methods expanded).
+  buffer.placeCursor(asIter(buffer.getIterAtLine(0)));
+  syntax.setFoldAtCursor(false);
+  assert.match(
+    text(),
+    /^export class Doc \{\n {2}m1\(\) \{\[\d+\]\}\n {2}m2\(\) \{\[\d+\]\}\n\}\n?$/,
+    `inner method folds should stay closed after zC then opening the class:\n${text()}`,
+  );
+});
+
+test('zO opens the cursor fold recursively: fully expands a collapsed subtree', () => {
+  if (!hasJs) return;
+  const { syntax, text, buffer } = setup(CLASS);
+  syntax.foldAll(); // everything closed; the class placeholder subsumes m1/m2
+  buffer.placeCursor(asIter(buffer.getIterAtLine(0)));
+  // zO must fully expand — NOT the one-level zo, which would leave m1/m2 folded.
+  syntax.setFoldAtCursorRecursive(false);
+  assert.equal(text(), CLASS, `zO fully expands the class and its methods:\n${text()}`);
+});
+
+test('zO opens already-collapsed children of an expanded fold', () => {
+  if (!hasJs) return;
+  const { syntax, text, buffer } = setup(CLASS);
+  syntax.foldAll();
+  buffer.placeCursor(asIter(buffer.getIterAtLine(0)));
+  syntax.setFoldAtCursor(false); // open the class one level: m1/m2 remain folded
+  assert.match(text(), /m1\(\) \{\[\d+\]\}/, 'methods start folded');
+  // Caret on the now-expanded class header; zO opens the nested method folds too.
+  buffer.placeCursor(asIter(buffer.getIterAtLine(0)));
+  syntax.setFoldAtCursorRecursive(false);
+  assert.equal(text(), CLASS, `zO reveals the nested method folds:\n${text()}`);
+});
+
 test('editing + undo with folds collapsed writes through and stays consistent', () => {
   if (!hasJs) return;
   const src = 'export class Doc {\n  m1() {\n    return 1;\n  }\n}\n';

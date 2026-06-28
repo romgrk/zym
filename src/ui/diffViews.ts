@@ -195,7 +195,7 @@ async function buildRefDiffFiles(
       const newText = f.status === 'D' ? '' : await read(newRef, f.relPath);
       // Surface renames in the header (old → new); plain changes keep the default label.
       const label = f.oldRelPath && f.oldRelPath !== f.relPath ? `${f.oldRelPath} → ${f.relPath}` : undefined;
-      return { path: Path.join(root, f.relPath), oldText, newText, label };
+      return { path: Path.join(root, f.relPath), oldText, newText, label, deleted: f.status === 'D' };
     }),
   );
 }
