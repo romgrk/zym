@@ -2057,6 +2057,16 @@ export class AppWindow {
       gitPanel.focus();
       return;
     }
+    // Still attached to the live window tree but not in this center — e.g. its tab was
+    // dragged into a dock (a Panel outside the center). Reveal it where it lives instead
+    // of unparenting it: unparenting a live page child corrupts it into a zombie that
+    // vanishes from the tree (the reveal rule in docs/panels.md). `getRoot()` is non-null
+    // only while it sits in the live tree, so it tells a live host from an orphaned page.
+    if (gitPanel.root.getRoot()) {
+      Panel.containing(gitPanel.root)?.reveal(gitPanel.root);
+      gitPanel.focus();
+      return;
+    }
     if (gitPanel.root.getParent()) gitPanel.root.unparent(); // drop any closed/orphaned page
     this.workbench.gitTab = this.workbench.center.add(gitPanel.root, {
       title: `${Icons.git}  Git`,

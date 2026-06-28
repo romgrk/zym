@@ -158,8 +158,14 @@ not-yet-finalized page). The rule: **never `add()` into an unrooted tab view.**
   drag moved it out of, or that a layout rebuild (`restoreLayout` discards the old
   tree without closing its pages) detached: selecting such a page shows nothing and
   `unparent()`-ing a *live* page child corrupts it into a zombie that vanishes from
-  the tree. A `false` from `reveal` means it is genuinely not shown, so the caller
-  drops any leftover (closed / orphaned) parent and `add()`s it fresh.
+  the tree. A `false` from `reveal` means it is not shown **in the center**, but the
+  widget may still be live elsewhere — its tab can be dragged into a *dock* (a `Panel`
+  outside the center, which `PanelGroup.reveal` doesn't walk). So before unparenting,
+  `revealGitPanel` checks `gitPanel.root.getRoot()`: non-null means it is still in the
+  live window tree (e.g. the dock), so it reveals it in place via
+  `Panel.containing(root).reveal(root)` and never unparents it; only a null `getRoot()`
+  (closed, or orphaned by a layout rebuild) is safe to `unparent()` + `add()` fresh.
+  Tested in `GitPanelReveal.test.ts`.
 - **Agents** — each agent's widget is a `Gtk.Stack` page in the window-level
   `AgentSidebar`, not a tab — so it's inherently uncloseable (no tab, no close
   button). Switching person flips the visible page and swaps the shown Workbench, so
