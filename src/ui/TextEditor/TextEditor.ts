@@ -440,7 +440,7 @@ export class TextEditor implements DocumentHost {
   private hoverPopover!: EditorPopover;
   private contentOverlay!: InstanceType<typeof Gtk.Overlay>; // hosts the floating cards
   private inlinePeek!: Peek; // focusable inline peek (see-definition); built in buildEditorArea
-  private stickyHeaderController!: StickyHeaders; // sticky multi-file diff headers (over the block surface)
+  private stickyHeaderController!: StickyHeaders; // reusable per-excerpt sticky headers (diff / search)
   // The signature-help card: shown live while typing a call's arguments. Same
   // MarkupCard/EditorPopover as hover; `signatureSeq` drops stale async responses.
   private signatureCard!: MarkupCard;
@@ -626,8 +626,9 @@ export class TextEditor implements DocumentHost {
     this.textDecorations = new TextDecorations(this.editorModel);
     // Inline block surface (virtual content between lines: the diff fold placeholder).
     this.blockDecorationController = new BlockDecorations(this.view);
-    // Sticky multi-file diff headers — a thin layer over the block surface (above + sticky bands).
-    this.stickyHeaderController = new StickyHeaders(this.blockDecorationController);
+    // Reusable per-excerpt sticky headers (diff / project-search) — over the block surface, plus the
+    // caret-follow focus + no-cursor decoration it owns (hence the model + decorations).
+    this.stickyHeaderController = new StickyHeaders(this.blockDecorationController, this.editorModel, this.textDecorations);
     // Search/replace engine; its `SearchBar` widget is built in buildEditorArea.
     this.search = new SearchController(this.editorModel, this.textDecorations);
 
@@ -1223,8 +1224,9 @@ export class TextEditor implements DocumentHost {
     return set;
   }
 
-  /** The sticky multi-file diff headers — pinned header widgets on the sibling overlay, driven by
-   *  `DiffView` via `setHeaders()`. Inert (no headers) for every other editor. */
+  /** Reusable per-excerpt sticky headers (the multi-file diff, project-search next) — a multibuffer
+   *  surface drives it via `setHeaders()`; it owns the pinning + caret-follow focus + no-cursor
+   *  decoration. Inert (no headers) for every other editor. */
   get stickyHeaders(): StickyHeaders {
     return this.stickyHeaderController;
   }

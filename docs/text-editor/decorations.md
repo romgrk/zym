@@ -52,9 +52,9 @@ overlay, so it tracks scroll/edits by re-binding `value-changed` on
 ranges where the caret is hidden. The cursor model (`EditorModel`) consults it
 via the generic `shouldHideCursorAt` hook (wired by `TextEditor`) and draws no
 block / overlay / native caret there, for the **primary and every extra
-(multi-)cursor** — the caret still moves there, it's just invisible. The diff
-marks its read-only header rows with it (the caret rests on a header but shows
-no box; the band reads `.focused` instead). See
+(multi-)cursor** — the caret still moves there, it's just invisible.
+`StickyHeaders` sets it over the read-only header rows (the caret rests on a
+header but shows no box; the band reads `.focused` instead). See
 [diff.md](diff.md).
 
 ## Virtual text — EOL *and* mid-line
@@ -95,8 +95,9 @@ Two flavors of "text shown but not in the model":
   collapse-toggle target) and clamps its overlay Y to the viewport top so it PINS
   when its file scrolls past (VSCode-style sticky scroll), while still being a
   native-scrolling, viewport-clipped, click-through text-window child. `StickyHeaders`
-  (`src/ui/TextEditor/StickyHeaders.ts`) is a thin reconcile + focus layer the diff
-  drives (`editor.stickyHeaders.setHeaders`); see [diff.md](diff.md).
+  (`src/ui/TextEditor/StickyHeaders.ts`) is the reusable surface-agnostic abstraction
+  a multibuffer drives (`editor.stickyHeaders.setHeaders`) — it owns the pinning, the
+  caret-follow `.focused` highlight, and the `no-cursor` decoration; see [diff.md](diff.md).
 
 ## The model↔view boundary (folds)
 

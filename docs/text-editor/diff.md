@@ -35,9 +35,9 @@ Each file's header is an **empty, read-only, navigable `block` row** (the file's
 the filename widget **covers** as an `on`-placed `sticky` `BlockDecoration` (`placement: 'on', sticky:
 true`) — the widget sits OVER its own line (the line is grown to the widget's height), so the caret
 lands *on the headerband* (`j`/`k` stops there). The caret box itself is **suppressed** on the header
-rows via a `no-cursor` decoration (`editor.decorations.setNoCursorRanges`, applied in
-`applyDecorations`) — the band reads `.focused` instead, so it's clear the cursor is on the header
-without a stray box over the filename. Being an ordinary text-window `add_overlay` child it **scrolls
+rows (a `no-cursor` decoration) and the band reads `.focused` instead — both owned by `StickyHeaders`
+(see below) — so it's clear the cursor is on the header without a stray box over the filename. Being
+an ordinary text-window `add_overlay` child it **scrolls
 natively** — smooth on a touchpad, never swallows scroll (it bubbles to the view), stays click-to-jump,
 and is **clipped to the viewport by the text view** (so nothing draws over the tab bar). The `sticky`
 flag (in `BlockDecorations`) clamps the overlay's Y to the scroll top and re-clamps it on every
@@ -48,10 +48,13 @@ slides up and rides the text out of view as the next reaches the top — only th
 file's header stays pinned. The opaque header fill (editor background + tint) lets it occlude the diff
 scrolling underneath.
 
-`StickyHeaders` (`src/ui/TextEditor/StickyHeaders.ts`) is a thin reconcile + focus layer over the
-block primitive: `DiffView` drives it from `installOverlays` via `editor.stickyHeaders.setHeaders(...)`
-(reconciled by path — add / re-anchor / swap-widget-on-content-change / remove), and it toggles a
-`.focused` class on the header whose line the caret sits on. The header widget shows a `▾`/`▸` chevron
+`StickyHeaders` (`src/ui/TextEditor/StickyHeaders.ts`) is a **reusable, surface-agnostic** abstraction
+over the block primitive (the diff today, project-search next): a surface drives it via
+`editor.stickyHeaders.setHeaders(...)` (one `{ viewRow, build, id, key }` per excerpt — for the diff,
+reconciled by path from `installOverlays`), and it owns everything generic — the pinning, the
+caret-follow `.focused` highlight, and the `no-cursor` decoration over the header rows. Nothing
+diff-specific lives in it; the surface only supplies the header set + its own widget look. The diff's
+header widget shows a `▾`/`▸` chevron
 + `+N −M` stats, and **only** the filename (the elided file head is now its own gap band, not a header
 subtitle). `⋯` gaps — the leading file-head gap (`'above'` the first content row) and between-window
 gaps (`'below'` the last shown row) — plus review-comment cards are ordinary (non-sticky)

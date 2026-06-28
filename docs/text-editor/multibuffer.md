@@ -300,9 +300,11 @@ Single-file editing plus both multibuffer surfaces run on the
 - Block decorations: `src/ui/TextEditor/BlockDecorations.ts` (generic
   primitive), `BlockDecorationSet.ts` (declarative source-anchored layer)
   — full design in `block-decorations.md`.
-- Sticky diff headers: `src/ui/TextEditor/StickyHeaders.ts` (a thin reconcile
-  + focus layer over `sticky` `BlockDecorations`) — driven by `DiffView`,
-  see `diff.md`.
+- Sticky headers: `src/ui/TextEditor/StickyHeaders.ts` — the reusable,
+  surface-agnostic abstraction over `sticky` `BlockDecorations` (owns pinning +
+  caret-follow focus + the no-cursor decoration); any multibuffer drives it via
+  `editor.stickyHeaders.setHeaders` (the diff today, project-search next). See
+  `diff.md`.
 - Model (`src/ui/multibuffer/`): `MultiBufferModel.ts`,
   `MultiBufferDocument.ts`, `diffMultiBuffer.ts`, `diffSegments.ts`,
   `projectSearch.ts`, `ExcerptSyntaxProjection.ts`.

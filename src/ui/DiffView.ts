@@ -282,7 +282,7 @@ export class DiffView {
     this.installNavigation();
     // Track which file the caret sits in, to notify onCursorFileChanged subscribers (the GitPanel
     // keeps its change-list selection in sync). Disposed with the view.
-    this.disposables.add(this.editor.onDidChangeCursorPosition(() => { this.emitCursorFile(); this.updateHeaderFocus(); }));
+    this.disposables.add(this.editor.onDidChangeCursorPosition(() => this.emitCursorFile()));
     if (this.editable) {
       // Re-diff after an edit. A LINE-COUNT change (Enter / `o` / dd) reflows the diff and moves
       // the caret relative to the gaps, so re-diff IMMEDIATELY — debouncing it leaves the caret
@@ -400,14 +400,6 @@ export class DiffView {
     if (this.collapsedFiles.size === 0) return;
     this.collapsedFiles.clear();
     this.reDiff();
-  }
-
-  /** Highlight the header whose row the caret sits on (so it reads as focused even though the caret
-   *  rests on the empty line beneath the floating widget), or clear the highlight. */
-  private updateHeaderFocus(): void {
-    const row = this.cursorRow();
-    const onHeader = this.headerAnchors.some((h) => h.viewRow === row);
-    this.editor.stickyHeaders.setFocusedRow(onHeader ? row : null);
   }
 
   /** The header-row view position of the file owning `documentKey` (`new:<p>` / `old:<p>`) — the
@@ -845,7 +837,7 @@ export class DiffView {
         this.headerViewRowForDocumentKey(anchor.documentKey);
       if (pos) this.editor.model.setCursorBufferPosition(pos);
     }
-    this.updateHeaderFocus(); // the caret may now sit on a header row (e.g. after a collapse)
+    // (Header focus follows the caret automatically — owned by `editor.stickyHeaders`.)
     this.lastLineCount = this.screen.buffer.getLineCount(); // reflow changed it
   }
 
@@ -859,10 +851,7 @@ export class DiffView {
       wordRanges: dmb.wordRanges[row] ?? undefined, // intra-line word-add/word-del spans
     }));
     applyDiffDecorations(this.editor.decorations.layer('diff'), lines, /* terminated */ false);
-    // Hide the caret on the read-only header rows — the band reads `.focused` instead. Range spans
-    // each header row's newline so the marker is present at column 0 (an empty line has no glyph).
-    const headerRange = (row: number): [[number, number], [number, number]] => [[row, 0], [row + 1, 0]];
-    this.editor.decorations.setNoCursorRanges(dmb.headerAnchors.map((h) => headerRange(h.viewRow)));
+    // (The read-only header rows hide the caret + read `.focused` — owned by `editor.stickyHeaders`.)
   }
 
   private lineText(buffer: any, row: number): string {
