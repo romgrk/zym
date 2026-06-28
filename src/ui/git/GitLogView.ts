@@ -30,17 +30,17 @@
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
-import { addStyles } from '../styles.ts';
-import { ICON_FONT_FAMILY, fonts } from '../fonts.ts';
-import { zym } from '../zym.ts';
-import { CompositeDisposable } from '../util/eventKit.ts';
-import { escapeMarkup } from './pickerHighlight.ts';
-import { fuzzyMatch } from './fuzzyMatch.ts';
-import { humanReadableTime } from '../util/humanReadableTime.ts';
-import { Icons } from './icons.ts';
-import { clipboard } from './TextEditor/vim/clipboard.ts';
-import { buildCommitDiffView } from './diffViews.ts';
-import { type DiffView } from './DiffView.ts';
+import { addStyles } from '../../styles.ts';
+import { ICON_FONT_FAMILY, fonts } from '../../fonts.ts';
+import { zym } from '../../zym.ts';
+import { CompositeDisposable } from '../../util/eventKit.ts';
+import { escapeMarkup } from '../pickerHighlight.ts';
+import { fuzzyMatch } from '../fuzzyMatch.ts';
+import { humanReadableTime } from '../../util/humanReadableTime.ts';
+import { Icons } from '../icons.ts';
+import { clipboard } from '../TextEditor/vim/clipboard.ts';
+import { buildCommitDiffView } from '../diffViews.ts';
+import { type DiffView } from '../DiffView.ts';
 import {
   repoRoot,
   listCommits,
@@ -49,7 +49,7 @@ import {
   type GitRepo,
   type CommitSummary,
   type CommitRef,
-} from '../git.ts';
+} from '../../git.ts';
 
 export interface GitLogViewOptions {
   cwd: string;

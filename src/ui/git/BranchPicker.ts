@@ -9,11 +9,11 @@
  * through `zym.notifications`.
  */
 import Gtk from 'gi:Gtk-4.0';
-import { openPicker, highlightMarkup } from './Picker.ts';
-import { renderRowSingleLine } from './PickerRow.ts';
-import { Icons } from './icons.ts';
-import { zym } from '../zym.ts';
-import { repoRoot, listBranches, type GitRepo, type GitOpResult } from '../git.ts';
+import { openPicker, highlightMarkup } from '../Picker.ts';
+import { renderRowSingleLine } from '../PickerRow.ts';
+import { Icons } from '../icons.ts';
+import { zym } from '../../zym.ts';
+import { repoRoot, listBranches, type GitRepo, type GitOpResult } from '../../git.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 

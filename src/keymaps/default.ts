@@ -230,10 +230,11 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     o: 'git:open-diff', // open the selected change's diff (like `l`)
     enter: 'git:open-diff',
     s: 'git:stage', // stage the file under the cursor
+    S: 'git:stage-all', // stage every change (git add -A)
     u: 'git:unstage', // unstage the file under the cursor
-    A: 'git:stage-all', // stage everything (or unstage all when nothing is unstaged)
+    U: 'git:unstage-all', // unstage every change (git reset)
     X: 'git:discard', // restore (tracked) / delete (untracked) the file under the cursor
-    'c c': 'git:commit', // commit: edit the message in a tab, save+close to commit
+    'c c': 'git:commit', // commit the staged changes (embedded editor)
   },
 
   // Move between the panel's two "windows" — the change list and the embedded diff — with vim's
@@ -247,10 +248,24 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'ctrl-w h': 'git-panel:focus-list',
   },
   // `q` closes the embedded diff (collapse back to the list). Normal-mode only — so it doesn't
-  // shadow typing 'q' while editing the diff — and 2 ids + a class, so it outranks vim's bare `q`
-  // (macro record) only inside the GitPanel's diff, not in ordinary editors.
-  '.GitPanel .TextEditor.normal-mode': {
+  // shadow typing 'q' while editing the diff — and more specific than vim's bare `q` (macro
+  // record) only inside the GitPanel's diff. `:not(.GitCommitInput)` keeps it off the commit
+  // editor (which binds its own `q` to cancel below).
+  '.GitPanel .TextEditor.normal-mode:not(.GitCommitInput)': {
     q: 'git-panel:close-diff',
+  },
+
+  // The embedded commit editor (the vertical split above the list): `ctrl-enter` commits,
+  // `alt-enter` inserts a newline (plain `enter` stays a newline — commit messages are
+  // multi-line), and `q`/`escape` in normal mode cancels. Scoped to `.GitCommitInput` so these
+  // don't collide with the diff's keys (and vice-versa, via the `:not` above).
+  '.GitPanel .GitCommitInput': {
+    'ctrl-enter': 'git-commit:submit',
+    'alt-enter': 'git-commit:newline',
+  },
+  '.GitPanel .GitCommitInput.normal-mode': {
+    q: 'git-commit:cancel',
+    escape: 'git-commit:cancel',
   },
 
   // Editable diff multibuffer (git:diff-current-changes): fold-style keys expand the elided `⋯`
