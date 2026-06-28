@@ -4,6 +4,7 @@ Most important tasks:
 
 - agent UI
 - search/replace widget
+- diffview
 - styling/theming
   - finish removing custom tokens
   - implement kyntell theme
