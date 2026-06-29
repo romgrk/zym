@@ -196,7 +196,11 @@ Each `Workbench` owns a set of **runnable actions** (label + shell command — d
 server, tests, open the app), run via `space x`. The set seeds from the committable
 project file `<cwd>/.zym/actions.json`, can be overwritten by an agent's
 `set_actions` (`reset` re-reads the file), and is saved in the session (lost on
-close). `WorkbenchActions` (`src/ui/workbench/`) owns the set and runs each —
+close). Replacing the set (`set_actions`, `reset`, session restore) stops any
+running action the new set drops — keyed by id — so a replaced action's background
+process / terminal command can't keep running with no button left to stop it; an
+action kept by id (same label slug) stays running. `WorkbenchActions`
+(`src/ui/workbench/`) owns the set and runs each —
 `terminal` ones in a center tab, the rest as a background process; agents only
 *report* actions, AppWindow pipes them in. The active workbench's set is shown as
 buttons in the window header bar (`WorkbenchActionsBar`).

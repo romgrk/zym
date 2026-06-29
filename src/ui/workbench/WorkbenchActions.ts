@@ -10,6 +10,9 @@
  *   - overwritten when an agent calls the `set_actions` bridge tool (`setFromAgent`,
  *     replace — not merge), which AppWindow forwards from `agent.onDidChangeActions`;
  *   - reset back to the project defaults on demand (`reset`, re-reads the file);
+ *   - every set-replacing path (`setFromAgent`/`reset`/`restore`) routes through
+ *     `replaceWith`, which stops any running action the new set drops so a replaced
+ *     action's process/terminal command can't leak with no button left to stop it;
  *   - persisted into the session and restored (`serialize` / `restore`) so a
  *     workbench's set survives an editor restart — but not beyond (a closed
  *     workbench discards it).
@@ -82,21 +85,34 @@ export class WorkbenchActions {
     return () => sub.dispose();
   }
 
-  /** Overwrite the set from an agent's `set_actions` (replace, not merge). */
+  /** Overwrite the set from an agent's `set_actions` (replace, not merge); any
+   *  running action the new set drops is stopped (see `replaceWith`). */
   setFromAgent(actions: Action[]): void {
-    this.list = actions;
-    this.emitter.emit('change');
+    this.replaceWith(actions);
   }
 
-  /** Reset back to the project defaults (re-read `<cwd>/.zym/actions.json`). */
+  /** Reset back to the project defaults (re-read `<cwd>/.zym/actions.json`); any
+   *  running action the defaults drop is stopped (see `replaceWith`). */
   reset(): void {
-    this.list = readProjectActions(this.cwd());
-    this.emitter.emit('change');
+    this.replaceWith(readProjectActions(this.cwd()));
   }
 
   /** Restore a set persisted in the session. */
   restore(actions: Action[]): void {
-    this.list = actions;
+    this.replaceWith(actions);
+  }
+
+  /** Swap in a new action set, first stopping any currently-running action the new
+   *  set no longer contains — otherwise a dropped action's background process /
+   *  terminal command keeps running with no button left to stop it (the running set
+   *  is kept a subset of the live action ids). Survivors (same id) keep running.
+   *  Every set-replacing path routes through here. */
+  private replaceWith(next: Action[]): void {
+    const kept = new Set(next.map((a) => a.id));
+    for (const prev of this.list) {
+      if (!kept.has(prev.id) && this.isRunning(prev.id)) this.stop(prev.id);
+    }
+    this.list = next;
     this.emitter.emit('change');
   }
 

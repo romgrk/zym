@@ -9,8 +9,34 @@ import {
   readProjectActions,
   ensureProjectActionsFile,
 } from './actions.ts';
-import { WorkbenchActions } from './ui/workbench/WorkbenchActions.ts';
+import { WorkbenchActions, type TerminalActionRunner } from './ui/workbench/WorkbenchActions.ts';
+import type { Action } from './actions.ts';
 import { tmpDir } from './util/testTmp.ts';
+
+/** A deterministic terminal-action runner for tests: tracks which action ids are
+ *  "running" and records every stop, so the orphan-stopping logic can be asserted
+ *  without spawning real processes. */
+class FakeTerminalRunner implements TerminalActionRunner {
+  readonly running = new Set<string>();
+  readonly stopped: string[] = [];
+  private readonly cbs: (() => void)[] = [];
+  run(action: Action): void {
+    this.running.add(action.id);
+    this.cbs.forEach((cb) => cb());
+  }
+  stop(actionId: string): void {
+    if (!this.running.delete(actionId)) return;
+    this.stopped.push(actionId);
+    this.cbs.forEach((cb) => cb());
+  }
+  isRunning(actionId: string): boolean {
+    return this.running.has(actionId);
+  }
+  onDidChangeRunning(cb: () => void): () => void {
+    this.cbs.push(cb);
+    return () => {};
+  }
+}
 
 test('parseActions accepts both an array and a { actions } wrapper', () => {
   const list = [{ label: 'Run', command: 'npm start' }];
@@ -136,6 +162,48 @@ test('setFromAgent overwrites the set, reset restores the project defaults', () 
     wb.reset();
     assert.deepEqual(wb.actions.map((a) => a.label), ['Dev']);
     assert.equal(changes, 2);
+  } finally {
+    wb.dispose();
+  }
+});
+
+test('replacing the set stops a running action it drops, keeps a survivor running', () => {
+  const cwd = tmpDir('wb-replace-stop');
+  const wb = new WorkbenchActions(() => cwd);
+  const runner = new FakeTerminalRunner();
+  wb.setTerminalRunner(runner);
+  try {
+    wb.setFromAgent(parseActions([
+      { label: 'Dev', command: 'pnpm dev' },
+      { label: 'Test', command: 'pnpm test' },
+    ]));
+    for (const action of wb.actions) wb.run(action);
+    assert.deepEqual([...runner.running].sort(), ['dev', 'test']);
+
+    // Replace with a set that keeps Dev but drops Test: Test must be stopped, Dev kept.
+    wb.setFromAgent(parseActions([{ label: 'Dev', command: 'pnpm dev' }]));
+    assert.deepEqual(runner.stopped, ['test']);
+    assert.equal(wb.isRunning('dev'), true);
+    assert.equal(wb.isRunning('test'), false);
+  } finally {
+    wb.dispose();
+  }
+});
+
+test('reset stops a running action absent from the project defaults', () => {
+  const cwd = tmpDir('wb-reset-stop');
+  writeProjectActions(cwd, JSON.stringify([{ label: 'Dev', command: 'pnpm dev' }]));
+  const wb = new WorkbenchActions(() => cwd);
+  const runner = new FakeTerminalRunner();
+  wb.setTerminalRunner(runner);
+  try {
+    wb.setFromAgent(parseActions([{ label: 'Agent', command: 'echo agent' }]));
+    for (const action of wb.actions) wb.run(action);
+    assert.equal(wb.isRunning('agent'), true);
+
+    wb.reset(); // project defaults have no 'Agent' action → it is stopped
+    assert.deepEqual(runner.stopped, ['agent']);
+    assert.equal(wb.isRunning('agent'), false);
   } finally {
     wb.dispose();
   }
