@@ -352,12 +352,14 @@ export class SearchController {
     }
   }
 
-  /** Move the cursor to the current match (and scroll it onscreen). */
+  /** Move the cursor to the current match and reveal it centered — the same "reveal centered"
+   *  behavior every search step shares (`/`/`?` preview, `n`/`N`, `*`/`#`, replace).
+   *  See docs/text-editor/index.md (Centering). */
   private moveToCurrent(): void {
     const current = this.matches[this.index];
     if (current) {
       this.editor.setCursorBufferPosition(current.start);
-      this.editor.scrollToBufferPosition(current.start);
+      this.editor.centerCursor();
     }
   }
 

@@ -332,6 +332,9 @@ class RedrawCursorLine extends MiscCommand {
   initialize (): void {
     const baseName = this.name.replace(/AndMoveToFirstCharacterOfLine$/, '')
     this.coefficient = (this.constructor as typeof RedrawCursorLine).coefficientByName[baseName]
+    // `z z` (center) honors the editor's configured center fraction rather than a hardcoded
+    // mid-screen, matching every other "reveal centered" path. See docs/text-editor/index.md (Centering).
+    if (baseName === 'RedrawCursorLineAtMiddle') this.coefficient = this.editor.getCenterFraction()
     this.moveToFirstCharacterOfLine = this.name.endsWith('AndMoveToFirstCharacterOfLine')
     super.initialize()
   }

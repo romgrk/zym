@@ -24,6 +24,7 @@ import { Cursor } from './Cursor.ts';
 import { MarkerLayer } from './MarkerLayer.ts';
 import { Emitter, Disposable, CompositeDisposable } from '../../util/eventKit.ts';
 import { theme } from '../../theme/theme.ts';
+import { zym } from '../../zym.ts';
 import Gtk from 'gi:Gtk-4.0';
 import type GtkSource from 'gi:GtkSource-5';
 type SourceBuffer = InstanceType<typeof GtkSource.Buffer>;
@@ -231,6 +232,13 @@ export class EditorModel {
    *  `Document` model, for a document-backed view (whose buffer has native undo off). */
   setUndoTarget(target: UndoTarget): void {
     this.undoTarget = target;
+  }
+
+  /** The viewport fraction (from the top) a centered reveal lands the cursor at — read live
+   *  from `editor.centerFraction` (the schema bounds it to `[0, 0.5]`). The one place the key
+   *  is read, so callers go through here. See docs/text-editor/index.md (Centering). */
+  getCenterFraction(): number {
+    return zym.config.get('editor.centerFraction') as number;
   }
 
   constructor(view: SourceView, buffer: SourceBuffer) {
@@ -1862,8 +1870,9 @@ export class EditorModel {
     }
   }
 
-  scrollToCursorPosition(_options?: unknown): void {
-    this.scrollCursorOnscreen();
+  scrollToCursorPosition(options?: { center?: boolean }): void {
+    if (options?.center) this.centerCursor();
+    else this.scrollCursorOnscreen();
   }
 
   /**
@@ -1877,6 +1886,13 @@ export class EditorModel {
   scrollCursorToFraction(yalign: number): void {
     if (!this.view.getRealized()) return;
     this.view.scrollToMark(this.buffer.getInsert(), 0, true, 0, yalign);
+  }
+
+  /** Scroll so the cursor lands at the configured center fraction down the viewport — the one
+   *  "reveal centered" behavior shared by gg/G/zz, search, and session restore. See
+   *  docs/text-editor/index.md (Centering). */
+  centerCursor(): void {
+    this.scrollCursorToFraction(this.getCenterFraction());
   }
 
   scrollToBufferPosition(point: PointLike, _options?: unknown): void {

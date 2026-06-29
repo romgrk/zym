@@ -130,6 +130,14 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     default: true,
     description: 'Allow scrolling past the end of the buffer so the last line can reach the top of the viewport.',
   },
+  'editor.centerFraction': {
+    type: 'number',
+    default: 0.25,
+    minimum: 0,
+    maximum: 0.5,
+    description:
+      'Where a centered reveal lands the cursor: the fraction of the viewport height from the top (0 = top edge, 0.25 = a quarter down, 0.5 = the middle). Used everywhere something opens centered — vim z z, gg/G, jumping to a search match, session restore.',
+  },
   'editor.languageInjections': {
     type: 'array',
     default: [],

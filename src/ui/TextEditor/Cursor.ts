@@ -124,9 +124,11 @@ export class Cursor {
     return true;
   }
 
-  /** Scroll the view to keep the cursor visible. */
-  autoscroll(_options?: unknown): void {
-    this.editor.scrollCursorOnscreen();
+  /** Scroll the view to keep the cursor visible — or land it at the configured center
+   *  fraction when `center` is set (gg/G/marks). See docs/text-editor/index.md (Centering). */
+  autoscroll(options?: { center?: boolean }): void {
+    if (options?.center) this.editor.centerCursor();
+    else this.editor.scrollCursorOnscreen();
   }
 
   /** The range of the line the cursor is on. */

@@ -186,9 +186,11 @@ export class Selection {
     return this.emitter.on('did-destroy', callback as (value: unknown) => void);
   }
 
-  /** Scroll the view to keep this selection's head on screen. */
-  autoscroll(_options?: unknown): void {
-    this.editor.scrollCursorOnscreen();
+  /** Scroll the view to keep this selection's head on screen — or land it at the configured
+   *  center fraction when `center` is set. See docs/text-editor/index.md (Centering). */
+  autoscroll(options?: { center?: boolean }): void {
+    if (options?.center) this.editor.centerCursor();
+    else this.editor.scrollCursorOnscreen();
   }
 
   /** True when the head is before the tail (the selection grew backward). */
