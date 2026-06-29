@@ -18,6 +18,7 @@
     "generate-icons": "node scripts/generate-icons.ts",
     "poc": "node --import node-gtk/register src/poc/fold-highlight.ts",
     "poc:inline": "node --import node-gtk/register src/poc/inline-overlay.ts",
+    "poc:fullwidth": "node --import node-gtk/register src/poc/fullwidth-content-band.ts",
     "poc:peek": "node --import node-gtk/register src/poc/sibling-peek.ts",
     "poc:mdwidget": "node --import node-gtk/register src/poc/markdown-widget.ts",
     "poc:conversation": "node --import node-gtk/register src/poc/conversation-transcript.ts",

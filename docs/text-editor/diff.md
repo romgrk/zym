@@ -73,7 +73,8 @@ which reuses git's default `,count`-elision and function-context heuristic), or 
 trailing gap (no hunk follows, as git prints nothing there). Markers render in the editor foreground,
 same as the filename. The leading file-head gap (`'above'` the first content row) and between-window
 gaps (`'below'` the last shown row) — plus review-comment cards — are ordinary (non-sticky)
-`BlockDecorations`, the gaps `fullWidth` so they span the row under the header.
+`BlockDecorations`, the gaps `fullWidth: 'content'` so they span the full content width under the
+header and stay full-width while scrolling horizontally with the text (unlike the pinned header).
 
 **Per-file folding & navigation** (vim-style, keyed by path in `DiffView.collapsedFiles`) — `z c` /
 `z o` (`diff:collapse-file` / `diff:expand-file`) close/open the file under the cursor, `z a`

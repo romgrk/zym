@@ -17,7 +17,7 @@
  * "Band" is a consumer concept (a filename header band, a `⋯` gap band) — it does not appear here.
  */
 import type Gtk from 'gi:Gtk-4.0';
-import type { BlockDecorations, BlockDecorationHandle, BlockDecorationPlacement } from './BlockDecorations.ts';
+import type { BlockDecorations, BlockDecorationHandle, BlockDecorationPlacement, BlockWidth } from './BlockDecorations.ts';
 
 /**
  * Where a decoration is anchored. Two forms:
@@ -38,8 +38,9 @@ export interface BlockDecorationSpec {
   key: string;
   anchor: BlockDecorationAnchor;
   placement?: BlockDecorationPlacement;
-  /** Span the full viewport width even while scrolling with the text (see `BlockDecorationOptions`). */
-  fullWidth?: boolean;
+  /** Make a non-sticky band span the row while scrolling with the text — `'viewport'` (visible width)
+   *  or `'content'` (full content width, so it stays full-width at any hscroll). See `BlockDecorationOptions`. */
+  fullWidth?: BlockWidth;
   build: () => InstanceType<typeof Gtk.Widget>;
   /** Called when THIS spec's built widget is dropped — replaced on a `key` change, removed when
    *  the decoration leaves the set, or on `clear()`. Use it to sever anything node-gtk roots on

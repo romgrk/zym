@@ -50,10 +50,13 @@ TextEditor
   floats in it) or `'on'` (the line is grown to the widget height and the widget
   COVERS it — the caret rests on the line). `sticky` (generic: pin to the viewport
   top when the anchor scrolls above it, re-clamped on every scroll) powers the
-  diff's pinned file headers. `fullWidth` width-requests the slot to the visible
-  width (re-fit on resize) so a NON-sticky band spans the row instead of hugging
-  its widget's natural width — the diff's `⋯` gap bands use it (sticky bands are
-  always full-width, so it's a no-op there).
+  diff's pinned file headers. `fullWidth` makes a NON-sticky band span the row
+  instead of hugging its widget's natural width while still scrolling with the text
+  — `'viewport'` width-requests the slot to the visible width (fills the row at
+  scroll origin, scrolls off when scrolled right) or `'content'` to the full
+  scrollable content width (stays full-width at ANY horizontal scroll, like the
+  sticky headers but riding the text instead of pinned). The diff's `⋯` gap bands
+  use `'content'`. Ignored for sticky bands, which are always pinned full-width.
   This is "whatever block decoration is in the TextEditor."
 - **`BlockDecorationSet` (declarative)** is where reconcile-a-set and
   source-anchoring live — the concern that does NOT belong in the primitive.
@@ -109,8 +112,9 @@ only on a new narrow `Screen.onDidMaterialize` (initial build /
   (its set genuinely changes — elision gaps appear/disappear). Uses
   `{viewRow}` anchors (its first row may be a phantom; it re-`set()`s per
   reDiff anyway). The `⋯` **gaps** (leading file-head gap `'above'` the first
-  content row, between-window gaps `'below'`) are `fullWidth` bands (they span the
-  row like the header above them, but scroll with the text); review-comment cards
+  content row, between-window gaps `'below'`) are `fullWidth: 'content'` bands (they
+  span the row like the header above them and stay full-width at any horizontal
+  scroll, but scroll with the text rather than pinning); review-comment cards
   are plain bands; the per-file **headers** are `sticky` bands placed `'on'` their row
   (`placement: 'on', sticky: true`) reconciled by `StickyHeaders` — the widget
   COVERS an empty navigable header row (the caret lands on it) and pins to the

@@ -48,6 +48,13 @@ import { CompositeDisposable, Disposable } from '../../util/eventKit.ts';
 // file headers). The anchor line must not be the last buffer line.
 export type BlockDecorationPlacement = 'below' | 'above' | 'on';
 
+/** How a NON-sticky `fullWidth` band sizes itself to span the row (see `BlockDecorationOptions.fullWidth`):
+ *  - `'viewport'`: the VISIBLE width, anchored at the text origin — fills the row at scroll origin but
+ *    scrolls off to the left as the view scrolls right.
+ *  - `'content'`: the full scrollable CONTENT width — stays full-width at ANY horizontal scroll while
+ *    still riding the text. */
+export type BlockWidth = 'viewport' | 'content';
+
 export interface BlockDecorationOptions {
   /** Anchor line (buffer row). The band sits below it ('below') or above it ('above'). */
   line: number;
@@ -61,11 +68,15 @@ export interface BlockDecorationOptions {
    *  being a text-window child — it neither swallows scroll nor needs an event controller. Used with
    *  `placement: 'on'` (the header covers its read-only row). */
   sticky?: boolean;
-  /** Force a NON-sticky band to span the full viewport width (its slot width-requested to the
-   *  visible width, re-fit on resize) instead of hugging the widget's natural width — so a band
-   *  that scrolls with the text (the `⋯` diff gap) still fills the row like the sticky headers.
-   *  Ignored for sticky bands, which are always full-width. */
-  fullWidth?: boolean;
+  /** Make a NON-sticky band span the row instead of hugging the widget's natural width. The band
+   *  still scrolls with the text (it is NOT pinned like a sticky band); the value picks how wide:
+   *   - `'viewport'`: width-requested to the VISIBLE width and anchored at the text origin, so it
+   *     fills the row at scroll origin but scrolls off to the left as the view scrolls right.
+   *   - `'content'`: width-requested to the full scrollable CONTENT width, so it ALWAYS fills the row
+   *     at any horizontal scroll while still riding the text — visually like the sticky headers but
+   *     scrolling instead of pinned. The diff `⋯` gap bands use this.
+   *  Ignored for sticky bands, which are always pinned full-width to the viewport. */
+  fullWidth?: BlockWidth;
 }
 
 export interface BlockDecorationHandle {
@@ -90,12 +101,12 @@ interface Block {
   widget: any; // the consumer's widget, parented inside `slot`
   placement: BlockDecorationPlacement;
   sticky: boolean; // pin to the viewport top when scrolled past (see BlockDecorationOptions.sticky)
-  fullWidth: boolean; // span the full viewport width even when non-sticky (see BlockDecorationOptions.fullWidth)
+  fullWidth: BlockWidth | null; // non-sticky row-spanning width mode, or null for natural width (see BlockDecorationOptions.fullWidth)
   height: number;
   placed: boolean; // overlay (the slot) added to the view yet (deferred until mapped)
   lastX: number; // last buffer-X the overlay was moved to (sticky bands pin X; skip no-op moves)
   lastY: number; // last buffer-Y the overlay was moved to (skip no-op moves)
-  lastWidth: number; // last width forced on the slot (sticky = full viewport width; -1 = natural)
+  lastWidth: number; // last width forced on the slot (viewport/sticky = visible width, content = full content width; NaN = never fitted)
 }
 
 // Frames to keep repositioning after a layout-changing event (fold toggle, edit).
@@ -160,17 +171,25 @@ export class BlockDecorations {
     this.subs.add(new Disposable(() => vadj.off('changed', onVadjChanged)));
     // STICKY: a sticky band must re-pin on every scroll — VERTICALLY (re-clamp to the viewport top) on
     // the vadjustment, and HORIZONTALLY (re-pin X to the viewport left + re-fit the width) on the
-    // hadjustment (value = sideways scroll, changed = resize). Non-sticky bands scroll natively (no
-    // per-scroll work). Done synchronously so the pin tracks the scroll in the same frame; it reads
-    // only buffer-stable geometry, so it's safe here.
-    const onScroll = () => { for (const b of this.blocks) if (b.placed && b.sticky) this.reposition(b); };
-    vadj.on('value-changed', onScroll);
-    this.subs.add(new Disposable(() => vadj.off('value-changed', onScroll)));
+    // hadjustment value-change. Non-sticky bands scroll natively, so a sideways scroll needs no work
+    // from them. Done synchronously so the pin tracks the scroll in the same frame; it reads only
+    // buffer-stable geometry, so it's safe here.
+    const repinSticky = () => { for (const b of this.blocks) if (b.placed && b.sticky) this.reposition(b); };
+    vadj.on('value-changed', repinSticky);
+    this.subs.add(new Disposable(() => vadj.off('value-changed', repinSticky)));
     const hadj = this.view.getHadjustment?.();
     if (hadj) {
-      hadj.on('value-changed', onScroll);
-      hadj.on('changed', onScroll);
-      this.subs.add(new Disposable(() => { hadj.off('value-changed', onScroll); hadj.off('changed', onScroll); }));
+      hadj.on('value-changed', repinSticky);
+      this.subs.add(new Disposable(() => hadj.off('value-changed', repinSticky)));
+      // hadjustment `changed` = the content width / page size changed (a resize, a longer line appears).
+      // Re-fit every band whose span tracks that width: sticky bands (pinned to the viewport) AND
+      // non-sticky `'content'` bands (sized to the full content width, so they grow with it). A
+      // `'viewport'` band re-fits via the normal reposition path on resize, so it needs no hook here.
+      const refitWidthTracking = () => {
+        for (const b of this.blocks) if (b.placed && (b.sticky || b.fullWidth === 'content')) this.reposition(b);
+      };
+      hadj.on('changed', refitWidthTracking);
+      this.subs.add(new Disposable(() => hadj.off('changed', refitWidthTracking)));
     }
   }
 
@@ -195,7 +214,7 @@ export class BlockDecorations {
       widget: options.widget,
       placement,
       sticky,
-      fullWidth: options.fullWidth ?? false,
+      fullWidth: options.fullWidth ?? null,
       height: 0,
       placed: false, // set once place() runs; place() skips re-adding an already-parented slot
       lastX: NaN,
@@ -410,9 +429,10 @@ export class BlockDecorations {
     let y = this.bandTop(block, rect);
     if (!block.sticky) {
       // Non-sticky: anchored at the text-window left (buffer x=0), scrolls natively on both axes.
-      // A full-width band still gets its slot fitted to the visible width (re-fit before the no-op
-      // guard so a width-only change — e.g. a resize that leaves Y put — still lands).
-      if (block.fullWidth) this.fitWidth(block);
+      // A full-width band still gets its slot fitted (to the visible or full-content width per its
+      // mode) before the no-op guard, so a width-only change — a resize, or a wider line under a
+      // `'content'` band — still lands even when Y stays put.
+      if (block.fullWidth) this.fitWidth(block, block.fullWidth);
       if (y === block.lastY) return; // no-op move (avoids churn during the settle window)
       block.lastY = y;
       this.view.moveOverlay(block.slot, 0, y);
@@ -428,18 +448,23 @@ export class BlockDecorations {
     // to the visible width, so the bar spans the viewport and stays put as the text scrolls sideways.
     const hadj = this.view.getHadjustment?.();
     const x = hadj ? Math.round(hadj.getValue()) : 0;
-    this.fitWidth(block);
+    this.fitWidth(block, 'viewport');
     if (x === block.lastX && y === block.lastY) return; // no-op move
     block.lastX = x;
     block.lastY = y;
     this.view.moveOverlay(block.slot, x, y);
   }
 
-  /** Width-request the slot to the viewport's visible width (full-width / sticky bands), so the band
-   *  spans the row rather than hugging its widget's natural width. Cheap no-op when unchanged. */
-  private fitWidth(block: Block): void {
+  /** Width-request the slot so the band spans the row rather than hugging the widget's natural width:
+   *  to the viewport's VISIBLE width (`'viewport'` / sticky bands, which stay pinned to the viewport)
+   *  or to the full scrollable CONTENT width (`'content'` bands, which ride the text and so must be as
+   *  wide as the whole content to stay full-width at any horizontal scroll). Cheap no-op when
+   *  unchanged. The content width is never less than the visible width (GTK clamps the hadjustment's
+   *  upper to its page size when the text is narrower), so a `'content'` band always covers the row. */
+  private fitWidth(block: Block, mode: BlockWidth): void {
     const hadj = this.view.getHadjustment?.();
-    const width = hadj ? Math.round(hadj.getPageSize()) : -1;
+    if (!hadj) return;
+    const width = Math.round(mode === 'content' ? hadj.getUpper() : hadj.getPageSize());
     if (width > 0 && width !== block.lastWidth) {
       block.slot.setSizeRequest(width, -1);
       block.lastWidth = width;

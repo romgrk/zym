@@ -781,7 +781,9 @@ export class DiffView {
         key: DiffView.gapKey(g),
         anchor: { viewRow: g.viewRow },
         placement: g.placement,
-        fullWidth: true, // the `⋯ N unchanged lines` band spans the row (like the file header above it)
+        // The `⋯ N unchanged lines` band spans the FULL content width and rides the text, so it stays
+        // full-width at any horizontal scroll (like the file header above it, but scrolling not pinned).
+        fullWidth: 'content',
         // Clicking the gap reveals a chunk of its elided lines (`fromTop` = which end first).
         build: () => buildGapWidget(scope, g.label, () => this.revealChunk(g.revealRows, g.fromTop)),
         dispose: () => scope.dispose(),
