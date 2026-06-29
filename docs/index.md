@@ -28,7 +28,7 @@ should only be stated once; further mentions should point to other documents.
 - One main component per file, under `src/ui`.
 - Fonts (ui and monospace) are defined in `src/fonts.ts`
 - Icons are Nerd Font glyphs via `src/ui/nerdfonts.ts` — avoid `Gio.ThemedIcon` / `Gtk.Image(iconName)`.
-- Bundled SVGs live in `assets/icons/`, named `*-symbolic.svg` so GTK recolors them to the theme foreground (the suffix is the recolor trigger — `FORCE_SYMBOLIC` won't substitute). `scripts/generate-icons.ts` (run on `postinstall`, or `pnpm run generate-icons`) emits a name→path map to `src/icons.generated.ts` (key drops `-symbolic`), which `src/icons.ts` exposes as `ImageIcons` — `ImageIcons.CAT_SLEEPING(52)` builds a sized, theme-recolored `Gtk.Image`. Add an icon by dropping an `*-symbolic.svg` in the folder and re-running the script.
+- Bundled SVGs live in `assets/icons/`, named `*-symbolic.svg` so GTK recolors them to the theme foreground (the suffix is the recolor trigger — `FORCE_SYMBOLIC` won't substitute). `scripts/generate-icons.ts` (run by the `prepare` step on a source install, or `pnpm run generate-icons`) emits a name→path map to `src/icons.generated.ts` (key drops `-symbolic`), which `src/icons.ts` exposes as `ImageIcons` — `ImageIcons.CAT_SLEEPING(52)` builds a sized, theme-recolored `Gtk.Image`. Add an icon by dropping an `*-symbolic.svg` in the folder and re-running the script.
 - Do not under any circumstance use a Gtk.EventController of any kind without prompting.
 
 ## Commands & keymaps
@@ -84,6 +84,17 @@ a GObject, handler, timer, or child. See
 
 `pnpm run lint` (ESLint flat config) is tuned to **catch real bugs, not style**.
 `pnpm run typecheck` does type-level checking. See [tooling.md](tooling.md).
+
+## Running & install
+
+`pnpm start [file]` in dev; `pnpm i -g` installs the `zym` command (a launcher,
+`bin/zym.mjs`, that registers a type-stripping hook so `.ts` source runs even from
+`node_modules`, then re-creates the `--import node-gtk/register` ordering, in
+process). `zym --install-desktop` / `pnpm run install-desktop` writes the
+`~/.local/share/applications` entry. Covers the launcher, the
+`prepare`-vs-`postinstall` lifecycle, runtime-vs-dev dependency classification, and
+the node-gtk build-approval / system-library requirements for a consumer install.
+See [install.md](install.md).
 
 ## Data & storage
 
