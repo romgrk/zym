@@ -2,13 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
-import {
-  parseActions,
-  defaultAction,
-  projectActionsPath,
-  readProjectActions,
-  ensureProjectActionsFile,
-} from './actions.ts';
+import { parseActions, defaultAction } from './actions.ts';
+import { projectSettingsPath } from './projectSettings.ts';
 import { WorkbenchActions, type TerminalActionRunner } from './ui/workbench/WorkbenchActions.ts';
 import type { Action } from './actions.ts';
 import { tmpDir } from './util/testTmp.ts';
@@ -97,48 +92,19 @@ test('defaultAction is the first action, or null when empty', () => {
   assert.equal(defaultAction(undefined), null);
 });
 
-// --- Project file ----------------------------------------------------------
-
-function writeProjectActions(cwd: string, json: string): void {
-  const path = projectActionsPath(cwd);
-  Fs.mkdirSync(Path.dirname(path), { recursive: true });
-  Fs.writeFileSync(path, json);
-}
-
-test('readProjectActions reads + parses <cwd>/.zym/actions.json', () => {
-  const cwd = tmpDir('actions-read');
-  writeProjectActions(cwd, JSON.stringify([{ label: 'Dev', command: 'pnpm dev' }]));
-  const actions = readProjectActions(cwd);
-  assert.deepEqual(actions.map((a) => a.label), ['Dev']);
-  assert.equal(actions[0].command, 'pnpm dev');
-});
-
-test('readProjectActions returns [] when the file is missing or malformed', () => {
-  const missing = tmpDir('actions-missing');
-  assert.deepEqual(readProjectActions(missing), []);
-  const bad = tmpDir('actions-bad');
-  writeProjectActions(bad, '{ not json');
-  assert.deepEqual(readProjectActions(bad), []);
-});
-
-test('ensureProjectActionsFile seeds a new file but leaves an existing one', () => {
-  const fresh = tmpDir('actions-seed');
-  const path = ensureProjectActionsFile(fresh);
-  assert.equal(path, projectActionsPath(fresh));
-  assert.ok(Fs.existsSync(path));
-  assert.ok(readProjectActions(fresh).length > 0); // the seed parses to at least one action
-
-  const existing = tmpDir('actions-keep');
-  writeProjectActions(existing, JSON.stringify([{ label: 'Mine', command: 'echo mine' }]));
-  ensureProjectActionsFile(existing);
-  assert.deepEqual(readProjectActions(existing).map((a) => a.label), ['Mine']); // untouched
-});
-
 // --- WorkbenchActions ------------------------------------------------------
+
+/** Seed the project settings file's `actions` section (file I/O is covered in
+ *  projectSettings.test.ts; here it just feeds WorkbenchActions). */
+function writeProjectActions(cwd: string, actions: unknown[]): void {
+  const path = projectSettingsPath(cwd);
+  Fs.mkdirSync(Path.dirname(path), { recursive: true });
+  Fs.writeFileSync(path, JSON.stringify({ actions }));
+}
 
 test('WorkbenchActions seeds from the project file', () => {
   const cwd = tmpDir('wb-seed');
-  writeProjectActions(cwd, JSON.stringify([{ label: 'Dev', command: 'pnpm dev' }]));
+  writeProjectActions(cwd, [{ label: 'Dev', command: 'pnpm dev' }]);
   const wb = new WorkbenchActions(() => cwd);
   try {
     assert.deepEqual(wb.actions.map((a) => a.label), ['Dev']);
@@ -149,7 +115,7 @@ test('WorkbenchActions seeds from the project file', () => {
 
 test('setFromAgent overwrites the set, reset restores the project defaults', () => {
   const cwd = tmpDir('wb-overwrite');
-  writeProjectActions(cwd, JSON.stringify([{ label: 'Dev', command: 'pnpm dev' }]));
+  writeProjectActions(cwd, [{ label: 'Dev', command: 'pnpm dev' }]);
   const wb = new WorkbenchActions(() => cwd);
   try {
     let changes = 0;
@@ -192,7 +158,7 @@ test('replacing the set stops a running action it drops, keeps a survivor runnin
 
 test('reset stops a running action absent from the project defaults', () => {
   const cwd = tmpDir('wb-reset-stop');
-  writeProjectActions(cwd, JSON.stringify([{ label: 'Dev', command: 'pnpm dev' }]));
+  writeProjectActions(cwd, [{ label: 'Dev', command: 'pnpm dev' }]);
   const wb = new WorkbenchActions(() => cwd);
   const runner = new FakeTerminalRunner();
   wb.setTerminalRunner(runner);
@@ -211,7 +177,7 @@ test('reset stops a running action absent from the project defaults', () => {
 
 test('restore replaces the set and serialize round-trips it', () => {
   const cwd = tmpDir('wb-restore');
-  writeProjectActions(cwd, JSON.stringify([{ label: 'Dev', command: 'pnpm dev' }]));
+  writeProjectActions(cwd, [{ label: 'Dev', command: 'pnpm dev' }]);
   const wb = new WorkbenchActions(() => cwd);
   try {
     const saved = parseActions([{ label: 'Saved', command: 'echo saved' }]);

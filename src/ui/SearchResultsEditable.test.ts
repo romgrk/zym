@@ -319,3 +319,48 @@ test('editable search: a file already open in the registry is shared (edit reach
   mbv.dispose();
   registry.release(document); // drop the "tab"'s ref
 });
+
+test('a file with a pathologically long line is skipped from results (no GtkSourceView hang)', () => {
+  const a = tmpFile('a.ts', 'alpha\nbeta\n');
+  const big = tmpFile('big.min.js', 'x'.repeat(20000) + '\n'); // one line longer than MAX_SOURCE_LINE
+  const registry = new DocumentRegistry();
+  const mbv = new SearchResultsView({
+    editable: true,
+    documents: registry,
+    excerpts: [
+      { path: a, regions: [{ startRow: 0, endRow: 1 }] },
+      { path: big, regions: [{ startRow: 0, endRow: 0 }] },
+    ],
+  });
+  // Only a.ts is shown; the minified-style file is dropped rather than stalling the buffer.
+  assert.deepEqual(mbv.editor.getText().split('\n'), ['alpha', 'beta']);
+  mbv.dispose();
+});
+
+test('setExcerpts grows the surface in place as a streaming search delivers more files', () => {
+  const a = tmpFile('a.ts', 'alpha\nbeta\ngamma\n');
+  const b = tmpFile('b.ts', 'one\ntwo\nthree\n');
+  const registry = new DocumentRegistry();
+  const mbv = new SearchResultsView({
+    editable: true,
+    documents: registry,
+    excerpts: [{ path: a, regions: [{ startRow: 0, endRow: 2 }], matches: [{ row: 0, startCol: 0, endCol: 5 }] }],
+  });
+  assert.deepEqual(mbv.editor.getText().split('\n'), ['alpha', 'beta', 'gamma'], 'only the first file at first');
+
+  // A second file arrives mid-search: grow in place (new file appends at the bottom).
+  mbv.setExcerpts([
+    { path: a, regions: [{ startRow: 0, endRow: 2 }], matches: [{ row: 0, startCol: 0, endCol: 5 }] },
+    { path: b, regions: [{ startRow: 0, endRow: 2 }], matches: [{ row: 1, startCol: 0, endCol: 3 }] },
+  ]);
+  assert.deepEqual(
+    mbv.editor.getText().split('\n'),
+    ['alpha', 'beta', 'gamma', 'one', 'two', 'three'],
+    'both files now shown',
+  );
+  // The new source's match highlights (b.ts row 1 = view row 4), and the first file's highlight
+  // survives the grow exactly once (layer cleared + re-applied, not stacked).
+  assert.equal(hasSearchTag(mbv, 0, 0), true, 'a.ts "alpha" still highlighted');
+  assert.equal(hasSearchTag(mbv, 4, 0), true, 'b.ts "two" highlighted after grow');
+  mbv.dispose();
+});

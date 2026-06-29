@@ -1,24 +1,21 @@
 /*
- * Search picker — full-text search across the project with ripgrep. Unlike the
- * file picker (which fuzzy-matches paths locally), this is a "remote search"
- * picker: each keystroke re-runs `rg` (debounced) and its results replace the
- * candidate pool, so local fuzzy filtering is off (`localFilter: false`) —
- * ripgrep does the matching. Each row is one matching line; choosing it opens
- * the file at that line/column.
- *
- * `rg` runs via `spawn` with streaming `data`/`close` handlers rather than a
- * promise or `execFile`'s buffered callback: Node's promise microtasks don't
- * resolve while node-gtk's GLib main loop is blocked (node-gtk#430), and the
- * stream-event form is the subprocess pattern proven to fire under the loop (the
- * same one the LSP client and the LSP installer use).
+ * Search picker — full-text project search with ripgrep, in a quick-jump picker.
+ * Unlike the file picker (which fuzzy-matches paths locally), this is a "remote
+ * search" picker: each keystroke re-runs the shared streaming `searchProject`
+ * backend (`localFilter: false`, so ripgrep does the matching), and matches are
+ * appended to the list as they arrive. The entry row carries case / whole-word /
+ * regex option chips (the same `ProjectSearchOptions` the full ProjectSearchView
+ * uses); flipping one re-runs the search. Each row is one matching line; choosing
+ * it opens the file at that line/column.
  */
-import { spawn } from 'node:child_process';
-import * as Path from 'node:path';
-import { Buffer } from 'node:buffer';
-import { escapeMarkup, HIGHLIGHT_COLOR, type PickerItem } from './Picker.ts';
+import Gtk from 'gi:Gtk-4.0';
+import { addStyles } from '../styles.ts';
+import { CompositeDisposable } from '../util/eventKit.ts';
+import { escapeMarkup, HIGHLIGHT_COLOR, type PickerHandle, type PickerItem } from './Picker.ts';
 import { openLocationPicker } from './LocationPicker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
-import Gtk from 'gi:Gtk-4.0';
+import { searchProject, type ProjectSearchOptions, type RgMatch } from './multibuffer/projectSearch.ts';
+import type { ProcHandle } from '../process/runner.ts';
 import { Icons } from './icons.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -26,9 +23,11 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 /** Navigate to a chosen result: absolute path + 0-based `[row, column]` cursor. */
 export type SearchTarget = (path: string, cursor: [number, number]) => void;
 
-const MAX_RESULTS = 500; // cap rows parsed from rg (and so shown)
-const MAX_OUTPUT = 16 * 1024 * 1024; // cap accumulated stdout; kill rg past it
 const MAX_LINE_LENGTH = 500; // crop very long matching lines for display
+
+addStyles(`
+  .SearchPickerChips button { min-width: 0; min-height: 0; padding: 2px 8px; }
+`);
 
 // A picker item carrying the location to jump to and the match span to accent.
 interface SearchItem extends PickerItem {
@@ -43,13 +42,74 @@ interface SearchItem extends PickerItem {
   detailText: string;
 }
 
+/** Map a streamed match to a display item: trim leading indentation (code is usually
+ *  indented), shift the highlight span to match, and crop very long lines. */
+function toItem(m: RgMatch): SearchItem {
+  const span = m.spans[0];
+  const startCol = span ? span.startCol : 0;
+  const endCol = span ? span.endCol : startCol;
+  const leading = m.lineText.length - m.lineText.trimStart().length;
+  let display = m.lineText.slice(leading);
+  let matchStart = Math.max(0, startCol - leading);
+  let matchEnd = Math.max(matchStart, endCol - leading);
+  if (display.length > MAX_LINE_LENGTH) {
+    display = display.slice(0, MAX_LINE_LENGTH) + '…';
+    matchStart = Math.min(matchStart, MAX_LINE_LENGTH);
+    matchEnd = Math.min(matchEnd, MAX_LINE_LENGTH);
+  }
+  return {
+    value: m.file,
+    text: display,
+    file: m.file,
+    cursor: [m.row, startCol], // jump to the untrimmed match column
+    matchStart,
+    matchEnd,
+    detailText: `${m.relPath}:${m.row + 1}`,
+  };
+}
+
+/** A flat option chip: a small toggle that never takes focus (so clicking it keeps
+ *  the caret in the entry and the picker open). */
+function buildChip(label: string, tooltip: string): InstanceType<typeof Gtk.ToggleButton> {
+  const button = new Gtk.ToggleButton({ label });
+  button.setTooltipText(tooltip);
+  button.addCssClass('flat');
+  button.setCanFocus(false);
+  return button;
+}
+
 export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTarget): void {
-  openLocationPicker({
+  const subs = new CompositeDisposable();
+  const caseToggle = buildChip('Aa', 'Match case');
+  const wordToggle = buildChip('W', 'Match whole word');
+  const regexToggle = buildChip('.*', 'Use regular expression');
+  const chips = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 4 });
+  chips.addCssClass('SearchPickerChips');
+  for (const chip of [caseToggle, wordToggle, regexToggle]) chips.append(chip);
+
+  const options = (): ProjectSearchOptions => ({
+    caseSensitive: caseToggle.getActive(),
+    wholeWord: wordToggle.getActive(),
+    regex: regexToggle.getActive(),
+  });
+
+  let handle: PickerHandle | null = null;
+  let search: ProcHandle | null = null;
+  // Flipping a flag re-runs the search for the same query.
+  for (const chip of [caseToggle, wordToggle, regexToggle]) {
+    subs.connect(chip, 'toggled', () => handle?.refetch());
+  }
+
+  handle = openLocationPicker({
     host,
     placeholder: 'Search in project…',
     promptIcon: Icons.search, // doubles as the home for the fetch spinner
-    // ripgrep filters server-side; show its results in order, no local refine.
-    localFilter: false,
+    localFilter: false, // ripgrep filters server-side; show its results in order
+    headerAccessory: chips,
+    onClose: () => {
+      search?.cancel();
+      subs.dispose();
+    },
     // Render the matched line with the matched span accented, and the `path:line`
     // location as a muted right-aligned detail.
     renderRow: (item) => {
@@ -61,18 +121,19 @@ export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTar
         escapeMarkup(t.slice(it.matchStart, it.matchEnd)) +
         '</span>' +
         escapeMarkup(t.slice(it.matchEnd));
-      // Smaller `path:line`: it yields to the matched line (cropping from the start) when space is tight.
       return renderRowSingleLine({ main, detail: `<span size="smaller">${escapeMarkup(it.detailText)}</span>` });
     },
-    fetch: (query, onResult, onError) => {
+    fetch: (query, sink) => {
+      search?.cancel(); // stop the in-flight rg before starting a new query/flag run
       const q = query.trim();
       if (q === '') {
-        onResult([]); // nothing to search for yet
+        sink.replace([]); // nothing to search for yet
         return;
       }
-      runRipgrep(cwd, q, (result) => {
-        if (result.error !== undefined) onError(result.error);
-        else onResult(result.items ?? []);
+      search = searchProject(cwd, q, options(), {
+        onMatches: (batch) => sink.append(batch.map(toItem)),
+        onDone: () => sink.done(),
+        onError: (message) => sink.error(message),
       });
     },
     locate: (item) => {
@@ -84,118 +145,4 @@ export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTar
     },
     onJump: (loc) => onSelect(loc.path, [loc.line, loc.column]),
   });
-}
-
-interface RipgrepResult {
-  items?: SearchItem[];
-  error?: string;
-}
-
-function runRipgrep(cwd: string, query: string, onDone: (result: RipgrepResult) => void): void {
-  // `--json` gives exact byte offsets per match (for accurate highlighting and
-  // navigation); `--smart-case` matches the editor's search ergonomics. The `--`
-  // stops a query that starts with `-` being read as a flag.
-  const args = ['--json', '--smart-case', '--', query];
-  let proc: ReturnType<typeof spawn>;
-  try {
-    proc = spawn('rg', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (e) {
-    onDone({ error: e instanceof Error ? e.message : String(e) });
-    return;
-  }
-
-  let stdout = '';
-  let stderr = '';
-  let done = false;
-  const finish = (result: RipgrepResult) => {
-    if (done) return;
-    done = true;
-    onDone(result);
-  };
-
-  // Spawn failure (e.g. rg not installed) surfaces here, not via `close`.
-  proc.on('error', (err) => {
-    finish({
-      error: (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'ripgrep (rg) is not installed' : err.message,
-    });
-  });
-  proc.stdout?.on('data', (d) => {
-    stdout += d.toString();
-    // A query matching half the tree could stream forever; once we have plenty
-    // (more than we'll show), stop rg and parse what arrived.
-    if (stdout.length > MAX_OUTPUT) {
-      proc.kill();
-      finish({ items: parseRipgrep(stdout, cwd) });
-    }
-  });
-  proc.stderr?.on('data', (d) => {
-    stderr += d.toString();
-  });
-  proc.on('close', (code) => {
-    // rg exits 0 (matches) or 1 (no matches); 2+ is a real error (bad regex…).
-    if (code !== null && code > 1) {
-      finish({ error: stderr.trim() || 'search failed' });
-      return;
-    }
-    finish({ items: parseRipgrep(stdout, cwd) });
-  });
-}
-
-/** Parse `rg --json` stdout (one JSON object per line) into search items. */
-function parseRipgrep(stdout: string, cwd: string): SearchItem[] {
-  const items: SearchItem[] = [];
-  for (const line of stdout.split('\n')) {
-    if (items.length >= MAX_RESULTS) break;
-    if (line === '') continue;
-    let msg: any;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (msg.type !== 'match') continue;
-
-    const data = msg.data;
-    const relPath: string | undefined = data.path?.text;
-    const lineText: string | undefined = data.lines?.text;
-    const submatch = data.submatches?.[0];
-    // `path`/`lines` are absent (only `.bytes`) for non-UTF-8 content — skip it.
-    if (relPath === undefined || lineText === undefined || !submatch) continue;
-
-    // rg reports byte offsets into the line; convert to char indices so the
-    // highlight span and cursor column are correct for non-ASCII lines too.
-    const startChar = byteToChar(lineText, submatch.start);
-    const endChar = byteToChar(lineText, submatch.end);
-    const rawLine = lineText.replace(/\r?\n$/, '');
-
-    // Trim leading indentation for display (code is usually indented) and shift
-    // the match span to match; cap long lines so one row can't widen the card.
-    const leading = rawLine.length - rawLine.trimStart().length;
-    let display = rawLine.slice(leading);
-    let matchStart = Math.max(0, startChar - leading);
-    let matchEnd = Math.max(matchStart, endChar - leading);
-    if (display.length > MAX_LINE_LENGTH) {
-      display = display.slice(0, MAX_LINE_LENGTH) + '…';
-      matchStart = Math.min(matchStart, MAX_LINE_LENGTH);
-      matchEnd = Math.min(matchEnd, MAX_LINE_LENGTH);
-    }
-
-    const file = Path.join(cwd, relPath);
-    items.push({
-      value: file,
-      text: display,
-      file,
-      cursor: [data.line_number - 1, startChar], // rg is 1-based; buffer is 0-based
-      matchStart,
-      matchEnd,
-      detailText: `${relPath}:${data.line_number}`,
-    });
-  }
-  return items;
-}
-
-/** Char index in `text` for a UTF-8 `byteOffset` (so non-ASCII lines map right). */
-function byteToChar(text: string, byteOffset: number): number {
-  if (byteOffset <= 0) return 0;
-  return Buffer.from(text, 'utf8').subarray(0, byteOffset).toString('utf8').length;
 }

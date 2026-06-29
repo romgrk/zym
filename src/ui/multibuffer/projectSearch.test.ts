@@ -1,6 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesToExcerptInputs, byteToColumn, buildRipgrepArgs } from './projectSearch.ts';
+import * as Fs from 'node:fs/promises';
+import * as Os from 'node:os';
+import * as Path from 'node:path';
+import {
+  matchesToExcerptInputs,
+  byteToColumn,
+  buildRipgrepArgs,
+  parseRgMatch,
+  groupMatches,
+  searchProject,
+  type RgMatch,
+} from './projectSearch.ts';
+
+// rg --json `match` record helper (the fields parseRgMatch reads).
+const rgMatch = (path: string, lineNumber: number, lineText: string, subs: Array<[number, number]>) =>
+  JSON.stringify({
+    type: 'match',
+    data: {
+      path: { text: path },
+      lines: { text: lineText },
+      line_number: lineNumber,
+      submatches: subs.map(([start, end]) => ({ start, end })),
+    },
+  });
 
 // Pure region-merge math — no rg, no GTK.
 
@@ -89,11 +112,10 @@ test('regex on drops --fixed-strings; whole-word adds --word-regexp', () => {
   );
 });
 
-test('include / exclude globs become --glob (exclude is negated)', () => {
+test('globs map to --glob in one field; a leading ! excludes, blanks dropped', () => {
   assert.deepEqual(
-    buildRipgrepArgs('foo', { includeGlobs: ['*.ts', ' '], excludeGlobs: ['*.test.ts'] }),
+    buildRipgrepArgs('foo', { globs: ['*.ts', ' ', '!*.test.ts'] }),
     ['--json', '--smart-case', '--fixed-strings', '--glob', '*.ts', '--glob', '!*.test.ts', '--', 'foo', '.'],
-    'blank globs are dropped; exclude patterns are prefixed with !',
   );
 });
 
@@ -106,4 +128,70 @@ test('includeIgnored adds --no-ignore --hidden', () => {
 
 test('a query starting with `-` is protected by the `--` separator, before the `.` path', () => {
   assert.deepEqual(buildRipgrepArgs('-n', { regex: true }).slice(-3), ['--', '-n', '.']);
+});
+
+// --- parseRgMatch: one rg --json line → a normalized RgMatch ------------------
+
+test('parseRgMatch maps a match record (abs path, 0-based row, codepoint spans)', () => {
+  const m = parseRgMatch(rgMatch('src/a.ts', 10, '  const foo = 1\n', [[8, 11]]), '/root');
+  assert.deepEqual(m, {
+    file: '/root/src/a.ts',
+    relPath: 'src/a.ts',
+    row: 9, // rg is 1-based
+    lineText: '  const foo = 1',
+    spans: [{ startCol: 8, endCol: 11 }],
+  });
+});
+
+test('parseRgMatch converts multibyte byte offsets to codepoint columns', () => {
+  // 'café ' = 6 bytes (é=2); a match on 'foo' at bytes 6..9 is codepoints 5..8.
+  const m = parseRgMatch(rgMatch('a.ts', 1, 'café foo\n', [[6, 9]]), '/r');
+  assert.deepEqual(m?.spans, [{ startCol: 5, endCol: 8 }]);
+});
+
+test('parseRgMatch returns null for non-match records and garbage', () => {
+  assert.equal(parseRgMatch(JSON.stringify({ type: 'begin', data: {} }), '/r'), null);
+  assert.equal(parseRgMatch(JSON.stringify({ type: 'summary', data: {} }), '/r'), null);
+  assert.equal(parseRgMatch('not json', '/r'), null);
+  assert.equal(parseRgMatch('', '/r'), null);
+});
+
+// --- groupMatches: flat stream → per-file rows + spans ------------------------
+
+test('groupMatches groups by file in first-seen order, collecting rows and spans', () => {
+  const matches: RgMatch[] = [
+    { file: '/r/b.ts', relPath: 'b.ts', row: 0, lineText: 'x', spans: [{ startCol: 0, endCol: 1 }] },
+    { file: '/r/a.ts', relPath: 'a.ts', row: 4, lineText: 'y', spans: [] },
+    { file: '/r/b.ts', relPath: 'b.ts', row: 7, lineText: 'z', spans: [{ startCol: 2, endCol: 3 }] },
+  ];
+  assert.deepEqual(groupMatches(matches), [
+    { path: '/r/b.ts', rows: [0, 7], matches: [
+      { row: 0, startCol: 0, endCol: 1 },
+      { row: 7, startCol: 2, endCol: 3 },
+    ] },
+    { path: '/r/a.ts', rows: [4], matches: [] },
+  ]);
+});
+
+// --- searchProject: streaming end-to-end over a real rg ----------------------
+
+test('searchProject streams matches from rg and signals done', async () => {
+  const dir = await Fs.mkdtemp(Path.join(Os.tmpdir(), 'zym-search-'));
+  try {
+    await Fs.writeFile(Path.join(dir, 'a.ts'), 'alpha\nNEEDLE here\nbeta\n');
+    await Fs.writeFile(Path.join(dir, 'b.ts'), 'NEEDLE again\n');
+    const matches: RgMatch[] = [];
+    const info = await new Promise<{ capped: boolean }>((resolve, reject) =>
+      searchProject(dir, 'NEEDLE', {}, {
+        onMatches: (m) => matches.push(...m),
+        onDone: resolve,
+        onError: reject,
+      }),
+    );
+    assert.equal(info.capped, false);
+    const grouped = groupMatches(matches);
+    assert.deepEqual(grouped.map((g) => Path.basename(g.path)).sort(), ['a.ts', 'b.ts']);
+  } finally {
+    await Fs.rm(dir, { recursive: true, force: true });
+  }
 });

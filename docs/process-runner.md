@@ -6,7 +6,13 @@ libuv has no `posix_spawn` fast path, so fork cost scales with RSS (tens of
 ms/spawn). Instead the parent forks one tiny child once, and that child runs
 every command (~1 ms each).
 
-- `runProcess({ file, args, cwd, input }, onDone)` is async-only.
+- `runProcess({ file, args, cwd, input }, onDone)` is async-only and **buffered**:
+  one reply with the whole stdout/stderr.
+- `runProcessStream(spec, { onStdout, onStderr, onDone })` **streams**: chunks arrive
+  as the command runs, and the returned handle's `cancel()` kills it (no further
+  callbacks). Project search uses it so matches render as they arrive and a new query
+  cancels the in-flight `rg`. The wire format is kind-tagged frames (`ReqKind`/`ResKind`
+  in `codec.ts`).
 - IPC is **binary, length-prefixed** (no JSON): stdout/stderr cross the pipe as
   raw bytes, up to 64 MiB.
 - git (`git/cli.ts`), gh (`github.ts`), and project search (ripgrep, via

@@ -37,12 +37,12 @@ export function openWorkspaceSymbolPicker(
     promptIcon: Icons.symbol,
     // The server filters and ranks; show its results as-is rather than re-filtering.
     localFilter: false,
-    fetch: (query, onResult, onError) => {
+    fetch: (query, sink) => {
       zym.lsp
         .workspaceSymbols(doc, query)
         .then((symbols) => {
           byValue.clear();
-          onResult(
+          sink.replace(
             symbols.map((sym) => {
               const value = `${sym.path}:${sym.point.row}:${sym.point.column}`;
               byValue.set(value, sym);
@@ -50,7 +50,7 @@ export function openWorkspaceSymbolPicker(
             }),
           );
         })
-        .catch((err) => onError(err instanceof Error ? err.message : String(err)));
+        .catch((err) => sink.error(err instanceof Error ? err.message : String(err)));
     },
     renderRow: (item) => {
       const sym = byValue.get(item.value);

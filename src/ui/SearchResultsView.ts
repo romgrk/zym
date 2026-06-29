@@ -36,6 +36,7 @@ import { SourceLineNumberGutter } from './SourceLineNumberGutter.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
 import { Range } from '../text/Range.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import { prof } from '../util/profile.ts';
 import type { BlockDecorationSpec, BlockDecorationSet } from './TextEditor/BlockDecorationSet.ts';
 
 /** One file's contribution: the regions (source model row spans) to show. */
@@ -74,6 +75,13 @@ interface SourceEntry {
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
 
+// A matched file is skipped from the results when it's too big to read or has a line too long to
+// render: a minified bundle / source map can carry a million-character line that stalls
+// GtkSourceView (text layout + tree-sitter) for seconds. Project search isn't a useful editing
+// surface for those anyway.
+const MAX_SOURCE_BYTES = 2 * 1024 * 1024; // skip files larger than this (checked before reading)
+const MAX_SOURCE_LINE = 10_000; // skip files with any line longer than this
+
 export class SearchResultsView {
   readonly root: InstanceType<typeof Gtk.Widget>;
   readonly editor: TextEditor;
@@ -91,7 +99,14 @@ export class SearchResultsView {
   // first source row (always anchorable — no block rows, no view-fold; the painter stays fold-naive).
   private excerpts: Excerpt[] = [];
   private excerptInputs: ExcerptInput[] = [];
+  // Root for relativizing header labels + the syntax painter, kept so `setExcerpts` can grow the
+  // surface (register new sources, rebuild labels) as a streaming search delivers more files.
+  private readonly cwd?: string;
+  private painter!: ExcerptSyntaxProjection;
   private readonly collapsed = new Set<number>();
+  // How many excerpts have had their match highlights applied — so a streaming grow re-highlights
+  // only the newly-appended excerpts (the existing ones' tags ride the append untouched).
+  private highlightedCount = 0;
   private lastLineCount = 0; // view buffer line count, to detect row-count-changing edits
   private readonly disposables = new CompositeDisposable();
   private disposed = false;
@@ -106,6 +121,7 @@ export class SearchResultsView {
     this.onActivate = options.onActivate;
     this.editable = !!options.editable;
     this.registry = options.documents;
+    this.cwd = options.cwd;
     if (this.editable && !this.registry) {
       throw new Error('SearchResultsView: editable mode requires a DocumentRegistry');
     }
@@ -114,23 +130,24 @@ export class SearchResultsView {
     // back the editor with a Screen over those source buffers — the SAME substrate the
     // single-file editor uses. The painter highlights each excerpt from its source's own parse
     // via the ExcerptSyntaxProjection over the PV's (live) coordinate map.
-    this.excerpts = this.buildExcerpts(options.excerpts, options.cwd);
+    this.excerpts = prof(`construct.buildExcerpts(${options.excerpts.length})`, () => this.buildExcerpts(options.excerpts, options.cwd));
     this.excerptInputs = options.excerpts;
     const sourceBuffers = new Map([...this.sources].map(([key, entry]) => [key, entry.buffer] as const));
     // Headers + gaps are widget bands (not buffer rows), so the item list carries only real source
     // segments. A collapsed excerpt contributes just its first row (see `currentItems`).
-    this.screen = new Screen(this.currentItems(), sourceBuffers);
+    this.screen = prof('construct.Screen', () => new Screen(this.currentItems(), sourceBuffers));
     // Lazy syntax: hand the projection each source's parse thunk (deferred). TextEditor parses
     // the sources whose excerpts near the viewport — not all matched files up front.
     const syntaxMap = new Map(
       [...this.sources].map(([key, entry]) => [key, { syntax: entry.syntax, ensureParsed: entry.parse }] as const),
     );
     const painter = new ExcerptSyntaxProjection(() => this.screen.view, syntaxMap);
+    this.painter = painter;
 
     // One editor, natively backed by the multi-source projection (the `MultiBufferDocument` supplies
     // the view buffer, the per-excerpt painter, and undo coordinating the touched sources). The
     // editor owns + disposes it.
-    this.editor = new TextEditor({ source: new MultiBufferDocument(this.screen, painter) });
+    this.editor = prof('construct.TextEditor', () => new TextEditor({ source: new MultiBufferDocument(this.screen, painter) }));
     if (!this.editable) this.editor.model.setReadOnly(true);
     this.bands = this.editor.blockDecorations();
     // Scope the per-excerpt collapse keymap (`z a`/`z M`/`z R`) to this surface — more specific than
@@ -155,8 +172,8 @@ export class SearchResultsView {
       maxLine,
       (line) => this.editor.inlineBlocks.placementAtLine(line),
     );
-    this.highlightMatches(this.excerptInputs);
-    this.installBands();
+    prof('construct.highlightMatches', () => this.highlightMatches(this.excerptInputs, { clear: true }));
+    prof('construct.installBands', () => this.installBands());
     if (this.editable) {
       // The HEADER/GAP bands need no per-edit handling: declared as source anchors (installBands),
       // their positions ride the BlockDecorations marks through every edit/undo/splice, and the
@@ -258,6 +275,31 @@ export class SearchResultsView {
     this.rebuild();
   }
 
+  /** Replace the shown excerpts — used by a streaming search to grow the surface as more files
+   *  arrive. Registers any newly-resolved sources with the projection + syntax painter, then
+   *  re-flows in place (the minimal-churn splice keeps the caret, syntax, and decorations of
+   *  unchanged rows; new files append at the bottom). */
+  setExcerpts(inputs: ExcerptInput[]): void {
+    if (this.disposed) return;
+    const highlightFrom = this.highlightedCount;
+    this.excerpts = prof(`setExcerpts.buildExcerpts(${inputs.length})`, () => this.buildExcerpts(inputs, this.cwd));
+    this.excerptInputs = inputs;
+    // buildExcerpts resolved any new files into `sources`; hand each to the live screen + painter
+    // so the projection can resolve their lines and highlight them (both adds are idempotent).
+    for (const [key, entry] of this.sources) {
+      this.screen.addSource(key, entry.buffer);
+      this.painter.addSource(key, { syntax: entry.syntax, ensureParsed: entry.parse });
+    }
+    // Append the new rows (O(new)) instead of a full re-flow (O(rows²)) — this is the streaming
+    // grow path. A non-append change (shouldn't happen here) re-flows fully and re-highlights all.
+    const appended = prof(`setExcerpts.append(${this.excerpts.length})`, () => this.screen.appendItems(this.currentItems()));
+    prof('setExcerpts.repaintSyntax', () => this.editor.repaintSyntax());
+    prof('setExcerpts.installBands', () => this.installBands());
+    prof('setExcerpts.highlight', () =>
+      this.highlightMatches(this.excerptInputs, appended ? { from: highlightFrom } : { clear: true }),
+    );
+  }
+
   /** Re-derive the items for the new collapse state and re-flow the view (minimal-churn splice),
    *  re-placing the bands, re-painting, re-highlighting matches, and following the caret to its
    *  source row (or the file's surviving first row if its row was collapsed away). */
@@ -265,10 +307,10 @@ export class SearchResultsView {
     if (this.disposed) return;
     const caret = this.editor.model.getCursorBufferPosition();
     const anchor = this.projection.screenToDocument(caret.row, caret.column);
-    this.screen.retarget(this.currentItems());
-    this.editor.repaintSyntax();
-    this.installBands();
-    this.highlightMatches(this.excerptInputs);
+    prof(`rebuild.retarget(${this.excerpts.length})`, () => this.screen.retarget(this.currentItems()));
+    prof('rebuild.repaintSyntax', () => this.editor.repaintSyntax());
+    prof('rebuild.installBands', () => this.installBands());
+    prof('rebuild.highlightMatches', () => this.highlightMatches(this.excerptInputs, { clear: true }));
     if (anchor.kind === 'document') {
       const pos =
         this.projection.documentToScreen(anchor.documentKey, anchor.row, anchor.column) ??
@@ -307,17 +349,21 @@ export class SearchResultsView {
    *  projection and decorate it on the shared `search` layer (the same highlight `/`-search
    *  uses). Tags anchor to buffer positions, so they track in-place edits; a re-materialize
    *  (reverse-sync) would drop them — fine for a browse/edit surface. */
-  private highlightMatches(excerpts: ExcerptInput[]): void {
+  private highlightMatches(excerpts: ExcerptInput[], opts: { clear?: boolean; from?: number } = {}): void {
     const layer = this.editor.decorations.layer('search');
+    if (opts.clear) layer.clear(); // full re-highlight (collapse): drop existing spans first
     const projection = this.screen.view;
-    for (const excerpt of excerpts) {
-      for (const m of excerpt.matches ?? []) {
-        const start = projection.documentToScreen(excerpt.path, m.row, m.startCol);
-        const end = projection.documentToScreen(excerpt.path, m.row, m.endCol);
+    // A streaming grow highlights only the newly-appended excerpts (`from`); the existing ones'
+    // tags survived the append. A full pass starts at 0.
+    for (let i = opts.from ?? 0; i < excerpts.length; i++) {
+      for (const m of excerpts[i].matches ?? []) {
+        const start = projection.documentToScreen(excerpts[i].path, m.row, m.startCol);
+        const end = projection.documentToScreen(excerpts[i].path, m.row, m.endCol);
         if (!start || !end) continue; // match row not projected (shouldn't happen — regions wrap matches)
         layer.decorate(new Range(start, end), 'highlight');
       }
     }
+    this.highlightedCount = excerpts.length;
   }
 
   /** Resolve sources + parse them, and turn region inputs into Excerpts. Files that can't be
@@ -350,8 +396,22 @@ export class SearchResultsView {
   private ensureSource(path: string): SourceEntry | null {
     const existing = this.sources.get(path);
     if (existing) return existing;
+    // Skip an oversized file without reading it (a giant generated/vendor blob would stall the
+    // build and never render usefully).
+    try {
+      if (Fs.statSync(path).size > MAX_SOURCE_BYTES) return null;
+    } catch {
+      return null; // unreadable / gone
+    }
     const entry = this.editable ? this.acquireLiveSource(path) : this.readSnapshotSource(path);
-    if (entry) this.sources.set(path, entry);
+    if (!entry) return null;
+    // A pathologically long line (minified JS / source map) hangs GtkSourceView — drop the file,
+    // releasing the live Document ref the editable path took.
+    if (entry.lines.some((line) => line.length > MAX_SOURCE_LINE)) {
+      if (entry.document) this.registry!.release(entry.document);
+      return null;
+    }
+    this.sources.set(path, entry);
     return entry;
   }
 

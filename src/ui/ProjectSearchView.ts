@@ -25,11 +25,15 @@ import { CompositeDisposable } from '../util/eventKit.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { SearchResultsView } from './SearchResultsView.ts';
 import {
-  runProjectSearch,
+  searchProject,
+  groupMatches,
   matchesToExcerptInputs,
   DEFAULT_CONTEXT,
   type ProjectSearchOptions,
+  type RgMatch,
 } from './multibuffer/projectSearch.ts';
+import type { ProcHandle } from '../process/runner.ts';
+import { projectSearchPresets, saveSearchPreset, type SearchPreset } from '../projectSettings.ts';
 
 export interface ProjectSearchViewOptions {
   cwd: string;
@@ -37,6 +41,8 @@ export interface ProjectSearchViewOptions {
   documents: DocumentRegistry;
   /** Seed the search box (e.g. the editor selection); empty opens a blank box. */
   initialQuery?: string;
+  /** Seed the search flags / glob filters (e.g. carried from a preset or the picker). */
+  initialOptions?: ProjectSearchOptions;
   /** Jump to a file/line when a result row is activated (Enter / double-click). */
   onActivate: (location: { path: string; row: number }) => void;
 }
@@ -54,12 +60,26 @@ addStyles(`
     padding: 2px 8px;
   }
   .ProjectSearchView .project-search-status { color: var(--t-ui-text-muted); padding: 12px; }
+  .ProjectSearchView .project-search-glob { min-width: 16ch; }
+  .project-search-save { padding: 6px; }
 `);
 
 // How long to wait after the last keystroke before re-running ripgrep. Each search rebuilds the
 // whole results multibuffer (acquiring + parsing every matched file), so this is deliberately
 // generous — it keeps typing responsive rather than searching on every character.
 const SEARCH_DEBOUNCE_MS = 300;
+
+// While a search streams, coalesce match batches into a results refresh at most this often.
+const VIEW_UPDATE_MS = 60;
+
+// rg streams matches faster than the editable multibuffer absorbs them, so push at most this many
+// new files into the editor per refresh and continue on the next frame. `SearchResultsView` grows
+// in place (an O(new) append, not a full re-flow), so this keeps each frame bounded — results fill
+// progressively without a single giant synchronous build hanging the loop.
+const VIEW_FILES_PER_FLUSH = 20;
+// Hard cap on files built into the editable view (rows already cap at MAX_MATCHES) — a broad query
+// (e.g. a single letter) isn't a useful editing surface past this, and the cap bounds total cost.
+const MAX_VIEW_FILES = 300;
 
 /** Split a comma-separated glob field into trimmed, non-empty patterns. */
 function splitGlobs(text: string): string[] {
@@ -79,17 +99,33 @@ export class ProjectSearchView {
   private readonly wordToggle: InstanceType<typeof Gtk.ToggleButton>;
   private readonly regexToggle: InstanceType<typeof Gtk.ToggleButton>;
   private readonly ignoredToggle: InstanceType<typeof Gtk.ToggleButton>;
-  private readonly includeEntry: InstanceType<typeof Gtk.Entry>;
-  private readonly excludeEntry: InstanceType<typeof Gtk.Entry>;
+  private readonly globEntry: InstanceType<typeof Gtk.Entry>;
+  private readonly presetDropdown: InstanceType<typeof Gtk.DropDown>;
   private readonly content: InstanceType<typeof Gtk.Box>;
   private readonly status: InstanceType<typeof Gtk.Label>;
+  // The presets backing the dropdown rows (parallel to its model, after the leading "Presets"
+  // placeholder), so a selection index maps straight to a preset.
+  private presetsForModel: SearchPreset[] = [];
+  // While applying an option set (a preset / seed), suppress the per-control search handlers so
+  // we run one search at the end instead of one per changed control.
+  private applyingOptions = false;
+  // Handlers for the (rebuilt-on-open) save-preset popover; cleared each open.
+  private presetSubs = new CompositeDisposable();
 
   // The current results multibuffer (null while the query is empty / yields nothing).
   private resultsView: SearchResultsView | null = null;
-  // Bumped per search; an async rg result whose generation is stale is dropped (debounce race).
+  // Bumped per search; a stale streaming callback (a newer search started) is dropped.
   private generation = 0;
   // Pending debounce timer between a keystroke and the search it triggers.
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  // The in-flight streaming search, cancelled when a new one starts or on dispose.
+  private searchHandle: ProcHandle | null = null;
+  // Matches accumulated so far for the current search, regrouped into excerpts on each refresh.
+  private matches: RgMatch[] = [];
+  // How many matched files are currently built into the results (the streamed prefix already shown).
+  private appliedFileCount = 0;
+  // Pending coalesced results refresh (see VIEW_UPDATE_MS).
+  private viewUpdateTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(options: ProjectSearchViewOptions) {
@@ -97,7 +133,7 @@ export class ProjectSearchView {
     this.documents = options.documents;
     this.onActivate = options.onActivate;
 
-    // --- Row 1: the query entry + the case/word/regex toggles.
+    // --- One options row: query entry, flag toggles, a single glob field, and the presets combo.
     this.entry = new Gtk.SearchEntry({ placeholderText: 'Search the project…' });
     this.entry.addCssClass('ProjectSearchEntry');
     this.entry.addCssClass('has-text-input'); // release the `space` leader so it types
@@ -106,38 +142,39 @@ export class ProjectSearchView {
     this.caseToggle = this.buildToggle('Aa', 'Match case');
     this.wordToggle = this.buildToggle('W', 'Match whole word');
     this.regexToggle = this.buildToggle('.*', 'Use regular expression');
+    this.ignoredToggle = this.buildToggle('Hidden', 'Also search ignored & hidden files');
 
-    const toggles = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 4 });
+    // `.linked` joins the toggles into one segmented group; `.raised` keeps them lifted (not flat).
+    const toggles = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 0 });
     toggles.addCssClass('project-search-toggles');
+    toggles.addCssClass('linked');
+    toggles.addCssClass('raised');
     toggles.append(this.caseToggle);
     toggles.append(this.wordToggle);
     toggles.append(this.regexToggle);
+    toggles.append(this.ignoredToggle);
 
-    const row1 = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 });
-    row1.addCssClass('project-search-row');
-    row1.append(this.entry);
-    row1.append(toggles);
+    // One glob field: comma-separated globs, a `!` prefix excludes (e.g. `*.ts, !*.test.ts`).
+    this.globEntry = new Gtk.Entry({ placeholderText: 'Files: *.ts, !*.test.ts' });
+    this.globEntry.addCssClass('has-text-input');
+    this.globEntry.addCssClass('project-search-glob');
 
-    // --- Row 2: include / exclude glob fields + the "search hidden & ignored" toggle. Plain
-    // Gtk.Entry (not Gtk.SearchEntry) — these are glob filters, not searches, so no search icon.
-    this.includeEntry = new Gtk.Entry({ placeholderText: 'Files to include (e.g. *.ts, src/)' });
-    this.includeEntry.addCssClass('has-text-input');
-    this.includeEntry.setHexpand(true);
-    this.excludeEntry = new Gtk.Entry({ placeholderText: 'Files to exclude (e.g. *.test.ts)' });
-    this.excludeEntry.addCssClass('has-text-input');
-    this.excludeEntry.setHexpand(true);
-    this.ignoredToggle = this.buildToggle('Hidden', 'Also search ignored & hidden files');
+    // Presets combo: a leading "Presets" placeholder, the presets, then a "Save current as…" row.
+    this.presetDropdown = Gtk.DropDown.newFromStrings(['Presets']);
+    this.presetDropdown.setTooltipText('Apply or save a search preset');
+    this.rebuildPresetModel();
+    this.subs.connect(this.presetDropdown, 'notify::selected', () => this.onPresetSelected());
 
-    const row2 = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 });
-    row2.addCssClass('project-search-row');
-    row2.append(this.includeEntry);
-    row2.append(this.excludeEntry);
-    row2.append(this.ignoredToggle);
+    const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 8 });
+    row.addCssClass('project-search-row');
+    row.append(this.entry);
+    row.append(toggles);
+    row.append(this.globEntry);
+    row.append(this.presetDropdown);
 
     const header = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     header.addCssClass('project-search-header');
-    header.append(row1);
-    header.append(row2);
+    header.append(row);
 
     // --- Body: the results multibuffer (swapped in per search) over a muted status label.
     this.status = new Gtk.Label({ label: 'Type to search the project', xalign: 0, yalign: 0 });
@@ -157,11 +194,11 @@ export class ProjectSearchView {
     // immediately, below. Typing then re-searches on a debounce; toggling a flag is a deliberate
     // action, so it searches at once.
     if (options.initialQuery) this.entry.setText(options.initialQuery);
+    if (options.initialOptions) this.applyOptions(options.initialOptions);
     this.subs.connect(this.entry, 'changed', () => this.scheduleSearch());
-    this.subs.connect(this.includeEntry, 'changed', () => this.scheduleSearch());
-    this.subs.connect(this.excludeEntry, 'changed', () => this.scheduleSearch());
+    this.subs.connect(this.globEntry, 'changed', () => { if (!this.applyingOptions) this.scheduleSearch(); });
     for (const t of [this.caseToggle, this.wordToggle, this.regexToggle, this.ignoredToggle]) {
-      this.subs.connect(t, 'toggled', () => this.runSearch());
+      this.subs.connect(t, 'toggled', () => { if (!this.applyingOptions) this.runSearch(); });
     }
     if (options.initialQuery) this.runSearch();
   }
@@ -177,6 +214,11 @@ export class ProjectSearchView {
     this.disposed = true;
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.searchTimer = null;
+    if (this.viewUpdateTimer) clearTimeout(this.viewUpdateTimer);
+    this.viewUpdateTimer = null;
+    this.searchHandle?.cancel();
+    this.searchHandle = null;
+    this.presetSubs.dispose();
     this.subs.dispose();
     this.resultsView?.dispose();
     this.resultsView = null;
@@ -202,7 +244,6 @@ export class ProjectSearchView {
   private buildToggle(label: string, tooltip: string): InstanceType<typeof Gtk.ToggleButton> {
     const button = new Gtk.ToggleButton({ label });
     button.setTooltipText(tooltip);
-    button.addCssClass('flat');
     button.setCanFocus(false); // clicking a flag keeps the caret in the entry
     return button;
   }
@@ -213,9 +254,84 @@ export class ProjectSearchView {
       wholeWord: this.wordToggle.getActive(),
       regex: this.regexToggle.getActive(),
       includeIgnored: this.ignoredToggle.getActive(),
-      includeGlobs: splitGlobs(this.includeEntry.getText()),
-      excludeGlobs: splitGlobs(this.excludeEntry.getText()),
+      globs: splitGlobs(this.globEntry.getText()),
     };
+  }
+
+  /** Seed the header controls from `options` (a preset / the initial flags + globs). Wrapped in the
+   *  `applyingOptions` guard so the per-control handlers don't each fire a search. */
+  private applyOptions(options: ProjectSearchOptions): void {
+    this.applyingOptions = true;
+    try {
+      this.caseToggle.setActive(!!options.caseSensitive);
+      this.wordToggle.setActive(!!options.wholeWord);
+      this.regexToggle.setActive(!!options.regex);
+      this.ignoredToggle.setActive(!!options.includeIgnored);
+      this.globEntry.setText(options.globs?.join(', ') ?? '');
+    } finally {
+      this.applyingOptions = false;
+    }
+  }
+
+  /** The current options with default (falsy / empty) fields dropped — a compact preset to store. */
+  private compactOptions(): ProjectSearchOptions {
+    const o = this.currentOptions();
+    const out: ProjectSearchOptions = {};
+    if (o.caseSensitive) out.caseSensitive = true;
+    if (o.wholeWord) out.wholeWord = true;
+    if (o.regex) out.regex = true;
+    if (o.includeIgnored) out.includeIgnored = true;
+    if (o.globs?.length) out.globs = o.globs;
+    return out;
+  }
+
+  // --- presets combo ---------------------------------------------------------
+
+  /** Rebuild the dropdown rows: a "Presets" placeholder, the presets, then "Save current as…". */
+  private rebuildPresetModel(): void {
+    this.presetsForModel = projectSearchPresets(this.cwd);
+    const labels = ['Presets', ...this.presetsForModel.map((p) => p.name), 'Save current as…'];
+    this.presetDropdown.setModel(Gtk.StringList.new(labels));
+    this.presetDropdown.setSelected(0);
+  }
+
+  /** Act on a dropdown choice: apply a preset's options, or open the save prompt; then snap back to
+   *  the "Presets" placeholder. */
+  private onPresetSelected(): void {
+    const i = this.presetDropdown.getSelected();
+    if (i <= 0) return; // the placeholder
+    if (i <= this.presetsForModel.length) {
+      const preset = this.presetsForModel[i - 1];
+      this.presetDropdown.setSelected(0);
+      this.applyOptions(preset.options);
+      this.runSearch();
+    } else {
+      this.presetDropdown.setSelected(0); // the "Save current as…" row
+      this.openSavePresetPopover();
+    }
+  }
+
+  /** A small popover anchored to the combo: type a name to save the current options as a preset. */
+  private openSavePresetPopover(): void {
+    this.presetSubs.dispose();
+    this.presetSubs = new CompositeDisposable();
+    const popover = new Gtk.Popover();
+    popover.setParent(this.presetDropdown);
+    this.presetSubs.defer(() => popover.unparent());
+    const entry = new Gtk.Entry({ placeholderText: 'Preset name…' });
+    entry.addCssClass('has-text-input');
+    entry.addCssClass('project-search-save');
+    this.presetSubs.connect(entry, 'activate', () => {
+      const name = entry.getText().trim();
+      if (name !== '') {
+        saveSearchPreset(this.cwd, { name, options: this.compactOptions() });
+        this.rebuildPresetModel();
+      }
+      popover.popdown();
+    });
+    popover.setChild(entry);
+    popover.popup();
+    entry.grabFocus();
   }
 
   /** Re-run the search once the user pauses typing (debounced). Replaces any pending timer, so
@@ -230,30 +346,65 @@ export class ProjectSearchView {
     }, SEARCH_DEBOUNCE_MS);
   }
 
-  /** Run ripgrep for the current query + flags and (re)build the results. Stale async results
-   *  (a newer search started meanwhile) are dropped via the generation guard. */
+  /** Stream ripgrep for the current query + flags, growing the results as matches arrive. The
+   *  previous search's rg is cancelled; stale streaming callbacks are dropped via the generation
+   *  guard. */
   private runSearch(): void {
     if (this.disposed) return;
     if (this.searchTimer) clearTimeout(this.searchTimer); // an immediate run cancels a pending one
     this.searchTimer = null;
+    this.searchHandle?.cancel(); // stop the in-flight rg before starting a new run
+    if (this.viewUpdateTimer) { clearTimeout(this.viewUpdateTimer); this.viewUpdateTimer = null; }
+    this.matches = [];
+    this.appliedFileCount = 0;
     const query = this.entry.getText().trim();
     const generation = ++this.generation;
     if (query === '') {
       this.setStatus('Type to search the project');
       return;
     }
-    runProjectSearch(this.cwd, query, this.currentOptions(), (result) => {
-      if (this.disposed || generation !== this.generation) return; // superseded
-      if (result.error !== undefined) {
-        this.setStatus(result.error);
-        return;
-      }
-      const files = result.files ?? [];
-      if (files.length === 0) {
-        this.setStatus(`No results for “${query}”`);
-        return;
-      }
-      const excerpts = matchesToExcerptInputs(files, { context: DEFAULT_CONTEXT });
+    this.searchHandle = searchProject(this.cwd, query, this.currentOptions(), {
+      onMatches: (batch) => {
+        if (this.disposed || generation !== this.generation) return; // superseded
+        this.matches.push(...batch);
+        this.scheduleViewUpdate();
+      },
+      onDone: () => {
+        if (this.disposed || generation !== this.generation) return;
+        this.flushViewUpdate(); // build any remaining files (continues frame by frame)
+        if (this.matches.length === 0) this.setStatus(`No results for “${query}”`);
+      },
+      onError: (message) => {
+        if (this.disposed || generation !== this.generation) return;
+        this.setStatus(message);
+      },
+    });
+  }
+
+  /** Coalesce streamed batches into a results refresh (see VIEW_UPDATE_MS). */
+  private scheduleViewUpdate(): void {
+    if (this.viewUpdateTimer !== null) return;
+    this.viewUpdateTimer = setTimeout(() => {
+      this.viewUpdateTimer = null;
+      this.flushViewUpdate();
+    }, VIEW_UPDATE_MS);
+  }
+
+  /** Grow (or create) the results surface, adding at most `VIEW_FILES_PER_FLUSH` more files per
+   *  call and scheduling another frame while files remain. Files stream in first-seen order, so the
+   *  shown prefix only grows; `SearchResultsView` appends the new rows in place (O(new)), keeping
+   *  the caret / edits / scroll. */
+  private flushViewUpdate(): void {
+    if (this.viewUpdateTimer) { clearTimeout(this.viewUpdateTimer); this.viewUpdateTimer = null; }
+    if (this.disposed || this.matches.length === 0) return;
+    const files = groupMatches(this.matches);
+    const cap = Math.min(files.length, MAX_VIEW_FILES);
+    const target = Math.min(cap, this.appliedFileCount + VIEW_FILES_PER_FLUSH);
+    if (target <= this.appliedFileCount && this.resultsView) return; // nothing new to add
+    const excerpts = matchesToExcerptInputs(files.slice(0, target), { context: DEFAULT_CONTEXT });
+    if (this.resultsView) {
+      this.resultsView.setExcerpts(excerpts); // grow in place — keeps caret / edits / scroll
+    } else {
       this.swapResults(
         new SearchResultsView({
           excerpts,
@@ -265,7 +416,9 @@ export class ProjectSearchView {
           onActivate: this.onActivate,
         }),
       );
-    });
+    }
+    this.appliedFileCount = target;
+    if (target < cap) this.scheduleViewUpdate(); // more files pending — continue next frame
   }
 
   /** Replace the body with `view` (disposing the previous results), or with the status label

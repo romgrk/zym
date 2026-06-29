@@ -157,7 +157,7 @@ for (let n = 1; n <= 8; n++)
 const WORKBENCH_ACTIONS: Record<string, Binding> = {
   'space x x': { command: 'workbench:action-run', args: [1] }, // run the first (default) action
   'space x o': 'workbench:action-picker', // pick an action to run
-  'space x e': 'workbench:action-edit', // edit the workbench actions (.zym/actions.json)
+  'space x e': 'workbench:action-edit', // edit the project settings (.zym/settings.json)
   'space x r': 'workbench:action-reset', // reset the live set to the project defaults
 };
 for (let n = 1; n <= 9; n++)

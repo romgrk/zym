@@ -63,12 +63,12 @@ export function switchToGithubPrPicker(host: Overlay, cwd: string, git: GitRepo)
     // Filter entirely via `gh` search (debounced): a GitHub search and local fzy
     // disagree on what matches, so don't refine locally — show what `gh` returns.
     localFilter: false,
-    fetch: (query, onResult, onError) => {
+    fetch: (query, sink) => {
       searchPullRequests(
         root,
         query,
         (prs) => {
-          onResult(
+          sink.replace(
             prs.map((pr): PrPickerItem => ({
               value: String(pr.number), // PR number is unique
               text: `#${pr.number} ${pr.title}`,
@@ -77,7 +77,7 @@ export function switchToGithubPrPicker(host: Overlay, cwd: string, git: GitRepo)
           );
         },
         'all',
-        (message) => onError(`Could not list pull requests: ${message}`),
+        (message) => sink.error(`Could not list pull requests: ${message}`),
       );
     },
     // A colour-coded state glyph leads each row; the title is prose, the author a

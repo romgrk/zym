@@ -6,7 +6,8 @@
  * never snapshots the root (a workbench re-roots into a worktree by reassigning
  * `Workbench.cwd`; reading it live keeps the project-file path and an action's spawn
  * dir correct after a move). The set is:
- *   - seeded from the project file `<cwd>/.zym/actions.json` on construction;
+ *   - seeded from the project settings file `<cwd>/.zym/settings.json` (`actions`
+ *     section, via `projectSettings.ts`) on construction;
  *   - overwritten when an agent calls the `set_actions` bridge tool (`setFromAgent`,
  *     replace — not merge), which AppWindow forwards from `agent.onDidChangeActions`;
  *   - reset back to the project defaults on demand (`reset`, re-reads the file);
@@ -26,7 +27,8 @@
  */
 import { Emitter } from '../../util/eventKit.ts';
 import { ActionProcesses } from './ActionProcesses.ts';
-import { type Action, readProjectActions } from '../../actions.ts';
+import { type Action } from '../../actions.ts';
+import { readProjectActions } from '../../projectSettings.ts';
 
 /** Runs `terminal: true` actions in a tab and reports their live state, so the
  *  controller can run / stop / status them like background ones. AppWindow supplies
@@ -91,7 +93,7 @@ export class WorkbenchActions {
     this.replaceWith(actions);
   }
 
-  /** Reset back to the project defaults (re-read `<cwd>/.zym/actions.json`); any
+  /** Reset back to the project defaults (re-read `<cwd>/.zym/settings.json`); any
    *  running action the defaults drop is stopped (see `replaceWith`). */
   reset(): void {
     this.replaceWith(readProjectActions(this.cwd()));

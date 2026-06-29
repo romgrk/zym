@@ -192,6 +192,24 @@ export type RowRenderer = (item: PickerItem, positions: number[]) => InstanceTyp
 const defaultRowRenderer: RowRenderer = (item, positions) =>
   renderRowSingleLine({ main: highlightMarkup(item.text, positions) });
 
+/**
+ * The sink a `fetch` source feeds. One-shot sources call `replace(items)` once.
+ * A streaming source calls `append(batch)` per batch (the first append of a query
+ * replaces the prior pool, later ones accumulate) and `done()` when finished; the
+ * loading spinner runs across the whole stream. `error(message)` reports a failure.
+ * Calls after the query changed or the picker closed are ignored.
+ */
+export interface FetchSink {
+  /** Replace the candidate pool and finish loading (the one-shot case). */
+  replace(items: Array<string | PickerItem>): void;
+  /** Append a streaming batch (first append of a query replaces); loading stays until `done()`. */
+  append(items: Array<string | PickerItem>): void;
+  /** Streaming finished — clear the loading state. */
+  done(): void;
+  /** Report a failure (clears loading, shows the message in place of matches). */
+  error(message: string): void;
+}
+
 export interface PickerOptions {
   host: Overlay;
   /** Align the card to a widget (e.g. the active editor) instead of the overlay's
@@ -231,15 +249,12 @@ export interface PickerOptions {
    * it (e.g. `gh` search). The `onResult` callback is ignored if the picker has
    * closed or a newer query superseded this call.
    *
-   * Report a failure via the `onError` callback (or by throwing synchronously):
-   * the picker drops its loading state and shows the message in place of the
-   * matches. Like `onResult`, a stale/closed `onError` call is ignored.
+   * Report a failure via `sink.error` (or by throwing synchronously): the picker
+   * drops its loading state and shows the message in place of the matches. A
+   * stale/closed call on the sink is ignored. See `FetchSink` for streaming vs.
+   * one-shot semantics.
    */
-  fetch?: (
-    query: string,
-    onResult: (items: Array<string | PickerItem>) => void,
-    onError: (message: string) => void,
-  ) => void;
+  fetch?: (query: string, sink: FetchSink) => void;
   /**
    * Whether to fuzzy-filter the pool locally as the user types (default true).
    * Set false for a `fetch` source that filters server-side — the list then shows
@@ -316,6 +331,18 @@ export interface PickerOptions {
    * should keep the standard row padding instead.
    */
   disableIconPadding?: boolean;
+  /**
+   * A caller-built widget mounted at the trailing end of the entry row (e.g. the
+   * search picker's option chips). The picker just hosts it; the caller owns its
+   * widgets/handlers and tears them down in `onClose`.
+   */
+  headerAccessory?: InstanceType<typeof Gtk.Widget>;
+  /**
+   * Called once when the picker closes — for a caller to dispose anything it owns
+   * (a `headerAccessory`'s signal handlers, a `preview` widget, …). The picker's
+   * own teardown runs regardless.
+   */
+  onClose?: () => void;
 }
 
 /** A side-preview pane plus the hook that refreshes it as the selection moves. */
@@ -342,6 +369,9 @@ export interface PickerHandle {
   /** Show an error message in place of the matches (e.g. an async load failed),
    *  or clear it by passing `null`. Also clears the loading state. */
   setError(message: string | null): void;
+  /** Re-run the `fetch` source with the current query (e.g. after a search option
+   *  toggled). No-op for a picker without a `fetch` source. */
+  refetch(): void;
   close(): void;
 }
 
@@ -385,7 +415,9 @@ export function openPicker(options: PickerOptions): PickerHandle {
     options.weight ??
     (frecencyNs ? (item: PickerItem) => frecency.boost(frecencyNs, item.value) : undefined);
 
-  const entry = new Gtk.SearchEntry({
+  // A plain Gtk.Entry (not Gtk.SearchEntry): no built-in search/clear icons — the picker overlays
+  // its own prompt slot, and the debounce is driven manually below (Gtk.Entry has no searchDelay).
+  const entry = new Gtk.Entry({
     placeholderText: options.placeholder ?? 'Search…',
   });
   entry.setHexpand(true);
@@ -466,6 +498,8 @@ export function openPicker(options: PickerOptions): PickerHandle {
   let commandsSub: { dispose(): void } | null = null;
   // Pending side-preview refresh (debounced as the selection moves); cleared on close.
   let previewTimer: NodeJS.Timeout | null = null;
+  // Pending query debounce (the manual search delay); cleared on close.
+  let debounceTimer: NodeJS.Timeout | null = null;
   // The entry/list-box signal handlers wired below close over the whole openPicker scope
   // (items, results, options→onSelect/fetch, …). node-gtk roots each connected closure, so
   // every palette/picker open would leak its whole graph; disposed in `onClose`. See rule 2.
@@ -485,6 +519,8 @@ export function openPicker(options: PickerOptions): PickerHandle {
       readlineSub.dispose();
       promptSpinner?.stop();
       if (previewTimer) clearTimeout(previewTimer);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      options.onClose?.(); // let the caller tear down a headerAccessory / preview
     },
   });
   const panel = card.panel;
@@ -493,7 +529,19 @@ export function openPicker(options: PickerOptions): PickerHandle {
   // Skipped when `disableIconPadding` is set: the caller renders its own per-row
   // icons via `renderRow` and wants standard row padding, not the extra indent.
   if (entry.hasCssClass('has-prompt') && !options.disableIconPadding) panel.addCssClass('has-prompt');
-  panel.append(entryHost);
+  // The entry row: the entry (plus its prompt overlay) and, optionally, a trailing
+  // caller-built accessory (e.g. the search picker's option chips).
+  if (options.headerAccessory) {
+    entryHost.setHexpand(true);
+    const headerRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
+    headerRow.addCssClass('PickerHeader');
+    headerRow.append(entryHost);
+    options.headerAccessory.setValign(Gtk.Align.CENTER);
+    headerRow.append(options.headerAccessory);
+    panel.append(headerRow);
+  } else {
+    panel.append(entryHost);
+  }
   if (options.preview) {
     // Horizontal split: the result list keeps a fixed width, the preview pane
     // takes the rest. Both are bounded to the list's max height so the card has a
@@ -515,17 +563,19 @@ export function openPicker(options: PickerOptions): PickerHandle {
 
   let items = (options.items ?? []).map(normalizeItem);
 
-  // Set the entry's debounce: an explicit `searchDelay` wins; otherwise a `fetch`
-  // source debounces the remote call, and a plain local picker picks from the
-  // dataset size (instant for small lists, debounced for large ones). Re-run when
-  // `setItems` swaps the dataset (e.g. an async scan resolves).
+  // The debounce (ms) before a keystroke triggers the expensive step. An explicit `searchDelay`
+  // wins; otherwise a `fetch` source debounces the remote call, and a plain local picker picks from
+  // the dataset size (instant for small lists, debounced for large ones). Re-evaluated when
+  // `setItems` swaps the dataset (e.g. an async scan resolves). Applied via the manual debounce
+  // below (a plain Gtk.Entry has no built-in search delay).
+  let searchDelay = 0;
   const applySearchDelay = () => {
     const auto = options.fetch
       ? FETCH_DELAY_MS
       : items.length > LARGE_DATASET
         ? LARGE_DATASET_DELAY_MS
         : 0;
-    entry.setSearchDelay(options.searchDelay ?? auto);
+    searchDelay = options.searchDelay ?? auto;
   };
   applySearchDelay();
 
@@ -711,24 +761,38 @@ export function openPicker(options: PickerOptions): PickerHandle {
     // A stale/closed response (result or error) is dropped; only the latest
     // query's outcome updates the picker.
     const isCurrent = () => !card.isClosed() && generation === fetchGeneration;
-    const fail = (message: string) => {
-      if (!isCurrent()) return;
-      setError(message);
-      rebuild();
+    // The first append of a query replaces the prior pool; later ones accumulate
+    // (streaming). `done()` falls back to clearing the pool if nothing arrived.
+    let firstAppend = true;
+    const sink: FetchSink = {
+      replace(next) {
+        if (!isCurrent()) return;
+        setLoading(false);
+        items = next.map(normalizeItem);
+        rebuild();
+      },
+      append(next) {
+        if (!isCurrent()) return;
+        items = firstAppend ? next.map(normalizeItem) : items.concat(next.map(normalizeItem));
+        firstAppend = false;
+        rebuild();
+      },
+      done() {
+        if (!isCurrent()) return;
+        if (firstAppend) { items = []; firstAppend = false; } // streamed nothing → clear stale pool
+        setLoading(false);
+        rebuild();
+      },
+      error(message) {
+        if (!isCurrent()) return;
+        setError(message);
+        rebuild();
+      },
     };
     try {
-      options.fetch(
-        entry.getText(),
-        (next) => {
-          if (!isCurrent()) return;
-          setLoading(false);
-          items = next.map(normalizeItem);
-          rebuild();
-        },
-        fail,
-      );
+      options.fetch(entry.getText(), sink);
     } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
+      sink.error(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -746,16 +810,19 @@ export function openPicker(options: PickerOptions): PickerHandle {
     }
   };
 
-  if (options.fetch) {
-    // Remote-search picker: re-fetch on the debounced signal. When also refining
-    // locally, filter the current pool instantly on each keystroke (the immediate
-    // `changed` signal); a server-filtered picker skips that and just waits for
-    // the fetch.
-    if (options.localFilter !== false) subs.connect(entry, 'changed', rebuild);
-    subs.connect(entry, 'search-changed', runFetch);
-  } else {
-    subs.connect(entry, 'search-changed', rebuild);
-  }
+  // Manual debounce: a `changed` schedules the expensive step (re-fetch, or re-filter a local
+  // list) after `searchDelay` ms. A `fetch` picker that also refines locally filters the loaded
+  // pool instantly on every keystroke in between; a server-filtered one just waits for the fetch.
+  const debouncedStep = options.fetch ? runFetch : rebuild;
+  const scheduleDebounced = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (searchDelay <= 0) { debounceTimer = null; debouncedStep(); return; }
+    debounceTimer = setTimeout(() => { debounceTimer = null; debouncedStep(); }, searchDelay);
+  };
+  subs.connect(entry, 'changed', () => {
+    if (options.fetch && options.localFilter !== false) rebuild();
+    scheduleDebounced();
+  });
   subs.connect(entry, 'activate', () => choose(null));
   subs.connect(listBox, 'row-activated', (row) => choose(row));
   // Drive the side preview off selection changes (keyboard move and click both go
@@ -806,6 +873,9 @@ export function openPicker(options: PickerOptions): PickerHandle {
     setError(message: string | null) {
       setError(message);
       if (!card.isClosed()) rebuild();
+    },
+    refetch() {
+      if (!card.isClosed()) runFetch();
     },
     close,
   };

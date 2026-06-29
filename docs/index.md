@@ -167,6 +167,9 @@ Per-feature detail:
   NOTE: Decorations need to be re-architected and simplified.
 - [Diff](text-editor/diff.md) — one multibuffer `DiffView` for every diff
   (working tree, commit, branch); see [multibuffer.md](text-editor/multibuffer.md).
+- [Project search](text-editor/project-search.md) — one streaming ripgrep backend
+  behind the quick picker (`space /`) and the editable full view (`space p s`);
+  per-project named presets in `.zym/settings.json`.
 - [Comment to agent](text-editor/comment-to-agent.md) — `enter` (normal mode /
   visual selection) comments a line/selection to an agent; shared box + message
   format with the diff (file editors send single comments, diffs add review mode).

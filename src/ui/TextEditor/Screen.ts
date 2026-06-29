@@ -686,6 +686,15 @@ export class Screen {
     this.reflowHandler = fn;
   }
 
+  /** Register a source buffer added after construction (e.g. files arriving during a streaming
+   *  project search). Idempotent; a later `retarget`/`rebuild` whose items reference `key` then
+   *  resolves its lines. Wires write-through editing like the constructor's sources. */
+  addSource(key: string, buf: SourceBuffer): void {
+    if (this.sources.has(key)) return;
+    this.sources.set(key, buf);
+    this.wireSource(key, buf);
+  }
+
   /** Rebuild the projection from the current source state + re-materialize. Used when the
    *  segment structure changes (excerpts open/close, or a non-identity source edit). */
   rebuild(items: Item[] = this.items): void {
@@ -716,6 +725,36 @@ export class Screen {
     } finally {
       this.viewSuppress = false;
     }
+  }
+
+  /**
+   * Grow the view to `items` by inserting ONLY the appended rows at the end — for a streaming
+   * surface (project search) where `retarget`'s full line-diff is O(rows²) and stalls as the
+   * buffer grows. Requires `items` to extend the current set (the new screen text starts with the
+   * old text); any other change (collapse / reorder) falls back to a full re-flow. Existing rows
+   * keep their marks, tags, and decorations (the append never touches them). Returns true on the
+   * fast append path, false when it had to re-flow (so the caller knows decorations were dropped).
+   */
+  appendItems(items: Item[]): boolean {
+    const prevText = this.projection.screenText;
+    const next = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
+    this.items = items;
+    this.projection = next;
+    if (!next.screenText.startsWith(prevText)) {
+      this.materialize(); // not a clean append — rebuild the whole buffer
+      return false;
+    }
+    const suffix = next.screenText.slice(prevText.length);
+    if (suffix.length === 0) return true;
+    this.viewSuppress = true;
+    try {
+      this.buffer.insert(this.buffer.getEndIter(), suffix, -1);
+      this.relockReadonly();
+      this.buffer.setModified(false);
+    } finally {
+      this.viewSuppress = false;
+    }
+    return true;
   }
 
   /** Splice the view buffer to `target` by applying only its line-level diff against the current

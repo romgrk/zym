@@ -15,7 +15,7 @@
 import * as Fs from 'node:fs';
 import Gtk from 'gi:Gtk-4.0';
 import { addStyles } from '../styles.ts';
-import { openPicker, type PickerItem, type PickerOptions, type RowRenderer } from './Picker.ts';
+import { openPicker, type PickerHandle, type PickerItem, type PickerOptions, type RowRenderer } from './Picker.ts';
 import { type CardAnchor } from './FloatingCard.ts';
 import { TextEditor } from './TextEditor/TextEditor.ts';
 
@@ -53,6 +53,11 @@ export interface LocationPickerOptions {
   items?: Array<string | PickerItem>;
   fetch?: PickerOptions['fetch'];
   renderRow?: RowRenderer;
+  /** A caller-built widget at the trailing end of the entry row (forwarded). */
+  headerAccessory?: PickerOptions['headerAccessory'];
+  /** Disposed when the picker closes (e.g. a `headerAccessory`'s handlers). The
+   *  preview pane is torn down by LocationPicker itself. */
+  onClose?: () => void;
   /** The file location a row points at — drives both the preview and the jump. */
   locate: (item: PickerItem) => PickerLocation | null;
   /** Open/reveal the chosen location (e.g. open the file and move the cursor). */
@@ -65,9 +70,9 @@ addStyles(`
   }
 `);
 
-export function openLocationPicker(options: LocationPickerOptions): void {
+export function openLocationPicker(options: LocationPickerOptions): PickerHandle {
   const preview = options.preview === false ? null : createSourcePreview();
-  openPicker({
+  return openPicker({
     host: options.host,
     anchor: options.anchor,
     placeholder: options.placeholder,
@@ -79,12 +84,17 @@ export function openLocationPicker(options: LocationPickerOptions): void {
     items: options.items,
     fetch: options.fetch,
     renderRow: options.renderRow,
+    headerAccessory: options.headerAccessory,
     preview: preview
       ? {
           widget: preview.root,
           update: (item) => preview.show(item ? options.locate(item) : null),
         }
       : undefined,
+    onClose: () => {
+      preview?.dispose(); // the read-only preview editor (its handlers/decorations)
+      options.onClose?.();
+    },
     onSelect: (_value, item) => {
       const location = options.locate(item);
       if (location) options.onJump(location);
@@ -101,6 +111,7 @@ export function openLocationPicker(options: LocationPickerOptions): void {
 function createSourcePreview(): {
   root: InstanceType<typeof Gtk.Box>;
   show: (location: PickerLocation | null) => void;
+  dispose: () => void;
 } {
   const root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 0 });
   root.addCssClass('PickerPreview');
@@ -146,5 +157,5 @@ function createSourcePreview(): {
     }
   };
 
-  return { root, show };
+  return { root, show, dispose: () => editor.dispose() };
 }

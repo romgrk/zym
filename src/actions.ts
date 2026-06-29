@@ -6,17 +6,16 @@
  * `workbench:action-*` commands / picker (`space x`).
  *
  * Actions are **per-workbench** and first-class (see docs/workbench.md):
- *   - the project's default set lives in `<cwd>/.zym/actions.json`
- *     (`projectActionsPath` / `readProjectActions`), editable by the user;
+ *   - the project's default set lives in `<cwd>/.zym/settings.json` under `actions`
+ *     (read via `projectSettings.ts`), editable by the user;
  *   - each live workbench holds its own mutable copy, seeded from that file;
  *   - an agent can overwrite its workbench's set via the `set_actions` bridge tool
  *     (assets/mcp/zymBridge.mjs), which writes the raw JSON to an IPC file the host
  *     reads and `parseActions` normalizes into the shape below.
  * The first action is the default (no explicit flag). The runtime owner of the
- * per-workbench copy is `WorkbenchActions`.
+ * per-workbench copy is `WorkbenchActions`. This module is just the value
+ * vocabulary — the settings-file I/O lives in `projectSettings.ts`.
  */
-import * as Fs from 'node:fs';
-import * as Path from 'node:path';
 
 /** A runnable action registered with a workbench. */
 export interface Action {
@@ -63,52 +62,6 @@ export function parseActions(raw: unknown): Action[] {
 export function defaultAction(actions: readonly Action[] | undefined): Action | null {
   return actions?.[0] ?? null;
 }
-
-/** Absolute path of a workbench root's project actions file (`<cwd>/.zym/actions.json`). */
-export function projectActionsPath(cwd: string): string {
-  return Path.join(cwd, '.zym', 'actions.json');
-}
-
-/** Read + parse the project default actions for `cwd`, or `[]` when the file is
- *  missing / unreadable / malformed (the file is optional). */
-export function readProjectActions(cwd: string): Action[] {
-  let text: string;
-  try {
-    text = Fs.readFileSync(projectActionsPath(cwd), 'utf8');
-  } catch {
-    return []; // no project file (the common case) — no defaults
-  }
-  if (text.trim() === '') return [];
-  try {
-    return parseActions(JSON.parse(text));
-  } catch {
-    return []; // malformed JSON — treat as no defaults
-  }
-}
-
-/** Seed `<cwd>/.zym/actions.json` with an example set if it doesn't exist yet, so
- *  `workbench:action-edit` always opens an editable, self-documenting file.
- *  Returns the path. Best-effort — a write failure still returns the path. */
-export function ensureProjectActionsFile(cwd: string): string {
-  const path = projectActionsPath(cwd);
-  try {
-    if (!Fs.existsSync(path)) {
-      Fs.mkdirSync(Path.dirname(path), { recursive: true });
-      Fs.writeFileSync(path, SEED_ACTIONS);
-    }
-  } catch {
-    /* best effort — the editor reports an unopenable path */
-  }
-  return path;
-}
-
-// The seed for a new project actions file: a JSON array of
-// `{ label, command, terminal? }`. `terminal` defaults to true (a terminal tab);
-// set it false to run in the background with a stop button.
-const SEED_ACTIONS = `[
-  { "label": "Start app", "command": "pnpm run start", "terminal": true }
-]
-`;
 
 function slugify(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');

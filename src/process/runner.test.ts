@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FrameReader, FrameWriter, makeFrameParser } from './codec.ts';
-import { runProcess } from './runner.ts';
+import { runProcess, runProcessStream } from './runner.ts';
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // --- codec round-trips -------------------------------------------------------
 
@@ -89,4 +91,47 @@ test('runProcess runs many concurrent requests over one broker child', async () 
     results.map((r) => r.stdout),
     Array.from({ length: 20 }, (_, i) => String(i * 2)),
   );
+});
+
+// --- runProcessStream --------------------------------------------------------
+
+test('runProcessStream streams stdout in chunks, then completes', async () => {
+  const chunks: string[] = [];
+  const res = await new Promise<{ ok: boolean; code: number | null }>((resolve) =>
+    runProcessStream(
+      { file: 'node', args: ['-e', "process.stdout.write('a'); setTimeout(()=>{process.stdout.write('b');process.exit(0)},20)"] },
+      { onStdout: (c) => chunks.push(c.toString('utf8')), onDone: resolve },
+    ),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.code, 0);
+  assert.equal(chunks.join(''), 'ab');
+});
+
+test('runProcessStream reports stderr and a non-zero exit', async () => {
+  let stderr = '';
+  const res = await new Promise<{ ok: boolean; code: number | null }>((resolve) =>
+    runProcessStream(
+      { file: 'node', args: ['-e', "process.stderr.write('boom'); process.exit(2)"] },
+      { onStderr: (c) => (stderr += c.toString('utf8')), onDone: resolve },
+    ),
+  );
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 2);
+  assert.equal(stderr, 'boom');
+});
+
+test('runProcessStream cancel kills the command and suppresses onDone', async () => {
+  let done = false;
+  let firstChunk = '';
+  // Emits a chunk, then would exit after 5s; cancel must kill it well before.
+  const handle = runProcessStream(
+    { file: 'node', args: ['-e', "process.stdout.write('x'); setTimeout(()=>process.exit(0),5000)"] },
+    { onStdout: (c) => (firstChunk += c.toString('utf8')), onDone: () => (done = true) },
+  );
+  await delay(80);
+  handle.cancel();
+  await delay(120);
+  assert.equal(firstChunk, 'x'); // received the streamed chunk before cancelling
+  assert.equal(done, false); // cancel dropped the END — no completion callback
 });

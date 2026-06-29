@@ -548,3 +548,33 @@ test('600 edits around a fold never desync the source or the collapsed view', ()
   screen.unfold(fold);
   assert.equal(textOf(screen.buffer), textOf(src), 'unfolds to the live source after the fuzz');
 });
+
+// --- appendItems (streaming grow: O(new) instead of retarget's O(rows²)) -----
+
+test('appendItems inserts only the new rows and leaves existing rows (and their tags) untouched', () => {
+  const a = srcBuffer('a0\na1\na2\n');
+  const b = srcBuffer('b0\nb1\nb2\n');
+  const c = srcBuffer('c0\nc1\nc2\n');
+  const screen = new Screen([fileItem('a', 2)], new Map([['a', a], ['b', b], ['c', c]]));
+  assert.equal(textOf(screen.buffer), 'a0\na1\na2');
+
+  // Tag an existing row; a real append (not a re-materialize) must preserve it.
+  const tag = new Gtk.TextTag({ name: 'mark' });
+  screen.buffer.getTagTable().add(tag);
+  screen.buffer.applyTag(tag, asIter(screen.buffer.getIterAtLine(0)), asIter(screen.buffer.getIterAtLine(1)));
+
+  const ok = screen.appendItems([fileItem('a', 2), fileItem('b', 2), fileItem('c', 2)]);
+  assert.equal(ok, true, 'clean append');
+  assert.equal(textOf(screen.buffer), 'a0\na1\na2\nb0\nb1\nb2\nc0\nc1\nc2');
+  assert.equal(asIter(screen.buffer.getIterAtLine(0)).hasTag(tag), true, 'existing row tag survived the append');
+});
+
+test('appendItems falls back to a full re-flow (returns false) when items do not purely extend', () => {
+  const a = srcBuffer('a0\na1\na2\n');
+  const b = srcBuffer('b0\nb1\nb2\n');
+  const screen = new Screen([fileItem('a', 2), fileItem('b', 2)], new Map([['a', a], ['b', b]]));
+  // Shrinking (b removed) isn't an append — must re-flow, not corrupt the buffer.
+  const ok = screen.appendItems([fileItem('a', 2)]);
+  assert.equal(ok, false, 'not a clean append');
+  assert.equal(textOf(screen.buffer), 'a0\na1\na2');
+});

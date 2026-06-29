@@ -27,7 +27,8 @@ import { buildDefinitionPeek, wrapPeekBody, LIVE_PEEK_HEIGHT } from './TextEdito
 import { Terminal, terminalTabTitle } from './Terminal.ts';
 import { AgentTerminal, type AgentStatus, type AgentResume } from './AgentTerminal.ts';
 import type { Agent } from '../agents/types.ts';
-import { ensureProjectActionsFile, type Action } from '../actions.ts';
+import { type Action } from '../actions.ts';
+import { ensureProjectSettingsFile } from '../projectSettings.ts';
 import { openActionRunner } from './workbench/ActionPicker.ts';
 import { AgentConversation } from './AgentConversation.ts';
 import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
@@ -1632,7 +1633,7 @@ export class AppWindow {
       },
       { showSideDock: owner === 'user' },
     );
-    // The workbench owns its runtime action set (seeded from `<cwd>/.zym/actions.json`,
+    // The workbench owns its runtime action set (seeded from `<cwd>/.zym/settings.json`,
     // overwritable by an agent, run from `space x`); wire the terminal-action runner so
     // a `terminal` action runs in a tab here and reports its run/stop state (it needs
     // the workbench to host the tab), and prune orphaned action tabs when the set
@@ -2873,8 +2874,8 @@ export class AppWindow {
         when: () => this.workbench.actions.actions.length > 0,
       },
       'workbench:action-edit': {
-        didDispatch: () => this.openFile(ensureProjectActionsFile(this.workbench.cwd)),
-        description: 'Edit the workbench actions (.zym/actions.json)',
+        didDispatch: () => this.openFile(ensureProjectSettingsFile(this.workbench.cwd)),
+        description: 'Edit the project settings (.zym/settings.json)',
       },
       'workbench:action-reset': {
         didDispatch: () => this.workbench.actions.reset(),

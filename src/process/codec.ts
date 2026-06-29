@@ -12,13 +12,25 @@
  *   - bytes — a `[u32 LE length][raw bytes]` blob.
  *   - str   — a `bytes` field decoded as UTF-8.
  *
- * Request body:  u32 id, str file, str cwd, u32 argc, argc×str arg,
- *                u8 hasInput, (hasInput? bytes input).
- * Response body: u32 id, u8 ok, i32 code (-1 = killed by signal),
- *                bytes stdout, bytes stderr.
+ * Every body starts with a `u8 kind` tag (`ReqKind`/`ResKind`) so the same pipe
+ * carries both the one-shot buffered exchange and the streaming one.
+ *
+ * Requests (client → child):
+ *   RUN / STREAM: u32 id, str file, str cwd, u32 argc, argc×str arg,
+ *                 u8 hasInput, (hasInput? bytes input).
+ *   CANCEL:       u32 id.                                  // kill a STREAM
+ * Responses (child → client):
+ *   RESULT:        u32 id, u8 ok, i32 code, bytes stdout, bytes stderr.  // RUN
+ *   STDOUT/STDERR: u32 id, bytes chunk.                                  // STREAM
+ *   END:           u32 id, u8 ok, i32 code (-1 = killed by signal).      // STREAM
  *
  * Shared verbatim by the client (`runner.ts`) and the child (`runner-main.ts`).
  */
+
+/** Request kind, the first `u8` of every request body. */
+export const ReqKind = { RUN: 0, STREAM: 1, CANCEL: 2 } as const;
+/** Response kind, the first `u8` of every response body. */
+export const ResKind = { RESULT: 0, STDOUT: 1, STDERR: 2, END: 3 } as const;
 
 /** Accumulates a frame's fields, then emits the length-prefixed frame. */
 export class FrameWriter {

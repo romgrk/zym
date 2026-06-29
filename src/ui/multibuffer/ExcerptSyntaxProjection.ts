@@ -45,6 +45,12 @@ export class ExcerptSyntaxProjection implements SyntaxProjection {
     this.sources = sources;
   }
 
+  /** Register a source added after construction (a file arriving during a streaming search), so
+   *  its excerpt highlights once parsed. Idempotent. */
+  addSource(key: string, source: ProjectionSource): void {
+    if (!this.sources.has(key)) this.sources.set(key, source);
+  }
+
   hasContent(): boolean {
     for (const source of this.sources.values()) if (source.syntax.hasTree) return true;
     return false;

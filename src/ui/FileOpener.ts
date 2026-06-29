@@ -85,8 +85,8 @@ function openPathPicker(opts: PathPickerOptions): void {
     // fuzzy filter narrows + highlights the entries against the typed path in
     // between (debounced re-list, instant filter). `completions: false` suppresses
     // the listing entirely (the rename picker).
-    fetch: (query, onResult) =>
-      onResult(opts.completions === false ? [] : listDir(directoryOf(query, opts.cwd), opts.cwd, opts.foldersOnly)),
+    fetch: (query, sink) =>
+      sink.replace(opts.completions === false ? [] : listDir(directoryOf(query, opts.cwd), opts.cwd, opts.foldersOnly)),
     // Show just the entry's name with a file/folder glyph and (folders) a trailing
     // slash; the shared directory prefix is already in the prompt, so a muted detail
     // column would only repeat it on every row. The glyph needs a blank cell for

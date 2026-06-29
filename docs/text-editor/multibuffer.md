@@ -148,10 +148,11 @@ Single-file editing plus both multibuffer surfaces run on the
     replacement).
 - **Editable project search + replace-all** — `space p s` opens the search
   surface (`ProjectSearchView`); `space *` opens it seeded with the editor
-  selection. A header carries a debounced search entry plus ripgrep flag
-  controls — Match case / Whole word / Regex toggles, include/exclude glob
-  fields, and a "Hidden" toggle (`--no-ignore --hidden`); editing any re-runs
-  the search and rebuilds the results multibuffer (`SearchResultsView`).
+  selection. A header carries a debounced search entry, ripgrep flag controls,
+  one glob field (`!` excludes), and a presets combo. Matches **stream in** and grow
+  the results multibuffer in place (`SearchResultsView.setExcerpts`) rather than
+  rebuilding it. See [project-search.md](project-search.md) for the shared backend,
+  the quick picker, and presets.
   Ripgrep runs through the process runner (`projectSearch.ts`, see
   `docs/process-runner.md`). `file:save` routes to the active multibuffer.
 - **Cross-source undo/redo** — `Screen` is the `UndoTarget`;

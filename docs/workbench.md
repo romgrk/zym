@@ -194,9 +194,9 @@ itself).
 
 Each `Workbench` owns a set of **runnable actions** (label + shell command — dev
 server, tests, open the app), run via `space x`. The set seeds from the committable
-project file `<cwd>/.zym/actions.json`, can be overwritten by an agent's
-`set_actions` (`reset` re-reads the file), and is saved in the session (lost on
-close). Replacing the set (`set_actions`, `reset`, session restore) stops any
+project settings file `<cwd>/.zym/settings.json` (`actions` section, read via
+`src/projectSettings.ts`), can be overwritten by an agent's `set_actions` (`reset`
+re-reads the file), and is saved in the session (lost on close). Replacing the set (`set_actions`, `reset`, session restore) stops any
 running action the new set drops — keyed by id — so a replaced action's background
 process / terminal command can't keep running with no button left to stop it; an
 action kept by id (same label slug) stays running. `WorkbenchActions`
