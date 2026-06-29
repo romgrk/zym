@@ -8,7 +8,7 @@ import { Range } from '../../text/Range.ts';
 
 // The Cairo drawing needs a realized, allocated view, so it can't be exercised
 // headlessly; these cover construction + the data API (setUnderlines/clear) and
-// that they don't throw on an unrealized view. Gtk.init is idempotent.
+// that paint is a no-op on an unrealized view. Gtk.init is idempotent.
 Gtk.init();
 
 function model(text: string): EditorModel {
@@ -18,11 +18,12 @@ function model(text: string): EditorModel {
   return new EditorModel(view, buffer);
 }
 
-test('UnderlineOverlay constructs a DrawingArea and accepts underlines', () => {
+test('UnderlineOverlay constructs and accepts underlines', () => {
   const m = model('hello world\n');
   const overlay = new UnderlineOverlay(m.view, m);
-  assert.ok(overlay.widget instanceof Gtk.DrawingArea);
-  // No throw on an unrealized view (draw is a no-op until realized).
+  // No throw on an unrealized view; paint is a no-op until realized (it returns
+  // before touching the Cairo context, so passing null is safe here).
   overlay.setUnderlines([{ range: new Range([0, 0], [0, 5]), color: '#e01b24' }]);
+  overlay.paint(null as unknown as never);
   overlay.clear();
 });

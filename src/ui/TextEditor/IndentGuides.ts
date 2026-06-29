@@ -1,7 +1,9 @@
 /*
  * IndentGuides — faint vertical lines marking each indentation level, drawn
- * in the leading whitespace. A transparent `Gtk.DrawingArea` stacked over the text
- * (like UnderlineOverlay), repainted on scroll and edits.
+ * in the leading whitespace. Painted into the view's own snapshot (via
+ * EditorSourceView), in buffer coordinates, so it scrolls with the text for free
+ * instead of repainting a viewport-pinned overlay every frame. See
+ * docs/text-editor/index.md ("Scrolling & open performance").
  *
  * Levels follow the *actual* indentation of each line (so guides line up with the
  * text), and a blank line borrows the level of the nearest non-blank line below
@@ -13,7 +15,6 @@
  */
 import * as Color from 'color-bits/string';
 import Gdk from 'gi:Gdk-4.0';
-import Gtk from 'gi:Gtk-4.0';
 import type GtkSource from 'gi:GtkSource-5';
 type SourceView = InstanceType<typeof GtkSource.View>;
 import { Point } from '../../text/Point.ts';
@@ -28,20 +29,17 @@ const LINE_WIDTH = 1;
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
 
 export class IndentGuides {
-  readonly widget: InstanceType<typeof Gtk.DrawingArea>;
-
   private readonly view: SourceView;
   private readonly model: EditorModel;
   private readonly buffer: any;
   private enabled = true;
-  // Signal handlers (view/buffer/adjustment) + the config observer all land here. Each
-  // node-gtk handler closure captures `this` (→ view + model), so a single un-disconnected
+  // The buffer 'changed' handler + the config observer land here. Each node-gtk
+  // handler closure captures `this` (→ view + model), so a single un-disconnected
   // one pins the editor forever; `dispose()` cuts them. See TextEditor `subs`.
   private readonly subs = new CompositeDisposable();
   private readonly rgba = new Gdk.RGBA();
   // Monospace char advance, measured lazily from a visible content line and cached
-  // (constant for the editor's font). The column-0 origin is NOT cached — it's
-  // re-read each draw, because it shifts after open (deferred gutter install).
+  // (constant for the editor's font).
   private charWidth = 0;
 
   constructor(view: SourceView, model: EditorModel) {
@@ -50,33 +48,11 @@ export class IndentGuides {
     this.buffer = view.getBuffer();
     this.rgba.parse(Color.lighten(theme.ui.view.bg, 0.07));
 
-    this.widget = new Gtk.DrawingArea();
-    this.widget.setCanTarget(false);
-    this.widget.setDrawFunc((_area: unknown, cr: any) => this.draw(cr));
-
-    const redraw = () => this.widget.queueDraw();
-    // (Re)bind on notify::v/hadjustment too — the ScrolledWindow swaps in its own
-    // adjustments when the view is parented, so a construction-only binding can catch a
-    // throwaway adjustment whose value-changed never fires (see UnderlineOverlay).
-    const bind = (getter: 'getVadjustment' | 'getHadjustment', notify: string) => {
-      let bound: any = null;
-      const rebind = () => {
-        const adj = view[getter]?.();
-        if (!adj || adj === bound) return;
-        if (bound) bound.off('value-changed', redraw); // drop the stale binding before re-binding
-        bound = adj;
-        adj.on('value-changed', redraw);
-      };
-      rebind();
-      view.on(notify, rebind);
-      this.subs.add(new Disposable(() => {
-        view.off(notify, rebind);
-        if (bound) bound.off('value-changed', redraw);
-      }));
-    };
-    bind('getVadjustment', 'notify::vadjustment');
-    bind('getHadjustment', 'notify::hadjustment');
-    this.buffer.on('changed', redraw); // indentation may have changed
+    // Re-snapshot the view on the things that change the guides (the SCROLL repaint
+    // is automatic — the view re-runs snapshot_layer as it scrolls). Indentation can
+    // change on any edit; the config toggle flips `enabled`.
+    const redraw = () => this.view.queueDraw();
+    this.buffer.on('changed', redraw);
     this.subs.add(new Disposable(() => this.buffer.off('changed', redraw)));
     this.subs.add(
       zym.config.observe('editor.indentGuides', (v) => {
@@ -86,13 +62,16 @@ export class IndentGuides {
     );
   }
 
-  /** Detach the view/buffer/adjustment handlers + the config observer, so this overlay
-   *  stops pinning the editor on teardown. Called from `TextEditor.dispose()`. */
+  /** Detach the buffer handler + the config observer, so this stops pinning the
+   *  editor on teardown. Called from `TextEditor.dispose()`. */
   dispose(): void {
     this.subs.dispose();
   }
 
-  private draw(cr: any): void {
+  /** Paint the guides into the view's BELOW_TEXT snapshot layer, whose Cairo context is
+   *  in buffer coordinates (the same space `getIterLocation` reports) — so positions are
+   *  used directly, with no per-row buffer→window conversion. */
+  paint(cr: any): void {
     if (!this.enabled || !this.view.getRealized()) return;
     const view = this.view;
     const rect = view.getVisibleRect();
@@ -100,8 +79,8 @@ export class IndentGuides {
 
     const last = this.model.getLastBufferRow();
     // getLineAtY fills (target_iter, line_top) — the iter is the FIRST out-param. The
-    // generic "last element" helper grabbed line_top (an int) and threw in the draw
-    // func, so guides never rendered. Take r[0].
+    // generic "last element" helper grabbed line_top (an int) and threw, so guides
+    // never rendered. Take r[0].
     const lineAtY = (y: number): number => {
       const r = view.getLineAtY(y);
       return (Array.isArray(r) ? r[0] : r).getLine();
@@ -113,19 +92,17 @@ export class IndentGuides {
     const tabLength = this.model.getTabLength();
     const stride = tabLength * this.charWidth; // buffer px per indent level
     // Indent level per visible row, computed from ONE batched text read (not two
-    // FFI-heavy per-row line reads) — the bulk of the old per-frame scroll cost.
+    // FFI-heavy per-row line reads).
     const levels = this.levelsForRange(top, bottom, last, tabLength);
 
-    // Geometry, computed ONCE per frame. The column-0 x and the buffer→widget translation
-    // are constant across a frame, so hoist them out of the per-row loop (the old code did
-    // a bufferToWindowCoords per row). `dy` is the vertical translation; `wx` the (constant)
-    // column-0 widget x. When every visible row is the same height — no soft-wrap or scaled
-    // line on screen, the common case for code — each row's y follows arithmetically with NO
-    // per-row FFI; otherwise we fall back to a getIterLocation per row.
+    // Geometry, computed ONCE per frame. The column-0 x (`bx`) is constant across a
+    // frame; in buffer coords each row's y is just the iter location's y. When every
+    // visible row is the base height (no wrap/scaled line — common for code) each
+    // row's y follows arithmetically with NO per-row FFI; otherwise we fall back to a
+    // getIterLocation per row.
     const topCell = view.getIterLocation(this.lineStartIter(top));
     const lineHeight = topCell.height;
-    const [wx, wyTop] = view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, topCell.x, topCell.y);
-    const dy = topCell.y - wyTop;
+    const bx = topCell.x; // column-0 x, in buffer coordinates
     const botCell = bottom === top ? topCell : view.getIterLocation(this.lineStartIter(bottom));
     // Both endpoints at the base height AND an exact total span ⟹ every row in between is
     // exactly `lineHeight` tall: rows are never shorter than the base, so a wrapped or
@@ -138,20 +115,20 @@ export class IndentGuides {
     for (let row = top; row <= bottom; row++) {
       const level = levels[row - top];
       if (level <= 0) continue;
-      let wy: number;
+      let by: number;
       let height: number;
       if (uniform) {
-        wy = wyTop + (row - top) * lineHeight;
+        by = topCell.y + (row - top) * lineHeight;
         height = lineHeight;
       } else {
         const cell = row === top ? topCell : view.getIterLocation(this.lineStartIter(row));
-        wy = cell.y - dy; // same translation the hoisted bufferToWindowCoords applied
+        by = cell.y;
         height = cell.height;
       }
       for (let k = 0; k < level; k++) {
-        const x = Math.round(wx + k * stride) + 0.5; // +0.5 → crisp 1px line
-        cr.moveTo(x, wy);
-        cr.lineTo(x, wy + height);
+        const x = Math.round(bx + k * stride) + 0.5; // +0.5 → crisp 1px line
+        cr.moveTo(x, by);
+        cr.lineTo(x, by + height);
       }
     }
     cr.stroke();

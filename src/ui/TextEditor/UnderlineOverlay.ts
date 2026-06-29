@@ -3,20 +3,18 @@
  * squiggles) by painting them ourselves, instead of GtkTextTag's fixed, dense
  * `Pango.Underline.ERROR` style.
  *
- * It's a transparent `Gtk.DrawingArea` stacked over the text in the editor's
- * `Gtk.Overlay` (the same place the unfocused-caret layer lives). For each
- * underline it walks the buffer rows the range spans, converts each line segment
- * to widget pixels via `getIterLocation` + `bufferToWindowCoords(WIDGET)` (so the
- * gutter offset and scroll position are accounted for), and strokes a low-
- * amplitude sine wave with Cairo — anti-aliased, with full control over color,
- * amplitude, and wavelength. It repaints as the view scrolls.
+ * It paints into the view's own snapshot (via EditorSourceView), in buffer
+ * coordinates, so squiggles scroll with the text for free instead of repainting a
+ * viewport-pinned `DrawingArea` every frame. For each underline it walks the buffer
+ * rows the range spans, takes each line segment's buffer pixels via `getIterLocation`,
+ * and strokes a low-amplitude sine wave with Cairo — anti-aliased, with full control
+ * over color, amplitude, and wavelength.
  *
  * Producers (currently `DiagnosticsView`) push the full set via `setUnderlines`
  * and reset with `clear`. Drawing needs a realized, allocated view, so the visual
  * result needs interactive verification (it can't be exercised headlessly).
  */
 import Gdk from 'gi:Gdk-4.0';
-import Gtk from 'gi:Gtk-4.0';
 import type GtkSource from 'gi:GtkSource-5';
 type SourceView = InstanceType<typeof GtkSource.View>;
 import { Range } from '../../text/Range.ts';
@@ -41,9 +39,6 @@ const STEP = 1; // sampling interval along x
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
 
 export class UnderlineOverlay {
-  /** The DrawingArea to add as an overlay child over the text. */
-  readonly widget: InstanceType<typeof Gtk.DrawingArea>;
-
   private readonly view: SourceView;
   private readonly model: EditorModel;
   // Each underline is anchored to a pair of GtkTextMarks (not static coordinates), so
@@ -51,54 +46,26 @@ export class UnderlineOverlay {
   // text live instead of lagging until the next diagnostics push.
   private placed: Array<{ startMark: any; endMark: any; color: string }> = [];
   private readonly colorCache = new Map<string, InstanceType<typeof Gdk.RGBA>>();
-  // Every signal handler this overlay installs on the view/buffer/adjustment goes here.
-  // node-gtk roots each handler's closure in a Global for the GObject's lifetime, and the
-  // closure captures `this` (→ view + model) — so a single un-disconnected handler pins the
-  // overlay, and through it the editor, forever. `dispose()` cuts them. See TextEditor `subs`.
+  // The buffer 'changed' handler goes here. node-gtk roots the closure in a Global for the
+  // GObject's lifetime, and the closure captures `this` (→ view + model) — so a single
+  // un-disconnected handler pins the editor forever. `dispose()` cuts it. See TextEditor `subs`.
   private readonly subs = new CompositeDisposable();
 
   constructor(view: SourceView, model: EditorModel) {
     this.view = view;
     this.model = model;
 
-    this.widget = new Gtk.DrawingArea();
-    this.widget.setCanTarget(false); // never intercept clicks
-    this.widget.setDrawFunc((_area: unknown, cr: any) => this.draw(cr));
-
-    // Repaint as the text scrolls/changes so squiggles track their lines. The
-    // ScrolledWindow swaps in its own adjustments when the view is parented, so we
-    // (re)bind `value-changed` on `notify::v/hadjustment` as well as now — binding
-    // only at construction catches the throwaway pre-parent adjustment, whose
-    // `value-changed` never fires, so the squiggles would stay fixed while scrolling.
-    const redraw = () => this.widget.queueDraw();
-    const bind = (getter: 'getVadjustment' | 'getHadjustment', notify: string) => {
-      let bound: any = null;
-      const rebind = () => {
-        const adj = this.view[getter]?.();
-        if (!adj || adj === bound) return;
-        if (bound) bound.off('value-changed', redraw); // drop the stale binding before re-binding
-        bound = adj;
-        adj.on('value-changed', redraw);
-      };
-      rebind();
-      this.view.on(notify, rebind);
-      this.subs.add(new Disposable(() => {
-        this.view.off(notify, rebind);
-        if (bound) bound.off('value-changed', redraw);
-      }));
-    };
-    bind('getVadjustment', 'notify::vadjustment');
-    bind('getHadjustment', 'notify::hadjustment');
-    // Redraw on edits too: the marks have already moved with the edit, so repaint now
-    // (at their new positions) rather than waiting for the next diagnostics push — this
-    // is what removes the on-edit lag.
+    // Re-snapshot on edits so squiggles track their lines (the marks have already moved
+    // with the edit). The SCROLL repaint is automatic — the view re-runs snapshot_layer
+    // as it scrolls — so no adjustment handlers are needed.
+    const redraw = () => this.view.queueDraw();
     const buffer = this.model.buffer;
     buffer.on('changed', redraw);
     this.subs.add(new Disposable(() => buffer.off('changed', redraw)));
   }
 
-  /** Detach every signal handler (so the overlay stops pinning the editor) and drop the
-   *  anchor marks. Called by `TextDecorations.dispose()` on editor teardown. */
+  /** Detach the buffer handler (so this stops pinning the editor) and drop the anchor
+   *  marks. Called by `TextDecorations.dispose()` on editor teardown. */
   dispose(): void {
     this.subs.dispose();
     this.clear(); // delete the GtkTextMarks this overlay left on the buffer
@@ -115,7 +82,7 @@ export class UnderlineOverlay {
       endMark: buffer.createMark(null, this.model.iterAtPoint(range.end), true),
       color,
     }));
-    this.widget.queueDraw();
+    this.view.queueDraw();
   }
 
   /** Remove all underlines. */
@@ -123,7 +90,7 @@ export class UnderlineOverlay {
     if (this.placed.length === 0) return;
     this.deleteMarks();
     this.placed = [];
-    this.widget.queueDraw();
+    this.view.queueDraw();
   }
 
   private deleteMarks(): void {
@@ -134,7 +101,9 @@ export class UnderlineOverlay {
     }
   }
 
-  private draw(cr: any): void {
+  /** Paint the squiggles into the view's ABOVE_TEXT snapshot layer, whose Cairo context
+   *  is in buffer coordinates (the same space `getIterLocation` reports). */
+  paint(cr: any): void {
     if (this.placed.length === 0 || !this.view.getRealized()) return;
     cr.setLineWidth(LINE_WIDTH);
     for (const u of this.placed) this.drawUnderline(cr, u);
@@ -163,18 +132,14 @@ export class UnderlineOverlay {
     }
   }
 
-  /** Widget-pixel `[x0, x1]` and baseline `y` for `[startCol, endCol)` on `row`. */
+  /** Buffer-pixel `[x0, x1]` and baseline `y` for `[startCol, endCol)` on `row`. In
+   *  buffer coordinates (the snapshot layer's space), so positions are used directly. */
   private lineSpan(row: number, startColumn: number, endColumn: number): { x0: number; x1: number; y: number } | null {
     const startCell = this.view.getIterLocation(this.model.iterAtPoint(new Point(row, startColumn)));
     const endCell = this.view.getIterLocation(this.model.iterAtPoint(new Point(row, endColumn)));
     // Underline sits just below the cell box (in the descender gap).
-    const [x0, y] = this.view.bufferToWindowCoords(
-      Gtk.TextWindowType.WIDGET,
-      startCell.x,
-      startCell.y + startCell.height,
-    );
-    const [x1] = this.view.bufferToWindowCoords(Gtk.TextWindowType.WIDGET, endCell.x, endCell.y);
-    return { x0, x1, y: y - AMPLITUDE + 0.5 };
+    const y = startCell.y + startCell.height - AMPLITUDE + 0.5;
+    return { x0: startCell.x, x1: endCell.x, y };
   }
 
   /** Stroke a sine wave from `x0` to `x1` along baseline `y`. */

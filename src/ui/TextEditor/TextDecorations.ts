@@ -135,9 +135,10 @@ export class TextDecorations {
     return this.endLineSuppressed && iter.isEnd();
   }
 
-  /** The squiggle overlay's widget — the editor adds it to its overlay layer once. */
-  get underlineWidget(): InstanceType<typeof Gtk.DrawingArea> {
-    return this.underlines.widget;
+  /** Paint the diagnostic squiggles into the view's snapshot (the editor routes its
+   *  snapshot hook here; `cr` is in buffer coordinates). */
+  paintUnderlines(cr: any): void {
+    this.underlines.paint(cr);
   }
   /** Replace the full set of drawn underlines (diagnostic squiggles). */
   setUnderlines(items: Underline[]): void {

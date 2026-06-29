@@ -344,6 +344,22 @@ only visible paragraphs lay out. After the work per-frame JS is ~1% CPU; the
 frame-rate ceiling is now native GtkTextView/GSK rendering, beyond which the
 only lever is the gated custom-widget path (Option C). Current mechanisms:
 
+- **Overlays paint inside the view's snapshot, not as overlay widgets**
+  (`EditorSourceView.ts`) — the indent guides (`IndentGuides.ts`) and diagnostic
+  squiggles (`UnderlineOverlay.ts`) were viewport-pinned `Gtk.Overlay`
+  `DrawingArea`s that had to repaint (and re-convert buffer→window coords) on
+  *every* `value-changed`, plus cost two extra full-viewport GSK compositing layers
+  per frame. They now draw into the view's own snapshot via a `GtkSource.View`
+  subclass overriding `snapshot_layer` (`EditorSourceView`): guides on `BELOW_TEXT`,
+  squiggles on `ABOVE_TEXT`, in buffer coordinates (no per-row conversion), folded
+  into the one snapshot pass GTK re-runs on scroll for free. Removed the
+  `value-changed`→queue_draw plumbing entirely. **Measured A/B** (continuous scroll,
+  `src/poc/scroll-real.ts`): main-thread stalls >25ms **158→11**, scroll CPU
+  **38%→15%**. Caveat: node-gtk's `super.<vfunc>()` chain-up segfaults
+  (`g_vfunc_info_get_address`), so the override *replaces* GtkSourceView's own
+  `snapshot_layer` — which draws the current-line highlight (re-drawn in
+  `TextEditor.paintCurrentLine`) and the right-margin guide (imperceptible with our
+  scheme, not re-drawn).
 - **IndentGuides** (`IndentGuides.ts`) — one batched `getText` for the visible
   block + JS level math (not two FFI line-reads/row); geometry hoists the
   buffer→widget translation out of the per-row loop and, when all visible rows
@@ -418,8 +434,9 @@ where the native scroll floor sits:
 - **GTK4 caches the text's render nodes** (`GtkTextLineDisplay`), so scrolling
   *translates* cached per-line nodes rather than re-rendering them — the text
   itself is cheap. The per-frame native cost concentrates in what *isn't* cached:
-  the **gutter renderers** (a `PangoLayout` per line, per renderer) and our
-  overlay `DrawingArea`s (already optimized). ([GtkSourceView
+  the **gutter renderers** (a `PangoLayout` per line, per renderer) — the editor's
+  guide/squiggle overlays were since folded into the view's snapshot (see above), so
+  they no longer add their own compositing layers. ([GtkSourceView
   Next](https://blogs.gnome.org/chergert/2020/09/22/gtksourceview-next/))
 - **Line numbers alone cost "double-digit CPU %"** during kinetic scroll, because
   each line's number went through `PangoLayout` measure+render. The fix — cache

@@ -13,6 +13,7 @@ import { handleTagAutoClose } from './tagClose.ts';
 import { Range } from '../../text/Range.ts';
 import { Point } from '../../text/Point.ts';
 import type { TagName } from '../../syntax/tags.ts';
+import * as Color from 'color-bits/string';
 import { theme } from '../../theme/theme.ts';
 import { createSourceScheme } from '../../theme/createSourceScheme.ts';
 import { addStyles } from '../../styles.ts';
@@ -59,7 +60,9 @@ import type { TabState } from '../../SessionManager.ts';
 import Gdk from 'gi:Gdk-4.0';
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
+import Graphene from 'gi:Graphene-1.0';
 import GtkSource from 'gi:GtkSource-5';
+import { EditorSourceView } from './EditorSourceView.ts';
 type SourceBuffer = InstanceType<typeof GtkSource.Buffer>;
 type SourceView = InstanceType<typeof GtkSource.View>;
 
@@ -1423,7 +1426,11 @@ export class TextEditor implements DocumentHost {
   }
 
   private createView(buffer: SourceBuffer): SourceView {
-    const view = new GtkSource.View({ buffer });
+    const view = new EditorSourceView({ buffer });
+    // Paint the indent guides (below text) + diagnostic squiggles (above text)
+    // inside the view's own snapshot, so they scroll with the text instead of
+    // repainting viewport-pinned overlays every frame (see paintLayer).
+    view.layerPainter = (layer, snapshot) => this.paintLayer(layer, snapshot);
     view.addCssClass('zym-editor'); // monospace font applied via CSS (font store)
     if (this.cssClass) for (const c of this.cssClass.split(/\s+/)) if (c) view.addCssClass(c);
     view.setAutoIndent(true);
@@ -1580,14 +1587,11 @@ export class TextEditor implements DocumentHost {
     // Focusable inline peek (see-definition) — lives in this sibling overlay.
     this.inlinePeek = new Peek(this.view, overlay);
 
-    // Indent guides sit lowest (behind the squiggles/caret), in the whitespace. Held so
-    // `dispose()` can detach its view/buffer/adjustment handlers (they'd pin the editor).
+    // Indent guides + diagnostic squiggles are painted INSIDE the view's snapshot
+    // (paintLayer / EditorSourceView), not as overlay widgets — so they scroll with
+    // the text instead of repainting every frame. Held so `dispose()` can detach the
+    // guides' buffer/config handlers (they'd pin the editor).
     this.indentGuides = new IndentGuides(this.view, this.editorModel);
-    overlay.addOverlay(this.indentGuides.widget);
-
-    // Built here (after the view is in the ScrolledWindow, so its scroll
-    // adjustments exist); fed by DiagnosticsView in installLsp.
-    overlay.addOverlay(this.textDecorations.underlineWidget); // squiggles live inside TextDecorations
 
     // The search/replace bar floats at the top-right; it adds itself to `overlay`.
     this.searchBar = new SearchBar(overlay, this.search, this.view);
@@ -1821,6 +1825,60 @@ export class TextEditor implements DocumentHost {
       this.editorModel.setFocused(false);
     });
     this.subs.addController(this.view, focus);
+  }
+
+  /**
+   * Paint the editor's snapshot layers (`EditorSourceView.layerPainter`): the
+   * current-line highlight + indent guides on the BELOW_TEXT layer, diagnostic
+   * squiggles on ABOVE_TEXT. The snapshot is in buffer coordinates, so each painter
+   * draws at iter locations directly (no buffer→window conversion). Folding this into
+   * the view's own snapshot lets them scroll with the text for free (the view
+   * re-snapshots on scroll; no per-frame overlay widget repaint).
+   *
+   * The current-line highlight is re-drawn here because EditorSourceView's
+   * `snapshot_layer` override replaces GtkSourceView's own (node-gtk can't chain up
+   * to super — see EditorSourceView). GtkSourceView's right-margin guide is also
+   * replaced, but it is imperceptible with our scheme, so it isn't re-drawn.
+   */
+  private paintLayer(layer: any, snapshot: any): void {
+    const below = layer === Gtk.TextViewLayer.BELOW_TEXT;
+    const above = layer === Gtk.TextViewLayer.ABOVE_TEXT;
+    if (!below && !above) return;
+    if (!this.view.getRealized()) return;
+    const rect = this.view.getVisibleRect();
+    if (!rect || !rect.height) return;
+    const bounds = new Graphene.Rect();
+    bounds.init(rect.x, rect.y, rect.width, rect.height);
+    const cr = snapshot.appendCairo(bounds);
+    if (below) {
+      this.paintCurrentLine(cr, rect);
+      this.indentGuides?.paint(cr);
+    } else {
+      this.textDecorations.paintUnderlines(cr);
+    }
+  }
+
+  // Current-line highlight color: GtkSourceView's default tint is the editor
+  // background lightened a touch (sampled #2c2c30 from the stock renderer; lighten
+  // 0.05 reproduces it). Parsed once.
+  private currentLineRgba: InstanceType<typeof Gdk.RGBA> | null = null;
+
+  /** Re-draw the current-line highlight that GtkSourceView would have painted in its
+   *  own `snapshot_layer` (a full-width band on the insert line), in buffer coords. */
+  private paintCurrentLine(cr: any, rect: { x: number; width: number }): void {
+    if (!(this.view as any).getHighlightCurrentLine?.()) return;
+    const buffer = this.view.getBuffer();
+    const r = buffer.getIterAtMark(buffer.getInsert());
+    const iter = Array.isArray(r) ? r[r.length - 1] : r;
+    const loc = (this.view as any).getIterLocation(iter);
+    if (!this.currentLineRgba) {
+      this.currentLineRgba = new Gdk.RGBA();
+      this.currentLineRgba.parse(Color.lighten(theme.ui.view.bg, 0.05));
+    }
+    const c = this.currentLineRgba;
+    cr.setSourceRgba(c.red, c.green, c.blue, c.alpha);
+    cr.rectangle(rect.x, loc.y, rect.width, loc.height); // full visible width, one line tall
+    cr.fill();
   }
 
   /**
