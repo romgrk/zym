@@ -1,0 +1,30 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="zym-bg" x1="20" y1="8" x2="108" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2c3550"/>
+      <stop offset="1" stop-color="#11141d"/>
+    </linearGradient>
+    <linearGradient id="zym-z" x1="40" y1="40" x2="90" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5ff0d8"/>
+      <stop offset="1" stop-color="#6a8bff"/>
+    </linearGradient>
+    <linearGradient id="zym-sheen" x1="0" y1="8" x2="0" y2="78" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="zym-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#05070d" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <!-- rounded-square base tile -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#zym-bg)"/>
+  <!-- top sheen for depth -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#zym-sheen)"/>
+  <!-- hairline inner edge -->
+  <rect x="8.75" y="8.75" width="110.5" height="110.5" rx="27.25" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
+
+  <!-- Z glyph: one bold gradient stroke -->
+  <path d="M40 44 H88 L40 84 H88" fill="none" stroke="url(#zym-z)" stroke-width="15"
+        stroke-linecap="round" stroke-linejoin="round" filter="url(#zym-shadow)"/>
+</svg>

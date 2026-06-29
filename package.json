@@ -10,11 +10,12 @@
     "./plugin-api": "./src/plugin-api.ts"
   },
   "bin": {
-    "zym": "src/index.ts"
+    "zym": "bin/zym.mjs"
   },
   "scripts": {
     "start": "pnpm run generate-icons && NODE_ENV=development node --import node-gtk/register src/index.ts",
-    "postinstall": "pnpm run generate-types && pnpm run generate-icons",
+    "install-desktop": "node scripts/install-desktop.ts",
+    "prepare": "pnpm run generate-types && pnpm run generate-icons",
     "generate-icons": "node scripts/generate-icons.ts",
     "poc": "node --import node-gtk/register src/poc/fold-highlight.ts",
     "poc:inline": "node --import node-gtk/register src/poc/inline-overlay.ts",
@@ -35,11 +36,13 @@
     "diff": "^9.0.0",
     "marked": "^18.0.5",
     "native-keymap": "^3.3.9",
-    "node-gtk": "^2.1.0",
+    "node-gtk": "^3.0.0",
     "outdent": "^0.8.0",
     "postcss-selector-parser": "^7.1.4",
+    "tree-sitter-wasms": "^0.1.13",
     "vscode-jsonrpc": "^9.0.0",
-    "vscode-languageserver-protocol": "^3.18.0"
+    "vscode-languageserver-protocol": "^3.18.0",
+    "web-tree-sitter": "^0.20.8"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -47,10 +50,8 @@
     "@typescript-eslint/utils": "^8.61.1",
     "eslint": "^10.5.0",
     "globals": "^17.6.0",
-    "tree-sitter-wasms": "^0.1.13",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1",
-    "typescript-language-server": "^5.3.0",
-    "web-tree-sitter": "^0.20.8"
+    "typescript-language-server": "^5.3.0"
   }
 }

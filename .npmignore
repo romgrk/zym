@@ -13,13 +13,15 @@ AGENTS.md
 # Docs & media (not needed at runtime)
 docs/
 img/
-scripts/
+# scripts/ ships: postinstall runs scripts/generate-icons.ts, and
+# scripts/install-desktop.ts backs `zym --install-desktop`.
 
 # Tests
 **/*.test.ts
 
 # Proof-of-concept experiments
 src/poc/
+scripts/peek-demo.ts
 
 # Lockfiles / workspace (consumers resolve their own)
 pnpm-lock.yaml
