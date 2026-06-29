@@ -229,6 +229,18 @@ when the view is realized, so large files only pay for what's on screen:
   captures to it) and injections **entirely off-screen are skipped** — the big
   win for Markdown, which has an `inline` node per paragraph but only parses the
   visible ones.
+- A capture wider than the painted range is **clamped to it** when applied
+  (`paintViewLines`): a range query still returns a capture that merely *overlaps*
+  the range at its full extent (e.g. `(arrow_function) @function` over a whole
+  callback body, a multi-line string/comment), and the run sweep would paint that
+  color all the way down to the capture's real end — onto lines not yet painted
+  with their own token tags. Because the scroll repaint is **additive** (never
+  clears), that stray tag then survives until the next full `repaint()` (an
+  edit/fold), which is the "arrow-function body shows solid yellow until you type
+  in it" bug. The clamp maps any capture position before the range to its first
+  line / after it to its last line, so a tag never escapes the painted band. This
+  mirrors the multibuffer painter's `sliceIter` clamp (the comment-colored
+  constructor bug).
 - Highlighting is a **persistent, incremental cache** (`paintedRanges`): a
   scroll never clears (text unchanged ⇒ tags valid), so highlights persist
   down-then-up; an edit/fold resets it. See text-editor.md → "Scrolling & open

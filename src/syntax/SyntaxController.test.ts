@@ -1,11 +1,21 @@
-import { test } from 'node:test';
+import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import Gtk from 'gi:Gtk-4.0';
 import GtkSource from 'gi:GtkSource-5';
 import { SyntaxController } from './SyntaxController.ts';
 import { Document } from '../ui/TextEditor/Document.ts';
+import { plugins, registerBuiltinPlugins } from '../plugin/index.ts';
+import { preloadGrammars, getGrammar, langIdForPath } from './grammar.ts';
 
 Gtk.init();
+
+let hasTs = false;
+before(async () => {
+  try { registerBuiltinPlugins(); } catch { /* already registered */ }
+  await plugins.activateAll();
+  await preloadGrammars();
+  hasTs = !!getGrammar(langIdForPath('/x.ts') ?? '');
+});
 
 // SyntaxController is normally built inside the app's activate handler; it builds
 // safely headless too. Folding physically collapses a body to `[...]` in the VIEW
@@ -92,6 +102,31 @@ test('bracket match: highlights the bracket under the cursor and its pair', () =
   buffer.placeCursor(at(1)); // before any bracket, not enclosed → cleared
   assert.ok(!at(3).hasTag(tag), 'outside any pair clears the highlight');
   assert.ok(!at(7).hasTag(tag), 'and its former match');
+});
+
+test('a viewport sub-range paint does not bleed a wide capture past the painted range', () => {
+  if (!hasTs) return;
+  // `call(() => { …big body… })`: the body is captured whole by `(arrow_function) @function`.
+  // Painting only the head (as the viewport painter does on open) must not let that broad
+  // color spill onto body tokens far below the painted range — the additive scroll paint can't
+  // remove a stray tag, so it would survive (all-yellow body) until an edit's full repaint.
+  const body = Array.from({ length: 120 }, (_, i) => `  const v${i} = ${i};`).join('\n');
+  const { buffer, syntax } = setup(`const fn = call(() => {\n${body}\n})\n`);
+  syntax.setLanguageForPath('/x.ts'); // headless: a correct whole-buffer paint (view unrealized)
+
+  const fnTag = buffer.getTagTable().lookup('ts:function')!;
+  const kwTag = buffer.getTagTable().lookup('ts:keyword')!;
+  assert.ok(fnTag && kwTag, 'function + keyword color tags exist');
+  const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
+  const iterAt = (line: number, col: number): any => asIter(buffer.getIterAtLineOffset(line, col));
+
+  // Repaint ONLY the head — the private painter the viewport/scroll path drives (there is no
+  // public headless trigger: a viewport repaint needs a realized, sized view).
+  (syntax as unknown as { paintViewLines(a: number, b: number): void }).paintViewLines(0, 10);
+
+  const deep = iterAt(60, 2); // the `const` of a body line well below the painted range
+  assert.ok(deep.hasTag(kwTag), 'the deep keyword keeps its own color');
+  assert.ok(!deep.hasTag(fnTag), 'the broad @function capture does not bleed past the range');
 });
 
 test('a keep-footer fold (if/else branch) leaves the footer line on its own line', () => {

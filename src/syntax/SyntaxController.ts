@@ -489,7 +489,22 @@ export class SyntaxController {
     }
     const [mFrom, mTo] = vFrom === null || vTo === null ? [null, null] : this.documentLineRange(vFrom, vTo);
     const captures = this.docSyntax.captures(mFrom, mTo);
-    this.highlight.paint(this.buffer, captures, (row, col) => this.screenIterForDocument(row, col));
+    // CLAMP each capture position to the painted document range `[mFrom, mTo]`. A capture can
+    // be much wider than the range — the whole `(arrow_function) @function` body, a multi-line
+    // string/comment — and the run sweep paints its full extent. Without clamping, that broad
+    // color bleeds onto lines below/above the range that haven't been painted with their own
+    // token tags yet, and since the scroll repaint is ADDITIVE (never clears) the stray tag
+    // survives until a full `repaint()` (an edit/fold) clears the buffer — the "arrow-function
+    // body is all yellow until you type in it" bug. Mirror of `sliceIter`'s clamp for the
+    // multibuffer path (the comment-colored-constructor bug); identity when range is null.
+    const iterAt = mFrom === null || mTo === null
+      ? (row: number, col: number) => this.screenIterForDocument(row, col)
+      : (row: number, col: number) => {
+          if (row < mFrom) return this.screenIterForDocument(mFrom, 0);
+          if (row > mTo) return this.lineEndIter(this.screenRow(mTo));
+          return this.screenIterForDocument(row, col);
+        };
+    this.highlight.paint(this.buffer, captures, iterAt);
   }
 
   /** A VIEW-buffer iter for a source `(row, col)` capture inside a projection `slice` (a
