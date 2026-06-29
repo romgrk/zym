@@ -64,12 +64,15 @@ All files under `src/ui/TextEditor/`.
 
 - **`CompletionPopup.ts`** — a keyboard-driven dropdown anchored below the
   **start of the word** being completed, via the shared `EditorPopover` (a
-  chrome-less `Gtk.Popover` — the `#CompletionPopup` panel is the visual card;
+  chrome-less `Gtk.Popover` — the `.CompletionPopup` panel is the visual card;
   the popover positions it and slides it on-screen). Built `persistent` so it
   re-opens if GTK pops it down on a cycle's preview edit. Non-focusable
   (`setCanTarget(false)`) so the editor keeps focus and typing flows.
-  Painted with the theme background; selected row uses the theme's selected
-  color; rows have no min-height (a single match is one row tall). Each row:
+  Painted with `--popover-bg-color` and the shared in-text popover chrome
+  (`--popover-radius-small` + border + `--popover-shadow`, identical to the
+  hover/signature cards); the selected row uses the shared accent-tint
+  selection (`--selection-bg-focus`, as every other list); rows have no
+  min-height (a single match is one row tall). Each row:
   a fixed-width muted **kind icon** (Nerd Font codicon via
   `completionKindGlyph`), the label with fuzzy-matched chars highlighted in
   the picker's accent (`highlightMarkup`), the `detail` packed after it, and
@@ -80,7 +83,7 @@ All files under `src/ui/TextEditor/`.
   thereafter (to avoid flicker while cycling). The list scrolls
   (`MAX_HEIGHT_PX`) and scrolls-the-selection-into-view since the popup
   can't take focus. The popup shifts left near the editor's right edge to
-  keep the doc pane on-screen. Uses `--popover-radius-small`.
+  keep the doc pane on-screen.
 
 - **`createBufferWordsSource.ts`** — the simplest source (name `buffer`,
   default priority). A factory over a `getText` accessor (decoupled from the
