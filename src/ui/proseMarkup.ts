@@ -9,6 +9,7 @@
  * to agent).
  */
 import Gtk from 'gi:Gtk-4.0';
+import Pango from 'gi:Pango-1.0';
 import { theme } from '../theme/theme.ts';
 import { fonts } from '../fonts.ts';
 
@@ -57,9 +58,24 @@ export function setMarkupSafe(label: InstanceType<typeof Gtk.Label>, markup: str
   }
 }
 
+/**
+ * A wrapping label that breaks even a long *unbroken* token — a URL, file path,
+ * tool name, or JSON string — via Pango's `WORD_CHAR` mode. A plain wrapping label
+ * (`WORD`) reports a minimum width as wide as its longest token, which propagates up
+ * and forces the transcript column past its `Adw.Clamp` bound, widening every row.
+ * `WORD_CHAR` keeps the minimum width small, so a single long line wraps instead of
+ * stretching the column. Use this for every wrapping label in the conversation
+ * transcript. See docs/agents/claude-sdk.md.
+ */
+export function wrappingLabel(props: ConstructorParameters<typeof Gtk.Label>[0] = {}): InstanceType<typeof Gtk.Label> {
+  const label = new Gtk.Label({ wrap: true, ...props });
+  label.setWrapMode(Pango.WrapMode.WORD_CHAR);
+  return label;
+}
+
 /** A new wrapped, selectable label rendered from `markup` (plain `fallback` on reject). */
 export function markupLabel(markup: string, fallback: string): InstanceType<typeof Gtk.Label> {
-  const label = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
+  const label = wrappingLabel({ xalign: 0, selectable: true });
   setMarkupSafe(label, markup, fallback);
   return label;
 }

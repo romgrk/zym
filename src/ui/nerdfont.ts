@@ -76,6 +76,7 @@ export const NERDFONT = {
     GLOB:     '', // U+F07C nf-fa-folder_open
     WEB:      '', // U+F0AC nf-fa-globe
     SUBAGENT: '', // U+F0C0 nf-fa-users (Task)
+    ROBOT:    '󰚩', // U+F06A9 nf-md-robot (subagents header button)
     TODO:     '', // U+F0AE nf-fa-tasks (checklist)
     NOTEBOOK: '', // U+F02D nf-fa-book
     MCP:      '', // U+F1E6 nf-fa-plug

@@ -1,8 +1,8 @@
 /*
  * MonitorView — the UI for shell monitors (the `Monitor` tool). Like subagents:
- * an inline button in the main thread, an entry in a sticky "Monitors" panel
- * while running (with a Cancel button), and a pushed page to inspect its output.
- * Cancel uses the control protocol's stop_task (SdkSession.stopTask).
+ * an inline button in the main thread, a row in the agent header bar's terminal
+ * count-button popover while running (with a Cancel button), and a pushed page to
+ * inspect its output. Cancel uses the control protocol's stop_task (SdkSession.stopTask).
  */
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
@@ -10,11 +10,11 @@ import * as Fs from 'node:fs';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 import { theme } from '../../theme/theme.ts';
 import { addStyles } from '../../styles.ts';
-import { escapeMarkup, setMarkupSafe, clearChildren } from '../proseMarkup.ts';
+import { escapeMarkup, setMarkupSafe, clearChildren, wrappingLabel } from '../proseMarkup.ts';
 import { iconSpan } from '../icons.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { truncateLines } from './format.ts';
-import { StickyListPanel } from './StickyListPanel.ts';
+import { HeaderCountButton } from './HeaderCountButton.ts';
 import { ToolRow, toolHeaderLabel } from './ToolRow.ts';
 import type { SdkSession } from '../../agents/claude-sdk/SdkSession.ts';
 import type { PageNav } from './SubagentView.ts';
@@ -29,7 +29,9 @@ addStyles(`
 `);
 
 export class MonitorView {
-  readonly panel = new StickyListPanel('Monitors', 'is-below');
+  /** The terminal count button for the agent header bar (icon + running count +
+   *  popover list of running monitors); pack `headerButton.button` into the header. */
+  readonly headerButton = new HeaderCountButton(NERDFONT.EDITOR.TERMINAL, 'Running monitors');
   private readonly ids = new Set<string>();
   private readonly session: Pick<SdkSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>;
   private readonly nav: PageNav;
@@ -62,18 +64,17 @@ export class MonitorView {
   }
 
   private openButton(id: string, description: string, color?: string): InstanceType<typeof Gtk.Button> {
-    const label = new Gtk.Label({ xalign: 0, wrap: true });
+    const label = wrappingLabel({ xalign: 0, hexpand: true });
     setMarkupSafe(label, `${iconSpan(NERDFONT.TOOL.MONITOR, color)}  <b>Monitor</b>  ${escapeMarkup(description)}`, `Monitor ${description}`);
-    const button = new Gtk.Button({ halign: Gtk.Align.START, hexpand: true });
+    const button = new Gtk.Button({ hexpand: true });
     button.addCssClass('flat');
-    button.addCssClass('sticky-list-panel-link');
     button.setChild(label);
-    this.renderSubs.connect(button, 'clicked', () => this.pushPage(id));
+    this.renderSubs.connect(button, 'clicked', () => { this.pushPage(id); this.headerButton.close(); });
     return button;
   }
 
   private render(): void {
-    this.renderSubs.clear(); // sever the previous render's panel button handlers
+    this.renderSubs.clear(); // sever the previous render's popover button handlers
     const rows: Widget[] = [];
     for (const id of this.ids) {
       const m = this.session.getMonitor(id);
@@ -91,7 +92,7 @@ export class MonitorView {
       row.append(cancel);
       rows.push(row);
     }
-    this.panel.render(rows);
+    this.headerButton.setRows(rows);
   }
 
   // Inspect page: status + captured output (read from the monitor's output file).
@@ -105,12 +106,12 @@ export class MonitorView {
       clearChildren(box);
       const m = this.session.getMonitor(id);
       if (!m) return;
-      const head = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
+      const head = wrappingLabel({ xalign: 0, selectable: true });
       setMarkupSafe(head, `<b>${escapeMarkup(m.description)}</b>  <span alpha="55%">${escapeMarkup(m.status)}</span>`, `${m.description} (${m.status})`);
       box.append(head);
       let output = '';
       if (m.outputFile) { try { output = Fs.readFileSync(m.outputFile, 'utf8'); } catch { /* not readable yet */ } }
-      const body = new Gtk.Label({ xalign: 0, wrap: true, selectable: true, label: output.trim() ? truncateLines(output.trim(), 200, 8000) : 'No output captured yet.' });
+      const body = wrappingLabel({ xalign: 0, selectable: true, label: output.trim() ? truncateLines(output.trim(), 200, 8000) : 'No output captured yet.' });
       body.addCssClass('conversation-result');
       box.append(body);
     };

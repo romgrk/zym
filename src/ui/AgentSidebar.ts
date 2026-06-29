@@ -18,8 +18,8 @@ import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import { ICON_FONT_FAMILY } from '../fonts.ts';
 import { NERDFONT } from './nerdfont.ts';
+import { headerButtonContent } from './headerButton.ts';
 import type { Agent } from '../agents/types.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -37,19 +37,9 @@ addStyles(/* css */`
   .AgentSidebar { border-right: 1px solid var(--secondary-sidebar-border-color); }
   .AgentSidebar .agent-sidebar-header { border-bottom: 1px solid var(--border-color); }
 
-  /* The edited-files button at the header's trailing edge (pencil + count) — a flat,
-     muted control that opens the active agent's changed files; hidden until it edits
-     one. Muted via opacity (the secondary-sidebar fg), brightened on hover. */
-  .AgentSidebar .agent-sidebar-files {
-    min-width: 0;
-    min-height: 0;
-    padding: 0 4px;
-  }
-  .AgentSidebar .agent-sidebar-files label {
-    opacity: 0.6;
-    font-size: var(--t-font-ui-size-small);
-  }
-  .AgentSidebar .agent-sidebar-files:hover label { opacity: 1; }
+  /* The edited-files button at the header's trailing edge (pencil + count) opens the
+     active agent's changed files; its look is the shared .agent-header-button class
+     (see headerButton.ts), consistent with the subagent/monitor count buttons. */
 `);
 
 export interface AgentSidebarOptions {
@@ -66,12 +56,17 @@ export class AgentSidebar {
   // Every open agent's widget, one per stack page; the visible one is the active
   // workbench's agent. Children are never reparented — switching flips visibility.
   private readonly stack: InstanceType<typeof Gtk.Stack>;
+  // The header bar (packs the title, the active agent's header widgets, edited-files).
+  private readonly header: InstanceType<typeof Adw.HeaderBar>;
+  // The active agent's header widgets currently packed (subagent/monitor count
+  // buttons); removed and replaced when a different agent is shown.
+  private packedHeaderWidgets: Widget[] = [];
   // The header title (the active agent's name).
   private readonly title: InstanceType<typeof Adw.WindowTitle>;
   // The edited-files button + its count label (right side of the header), reflecting
   // the active agent. Hidden when it has no edits (or no agent is shown).
   private readonly files: InstanceType<typeof Gtk.Button>;
-  private readonly filesLabel: InstanceType<typeof Gtk.Label>;
+  private readonly filesSetCount: (value: number | string) => void;
   // The agent the header currently reflects, and the unsubscribe for its file-change
   // notifications — swapped whenever a different agent is shown.
   private activeAgent: Agent | null = null;
@@ -89,6 +84,7 @@ export class AgentSidebar {
     // An Adw.HeaderBar (its height/chrome matches the window header beside it), with
     // its own title buttons off — the window controls live on the main header.
     const header = new Adw.HeaderBar();
+    this.header = header;
     header.addCssClass('agent-sidebar-header');
     header.setShowStartTitleButtons(false);
     header.setShowEndTitleButtons(false);
@@ -98,13 +94,14 @@ export class AgentSidebar {
 
     // The edited-files badge, packed at the trailing edge; opens the active agent's
     // changes on click. (Moved here from the per-row badge in WorkbenchList.)
-    this.filesLabel = new Gtk.Label({ useMarkup: true });
     this.files = new Gtk.Button();
-    this.files.setChild(this.filesLabel);
     this.files.addCssClass('flat');
-    this.files.addCssClass('agent-sidebar-files');
+    this.files.addCssClass('agent-header-button'); // shared with the subagent/monitor count buttons
     this.files.setCanFocus(false);
     this.files.setVisible(false);
+    const filesContent = headerButtonContent(CHANGED_GLYPH);
+    this.filesSetCount = filesContent.setCount;
+    this.files.setChild(filesContent.root);
     this.subs.connect(this.files, 'clicked', () => { if (this.activeAgent) this.options.onOpenChanges?.(this.activeAgent); });
     header.packEnd(this.files);
 
@@ -149,6 +146,12 @@ export class AgentSidebar {
     if (agent !== this.activeAgent) {
       this.filesUnsub?.();
       this.filesUnsub = agent ? agent.onDidChangeFiles(() => this.updateFiles()) : null;
+      // Swap the per-agent header widgets (subagent/monitor count buttons): unpack the
+      // previous agent's, pack the new one's just left of the edited-files badge. Packed
+      // in reverse so the agent's array order reads left-to-right in the header.
+      for (const w of this.packedHeaderWidgets) this.header.remove(w);
+      this.packedHeaderWidgets = agent?.headerWidgets ?? [];
+      for (let i = this.packedHeaderWidgets.length - 1; i >= 0; i--) this.header.packEnd(this.packedHeaderWidgets[i]);
       this.activeAgent = agent;
     }
     this.updateFiles();
@@ -163,7 +166,7 @@ export class AgentSidebar {
       return;
     }
     this.files.setVisible(true);
-    this.filesLabel.setMarkup(`<span font_family="${ICON_FONT_FAMILY}">${CHANGED_GLYPH}</span> ${changed.length}`);
+    this.filesSetCount(changed.length);
     const names = changed.map((path) => path.split('/').pop() ?? path);
     this.files.setTooltipText(`Edited ${changed.length} file${changed.length === 1 ? '' : 's'} — click to open:\n${names.join('\n')}`);
   }

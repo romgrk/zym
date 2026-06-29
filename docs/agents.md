@@ -58,10 +58,15 @@ What already exists and is reused, not rebuilt:
   sidebar** (`src/ui/AgentSidebar.ts`) — a full-height column *outside* the header
   bar, between the WorkbenchList and the content, themed with the libadwaita
   `secondarySidebar` colors. Like WorkbenchList it carries its **own** `Adw` header
-  (an `Adw.ToolbarView` top bar showing the agent name on the left and the **active
-  agent's edited-files button** packed at the trailing edge — pencil + count, click →
-  `openAgentChanges`; it tracks the shown agent's `onDidChangeFiles` and hides when it
-  has no edits). So the header lines up with the agent column for free — no width-sync
+  (an `Adw.ToolbarView` top bar showing the agent name on the left and, at the trailing
+  edge, the **active agent's edited-files button** (pencil + count, click →
+  `openAgentChanges`; tracks `onDidChangeFiles`, hidden with no edits) plus any
+  **per-agent `headerWidgets`** the active agent contributes — for `AgentConversation`
+  these are the subagent (robot) and monitor (terminal) count buttons (each hidden until
+  it has a running item; popover lists them). `setActiveAgent` swaps both the edited-files
+  tracking and the packed `headerWidgets` on every switch. All three icon buttons
+  (subagent, monitor, edited-files) share one look + `[icon][count]` content via
+  `headerButton.ts` (`headerButtonContent` / the `agent-header-button` class). So the header lines up with the agent column for free — no width-sync
   against the window header (whose padding never aligned). It's **uncloseable**: it's a
   `Gtk.Stack` page, not a tab. Every open agent's widget is a stack page kept alive
   across switches; `activateWorkbench` flips the visible one (`AgentSidebar.show(agent)`,
@@ -116,10 +121,12 @@ What already exists and is reused, not rebuilt:
     `ctrl-c`) and **close** (`ctrl-d ctrl-d`, anywhere);
     **subagents** (captured per-`Agent`-tool transcript; a run of
     consecutive spawns collapses into one grouped inline entry — like Read does —
-    each a clickable item, plus a sticky panel + pushed `Adw.NavigationView` page
+    each a clickable item, plus a **robot count button in the agent header bar**
+    whose popover lists the running ones + a pushed `Adw.NavigationView` page
     that renders the subagent's tools through the *same* shared row builder as the
-    main transcript, kept out of the main thread); **shell monitors** (sticky panel
-    + inspect page + cancel via
+    main transcript, kept out of the main thread); **shell monitors** (a **terminal
+    count button in the agent header bar** with the same running-list popover +
+    inspect page + cancel via
     `stop_task`); **AskUserQuestion** as an `Adw.ViewSwitcher` card (j/k/h/l +
     notes; answered over the only working channel, the permission deny-message);
     **message queueing** while busy (right-aligned "Pending" bubble); unknown
@@ -128,8 +135,10 @@ What already exists and is reused, not rebuilt:
     tested), `Transcript.ts` (the scrollable entries column + consecutive-run
     grouping, shared by the main view and each subagent page), `toolRows.ts` (the
     shared tool-use row builder — Bash / file-tool group / generic toggle — used by
-    both), `StickyListPanel.ts` (Tasks/Subagents/Monitors), `cards.ts`
-    (permission), `QuestionCard.ts`, `SubagentView.ts`, `MonitorView.ts`.
+    both), `StickyListPanel.ts` (the Tasks panel), `HeaderCountButton.ts` (the
+    header-bar robot/terminal count buttons + popover, used by SubagentView /
+    MonitorView), `cards.ts` (permission), `QuestionCard.ts`, `SubagentView.ts`,
+    `MonitorView.ts`.
   - **Deferred:** conversation resume + session serialize for sdk
     (`serialize()` returns null → not persisted across editor restart);
     token-level live streaming.

@@ -1,17 +1,18 @@
 /*
  * SubagentView — the UI for spawned subagents (the `Agent` tool). A subagent's
  * activity is captured into its own transcript (see SdkSession); here it surfaces
- * as a single inline button in the main thread, an entry in a sticky "running"
- * panel, and a pushed NavigationView page showing the full transcript.
+ * as a single inline button in the main thread, a row in the agent header bar's
+ * robot count-button popover (running ones), and a pushed NavigationView page
+ * showing the full transcript.
  */
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 import { Message } from './Message.ts';
-import { escapeMarkup, setMarkupSafe } from '../proseMarkup.ts';
+import { escapeMarkup, setMarkupSafe, wrappingLabel } from '../proseMarkup.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { agentStatusMarkup } from '../agentStatusIcon.ts';
-import { StickyListPanel } from './StickyListPanel.ts';
+import { HeaderCountButton } from './HeaderCountButton.ts';
 import { Transcript } from './Transcript.ts';
 import { appendToolRow } from './toolRows.ts';
 import type { AgentStatus } from '../../agents/types.ts';
@@ -31,8 +32,9 @@ export interface PageNav {
 }
 
 export class SubagentView {
-  /** The running-subagents panel; mount `panel.root` in the layout. */
-  readonly panel = new StickyListPanel('Subagents', 'is-below');
+  /** The robot count button for the agent header bar (icon + running count + popover
+   *  list of running subagents); pack `headerButton.button` into the header. */
+  readonly headerButton = new HeaderCountButton(NERDFONT.TOOL.ROBOT, 'Running subagents');
   private readonly running = new Map<string, { agentType: string; description: string; status: 'running' | 'completed' }>();
 
   private readonly session: Pick<SdkSession, 'getSubagent' | 'onSubagentUpdate'>;
@@ -63,7 +65,7 @@ export class SubagentView {
     // A flat item "<type>  <description>" stacked under the group's single subagent
     // icon (no per-item glyph — the group head carries it, like file-path rows). The
     // click handler routes through `subs` so it's severed when the view is torn down.
-    const label = new Gtk.Label({ xalign: 0, wrap: true, hexpand: true });
+    const label = wrappingLabel({ xalign: 0, hexpand: true });
     label.addCssClass('conversation-tool-header');
     setMarkupSafe(label, `<b>${escapeMarkup(type)}</b>${desc ? `  ${escapeMarkup(desc)}` : ''}`, `${type} ${desc}`);
     const item = new Gtk.Button({ halign: Gtk.Align.START });
@@ -84,28 +86,27 @@ export class SubagentView {
     this.render();
   }
 
-  // A flat link-button "<status> <type>  <description>" that opens the subagent page.
-  // The leading glyph is the shared agent status indicator (agentStatusIcon), so a
-  // subagent reads the same as a top-level agent — `working` shows the ellipsis glyph.
+  // A flat full-width popover row "<status> <type>  <description>" that opens the
+  // subagent page (and closes the popover). The leading glyph is the shared agent
+  // status indicator — `working` shows the ellipsis glyph, like a top-level agent.
   private linkButton(id: string, status: AgentStatus, type: string, desc: string): InstanceType<typeof Gtk.Button> {
-    const label = new Gtk.Label({ xalign: 0, wrap: true });
+    const label = wrappingLabel({ xalign: 0, hexpand: true });
     setMarkupSafe(label, `${agentStatusMarkup(status)}  <b>${escapeMarkup(type)}</b>${desc ? `  ${escapeMarkup(desc)}` : ''}`, `${type} ${desc}`);
-    const button = new Gtk.Button({ halign: Gtk.Align.START });
+    const button = new Gtk.Button({ hexpand: true });
     button.addCssClass('flat');
-    button.addCssClass('sticky-list-panel-link');
     button.setChild(label);
-    this.renderSubs.connect(button, 'clicked', () => this.pushPage(id));
+    this.renderSubs.connect(button, 'clicked', () => { this.pushPage(id); this.headerButton.close(); });
     return button;
   }
 
   private render(): void {
-    this.renderSubs.clear(); // sever the previous render's panel link handlers
+    this.renderSubs.clear(); // sever the previous render's popover link handlers
     const rows: Widget[] = [];
     for (const [id, s] of this.running) {
       if (s.status !== 'running') continue;
       rows.push(this.linkButton(id, 'working', s.agentType, s.description));
     }
-    this.panel.render(rows);
+    this.headerButton.setRows(rows);
   }
 
   // Push a page rendering the subagent's captured transcript; live-updates while running.

@@ -15,7 +15,6 @@
  * first-class workbench owner registered in `zym.agents` — the chrome reads
  * `status` / `changedFiles` / etc., never the concrete class.
  */
-import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
 import { addStyles } from '../styles.ts';
@@ -25,16 +24,16 @@ import { worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { TextEditor, createInput } from './TextEditor/TextEditor.ts';
 import { createSlashCommandSource } from './TextEditor/createSlashCommandSource.ts';
 import { MarkdownView } from './markdown/MarkdownView.ts';
-import { escapeMarkup, setMarkupSafe } from './proseMarkup.ts';
+import { escapeMarkup, setMarkupSafe, wrappingLabel, clearChildren } from './proseMarkup.ts';
 import { iconSpan } from './icons.ts';
 import { formatCount, formatElapsed, parseLocalCommand } from './conversation/format.ts';
 import { StickyListPanel } from './conversation/StickyListPanel.ts';
 import { Transcript } from './conversation/Transcript.ts';
 import { Message, type MessageKind } from './conversation/Message.ts';
-import { permissionCard, permissionButtons } from './conversation/cards.ts';
+import { permissionPrompt, permissionDiffView, type PermissionChoice } from './conversation/cards.ts';
 import { QuestionCard } from './conversation/QuestionCard.ts';
 import { ToolRow } from './conversation/ToolRow.ts';
-import { appendToolRow, EDIT_TOOLS } from './conversation/toolRows.ts';
+import { appendToolRow, permissionPromptParts, editDiffLines, EDIT_TOOLS } from './conversation/toolRows.ts';
 import { SubagentView, SUBAGENT_GROUP } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
@@ -83,18 +82,26 @@ addStyles(/* css */`
   .AgentConversation .conversation-input-card {
     margin: 0 calc(2 * var(--t-spacing)) calc(2 * var(--t-spacing)) calc(2 * var(--t-spacing));
     border-radius: var(--card-radius);
-    background: var(--card-bg-color);
+    /* A subtle foreground tint, no border at rest; a permission / question colours
+       the (otherwise transparent) border — warning / info — via .is-permission /
+       .is-question below. */
+    background: alpha(currentColor, 0.05);
+    border: 2px solid transparent;
     /* Native (libadwaita) focus ring: invisible at rest, fading + scaling in when the
        prompt takes focus (.prompt-focused). Follows the card's border-radius. */
     outline: 0 solid transparent;
     outline-offset: 3px;
-    transition: outline-color 200ms ease-in-out, outline-width 200ms ease-in-out, outline-offset 200ms ease-in-out;
+    transition: outline-color 200ms ease-in-out, outline-width 200ms ease-in-out, outline-offset 200ms ease-in-out, border-color 200ms ease-in-out;
   }
   /* Ring the whole card while the prompt editor (not the footer dropdown) holds focus. */
   .AgentConversation .conversation-input-card.prompt-focused {
     outline: 2px solid alpha(var(--accent-color), 0.6);
     outline-offset: -1px;
   }
+  /* While a permission / question replaces the input, ring the card in the matching
+     status colour: warning to approve a tool, info to answer a question. */
+  .AgentConversation .conversation-input-card.is-permission { border-color: var(--t-ui-status-warning); }
+  .AgentConversation .conversation-input-card.is-question { border-color: var(--t-ui-status-info); }
 
   /* Let the card's background show through the editor (no separate editor bg). */
   .AgentConversation .conversation-prompt,
@@ -155,17 +162,26 @@ addStyles(/* css */`
   /* The pushed subagent/monitor page's header (back button + title). */
   .AgentConversation .conversation-page-header { padding: 6px; border-bottom: 1px solid var(--border-colo); }
 
-  /* The fallback permission card + its allow/deny buttons (cards.ts). */
-  .AgentConversation .conversation-perm {
-    padding: 8px;
-    border: 1px solid var(--t-ui-status-info);
-    border-radius: 6px;
+  /* The permission prompt that REPLACES the input while the agent waits for approval
+     (cards.ts, shown in the input card's interaction slot): a title, an optional
+     command line, then a row of equal, unemphasised actions. */
+  .AgentConversation .conversation-perm-prompt { padding: 16px; }
+  /* The command (Bash) and the diff (edit tools) read as a code block: a faint
+     window-bg tint, rounded like a button, 1×spacing of padding. The diff caps its
+     height in cards.ts and scrolls past it. */
+  .AgentConversation .conversation-perm-command,
+  .AgentConversation .conversation-perm-diff {
+    background: alpha(var(--window-bg-color), 0.1);
+    border-radius: var(--popover-radius-small);
   }
-  .AgentConversation .conversation-perm-buttons { margin-top: 4px; }
-  .AgentConversation .conversation-perm-detail { opacity: 0.8; }
+  .AgentConversation .conversation-perm-command,
+  .AgentConversation .conversation-perm-diff-body { padding: var(--t-spacing); }
+  .AgentConversation .conversation-perm-command { opacity: 0.8; }
+  .AgentConversation .conversation-perm-actions { margin-top: 6px; }
 
   /* The monospace bits (tool detail, results, JSON dumps) follow the font store. */
-  .AgentConversation .conversation-perm-detail,
+  .AgentConversation .conversation-perm-command,
+  .AgentConversation .conversation-perm-diff-body,
   .AgentConversation .conversation-bash-command,
   .AgentConversation .conversation-result,
   .AgentConversation .conversation-unknown-body { font-family: var(--t-font-monospace-family); }
@@ -245,6 +261,14 @@ export class AgentConversation implements Agent {
   private pendingText = ''; // a message submitted while busy, sent once the agent is idle
   private readonly input: TextEditor;
   private readonly promptContainer: InstanceType<typeof Gtk.Box>;
+  // The input area is a Gtk.Stack: the prompt editor, or an "interaction" widget (a
+  // permission prompt / question card) that REPLACES it while the agent waits for the
+  // user, restored to the prompt once answered. See docs/agents/claude-sdk.md.
+  private readonly promptStack = new Gtk.Stack();
+  private readonly interactionSlot = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+  // The rounded input card; gets a status-coloured border (warning / info) while a
+  // permission / question replaces the prompt — see showInteraction.
+  private readonly inputCard: InstanceType<typeof Gtk.Box>;
   private readonly footer: InstanceType<typeof Gtk.Box>;
   // Footer model name + context-window gauge + token/cost popover (owns its state).
   private readonly modelContext = new ModelContext();
@@ -252,6 +276,9 @@ export class AgentConversation implements Agent {
   private applyingMode = false; // guards the dropdown's notify::selected feedback loop
   private readonly statusIcon: { widget: InstanceType<typeof Gtk.Widget>; dispose: () => void };
   private readonly subs = new CompositeDisposable();
+  // Holds the active permission prompt's button handlers (a question card owns its own
+  // teardown); cleared when the prompt is restored so they don't pile up per request.
+  private readonly interactionSubs = this.subs.nest();
   private readonly launchPrompt?: string;
   // Base argv this agent was launched with (default ['claude']); kept for serialize.
   private readonly baseCommand?: string[];
@@ -370,7 +397,7 @@ export class AgentConversation implements Agent {
     // turn the user queued while the agent was busy. Revealed while a message is pending.
     this.pendingBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, halign: Gtk.Align.END });
     this.pendingBox.addCssClass('conversation-pending');
-    this.pendingLabel = new Gtk.Label({ xalign: 1, wrap: true });
+    this.pendingLabel = wrappingLabel({ xalign: 1 });
     this.pendingBox.append(this.pendingLabel);
     // The queued turn is sent automatically once the agent goes idle; until then the
     // user can amend it (Edit → moves it back into the prompt) or drop it (Cancel).
@@ -442,10 +469,18 @@ export class AgentConversation implements Agent {
     // `overflow: hidden` (the GTK CSS property) doesn't exist — the equivalent is
     // setOverflow(HIDDEN), which clips children to the rounded border so the
     // TextEditor's square background corners don't escape the radius.
+    // The prompt editor + the interaction slot share a stack: a permission/question
+    // widget replaces the editor in place (vhomogeneous off so the card sets its own
+    // height), restored once answered. Starts on the prompt.
+    this.promptStack.setVhomogeneous(false);
+    this.promptStack.addNamed(this.promptContainer, 'prompt');
+    this.promptStack.addNamed(this.interactionSlot, 'interaction');
+
     const inputCard = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    this.inputCard = inputCard;
     inputCard.addCssClass('conversation-input-card');
     inputCard.setOverflow(Gtk.Overflow.HIDDEN);
-    inputCard.append(this.promptContainer);
+    inputCard.append(this.promptStack);
     inputCard.append(this.footer);
 
     // Ring the card while the prompt holds focus; the controller sits on the prompt
@@ -473,8 +508,8 @@ export class AgentConversation implements Agent {
     mainBox.append(this.transcript.root); // the scrollable transcript column
     mainBox.append(this.thinkingReveal); // the thinking spinner sits just above the prompt
     mainBox.append(inputCard);
-    mainBox.append(this.subagentView.panel.root); // running subagents expand below the input card
-    mainBox.append(this.monitorView.panel.root); // running shell monitors, likewise
+    // Running subagents / monitors now live in the agent header bar (robot / terminal
+    // count buttons with a popover), not a panel below the input — see headerWidgets.
 
     // A NavigationView so a subagent's transcript can push its own page.
     this.root = new Adw.NavigationView();
@@ -599,6 +634,13 @@ export class AgentConversation implements Agent {
   get renamed(): boolean { return this._displayName !== null; }
   get exited(): boolean { return this._status === 'disconnected'; }
   get unannouncedWorktree(): string | null { return null; }
+
+  // The agent header bar packs these (AgentSidebar): the subagent (robot) and monitor
+  // (terminal) count buttons, each hidden until it has a running item and opening a
+  // popover listing them. Per-agent + stable instances, so the sidebar can swap them.
+  get headerWidgets(): Array<InstanceType<typeof Gtk.Widget>> {
+    return [this.subagentView.headerButton.button, this.monitorView.headerButton.button];
+  }
 
   get worktree(): WorktreeInfo | null {
     if (this._worktree === undefined) this._worktree = worktreeInfo(this._effectiveCwd);
@@ -1076,7 +1118,7 @@ export class AgentConversation implements Agent {
       const glyph = task.status === 'completed' ? NERDFONT.TASK.DONE : task.status === 'in_progress' ? NERDFONT.TASK.ACTIVE : NERDFONT.TASK.OPEN;
       const color = task.status === 'completed' ? theme.ui.status.success : task.status === 'in_progress' ? theme.ui.status.warning : undefined;
       const body = task.status === 'completed' ? `<s>${escapeMarkup(task.subject)}</s>` : escapeMarkup(task.subject);
-      const label = new Gtk.Label({ xalign: 0, wrap: true });
+      const label = wrappingLabel({ xalign: 0 });
       setMarkupSafe(label, `${iconSpan(glyph, color)}  ${body}`, task.subject);
       return label;
     });
@@ -1103,7 +1145,7 @@ export class AgentConversation implements Agent {
 
   // A single wrapped, left-aligned row (thinking / tool / system).
   private addRow(cssClass: string): InstanceType<typeof Gtk.Label> {
-    const label = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
+    const label = wrappingLabel({ xalign: 0, selectable: true });
     label.addCssClass('conversation-row');
     label.addCssClass(cssClass);
     this.transcript.appendToolEntry(label);
@@ -1138,12 +1180,11 @@ export class AgentConversation implements Agent {
     let json: string;
     try { json = JSON.stringify(event, null, 2); } catch { json = String(event); }
 
-    const header = new Gtk.Label({ xalign: 0, wrap: true, hexpand: true });
-    header.setWrapMode(Pango.WrapMode.WORD_CHAR); // break very long unbroken names instead of forcing the row wide
+    const header = wrappingLabel({ xalign: 0, hexpand: true }); // WORD_CHAR breaks a long unbroken event name instead of widening the row
     setMarkupSafe(header, `unhandled <tt>${escapeMarkup(type)}</tt> event`, `unhandled ${type} event`);
 
     const toolRow = new ToolRow({ icon: NERDFONT.STATUS.WARNING, header, status: 'warning', subs: this.subs });
-    const body = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
+    const body = wrappingLabel({ xalign: 0, selectable: true });
     body.addCssClass('conversation-unknown-body');
     body.setText(json);
     toolRow.content.append(body);
@@ -1168,66 +1209,68 @@ export class AgentConversation implements Agent {
     this.transcript.scrollToBottom();
   }
 
+  // A permission request REPLACES the prompt with an approval widget (title +
+  // command + actions). The tool's own row already sits in the transcript (from the
+  // tool-use event) and fills in with the result once the decision lands, so the
+  // prompt carries only the approval — no correlation to a row needed.
   private addPermissionCard(req: PermissionRequest): void {
-    // Prefer to surface the prompt in-place: expand the tool row the request is for
-    // and put the Allow/Deny buttons in its details. The request has no tool_use_id,
-    // so correlate by tool name + input (the most recent match wins).
-    const entry = this.findPermissionRow(req);
-    if (entry) {
-      const buttons = permissionButtons(this.subs, (allow) => {
-        this.session.respondPermission(req.id, { allow });
-        entry.row.content.remove(buttons); // answered — drop the buttons
-      });
-      entry.row.content.append(buttons);
-      entry.row.setExpanded(true);
-      this.transcript.scrollToBottom();
-      return;
-    }
-    // Fallback (no matching row — e.g. the request raced ahead of its tool-use row):
-    // a standalone card in the transcript flow.
-    const card = permissionCard(this.subs, req, (allow) => {
-      this.session.respondPermission(req.id, { allow });
-      this.transcript.removeEntry(card); // answered — drop it from the transcript
-    });
-    this.transcript.appendToolEntry(card);
-    this.transcript.scrollToBottom();
+    const parts = permissionPromptParts(req.toolName, req.input, this.cwd);
+    // Edit tools show the change as a diff body (the title is the file path); "Allow
+    // edits" only makes sense for them (acceptEdits auto-accepts file edits, not
+    // command runs), so it's offered only for those.
+    const isEdit = EDIT_TOOLS.has(req.toolName);
+    const body = isEdit ? permissionDiffView(editDiffLines(req.toolName, req.input)) : undefined;
+    const choices: PermissionChoice[] = isEdit
+      ? ['accept', 'deny', 'acceptEdits', 'auto']
+      : ['accept', 'deny', 'auto'];
+    const prompt = permissionPrompt(this.interactionSubs, { ...parts, body }, choices, (choice) => this.resolvePermission(req, choice));
+    this.showInteraction(prompt, 'permission');
   }
 
-  // The tool row a permission request belongs to: the most recently added row whose
-  // tool name + input match (permission requests carry no tool_use_id). Returns
-  // undefined when none match (the request predates its row, or has no row).
-  private findPermissionRow(req: PermissionRequest): { row: ToolRow } | undefined {
-    const target = stableJson(req.input);
-    let match: { row: ToolRow } | undefined;
-    for (const entry of this.toolRows.values()) {
-      if (entry.row && entry.name === req.toolName && stableJson(entry.input) === target) match = { row: entry.row };
-    }
-    return match;
+  // Apply the user's choice: `acceptEdits` / `auto` first switch the session mode (so
+  // the like calls that follow stop prompting), then every non-deny choice allows the
+  // pending call. Restoring the prompt drops the widget + its handlers.
+  private resolvePermission(req: PermissionRequest, choice: PermissionChoice): void {
+    if (choice === 'acceptEdits') this.session.setPermissionMode('acceptEdits');
+    else if (choice === 'auto') this.session.setPermissionMode('auto');
+    this.session.respondPermission(req.id, { allow: choice !== 'deny' });
+    this.interactionSubs.clear(); // sever the prompt's button handlers
+    this.clearInteraction(); // drops the widget from the slot + restores the prompt
   }
 
+  // An AskUserQuestion REPLACES the prompt with the interactive question card. On
+  // answer the card moves into the transcript (where it renders itself as the answered
+  // record) and the prompt is restored — so the card outlives the slot, hence it's
+  // owned by `subs`, not the per-interaction bag.
   private addQuestionCard(req: QuestionRequest): void {
-    const card = new QuestionCard(req, (answers) => this.session.answerQuestion(req.id, answers));
+    const card = new QuestionCard(req, (answers) => {
+      this.session.answerQuestion(req.id, answers);
+      this.interactionSlot.remove(card.root); // hand the card to the transcript before it
+      this.transcript.appendEntry(card.root); // rewrites itself into the answered summary
+      this.clearInteraction(); // back to the prompt
+      this.transcript.scrollToBottom();
+    });
     this.subs.defer(() => card.dispose()); // sever the card's controllers when the conversation tears down
-    this.transcript.appendEntry(card.root);
-    // The card grabs keyboard focus on map (for j/k nav), which scrolls its focused
-    // option into view — before it's measured that can fling the transcript to the
-    // top and release stick-to-bottom. Our map handler runs AFTER the card's, so it
-    // re-arms following and re-pins, landing the new question in view like any entry.
-    this.subs.connect(card.root, 'map', () => this.transcript.scrollToBottom(true)); // re-arm + re-pin
-    this.transcript.scrollToBottom();
+    this.showInteraction(card.root, 'question'); // the card grabs focus on map (for j/k nav)
   }
 
-}
+  // Swap the input for an interaction widget (permission / question) and ring the
+  // input card in the matching status colour; clearInteraction reverses both.
+  private showInteraction(widget: InstanceType<typeof Gtk.Widget>, kind: 'permission' | 'question'): void {
+    clearChildren(this.interactionSlot);
+    this.interactionSlot.append(widget);
+    this.promptStack.setVisibleChildName('interaction');
+    this.inputCard.addCssClass(kind === 'permission' ? 'is-permission' : 'is-question');
+  }
 
-/** A key-stable JSON serialization (object keys sorted at every level) so two inputs
- *  with the same content but different key order compare equal — used to match a
- *  permission request to its tool row (the two inputs come from different channels). */
-function stableJson(value: unknown): string {
-  return JSON.stringify(value, (_key, v) =>
-    v && typeof v === 'object' && !Array.isArray(v)
-      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)))
-      : v,
-  );
+  private clearInteraction(): void {
+    clearChildren(this.interactionSlot);
+    this.promptStack.setVisibleChildName('prompt');
+    this.inputCard.removeCssClass('is-permission');
+    this.inputCard.removeCssClass('is-question');
+    this.input.focusInsert(); // ready to type again
+  }
+
 }
 
 /** Push `cb` onto `list` and return an unsubscribe that splices it out. */

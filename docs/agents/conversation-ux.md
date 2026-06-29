@@ -61,14 +61,15 @@ retry, copy, jump-to-latest). The rework's biggest wins are cheap.
 > the footer indicator), and #14 (editable/cancellable queued message). The rest
 > remain open.
 
-6. **Richer permission prompt: escalate + steer.** The card is a bare Allow/Deny
-   boolean (`cards.ts`). Two high-value additions, both standard in Claude's own
-   prompt: (a) an **“Allow always / accept edits”** choice that flips the
-   permission mode in place (the `acceptEdits`/`auto` modes already exist on the
-   footer dropdown — surface them at the decision point), and (b) **Deny with a
-   message** — let the user type a steering note on denial. The headless answer
-   channel already round-trips a deny *message* for `AskUserQuestion`
-   (claude-sdk.md), so the carrier exists. Also show the `y`/`n` keys.
+6. **Richer permission prompt: escalate + steer.** *(escalate done)* The prompt now
+   REPLACES the input while the agent waits (`cards.ts:permissionPrompt`, shown in
+   AgentConversation's warning-ringed interaction slot — see claude-sdk.md) with
+   raised actions **Accept / Deny / Switch to auto**, plus **Allow edits** for edit
+   tools only — the mode-switch actions flip the permission mode in place
+   (`setPermissionMode('acceptEdits' | 'auto')`) *and* allow. Still open: (a) **Deny
+   with a message** — let the user type a steering note on denial (the headless
+   channel already round-trips a deny *message* for `AskUserQuestion`, so the carrier
+   exists), and (b) keyboard accelerators on the actions (`y`/`n`).
 
 7. **Per-tool-row running state.** *(done)* A live Bash/generic tool row now spins
    from tool-use until its result lands: `ToolRow.setRunning` swaps the glyph for

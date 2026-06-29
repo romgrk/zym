@@ -20,12 +20,13 @@ import { theme } from '../../theme/theme.ts';
 import { fonts } from '../../fonts.ts';
 import { MarkdownView } from '../markdown/MarkdownView.ts';
 import { toolBodyMarkup, toolFilePath, describeTool } from '../toolDisplay.ts';
-import { escapeMarkup, setMarkupSafe } from '../proseMarkup.ts';
+import { escapeMarkup, setMarkupSafe, wrappingLabel } from '../proseMarkup.ts';
 import { iconSpan } from '../icons.ts';
 import { truncateLines, summarizeInput, progressLine } from './format.ts';
 import { ToolRow, toolHeaderLabel } from './ToolRow.ts';
 import { Transcript } from './Transcript.ts';
 import { NERDFONT } from '../nerdfont.ts';
+import { diffLines } from '../../util/lineDiff.ts';
 import type { CompositeDisposable } from '../../util/eventKit.ts';
 import type { TaskProgress } from '../../agents/claude-sdk/SdkSession.ts';
 
@@ -104,7 +105,7 @@ export function appendToolRow(transcript: Transcript, name: string, input: unkno
     onResult: (isError, text) => { toolRow.setRunning(false); fillToolResult(toolRow, name, isError, text); },
     onProgress: (p) => {
       if (!progress) {
-        progress = new Gtk.Label({ xalign: 0, wrap: true });
+        progress = wrappingLabel({ xalign: 0 });
         progress.addCssClass('conversation-system');
         toolRow.content.append(progress);
       }
@@ -132,6 +133,64 @@ export function bashRowParts(input: unknown): { headerText: string; headerIsComm
     : { headerText: cmd, headerIsCommand: true, detailCommand: null };
 }
 
+/** Split a permission request into the prompt's `title` + (optional) `description`:
+ *  for Bash the command's description is the title and the command the body (or, with
+ *  no description, the command IS the title); an EDIT tool puts its FILE PATH in the
+ *  title (the change itself is shown as a diff body — see editDiffLines, no string
+ *  description); every other tool uses its `describeTool` title + detail. Pure, so
+ *  it's unit-tested. */
+export function permissionPromptParts(name: string, input: unknown, cwd: string): { title: string; description: string | null } {
+  if (name === 'Bash') {
+    const { headerText, headerIsCommand, detailCommand } = bashRowParts(input);
+    return headerIsCommand ? { title: headerText, description: null } : { title: headerText, description: detailCommand };
+  }
+  if (EDIT_TOOLS.has(name)) {
+    const { detail } = describeTool(name, input, cwd); // detail = the shortened file path
+    return { title: detail || name, description: null };
+  }
+  const { title, detail } = describeTool(name, input, cwd);
+  return { title: title || name, description: detail || summarizeInput(input) || null };
+}
+
+/** One line of an edit-tool diff: removed (`-`), added (`+`), or unchanged context (` `). */
+export interface DiffLine { sign: ' ' | '+' | '-'; text: string }
+
+// Diff `oldText` → `newText` (line-level Myers via lineDiff), as signed lines in file
+// order. Empty old → all additions (a fresh Write); empty new → all deletions.
+function diffBlock(oldText: string, newText: string): DiffLine[] {
+  const a = oldText.length ? oldText.split('\n') : [];
+  const b = newText.length ? newText.split('\n') : [];
+  const out: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  for (const op of diffLines(a, b)) {
+    if (op === 'eq') { out.push({ sign: ' ', text: a[i] }); i++; j++; }
+    else if (op === 'del') { out.push({ sign: '-', text: a[i] }); i++; }
+    else { out.push({ sign: '+', text: b[j] }); j++; }
+  }
+  return out;
+}
+
+/** The change an EDIT tool proposes, as a signed-line diff for the permission prompt:
+ *  Edit/NotebookEdit → old→new; MultiEdit → each edit's diff (blank-separated); Write
+ *  → the new content as additions. Pure, so it's unit-tested. */
+export function editDiffLines(name: string, input: unknown): DiffLine[] {
+  const i = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  if (name === 'MultiEdit' && Array.isArray(i.edits)) {
+    const out: DiffLine[] = [];
+    i.edits.forEach((e, idx) => {
+      const ed = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>;
+      if (idx > 0) out.push({ sign: ' ', text: '' }); // blank line between successive edits
+      out.push(...diffBlock(str(ed.old_string), str(ed.new_string)));
+    });
+    return out;
+  }
+  if (name === 'Write') return diffBlock('', str(i.content));
+  if (name === 'NotebookEdit') return diffBlock(str(i.old_source), str(i.new_source));
+  return diffBlock(str(i.old_string), str(i.new_string)); // Edit
+}
+
 // Bash (shared ToolRow): the header — the command's description when one is given, else
 // the command itself (monospace, cropped to its first line collapsed) — is the button
 // toggling the detail, which holds the full command (whenever the description owns the
@@ -145,6 +204,7 @@ function appendBashRow(transcript: Transcript, input: unknown, ctx: ToolRowConte
 
   const label = new Gtk.Label({ xalign: 0, hexpand: true });
   label.addCssClass('conversation-tool-header');
+  label.setWrapMode(Pango.WrapMode.WORD_CHAR); // when expanded (wrap on), break a long unbroken command rather than widening the row
   let onToggle: ((expanded: boolean) => void) | undefined;
   if (headerIsCommand) {
     // Collapsed: the command is cropped to its first line; the full (multiline)
@@ -179,7 +239,7 @@ function appendBashRow(transcript: Transcript, input: unknown, ctx: ToolRowConte
   // When the description owns the header, the command itself lives in the expanded
   // detail (monospace, selectable), above any output.
   if (detailCommand !== null) {
-    const cmdLabel = new Gtk.Label({ xalign: 0, wrap: true, selectable: true });
+    const cmdLabel = wrappingLabel({ xalign: 0, selectable: true });
     cmdLabel.addCssClass('conversation-bash-command');
     setMarkupSafe(cmdLabel, monoWrap(detailCommand), detailCommand);
     toolRow.content.append(cmdLabel);
@@ -195,7 +255,7 @@ function appendBashRow(transcript: Transcript, input: unknown, ctx: ToolRowConte
       toolRow.setRunning(false);
       const trimmed = text.trim();
       if (trimmed) {
-        const out = new Gtk.Label({ xalign: 0, wrap: true, selectable: true, label: truncateLines(trimmed, 40, 4000) });
+        const out = wrappingLabel({ xalign: 0, selectable: true, label: truncateLines(trimmed, 40, 4000) });
         out.addCssClass('conversation-result');
         toolRow.content.append(out);
       }
@@ -206,7 +266,7 @@ function appendBashRow(transcript: Transcript, input: unknown, ctx: ToolRowConte
     // Background-bash progress (run_in_background); shown in the detail body.
     onProgress: (p) => {
       if (!progress) {
-        progress = new Gtk.Label({ xalign: 0, wrap: true });
+        progress = wrappingLabel({ xalign: 0 });
         progress.addCssClass('conversation-system');
         toolRow.content.append(progress);
       }
@@ -239,7 +299,7 @@ function fillToolResult(toolRow: ToolRow, name: string, isError: boolean, text: 
     toolRow.content.append(view.root);
     view.setMarkdown(trimmed);
   } else {
-    const label = new Gtk.Label({ xalign: 0, wrap: true, selectable: true, label: truncateLines(trimmed, 8, 800) });
+    const label = wrappingLabel({ xalign: 0, selectable: true, label: truncateLines(trimmed, 8, 800) });
     label.addCssClass('conversation-result');
     toolRow.content.append(label);
   }
@@ -255,7 +315,7 @@ function renderTodos(todos: unknown[]): InstanceType<typeof Gtk.Box> {
     const glyph = status === 'completed' ? NERDFONT.TASK.DONE : status === 'in_progress' ? NERDFONT.TASK.ACTIVE : NERDFONT.TASK.OPEN;
     const color = status === 'completed' ? theme.ui.status.success : status === 'in_progress' ? theme.ui.status.warning : undefined;
     const body = status === 'completed' ? `<s>${escapeMarkup(content)}</s>` : escapeMarkup(content);
-    const label = new Gtk.Label({ xalign: 0, wrap: true });
+    const label = wrappingLabel({ xalign: 0 });
     setMarkupSafe(label, `${iconSpan(glyph, color)}  ${body}`, content);
     box.append(label);
   }

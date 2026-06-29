@@ -100,6 +100,10 @@ type Widget = InstanceType<typeof Gtk.Widget>;
  */
 export interface Agent {
   readonly root: Widget;
+  /** Optional per-agent widgets the agent sidebar packs into its header bar (e.g. the
+   *  claude-sdk subagent/monitor count buttons). Stable instances; omitted by agents
+   *  (like the terminal) that contribute none. */
+  readonly headerWidgets?: Widget[];
   readonly title: string;
   readonly status: AgentStatus;
   readonly permissionMode: AgentMode;

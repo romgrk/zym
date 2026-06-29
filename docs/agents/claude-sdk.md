@@ -109,8 +109,31 @@ The TUI's in-terminal prompt becomes a native structured request. We wire
 claude calls a designated MCP tool to ask permission; we expose it from a
 small stdio MCP server (`assets/mcp/zymPermission.mjs`, sibling to
 `zymBridge.mjs`), the call surfaces to `SdkSession` as a request (status →
-`waiting`), the native card collects allow/deny, and the decision returns as
-the tool result — exactly how the Agent SDK's `canUseTool` works internally.
+`waiting`), and the decision returns as the tool result — exactly how the Agent
+SDK's `canUseTool` works internally.
+
+**The prompt REPLACES the input** (it is *not* embedded in the tool row): while
+the agent waits, the input card's `Gtk.Stack` swaps the prompt editor for an
+interaction widget, restored once answered (`AgentConversation`'s interaction
+slot + `interactionSubs`), and the input card is ringed in the matching status
+colour — **warning** for a permission, **info** for a question (the `is-permission`
+/ `is-question` classes; the `QuestionCard` itself is borderless, the ring lives on
+the card). For a **permission** request that widget is `cards.ts:permissionPrompt`
+— a title + a body (`toolRows.ts:permissionPromptParts`) over a row of **raised**
+actions. The title/body depend on the tool: **Bash** → the command's description is
+the title and the command the body (a monospace **code block** — a faint
+`--window-bg-color` tint, button-radius rounding); an **edit tool** → the **file
+path** is the title and the body is a **diff** of the change (`editDiffLines` →
+`permissionDiffView`: signed +/- lines, added green / removed red / context dimmed,
+height-capped and scrollable). The actions are **Accept** / **Deny** / **Switch to
+auto**, plus **Allow edits** *only for edit tools* (`EDIT_TOOLS`; for a command run,
+`acceptEdits` wouldn't auto-accept it, so it's dropped). The last two
+`setPermissionMode('acceptEdits' | 'auto')` *and* allow, so like calls stop
+prompting. The tool's own row stays in the transcript and fills with the result
+once the decision lands, so no request↔row correlation is needed. An
+**AskUserQuestion** swaps the same slot for the interactive `QuestionCard`; on
+answer the card moves into the transcript (rendering itself as the answered
+record) and the prompt returns.
 
 ## Selecting the implementation
 
@@ -130,20 +153,36 @@ AppWindow owner machinery are generic over `Agent`.
 ## Native transcript UI
 
 `src/ui/AgentConversation.ts` (orchestrator) + `src/ui/conversation/*`
-(`Transcript`, `toolRows`, `format`, `StickyListPanel`, `cards`, `QuestionCard`,
-`SubagentView`, `MonitorView`) render a scrollable transcript of
+(`Transcript`, `toolRows`, `format`, `StickyListPanel`, `HeaderCountButton`, `cards`,
+`QuestionCard`, `SubagentView`, `MonitorView`) render a scrollable transcript of
 user/assistant/thinking/tool rows. **Tool-use entries are built in one place —
 `toolRows.ts:appendToolRow` (Bash row, collapsed file-tool group, or generic toggle
 row)** — so the main transcript and each subagent page render identically;
 `AgentConversation` feeds result/progress from live events, a subagent page (holding
 the full captured call+result) wires the result once. Tool rows carry nerdfont icons;
-the header (toggle button) is one ellipsized line, full text behind the toggle
-(`ToolRow.toolHeaderLabel`); the Bash command is plain monospace, cropped to one line
-until expanded. A non-zero Bash exit shows a trailing red dot, leaving the icon +
-command untouched (other tools swap to a red ✗ on a genuine failure). A **live**
-tool row spins (an `Adw.Spinner` in the icon slot, `ToolRow.setRunning`) from
-tool-use until its result lands, so an in-flight Bash/Task reads differently from a
-finished one; replayed and subagent-page rows pass `live:false` and never spin.
+for a single-button `ToolRow` (Bash / generic toggle / monitor / unknown-event) the
+icon sits **inline at the start of the header button**, left of the title, so icon +
+title are one click target that grows + tints together — only the **grouped**
+file-tool rows (Read/Edit/… collapsed into one run, built in `Transcript`) keep the
+icon outside, beside the run's head. The header (toggle button) is one ellipsized
+line, full text behind the toggle (`ToolRow.toolHeaderLabel`); the Bash command is
+plain monospace, cropped to one line until expanded. A non-zero Bash exit shows a
+trailing red dot, leaving the icon + command untouched (other tools swap to a red ✗
+on a genuine failure). A **live** tool row spins (an `Adw.Spinner` swapped in for the
+glyph in the button's icon slot, `ToolRow.setRunning`) from tool-use until its result
+lands, so an in-flight Bash/Task reads differently from a finished one; replayed and
+subagent-page rows pass `live:false` and never spin.
+
+**Fitting the column:** every *wrapping* label in the transcript (tool detail/output,
+Bash command, result/JSON dumps, monitor/subagent/question/permission rows) is built
+through `proseMarkup.wrappingLabel`, which sets Pango `WORD_CHAR`. A plain `WORD`-wrap
+label reports a minimum width as wide as its longest unbreakable token (a long URL,
+path, tool name, or JSON string), and that minimum propagates up and forces the
+column past its `Adw.Clamp` bound — widening *every* row. `WORD_CHAR` lets the token
+break mid-word, keeping the minimum small so the row wraps inside the clamp instead.
+Single-line headers ellipsize (`ToolRow.toolHeaderLabel`) for the same reason; message
+bubbles are immune (the `MarkdownRenderer` reports a small fixed minimum width).
+
 Richer turn surfaces:
 
 - Thinking spinner + token + elapsed meter (the footer "Thinking…" indicator, shown
@@ -155,11 +194,15 @@ Richer turn surfaces:
   of consecutive spawns **collapses into one inline entry** (a single subagent icon
   + an "Agent" head + each spawn stacked as a clickable item) — the same
   consecutive-run grouping Read uses (`Transcript.appendGroupItem` /
-  `SUBAGENT_GROUP`). Plus a sticky "Subagents" panel (running entries lead with the
-  shared `agentStatusIcon` glyph) + a pushed `Adw.NavigationView` page whose tool
-  rows go through the shared `appendToolRow`.
-- **Shell monitors:** sticky panel + inspect page + cancel.
-- **AskUserQuestion:** an `Adw.ViewSwitcher` card (j/k/h/l + notes).
+  `SUBAGENT_GROUP`). Plus a **robot count button in the agent header bar**
+  (`HeaderCountButton`, packed by `AgentSidebar` via `Agent.headerWidgets`) — icon +
+  running count, hidden at zero, opening a popover that lists the running ones (each
+  leads with the shared `agentStatusIcon` glyph and opens) + a pushed
+  `Adw.NavigationView` page whose tool rows go through the shared `appendToolRow`.
+- **Shell monitors:** a **terminal count button in the agent header bar** (same
+  `HeaderCountButton`; popover rows carry a Cancel) + inspect page + cancel.
+- **AskUserQuestion:** an `Adw.ViewSwitcher` card (j/k/h/l + notes) that replaces
+  the input while open, then moves into the transcript as the answered record.
 - **Message queueing** while busy: right-aligned "Pending" bubble with **Edit**
   (pull it back into the prompt to amend) and **Cancel** (discard) controls; sent
   automatically on the next idle if left alone.

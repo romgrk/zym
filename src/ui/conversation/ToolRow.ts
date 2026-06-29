@@ -3,19 +3,25 @@
  * unrecognised stream events). Layout:
  *
  *   ┌ row ─────────────────────────────────────┐
- *   │ ICON │ ┌ toggle ───────────────────────┐ │
- *   │      │ │ BUTTON  (header, flat)         │ │
- *   │      │ │ DETAILS (collapsible reveal)   │ │
- *   │      │ └───────────────────────────────┘ │
+ *   │ ┌ toggle ───────────────────────────────┐ │
+ *   │ │ BUTTON  [ ICON  header ]  (flat)       │ │
+ *   │ │ DETAILS (collapsible reveal)           │ │
+ *   │ └───────────────────────────────────────┘ │
  *   └───────────────────────────────────────────┘
  *
- * The leading ICON identifies the tool (Bash → a terminal). The `toggle` — the
- * BUTTON + DETAILS column — is the expander: clicking the button reveals the
- * details, and the toggle's background fades to a message bubble's. The icon sits
- * outside the toggle, so it stays put while the toggle alone grows and tints.
+ * The leading ICON identifies the tool (Bash → a terminal) and sits INSIDE the
+ * header button, left of the title — so the whole single-button row (icon + title)
+ * is one click target that grows + tints together. The `toggle` — the BUTTON +
+ * DETAILS column — is the expander: clicking the button reveals the details, and the
+ * toggle's background fades to a message bubble's.
  *
- * "Activate" rows (file tools) are the exception: their button click opens the file
- * instead of toggling, so their details show inline rather than behind a reveal.
+ * (Grouped file-tool rows — Read/Edit/… collapsed into one consecutive run — keep
+ * their icon OUTSIDE, beside the run's head; that layout lives in Transcript, not
+ * here.)
+ *
+ * "Activate" rows (file tools / monitor) are the exception: their button click opens
+ * the file/page instead of toggling, so their details show inline rather than behind
+ * a reveal.
  *
  * The widget owns only the layout, the toggle, and the fade — the conversation
  * builds each tool's header and fills `content`.
@@ -31,10 +37,11 @@ import { setMarkupSafe } from '../proseMarkup.ts';
 type Widget = InstanceType<typeof Gtk.Widget>;
 
 addStyles(`
-  /* The leading tool icon. A size group ties its height to the header button's, so
-     the label's own vertical centering keeps the glyph centered on the header row. */
+  /* The leading tool icon, inline at the start of the header button (left of the
+     title). The trailing pad sets it off the title; both share the button's row, so
+     the label's own vertical centering keeps the glyph centered on the title. */
   .ToolRow .tool-row-icon { padding-right: 8px; }
-  /* The BUTTON + DETAILS expander: the only part that grows + gains the bubble bg. */
+  /* The BUTTON (icon + title) + DETAILS expander: grows + gains the bubble bg. */
   .ToolRow .tool-row-toggle {
     border-radius: 8px;
     background: transparent;
@@ -120,32 +127,31 @@ export class ToolRow {
     // the row itself carries no entry class.
 
     this.header = opts.header;
-    this.iconSlot = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, valign: Gtk.Align.START });
-    this.icon = new Gtk.Label({ valign: Gtk.Align.START });
-    this.icon.addCssClass('tool-row-icon');
-    this.setIcon(opts.icon, opts.iconColor);
-    this.iconSlot.append(this.icon);
-    this.root.append(this.iconSlot);
 
     // The BUTTON + DETAILS column: the expander that grows + gains the bubble bg.
     this.toggle = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, hexpand: true });
     this.toggle.addCssClass('tool-row-toggle');
 
+    // The header button carries the leading tool icon INLINE: a horizontal [icon][header]
+    // box as its child, so the whole single-button row is one click target. The icon
+    // shares the button's row, so it centers on the title without the size-group trick
+    // the old outside-the-toggle slot needed.
     const button = new Gtk.Button();
     button.addCssClass('flat');
     button.addCssClass('tool-row-button');
+    const buttonContent = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+    this.iconSlot = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, valign: Gtk.Align.CENTER });
+    this.icon = new Gtk.Label({ valign: Gtk.Align.CENTER });
+    this.icon.addCssClass('tool-row-icon');
+    this.setIcon(opts.icon, opts.iconColor);
+    this.iconSlot.append(this.icon);
+    buttonContent.append(this.iconSlot);
     opts.header.setHexpand(true);
-    button.setChild(opts.header);
+    buttonContent.append(opts.header);
+    button.setChild(buttonContent);
     this.toggle.append(button);
 
     if (opts.status) this.setStatus(opts.status);
-
-    // Center the icon against the header button — not the whole toggle. A vertical
-    // size group ties the icon slot's height to the button's, so the (top-aligned) icon
-    // stays centered on the header row even once the details expand below it.
-    const iconSizing = new Gtk.SizeGroup({ mode: Gtk.SizeGroupMode.VERTICAL });
-    iconSizing.addWidget(this.iconSlot);
-    iconSizing.addWidget(button);
 
     this.content = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     this.content.addCssClass('tool-row-detail');
@@ -194,7 +200,7 @@ export class ToolRow {
       if (!this.spinner) {
         this.spinner = new Adw.Spinner();
         this.spinner.setSizeRequest(14, 14); // Adw.Spinner fills its allocation otherwise
-        this.spinner.setValign(Gtk.Align.START);
+        this.spinner.setValign(Gtk.Align.CENTER); // centered on the title, like the glyph it replaces
         this.spinner.addCssClass('tool-row-icon'); // same trailing pad as the glyph it replaces
         this.iconSlot.append(this.spinner);
       }

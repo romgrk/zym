@@ -18,7 +18,7 @@ import Adw from 'gi:Adw-1';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 import { addStyles } from '../../styles.ts';
 import { theme } from '../../theme/theme.ts';
-import { escapeMarkup, setMarkupSafe, clearChildren } from '../proseMarkup.ts';
+import { escapeMarkup, setMarkupSafe, clearChildren, wrappingLabel } from '../proseMarkup.ts';
 import { iconSpan } from '../icons.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { ToolRow, toolHeaderLabel } from './ToolRow.ts';
@@ -27,12 +27,11 @@ import type { AgentQuestion, QuestionRequest } from '../../agents/claude-sdk/Sdk
 type Answer = { header: string; labels: string[]; notes?: string };
 
 addStyles(/* css */`
-  /* AskUserQuestion: an interactive choice card (info-tinted while open). Once
-     answered the card becomes a tool row (see QuestionCard.submit) — no border. */
+  /* AskUserQuestion: the interactive choice card. It replaces the input while open —
+     the info-coloured ring lives on the input card (AgentConversation), not here — so
+     the card itself is borderless; once answered it becomes a transcript tool row. */
   .Question .question-card {
     padding: calc(2 * var(--t-spacing));
-    border: 1px solid var(--t-ui-status-info);
-    border-radius: var(--card-radius);
   }
   .Question .question-prompt { margin-bottom: calc(2 * var(--t-spacing)); font-size: var(--t-font-ui-size-large); }
   .Question .question-switcher button { padding-top: 2px; padding-bottom: 2px; min-height: 0; }
@@ -95,7 +94,7 @@ export class QuestionCard {
       const page = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6 });
       if (q.question) {
         // The number lives in the switcher tab title, so the prompt omits it.
-        const prompt = new Gtk.Label({ xalign: 0, wrap: true });
+        const prompt = wrappingLabel({ xalign: 0 });
         prompt.addCssClass('question-prompt');
         setMarkupSafe(prompt, `<b>${escapeMarkup(q.question)}</b>`, q.question);
         page.append(prompt);
@@ -296,7 +295,7 @@ export class QuestionCard {
     this.qs.forEach((q, qi) => {
       const title = q.question || q.header;
       if (title) {
-        const ql = new Gtk.Label({ xalign: 0, wrap: true });
+        const ql = wrappingLabel({ xalign: 0 });
         setMarkupSafe(ql, `<b>${escapeMarkup(title)}</b>`, title);
         box.append(ql);
       }
@@ -309,7 +308,7 @@ export class QuestionCard {
           : iconSpan(NERDFONT.TASK.OPEN, undefined, true);
         const body = selected ? `<b>${escapeMarkup(opt.label)}</b>` : escapeMarkup(opt.label);
         const extra = note ? ` <span alpha="65%">— ${escapeMarkup(note)}</span>` : '';
-        const label = new Gtk.Label({ xalign: 0, wrap: true });
+        const label = wrappingLabel({ xalign: 0 });
         label.setMarginStart(8);
         setMarkupSafe(label, `${glyph}  ${body}${extra}`, `${opt.label}${note ? ` — ${note}` : ''}`);
         box.append(label);
