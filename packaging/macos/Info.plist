@@ -12,6 +12,10 @@
   <key>CFBundleIconFile</key>        <string>zym.icns</string>
   <key>LSMinimumSystemVersion</key>  <string>12.0</string>
   <key>NSHighResolutionCapable</key> <true/>
+  <!-- Register bundled fonts (the Nerd Font icon glyphs) with CoreText at launch;
+       Pango's macOS backend can't add font files itself. The Fonts dir is filled
+       by packaging/macos/build-macos.sh. See docs/packaging.md. -->
+  <key>ATSApplicationFontsPath</key> <string>Fonts</string>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>

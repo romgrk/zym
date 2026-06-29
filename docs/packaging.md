@@ -79,10 +79,40 @@ language servers) are expected on the user's `PATH`, as when running from source
 Docker on Linux cannot produce macOS bundles, so `packaging/macos/build-macos.sh`
 **must run on a macOS host** (a Mac or a CI `macos-*` runner). It mirrors the
 Linux flow with Homebrew (`gtk4 libadwaita gtksourceview5 vte3
-gobject-introspection librsvg node dylibbundler create-dmg`) and `dylibbundler`
-for the dylib closure (seeded with the same GI-dlopened libraries), emitting
-`zym.app` and a `.dmg`. Homebrew's current `gtksourceview5` satisfies the 5.18
-requirement.
+gobject-introspection librsvg adwaita-icon-theme dylibbundler create-dmg`) and
+`dylibbundler` for the dylib closure, emitting `zym.app` and a `.dmg`. Homebrew's
+current `gtksourceview5` (5.20) satisfies the 5.18 requirement. It builds for the
+host arch only — `zym-<version>-macos-arm64.dmg` on Apple Silicon,
+`…-x86_64.dmg` on Intel.
+
+Four macOS-specific wrinkles, all handled by the script:
+
+- **Node is pinned, not from Homebrew.** node-gtk 3.0.0's NAN/V8 C++ does not
+  compile against current Node (Homebrew ships the latest, whose V8 dropped
+  `v8::DEFAULT` and changed `GetAlignedPointerFromInternalField`). The script
+  downloads the **same `NODE_VERSION` the Linux build bundles** (22.x) from the
+  official tarball, puts it ahead of Homebrew on `PATH`, and installs `pnpm`
+  under it — otherwise a stray corepack/global pnpm shim would recompile the
+  addon with the wrong Node ABI. That pinned Node is the one bundled into the app.
+- **GI-dlopened leaf libraries must be seeded explicitly.** Same reason as Linux,
+  but worse for `dylibbundler`: it copies dependencies, never its own `-x` inputs,
+  and the libraries the typelibs dlopen (`libadwaita`, `libgtksourceview-5.0`,
+  `libvte-2.91-gtk4.0`, `librsvg-2.2`, plus the typelib-named
+  `libharfbuzz-gobject`) are graph leaves nothing Mach-O-links. The script
+  pre-copies those into `Contents/libs`, runs `dylibbundler` over them **+ the
+  native addons + the gdk-pixbuf loaders** to pull the closure and rewrite install
+  names to `@executable_path/../libs`, then fixes the seed libs' own `LC_ID_DYLIB`
+  (dylibbundler leaves `-x` inputs' IDs at the Homebrew path).
+- **GSettings schemas must be dereferenced.** Homebrew exposes the schema XML as
+  symlinks into the Cellar; copying them with `cp -a` carries dangling symlinks
+  into the bundle, so `glib-compile-schemas` produces an empty cache and the app
+  aborts at launch with `Settings schema 'org.gnome.desktop.interface' is not
+  installed`. Copy with `cp -L` (and the Adwaita icon theme with `cp -RL`).
+- **Fonts go through CoreText.** Pango's macOS backend
+  (`PangoCairoCoreTextFontMap`) can't `add_font_file`, so `registerBundledFonts`
+  no-ops there (`src/fonts.ts`). Instead the bundled fonts are dropped in
+  `Contents/Resources/Fonts` and registered by the OS via Info.plist's
+  `ATSApplicationFontsPath`.
 
 ## Validation status
 
@@ -94,4 +124,13 @@ indefinitely. Full file-editing could not be verified here because the container
 has no GPU: rendering a file's content **segfaults under headless software
 rendering (Xvfb/llvmpipe)**, which does not reproduce on real desktop hardware
 (the bundling is provably complete — the crash is in GTK rendering, not a missing
-library). macOS is unverified in CI — the script needs a macOS host to run.
+library).
+
+The macOS `.dmg` (arm64) is built and **launches** on an Apple Silicon host: the
+app reaches full UI init (window, keymaps, styles) with every dylib resolving
+from the bundle — verified with `otool -L` showing no `/opt/homebrew` references
+and a launch smoke run. It is **unsigned / un-notarized**, so Gatekeeper blocks
+first launch until the quarantine flag is cleared (`xattr -dr
+com.apple.quarantine zym.app`) or the user right-clicks → Open. An Intel
+(`x86_64`) build needs an Intel host; CI for either arch needs a `macos-*`
+runner.

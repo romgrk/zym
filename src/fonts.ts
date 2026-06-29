@@ -46,9 +46,19 @@ const BUNDLED_FONTS = ['SymbolsNerdFontMono-Regular.ttf'];
 export function registerBundledFonts(): void {
   const dir = Path.join(Path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'fonts');
   const fontMap = PangoCairo.FontMap.getDefault();
+  // `add_font_file` exists only on the FontConfig-backed font map (Linux). macOS
+  // uses Pango's CoreText backend (PangoCairoCoreTextFontMap), which doesn't
+  // implement it and raises "Adding font files not supported"; there the bundled
+  // fonts are registered by the OS instead — the .app lists them via
+  // ATSApplicationFontsPath (see docs/packaging.md) — so a failure here is benign.
+  if (typeof fontMap.addFontFile !== 'function') return;
   for (const file of BUNDLED_FONTS) {
-    if (!fontMap.addFontFile(Path.join(dir, file)))
-      console.warn(`zym: failed to load bundled font ${file}`);
+    try {
+      if (!fontMap.addFontFile(Path.join(dir, file)))
+        console.warn(`zym: failed to load bundled font ${file}`);
+    } catch (err) {
+      console.warn(`zym: bundled font ${file} not registered on this platform (${String(err)})`);
+    }
   }
 }
 
