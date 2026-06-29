@@ -79,11 +79,11 @@ What must ship for the installed command to run: `bin/`, `scripts/`, `src/`
 ## Desktop entry
 
 `zym --install-desktop` (after a global install) or `pnpm run install-desktop`
-(from a checkout) writes `$XDG_DATA_HOME/applications/com.github.romgrk.zym.desktop`
-and refreshes the MIME cache. Both run `scripts/install-desktop.ts` —
-`installDesktopEntry()`; running the file directly installs pointing at this
-checkout's launcher, while `zym --install-desktop` imports it and points at the
-installed launcher.
+(from a checkout) writes `$XDG_DATA_HOME/applications/com.github.romgrk.zym.desktop`,
+installs the app icons (below), and refreshes the MIME / icon caches. Both run
+`scripts/install-desktop.ts` — `installDesktopEntry()`; running the file directly
+installs pointing at this checkout's launcher, while `zym --install-desktop`
+imports it and points at the installed launcher.
 
 Decisions:
 
@@ -96,5 +96,7 @@ Decisions:
   node only through an ephemeral per-shell symlink (`/run/user/.../fnm_multishells/…`)
   — resolving through it to the versioned install gives a path that survives later
   launches.
-- `Icon=com.github.romgrk.zym`; no branded icon ships yet, so desktops fall back to
-  a generic icon until one named after the app id is installed into an icon theme.
+- `Icon=com.github.romgrk.zym` resolves to the icons shipped in `assets/` and
+  installed into the user's hicolor theme: `assets/zym.svg` → `scalable/apps/` (the
+  full-colour squircle), `assets/zym-symbolic.svg` → `symbolic/apps/` (monochrome).
+  Both are scalable SVGs, so one source covers every size.

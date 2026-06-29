@@ -23,10 +23,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 /** GTK application id; keep in sync with APP_ID in src/application.ts. */
 const APP_ID = 'com.github.romgrk.zym';
 
+/** `$XDG_DATA_HOME` (default `~/.local/share`). */
+function dataHome(): string {
+  return process.env.XDG_DATA_HOME || Path.join(Os.homedir(), '.local', 'share');
+}
+
 /** `$XDG_DATA_HOME/applications` (default `~/.local/share/applications`). */
 function applicationsDir(): string {
-  const dataHome = process.env.XDG_DATA_HOME || Path.join(Os.homedir(), '.local', 'share');
-  return Path.join(dataHome, 'applications');
+  return Path.join(dataHome(), 'applications');
 }
 
 /** Quote a token for the `Exec` key per the freedesktop Desktop Entry spec. */
@@ -71,11 +75,35 @@ export function buildDesktopEntry(opts: { exec: string; icon?: string }): string
   ].join('\n');
 }
 
-/** Best-effort refresh of the MIME "Open with" cache; never throws. */
-function refreshDesktopDatabase(dir: string): Promise<void> {
+/** Best-effort spawn that ignores failure (the tool may be absent); never throws. */
+function bestEffort(file: string, args: string[]): Promise<void> {
   return new Promise((resolve) => {
-    execFile('update-desktop-database', [dir], () => resolve());
+    execFile(file, args, () => resolve());
   });
+}
+
+/**
+ * Install the app icons into the user's hicolor theme so the desktop entry's
+ * `Icon=com.github.romgrk.zym` resolves: the full-colour SVG under
+ * `scalable/apps`, the monochrome variant under `symbolic/apps`. Sources ship in
+ * `assets/` (resolved against the package root, so this works from a checkout and
+ * from a global install alike). Returns the installed full-colour icon path.
+ */
+async function installIcons(): Promise<string> {
+  const icons = Path.join(dataHome(), 'icons', 'hicolor');
+  const targets = [
+    { src: '../assets/zym.svg', dir: Path.join(icons, 'scalable', 'apps'), name: `${APP_ID}.svg` },
+    { src: '../assets/zym-symbolic.svg', dir: Path.join(icons, 'symbolic', 'apps'), name: `${APP_ID}-symbolic.svg` },
+  ];
+  let colorPath = '';
+  for (const t of targets) {
+    const dest = Path.join(t.dir, t.name);
+    await Fs.mkdir(t.dir, { recursive: true });
+    await Fs.copyFile(fileURLToPath(new URL(t.src, import.meta.url)), dest);
+    if (t.name === `${APP_ID}.svg`) colorPath = dest;
+  }
+  await bestEffort('gtk-update-icon-cache', ['-q', '-t', '-f', icons]);
+  return colorPath;
 }
 
 /**
@@ -84,9 +112,10 @@ function refreshDesktopDatabase(dir: string): Promise<void> {
  * being on PATH, so GUI launches work even when node lives behind a version
  * manager that only patches PATH inside interactive shells.
  *
- * Returns the absolute path of the written file.
+ * Also installs the app icons (see installIcons). Returns the absolute paths of
+ * the written desktop file and full-colour icon.
  */
-export async function installDesktopEntry(opts: { launcherPath: string }): Promise<{ path: string }> {
+export async function installDesktopEntry(opts: { launcherPath: string }): Promise<{ path: string; icon: string }> {
   const node = await stableNodePath();
   const exec = `${execQuote(node)} ${execQuote(opts.launcherPath)}`;
   const contents = buildDesktopEntry({ exec });
@@ -95,9 +124,10 @@ export async function installDesktopEntry(opts: { launcherPath: string }): Promi
   const file = Path.join(dir, `${APP_ID}.desktop`);
   await Fs.mkdir(dir, { recursive: true });
   await Fs.writeFile(file, contents, 'utf8');
-  await refreshDesktopDatabase(dir);
+  const icon = await installIcons();
+  await bestEffort('update-desktop-database', [dir]);
 
-  return { path: file };
+  return { path: file, icon };
 }
 
 // Run directly (`pnpm run install-desktop`): install pointing at this checkout's
@@ -105,6 +135,7 @@ export async function installDesktopEntry(opts: { launcherPath: string }): Promi
 // installDesktopEntry() with its own resolved launcher path.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const launcherPath = fileURLToPath(new URL('../bin/zym.mjs', import.meta.url));
-  const { path } = await installDesktopEntry({ launcherPath });
+  const { path, icon } = await installDesktopEntry({ launcherPath });
   console.log(`Installed desktop entry: ${path}`);
+  console.log(`Installed icon: ${icon}`);
 }

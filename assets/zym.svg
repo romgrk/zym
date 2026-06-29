@@ -1,0 +1,33 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="zym-bg" x1="32" y1="8" x2="96" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9d6bff"/>
+      <stop offset="0.55" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#4c1d95"/>
+    </linearGradient>
+    <linearGradient id="zym-sheen" x1="0" y1="8" x2="0" y2="72" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="zym-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="2.5" stdDeviation="2.5" flood-color="#2e1065" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- rounded-square base tile -->
+  <rect x="8" y="8" width="112" height="112" rx="27" fill="url(#zym-bg)"/>
+  <!-- top sheen for depth -->
+  <rect x="8" y="8" width="112" height="112" rx="27" fill="url(#zym-sheen)"/>
+  <!-- hairline inner edge -->
+  <rect x="8.75" y="8.75" width="110.5" height="110.5" rx="26.25" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="1.5"/>
+
+  <!-- Z: white bars + accent diagonal as separate non-overlapping strokes -->
+  <g filter="url(#zym-shadow)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M36 47 H76" stroke="#ffffff"/>
+    <path d="M36 83 H76" stroke="#ffffff"/>
+    <path d="M76 47 L36 83" stroke="#fbbf24"/>
+  </g>
+
+  <!-- block caret: the modal-editor cursor sitting after the Z -->
+  <rect x="86" y="49" width="12" height="34" rx="3" fill="#fbbf24" filter="url(#zym-shadow)"/>
+</svg>

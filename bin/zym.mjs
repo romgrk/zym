@@ -46,8 +46,8 @@ if (cmd === '--help' || cmd === '-h') {
   // The script is `.ts` under node_modules once installed, so strip types first.
   await import('./ts-strip-hook.mjs');
   const { installDesktopEntry } = await import(new URL('scripts/install-desktop.ts', root).href);
-  const { path } = await installDesktopEntry({ launcherPath: here });
-  process.stdout.write(`Installed desktop entry: ${path}\n`);
+  const { path, icon } = await installDesktopEntry({ launcherPath: here });
+  process.stdout.write(`Installed desktop entry: ${path}\nInstalled icon: ${icon}\n`);
 } else {
   // Boot the editor. Order is load-bearing: strip-types hook + gi: hooks first,
   // then the entry (whose static `gi:` and `.ts` imports resolve under both).
