@@ -32,7 +32,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   {
-    files: ['**/*.ts', '**/*.js'],
+    files: ['**/*.ts', '**/*.js', '**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
