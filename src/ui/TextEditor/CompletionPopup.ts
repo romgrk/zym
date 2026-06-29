@@ -48,7 +48,7 @@ addStyles(`
     background-color: var(--popover-bg-color);
     border: 1px solid var(--border-color);
     border-radius: var(--popover-radius-small);
-    box-shadow: 0px 6px 20px 8px var(--t-ui-shadow);
+    box-shadow: var(--popover-shadow);
   }
   /* Inner widgets paint nothing — the card's background shows through, and rows
      get no min-height so a single match is exactly one row tall. */
@@ -59,8 +59,9 @@ addStyles(`
     min-height: 0;
   }
   .CompletionPopup row { padding: 1px ${ROW_PADDING_PX}px; }
-  .CompletionPopup row:selected { 
-    border-radius: 0; 
+  .CompletionPopup row:selected {
+    background-color: var(--selection-bg-focus);
+    border-radius: 0;
   }
   .CompletionPopup .completion-icon { 
     margin-right: ${ICON_MARGIN_PX}px; 

@@ -37,6 +37,8 @@ export const installStyles = styles.install.bind(styles);
 // fullscreen/maximised — these surfaces should stay rounded regardless.
 // `--popover-radius-small` is the tighter radius for compact, in-text chrome
 // (the autocompletion popup) that sits flush against the cursor.
+// `--popover-shadow` is the drop shadow shared by the editor's in-text cards
+// (autocompletion, LSP hover, signature help) so they read as one surface.
 // `--card-radius` is the radius for bordered content cards that sit inside the
 // content area (the agent input card, the diff comment box) — softer than a
 // floating popover.
@@ -53,6 +55,7 @@ addStyles(`
   window {
     --popover-radius: 15px;
     --popover-radius-small: 6px;
+    --popover-shadow: 0px 6px 20px 8px var(--t-ui-shadow);
     --card-radius: 12px;
     --selection-bg: alpha(currentColor, 0.15);
     --selection-bg-focus: alpha(var(--accent-bg-color), 0.15);

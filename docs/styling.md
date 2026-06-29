@@ -80,7 +80,8 @@ widget. Prefer these over hard-coded literals so a change lands everywhere:
 | Variable                  | Value     | Use                                                        |
 | ------------------------- | --------- | ---------------------------------------------------------- |
 | `--popover-radius`        | `15px`    | Corner radius for floating chrome (pickers, which-key, search bar). Stays rounded when maximised, unlike libadwaita's `--window-radius`. |
-| `--popover-radius-small`  | `6px`     | Tighter radius for compact in-text chrome (completion popup). |
+| `--popover-radius-small`  | `6px`     | Tighter radius for compact in-text chrome — shared by the editor's three in-text popovers (completion, LSP hover, signature help). |
+| `--popover-shadow`        | `0px 6px 20px 8px var(--t-ui-shadow)` | Drop shadow for the editor's in-text popovers (completion, hover, signature help), so they read as one surface. |
 | `--card-radius`           | `12px`    | Radius for bordered content cards inside the content area (agent input card, diff comment box) — softer than a floating popover. |
 | `--selection-bg`          | `alpha(currentColor, 0.15)`           | Row-like selection highlight when **unfocused** — a neutral wash of the row's own foreground. Shared by every list selection (git panel/log, location list). |
 | `--selection-bg-focus`    | `alpha(var(--accent-bg-color), 0.15)` | Same selection when **focused** (`:focus-within`) — an accent tint. Also the focused option in a Question card. |

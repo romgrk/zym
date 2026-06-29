@@ -26,11 +26,16 @@ import type { EditorModel } from './EditorModel.ts';
 
 // The popover is a themed surface card by default (hover, signature); `.is-bare` strips its
 // chrome to a transparent positioner for content that draws its own card (the completion
-// list). The platform theme supplies the border-radius / shadow.
+// list). The card chrome (radius/border/shadow) comes from the shared `--popover-*` custom
+// properties (src/styles.ts) so all three in-text popovers — hover, signature, completion —
+// read as one surface.
 addStyles(`
   .EditorPopover > contents {
     background-color: var(--popover-bg-color);
     color: var(--t-ui-editor-foreground);
+    border: 1px solid var(--border-color);
+    border-radius: var(--popover-radius-small);
+    box-shadow: var(--popover-shadow);
     padding: 6px 8px;
   }
   .EditorPopover.is-bare > contents {
