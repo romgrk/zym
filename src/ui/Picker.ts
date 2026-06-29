@@ -316,6 +316,14 @@ export interface PickerOptions {
    * should keep the standard row padding instead.
    */
   disableIconPadding?: boolean;
+  /**
+   * Render no match list at all — neither match rows nor the empty / loading /
+   * "no matches" placeholder — leaving just the entry (plus the `action` row, if
+   * any). For a picker used as a bare prompt where the candidate list is
+   * meaningless (e.g. the diff glob-collapse input, which submits its typed glob
+   * via `action`). Pair with an `action` so Enter has something to run.
+   */
+  hideMatches?: boolean;
 }
 
 /** A side-preview pane plus the hook that refreshes it as the selection moves. */
@@ -638,13 +646,16 @@ export function openPicker(options: PickerOptions): PickerHandle {
     }
 
     const query = entry.getText();
-    // Local fuzzy filter, unless the caller filters server-side (`localFilter:
-    // false`) — then show the fetched pool as-is, in order, with no highlights.
-    const ranked = (
-      options.localFilter === false
-        ? items.map((item) => ({ item, positions: [] as number[] }))
-        : rank(query, items, weight)
-    ).slice(0, MAX_RESULTS);
+    // `hideMatches`: a bare prompt with no candidate list — render nothing here (the `action` row
+    // below is the only row). Else local fuzzy filter, unless the caller filters server-side
+    // (`localFilter: false`) — then show the fetched pool as-is, in order, with no highlights.
+    const ranked = options.hideMatches
+      ? []
+      : (
+          options.localFilter === false
+            ? items.map((item) => ({ item, positions: [] as number[] }))
+            : rank(query, items, weight)
+        ).slice(0, MAX_RESULTS);
     results = ranked.map((match) => match.item);
     syncMatchRows(ranked);
 
@@ -662,9 +673,9 @@ export function openPicker(options: PickerOptions): PickerHandle {
     }
 
     if (results.length === 0 && !actionRow) {
-      // No rows to select — show a non-interactive message row instead so the
-      // card doesn't collapse to just the entry.
-      showMessage(isLoading ? 'Loading…' : items.length === 0 ? 'No entries' : 'No matches', 'PickerEmpty');
+      // No rows to select — show a non-interactive message row instead so the card doesn't collapse
+      // to just the entry. Skipped under `hideMatches` (a bare prompt wants exactly the entry).
+      if (!options.hideMatches) showMessage(isLoading ? 'Loading…' : items.length === 0 ? 'No entries' : 'No matches', 'PickerEmpty');
       return;
     }
     const first = listBox.getRowAtIndex(0);

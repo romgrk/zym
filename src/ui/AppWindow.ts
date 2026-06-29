@@ -53,6 +53,7 @@ import { openScriptRunner, detectPackageManager } from './ScriptRunner.ts';
 import { openWorkspaceSymbolPicker } from './WorkspaceSymbolPicker.ts';
 import { openDocumentSymbolPicker } from './DocumentSymbolPicker.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
+import { openDiffCollapseGlobPicker } from './DiffCollapseGlobPicker.ts';
 import { openSearchPicker } from './SearchPicker.ts';
 import { SearchResultsView } from './SearchResultsView.ts';
 import { ProjectSearchView } from './ProjectSearchView.ts';
@@ -2222,6 +2223,14 @@ export class AppWindow {
     openDiffFilePicker(this.overlay, diff);
   }
 
+  /** `diff:collapse-files-matching` (`z x`) — collapse every file in the active diff matching a
+   *  comma-separated glob filter typed into a picker. */
+  private diffCollapseGlobPicker() {
+    const diff = this.activeContinuousDiff();
+    if (!diff) return;
+    openDiffCollapseGlobPicker(this.overlay, diff);
+  }
+
   private async documentSymbolPicker() {
     const editor = this.activeEditor;
     if (!editor) return;
@@ -2514,6 +2523,11 @@ export class AppWindow {
       'diff:collapse-all-files': {
         didDispatch: () => this.activeContinuousDiff()?.collapseAllFiles(),
         description: 'Collapse every file to a one-line header (overview)',
+        when: () => this.activeContinuousDiff() !== null,
+      },
+      'diff:collapse-files-matching': {
+        didDispatch: () => this.diffCollapseGlobPicker(),
+        description: 'Collapse files matching a glob…',
         when: () => this.activeContinuousDiff() !== null,
       },
       'diff:expand-all-files': {

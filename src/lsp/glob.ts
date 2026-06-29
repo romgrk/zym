@@ -3,53 +3,15 @@
  * (`**​/*.ts`, `**​/tsconfig.json`, …) via `client/registerCapability`; we match
  * changed paths against them before notifying `workspace/didChangeWatchedFiles`.
  *
- * Supports the common glob subset: `**` (any path segments), `*` (within a
- * segment), `?` (one non-separator char), and `{a,b}` alternation. Paths are
- * compared with forward slashes.
+ * The glob → regex compiler is the shared one in `src/util/glob.ts`; this module
+ * is just the LSP-specific anchoring (a relative pattern, or one rooted at a
+ * watcher base).
  */
-const REGEX_SPECIALS = /[.+^$()|[\]\\]/g;
-
-function escapeLiteral(text: string): string {
-  return text.replace(REGEX_SPECIALS, '\\$&');
-}
-
-/** Convert a glob to an (unanchored) regex source matching a forward-slash path. */
-function globBody(glob: string): string {
-  let out = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        i++;
-        if (glob[i + 1] === '/') {
-          i++;
-          out += '(?:.*/)?'; // `**/` → zero or more path segments
-        } else {
-          out += '.*'; // `**` → anything, across separators
-        }
-      } else {
-        out += '[^/]*'; // `*` → within one segment
-      }
-    } else if (c === '?') {
-      out += '[^/]';
-    } else if (c === '{') {
-      const end = glob.indexOf('}', i);
-      if (end === -1) {
-        out += '\\{';
-      } else {
-        out += `(?:${glob.slice(i + 1, end).split(',').map(escapeLiteral).join('|')})`;
-        i = end;
-      }
-    } else {
-      out += escapeLiteral(c);
-    }
-  }
-  return out;
-}
+import { escapeLiteral, globBody, globToRegExp } from '../util/glob.ts';
 
 /** Compile an LSP glob to an anchored RegExp matching a (relative) path. */
 export function lspGlobToRegExp(glob: string): RegExp {
-  return new RegExp(`^${globBody(glob.replace(/\\/g, '/'))}$`);
+  return globToRegExp(glob);
 }
 
 /**

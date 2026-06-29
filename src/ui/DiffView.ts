@@ -40,6 +40,7 @@ import type { StickyHeaderSpec } from './TextEditor/StickyHeaders.ts';
 import { buildRowMap, computeHunks, formatHunkPatch, hunkContainsBufferRow, type Hunk } from '../util/hunkPatch.ts';
 import { applyPatch, git, repoRoot, type GitDone, type GitRepo } from '../git.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import { compileGlobFilter } from '../util/glob.ts';
 import { zym } from '../zym.ts';
 import * as Path from 'node:path';
 
@@ -98,9 +99,10 @@ const REDIFF_DEBOUNCE_MS = 120;
 
 /** Right-align line numbers into an equal-width gutter column; a null (the side a row doesn't exist
  *  on) is all spaces of that width, so the column stays aligned and the `[space][number][space]`
- *  cell background spans a consistent width. */
-function lineLabels(nums: readonly (number | null)[]): string[] {
-  let width = 1;
+ *  cell background spans a consistent width. `minWidth` pins the column to the WHOLE diff's widest
+ *  number (see `gutterWidths`) so collapsing/expanding files never re-sizes the gutter. */
+function lineLabels(nums: readonly (number | null)[], minWidth = 1): string[] {
+  let width = minWidth;
   for (const n of nums) if (n !== null) width = Math.max(width, String(n).length);
   return nums.map((n) => (n === null ? ' '.repeat(width) : String(n).padStart(width)));
 }
@@ -280,10 +282,11 @@ export class DiffView {
     // ONE gutter renderer drawing both old + new columns (one PangoLayout/line, for perf). The
     // number columns are hidden by default (`editor.diffLineNumbers`); a live diff keeps its
     // staged/unstaged marker regardless.
+    const gw = this.gutterWidths();
     this.lineNumbers = new CombinedDiffLineNumberGutter(
       this.editor.sourceView,
-      lineLabels(dmb.oldNums),
-      lineLabels(dmb.newNums),
+      lineLabels(dmb.oldNums, gw.old),
+      lineLabels(dmb.newNums, gw.new),
       gutterBg(dmb, 'old'),
       gutterBg(dmb, 'new'),
       headerRows(dmb),
@@ -342,6 +345,21 @@ export class DiffView {
       this.fetchIndexText(this.files.map((f) => f.path), () => this.refreshMarkers());
       this.gitUnsub = this.gitRepo?.onChange(() => this.onGitChange());
     }
+  }
+
+  /** Stable gutter column widths (digit counts) for the WHOLE diff — sized to the widest old / new
+   *  file line number across EVERY file, from each side's full source buffer (line count is O(1) and,
+   *  being the whole file, an upper bound on any visible number). Keeping the columns pinned to this
+   *  means collapsing/expanding files — or revealing context — never re-sizes the gutter and shifts
+   *  the layout. (Recomputed per rebuild so an edit that grows the new side still tracks.) */
+  private gutterWidths(): { old: number; new: number } {
+    let maxOld = 1;
+    let maxNew = 1;
+    for (const f of this.files) {
+      maxOld = Math.max(maxOld, this.sources.get(oldKey(f.path))?.buffer.getLineCount() ?? 1);
+      maxNew = Math.max(maxNew, this.sources.get(newKey(f.path))?.buffer.getLineCount() ?? 1);
+    }
+    return { old: String(maxOld).length, new: String(maxNew).length };
   }
 
   /** Build the windowed diff from each file's base blob + its CURRENT new-side text (the live
@@ -437,6 +455,29 @@ export class DiffView {
     if (this.collapsedFiles.size === 0) return;
     this.collapsedFiles.clear();
     this.reDiff();
+  }
+
+  /** The files whose (cwd-relative) path matches `pattern` — a comma-separated glob filter, each
+   *  term `!`-prefixed to negate (see `compileGlobFilter`). Matched against the display label (the
+   *  relative path the user sees), in view order. Non-mutating; drives the `z x` picker's preview. */
+  filesMatching(pattern: string): { path: string; label: string }[] {
+    const filter = compileGlobFilter(pattern);
+    if (filter.isEmpty) return [];
+    return this.dmb.headerAnchors.filter((h) => filter.test(h.label)).map((h) => ({ path: h.path, label: h.label }));
+  }
+
+  /** Collapse every file matching `pattern` (`z x`) — see `filesMatching` for the glob syntax.
+   *  Already-collapsed files are left as-is; re-diffs once if anything changed. Returns the count. */
+  collapseFilesMatching(pattern: string): number {
+    let collapsed = 0;
+    for (const { path } of this.filesMatching(pattern)) {
+      if (!this.collapsedFiles.has(path)) {
+        this.collapsedFiles.add(path);
+        collapsed++;
+      }
+    }
+    if (collapsed > 0) this.reDiff();
+    return collapsed;
   }
 
   /** The header-row view position of the file owning `documentKey` (`new:<p>` / `old:<p>`) — the
@@ -711,9 +752,10 @@ export class DiffView {
     if (this.disposed) return;
     const dmb = this.buildDiff();
     this.dmb = dmb;
+    const gw = this.gutterWidths();
     this.lineNumbers?.setData(
-      lineLabels(dmb.oldNums),
-      lineLabels(dmb.newNums),
+      lineLabels(dmb.oldNums, gw.old),
+      lineLabels(dmb.newNums, gw.new),
       gutterBg(dmb, 'old'),
       gutterBg(dmb, 'new'),
       headerRows(dmb),
@@ -874,6 +916,12 @@ export class DiffView {
     // left pointing at a different (often phantom) row — and edits would then land there.
     const caret = this.editor.model.getCursorBufferPosition();
     const anchor = this.projection.screenToDocument(caret.row, caret.column);
+    // A caret resting ON a file header maps to a block row, not a document position, so the restore
+    // below would skip it. Anchor it to that file's PATH and re-land it on the header after the
+    // reflow — otherwise the splice drags it: the last file's header is the buffer's final,
+    // unterminated line, so expanding it appends at the caret and the insert mark rides to the end.
+    const headerPath =
+      anchor.kind === 'block' && anchor.block === 'header' ? this.fileAtViewRow(caret.row)?.path ?? null : null;
     const dmb = this.buildDiff();
     this.dmb = dmb;
     // No file has any change → show the empty state instead of an empty editor.
@@ -885,7 +933,8 @@ export class DiffView {
       this.suppressReDiff = false;
     }
     this.applyDecorations(dmb);
-    this.lineNumbers?.setData(lineLabels(dmb.oldNums), lineLabels(dmb.newNums), gutterBg(dmb, 'old'), gutterBg(dmb, 'new'), headerRows(dmb), this.live ? dmb.stagedState : null);
+    const gw = this.gutterWidths();
+    this.lineNumbers?.setData(lineLabels(dmb.oldNums, gw.old), lineLabels(dmb.newNums, gw.new), gutterBg(dmb, 'old'), gutterBg(dmb, 'new'), headerRows(dmb), this.live ? dmb.stagedState : null);
     this.installOverlays(dmb); // re-place header + gap widgets (counts/positions re-flowed)
     // retarget swapped rows but didn't repaint — re-highlight the spliced sections.
     this.editor.repaintSyntax();
@@ -896,6 +945,9 @@ export class DiffView {
         this.projection.documentToScreen(anchor.documentKey, anchor.row, anchor.column) ??
         this.headerViewRowForDocumentKey(anchor.documentKey);
       if (pos) this.editor.model.setCursorBufferPosition(pos);
+    } else if (headerPath) {
+      const h = this.headerAnchors.find((a) => a.path === headerPath);
+      if (h) this.editor.model.setCursorBufferPosition({ row: h.viewRow, column: 0 });
     }
     // (Header focus follows the caret automatically — owned by `editor.stickyHeaders`.)
     this.lastLineCount = this.screen.buffer.getLineCount(); // reflow changed it

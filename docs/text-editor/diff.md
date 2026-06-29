@@ -78,12 +78,14 @@ gaps (`'below'` the last shown row) — plus review-comment cards — are ordina
 **Per-file folding & navigation** (vim-style, keyed by path in `DiffView.collapsedFiles`) — `z c` /
 `z o` (`diff:collapse-file` / `diff:expand-file`) close/open the file under the cursor, `z a`
 (`diff:toggle-file`) toggles it, and `z r` / `z m` (`diff:expand-all-files` / `diff:collapse-all-files`)
-open/close every file (a one-line-per-file overview). `z j` / `z k` (`diff:next-file` / `diff:prev-file`)
-step the caret between file headers; `z /` (`diff:go-to-file`) opens a fuzzy file picker over the diff
-editor (`DiffFilePicker`, like `lsp:document-symbols`) that jumps to the chosen file's header. A
-collapsed file emits only its header row (`buildDiffMultiBuffer`'s `collapsed` predicate); the
-re-derive rides the existing `reDiff()` refresh path and the caret recovers onto the file's header
-row when its own line is folded away. Revealing the elided unchanged lines *within* a file is a
+open/close every file (a one-line-per-file overview). `z x` (`diff:collapse-files-matching`) collapses
+every file matching a comma-separated glob filter (`!` to negate), typed into a picker
+(`DiffCollapseGlobPicker`; glob engine in `src/util/glob.ts`). `z j` / `z k` (`diff:next-file` /
+`diff:prev-file`) step the caret between file headers; `z /` (`diff:go-to-file`) opens a fuzzy file
+picker over the diff editor (`DiffFilePicker`, like `lsp:document-symbols`) that jumps to the chosen
+file's header. A collapsed file emits only its header row (`buildDiffMultiBuffer`'s `collapsed`
+predicate); the re-derive rides the existing `reDiff()` refresh path and the caret recovers onto the
+file's header row. Revealing the elided unchanged lines *within* a file is a
 separate axis: `z .` (`diff:expand-context`) expands the nearest `⋯` gap a chunk at a time, `z >`
 (`diff:expand-all`) reveals the full files, `z <` (`diff:collapse-context`) re-collapses — and
 clicking a `⋯` marker expands it too. (`.` mirrors the dots; `z o` is the file-open now, not the
@@ -154,7 +156,8 @@ a review can always be sent to an agent:
   the one gutter renderer drawing both the old and new line-number columns. The
   number columns are gated on `editor.diffLineNumbers` (off by default, live-toggled
   via `zym.config.observe`); when off a read-only diff has no gutter, but the **live**
-  staging diff still shows its staged/unstaged marker band.
+  staging diff still shows its staged/unstaged marker band. Each column's width is fixed to the whole
+  diff's widest line number (`DiffView.gutterWidths`), so collapsing/expanding never re-sizes the gutter.
 - `src/ui/TextEditor/GitGutter.ts` — the live change-bar gutter shown **while
   editing** a file with uncommitted changes (a separate feature from the diff
   surface; also built on `lineDiff.ts`).

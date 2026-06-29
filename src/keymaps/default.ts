@@ -303,6 +303,8 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'z a': 'diff:toggle-file',
     'z r': 'diff:expand-all-files',
     'z m': 'diff:collapse-all-files',
+    // `z x` collapses every file matching a comma-separated glob (typed into a picker; `!` negates).
+    'z x': 'diff:collapse-files-matching',
     // `z j`/`z k` step between files; `z /` opens a picker to jump to one.
     'z j': 'diff:next-file',
     'z k': 'diff:prev-file',
