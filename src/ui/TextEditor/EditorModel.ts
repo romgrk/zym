@@ -1876,16 +1876,49 @@ export class EditorModel {
   }
 
   /**
+   * The horizontal alignment to hand `scroll_to_mark` so a centered (vertical) reveal leaves the
+   * horizontal scroll exactly where it is. `scroll_to_mark`'s `use_align` aligns BOTH axes, so a
+   * hardcoded `xalign` (0 = left edge) yanks the view horizontally on every center — search n/N,
+   * gg/G, zz, session restore. Instead we pass the cursor's *current* x-fraction across the
+   * viewport, which leaves the hadjustment unchanged. Only when the cursor cell is genuinely off
+   * screen horizontally do we deviate, pulling it just inside the nearer edge (a one-cell margin) —
+   * the minimal move to reveal it. Returns 0 (plain left-align) when the view has no usable width
+   * (e.g. just realized). See docs/text-editor/index.md (Centering).
+   */
+  private cursorXAlign(): number {
+    const hadj = this.view.getHadjustment?.();
+    const pageWidth = hadj?.getPageSize() ?? 0;
+    const cell = hadj
+      ? (this.view.getIterLocation(
+          unwrapIter(this.buffer.getIterAtMark(this.buffer.getInsert())),
+        ) as PixelRect)
+      : null;
+    // `scroll_to_mark` (within_margin 0) lands the hadjustment at `cell.x - (pageWidth - cell.width)
+    // * xalign`, so the alignment that *keeps* the current scroll is `(cell.x - left) / denom`. denom
+    // is the cell's travel range across the viewport; a degenerate viewport (≤ one cell wide) has no
+    // room to preserve, so fall back to the plain left edge.
+    const denom = pageWidth - (cell?.width ?? 0);
+    if (!hadj || !cell || denom <= 0) return 0;
+    const left = hadj.getValue();
+    if (cell.x >= left && cell.x + cell.width <= left + pageWidth)
+      return clamp((cell.x - left) / denom, 0, 1); // fully visible → keep the horizontal scroll put
+    const margin = Math.min(cell.width || 0, denom / 2);
+    if (cell.x < left) return clamp(margin / denom, 0, 1); // off the left → reveal at the left edge
+    return clamp((denom - margin) / denom, 0, 1); // off the right → reveal at the right edge
+  }
+
+  /**
    * Scroll so the cursor's line sits `yalign` down the viewport (0 = top edge, 0.25 = a
    * quarter down, 0.5 = centered), via `scroll_to_mark` with alignment. Unlike `setTopBufferRow`
    * / `scroll_to_iter` — which read a `getIterLocation` estimate and undershoot before the lines
    * above the target are validated (the diff multibuffer's variable-height header bands make the
    * estimate worse) — `scroll_to_mark` defers and validates incrementally until the mark is
-   * reached, landing accurately even on a not-fully-laid-out view. No-op until realized.
+   * reached, landing accurately even on a not-fully-laid-out view. Horizontal scroll is preserved
+   * (`cursorXAlign`) rather than reset to the left edge. No-op until realized.
    */
   scrollCursorToFraction(yalign: number): void {
     if (!this.view.getRealized()) return;
-    this.view.scrollToMark(this.buffer.getInsert(), 0, true, 0, yalign);
+    this.view.scrollToMark(this.buffer.getInsert(), 0, true, this.cursorXAlign(), yalign);
   }
 
   /** Scroll so the cursor lands at the configured center fraction down the viewport — the one
