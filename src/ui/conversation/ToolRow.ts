@@ -40,7 +40,7 @@ addStyles(`
   /* The leading tool icon, inline at the start of the header button (left of the
      title). The trailing pad sets it off the title; both share the button's row, so
      the label's own vertical centering keeps the glyph centered on the title. */
-  .ToolRow .tool-row-icon { padding-right: 8px; }
+  .ToolRow .tool-row-icon { padding-right: calc(2 * var(--t-spacing)); }
   /* The BUTTON (icon + title) + DETAILS expander: grows + gains the bubble bg. */
   .ToolRow .tool-row-toggle {
     border-radius: 8px;

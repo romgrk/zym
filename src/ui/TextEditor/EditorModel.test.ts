@@ -317,7 +317,7 @@ function modelWithMultilineFold() {
   m.setFoldAccess(documentFoldAccess(doc, screen, {
     placeholderRanges: () => [screen.foldPlaceholderRange(fold!)],
   }));
-  return { m, buffer, doc };
+  return { m, buffer, doc, screen };
 }
 
 test('a fold makes buffer-space reads see the unfolded source, not the collapsed screen', () => {
@@ -343,6 +343,20 @@ test('a fold makes buffer↔screen row/point conversions go through the transfor
   assert.deepEqual(m.getCursorBufferPosition().toArray(), [4, 2]);
   assert.deepEqual(m.getCursorScreenPosition().toArray(), [2, 2]);
   assert.deepEqual(m.getLastCursor().getScreenPosition().toArray(), [2, 2]);
+});
+
+test('the LSP cursor maps a folded caret to its true document position (TextEditor.lspCursor)', () => {
+  const { m, screen } = modelWithMultilineFold();
+  // Caret on 'line4' — buffer row 4, but screen row 2 (rows 2–3 are collapsed onto row 1).
+  m.setCursorBufferPosition(new Point(4, 2));
+  // TextEditor.lspCursor() = documentPointFromScreen(screen cursor). `document == buffer` for a
+  // single file, so it must recover the file position the caret actually sits on.
+  const lspCursor = screen.documentPointFromScreen(m.getCursorScreenPosition());
+  assert.deepEqual(lspCursor.toArray(), [4, 2], 'LSP sees the file line, not the folded screen row');
+  // Regression: feeding the *buffer* point (the pre-fix bug) treats screen row 4 — past the
+  // 4-row collapsed view — as a screen coordinate, overshooting past the fold.
+  const buggy = screen.documentPointFromScreen(m.getCursorBufferPosition());
+  assert.notDeepEqual(buggy.toArray(), [4, 2], 'feeding the buffer point overshoots past the fold');
 });
 
 test('a marker (vim mark) set past a fold round-trips in buffer space', () => {

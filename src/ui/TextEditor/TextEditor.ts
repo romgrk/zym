@@ -2434,9 +2434,10 @@ export class TextEditor implements DocumentHost {
   }
 
   /** @internal The cursor for an LSP request (anchors completion/hover at this view).
-   *  Translated to model space — inline fold anchors shift view columns past them. */
+   *  Translated screen→document — folds shift the lines and columns under the caret,
+   *  so `documentPointFromScreen` must be fed the *screen* cursor, not the buffer one. */
   lspCursor(): Point {
-    return this.screen.documentPointFromScreen(this.editorModel.getCursorBufferPosition());
+    return this.screen.documentPointFromScreen(this.editorModel.getCursorScreenPosition());
   }
 
   // --- Identity --------------------------------------------------------------
@@ -2546,6 +2547,10 @@ export class TextEditor implements DocumentHost {
    *  embedder (e.g. the GitPanel's diff) can jump to a row right after attaching the view. */
   revealRow(row: number, yalign = this.editorModel.getCenterFraction()): void {
     this.editorModel.setCursorBufferPosition({ row, column: 0 });
+    this.revealCursorCentered(yalign);
+  }
+
+  private revealCursorCentered(yalign = this.editorModel.getCenterFraction()): void {
     let frames = 0;
     let settled = 0;
     const apply = () => {
@@ -2578,9 +2583,10 @@ export class TextEditor implements DocumentHost {
       return;
     }
     this.editorModel.setCursorBufferPosition({ row: cursor[0], column: cursor[1] });
-    // Reveal the restored cursor centered (see docs/text-editor/index.md (Centering)); horizontally
-    // centered too so a long-line cursor lands in view.
-    this.view.scrollToMark(this.buffer.getInsert(), 0, true, 0.5, this.editorModel.getCenterFraction());
+    // Reveal the restored/jumped-to cursor centered. The horizontal scroll is left put unless the
+    // cursor is off-screen (then revealed at the nearer edge) — a far-column jump still lands in
+    // view, without sliding the screen sideways otherwise. See docs/text-editor/index.md (Centering).
+    this.revealCursorCentered();
   }
 
   /** True while the document holds unsaved edits — drives the exit prompt. */
