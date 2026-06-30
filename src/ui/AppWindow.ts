@@ -39,12 +39,10 @@ import { HeaderBar } from './HeaderBar.ts';
 import { GitPanel } from './git/GitPanel.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { Icons } from './icons.ts';
-import { acquireGitRepo, releaseGitRepo, type GitOpResult } from '../git.ts';
+import { acquireGitRepo, releaseGitRepo } from '../git.ts';
 import { git, repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
-import { stage, unstage, stageAll, unstageAll, type GitDone } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { GitLogView } from './git/GitLogView.ts';
-import { registerGithubCommands } from './githubCommands.ts';
 import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './workbench/Workbench.ts';
 import { openFilePicker } from './FilePicker.ts';
 import { openFileOpener, openFolderPicker, openRenamePicker } from './FileOpener.ts';
@@ -63,13 +61,7 @@ import { WhichKey } from './WhichKey.ts';
 import { openAgentPicker } from './AgentPicker.ts';
 import { openWorkbenchPicker } from './WorkbenchPicker.ts';
 import { openAgentLauncher, launchPrompt, type LauncherMode } from './AgentLauncher.ts';
-import {
-  openBranchPicker,
-  openDeleteBranchPicker,
-  openMergeBranchPicker,
-  openRenameBranchPicker,
-} from './git/BranchPicker.ts';
-import { openStashPicker } from './git/StashPicker.ts';
+import { openBranchPicker } from './git/BranchPicker.ts';
 import { openGithubCIChecksPicker } from './GithubCIChecksPicker.ts';
 import { openPicker } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
@@ -98,6 +90,7 @@ import { CompositeDisposable, Disposable, Emitter, type DisposableLike } from '.
 import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
+import { registerGitCommands } from './git/gitCommands.ts';
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 950;
@@ -447,7 +440,14 @@ export class AppWindow {
     this.registerPaneCommands();
     this.registerWindowCommands();
     this.registerTerminalCommands();
-    this.registerGitCommands();
+    registerGitCommands({
+      overlay: this.overlay,
+      getCwd: () => this.workbench.cwd,
+      getGit: () => this.workbench.git,
+      activeEditor: () => this.activeEditor,
+      github: this.headerBar.github,
+      toast: (message) => this.toast(message),
+    });
     this.registerNotificationCommands();
     this.registerConfigCommands();
     this.registerSessionCommands();
@@ -2406,44 +2406,6 @@ export class AppWindow {
     });
   }
 
-  // Stage / unstage the active editor's file. `git add -- <path>` when staging,
-  // `git restore --staged -- <path>` when unstaging; the repo root is resolved
-  // from the file itself (the active editor may belong to a nested repo).
-  private stageCurrentFile(staging: boolean): void {
-    const path = this.activeEditor?.currentFile;
-    if (!path) return;
-    const root = repoRoot(Path.dirname(path));
-    if (!root) {
-      this.toast('Not in a git repository');
-      return;
-    }
-    const rel = Path.relative(root, path);
-    const name = Path.basename(path);
-    const verb = staging ? 'Stage' : 'Unstage';
-    const op = staging ? stage : unstage;
-    op(root, rel, this.gitStageDone(`${verb} ${name}`));
-  }
-
-  // Stage / unstage the whole working tree: `git add -A` / `git reset -q`.
-  private stageEverything(staging: boolean): void {
-    const root = repoRoot(this.workbench.cwd);
-    if (!root) {
-      this.toast('Not in a git repository');
-      return;
-    }
-    const op = staging ? stageAll : unstageAll;
-    op(root, this.gitStageDone(staging ? 'Stage all' : 'Unstage all'));
-  }
-
-  // Refresh the cached repo so the gutter, Source Control panel, and branch
-  // indicator update immediately; report only failures (success is silent).
-  private gitStageDone(label: string): GitDone {
-    return (ok, _out, err) => {
-      if (!ok) zym.notifications.addError(`${label} failed`, { detail: err.trim() });
-      this.workbench.git.refresh();
-    };
-  }
-
   /** Open the project-search surface in a tab: a debounced search entry + ripgrep flag
    *  toggles over an editable results multibuffer (docs/text-editor/multibuffer.md). Seeded
    *  with `initialQuery` (the editor selection for `space *`) or empty (`space p s`). */
@@ -2660,118 +2622,6 @@ export class AppWindow {
       'agent:send-selection-to-new': { didDispatch: () => this.composeNewAgent(this.editorSelectionText()), description: 'Send the selection to a new agent' },
       'agent:send-file-to-new': { didDispatch: () => this.composeNewAgent(this.editorFileText()), description: 'Send the file path to a new agent' },
     });
-  }
-
-  // Git network operations. They run through GitRepo.run (Gio.Subprocess, non-
-  // blocking), so the branch button's spinner reflects progress automatically;
-  // the result is surfaced as a toast.
-  private registerGitCommands() {
-    zym.commands.add('.AppWindow', {
-      // Staging from anywhere (not just the Source Control panel): the current
-      // editor file, or the whole tree. These shell out to git directly — like the
-      // panel's row actions — then refresh the cached repo so the gutter and branch
-      // indicator update at once.
-      'git:stage-current': {
-        didDispatch: () => this.stageCurrentFile(true),
-        description: 'Stage the current file (git add)',
-        when: () => this.activeEditor?.currentFile != null,
-      },
-      'git:unstage-current': {
-        didDispatch: () => this.stageCurrentFile(false),
-        description: 'Unstage the current file',
-        when: () => this.activeEditor?.currentFile != null,
-      },
-      'git:stage-all': {
-        didDispatch: () => this.stageEverything(true),
-        description: 'Stage all changes (git add -A)',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:unstage-all': {
-        didDispatch: () => this.stageEverything(false),
-        description: 'Unstage all changes',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      // Git commands only apply inside a repository (a resolvable branch).
-      'git:fetch': { didDispatch: () => this.runGit(() => this.workbench.git.fetch(), 'Fetch'), description: 'Fetch from the remote', when: () => this.workbench.git.getBranch() !== null },
-      'git:pull': { didDispatch: () => this.runGit(() => this.workbench.git.pull(), 'Pull'), description: 'Pull from upstream (fast-forward)', when: () => this.workbench.git.getBranch() !== null },
-      'git:push': {
-        // After a successful push, GitHub re-runs the PR's checks; schedule a CI
-        // refresh ~10s out. The service stays busy until then, so the CI segment
-        // shows the in-progress (loading) look in the meantime. The first push of a
-        // new branch sets its upstream to this remote (the fork's), per `git.remotes.origin`.
-        didDispatch: () => {
-          const remote = (zym.config.get('git.remotes.origin') as string) || 'origin';
-          this.runGit(() => this.workbench.git.push(remote), 'Push', () => this.headerBar.github.scheduleRefresh(10000));
-        },
-        description: 'Push to the remote (sets the upstream on a new branch)',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:branch-switch': {
-        didDispatch: () => openBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
-        description: 'Switch or create a branch…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:branch-delete': {
-        didDispatch: () => openDeleteBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
-        description: 'Delete a branch…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:branch-merge': {
-        didDispatch: () => openMergeBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
-        description: 'Merge a branch into current…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:branch-rename': {
-        didDispatch: () => openRenameBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
-        description: 'Rename the current branch…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:stash-push': {
-        didDispatch: () => this.stashChanges(),
-        description: 'Stash changes',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:stash-pop': {
-        didDispatch: () => openStashPicker(this.overlay, this.workbench.cwd, 'pop', this.workbench.git),
-        description: 'Pop a stash…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:stash-apply': {
-        didDispatch: () => openStashPicker(this.overlay, this.workbench.cwd, 'apply', this.workbench.git),
-        description: 'Apply a stash…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-      'git:stash-drop': {
-        didDispatch: () => openStashPicker(this.overlay, this.workbench.cwd, 'drop', this.workbench.git),
-        description: 'Drop a stash…',
-        when: () => this.workbench.git.getBranch() !== null,
-      },
-    });
-    // GitHub-specific commands (pickers + open-on-web) live in their own module.
-    registerGithubCommands({
-      overlay: this.overlay,
-      github: this.headerBar.github,
-      cwd: () => this.workbench.cwd,
-      git: () => this.workbench.git,
-      toast: (message) => this.toast(message),
-    });
-  }
-
-  // Run a coordinated git operation (e.g. `() => this.workbench.git.fetch()`) and report.
-  // Success is quiet (a trace, recorded in the log only); failures pop a toast.
-  private async runGit(op: () => Promise<GitOpResult>, label: string, onSuccess?: () => void) {
-    const result = await op();
-    if (result.isOk()) {
-      zym.notifications.addTrace(`${label} succeeded`);
-      onSuccess?.();
-    } else zym.notifications.addError(`${label} failed`);
-  }
-
-  // Stash the working-tree changes (visible success, since it's a manual action).
-  private async stashChanges() {
-    const result = await this.workbench.git.stash();
-    if (result.isOk()) zym.notifications.addSuccess('Stashed changes');
-    else zym.notifications.addError('Stash failed', { detail: result.unwrapErr().message.trim() });
   }
 
   // Start a commit: open the message file (`.git/COMMIT_EDITMSG`) in an editor
