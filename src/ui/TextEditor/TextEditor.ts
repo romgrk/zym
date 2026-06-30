@@ -2434,9 +2434,10 @@ export class TextEditor implements DocumentHost {
   }
 
   /** @internal The cursor for an LSP request (anchors completion/hover at this view).
-   *  Translated to model space — inline fold anchors shift view columns past them. */
+   *  Translated screen→document — folds shift the lines and columns under the caret,
+   *  so `documentPointFromScreen` must be fed the *screen* cursor, not the buffer one. */
   lspCursor(): Point {
-    return this.screen.documentPointFromScreen(this.editorModel.getCursorBufferPosition());
+    return this.screen.documentPointFromScreen(this.editorModel.getCursorScreenPosition());
   }
 
   // --- Identity --------------------------------------------------------------
