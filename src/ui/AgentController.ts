@@ -678,7 +678,6 @@ export class AgentController {
   }
 
   /** Show `agent`: activate its workbench (its widget lives in the agent sidebar). */
-  /** Show `agent`: activate its workbench (the sidebar row + agent:picker). */
   showAgent(agent: Agent): void {
     this.d.workbenchManager.activateOwner(agent);
   }

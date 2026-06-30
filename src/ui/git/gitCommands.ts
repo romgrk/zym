@@ -28,7 +28,7 @@ import {
 import { openStashPicker } from './StashPicker.ts';
 import { registerGithubCommands } from '../githubCommands.ts';
 import type { GithubService } from '../../github.ts';
-import type { Disposable } from '../../util/eventKit.ts';
+import { Disposable } from '../../util/eventKit.ts';
 
 export interface GitCommandsDeps {
   /** The header's GitHub service — push schedules a CI refresh, and `github:*` chain in. */
@@ -75,15 +75,20 @@ export function registerGitCommands(d: GitCommandsDeps): Disposable {
     'git:stash-apply': { didDispatch: () => openStashPicker(host(), workbench().cwd, 'apply', workbench().git), description: 'Apply a stash…', when: inRepo },
     'git:stash-drop': { didDispatch: () => openStashPicker(host(), workbench().cwd, 'drop', workbench().git), description: 'Drop a stash…', when: inRepo },
   });
-  // GitHub-specific commands (pickers + open-on-web) live in their own module.
-  registerGithubCommands({
+  // GitHub-specific commands (pickers + open-on-web) live in their own module;
+  // chain their teardown into the returned Disposable so disposing this module
+  // also drains the `github:*` commands it registered.
+  const github = registerGithubCommands({
     overlay: host(),
     github: d.github,
     cwd: () => workbench().cwd,
     git: () => workbench().git,
     toast: (message) => zym.notifications.addInfo(message),
   });
-  return commands;
+  return new Disposable(() => {
+    commands.dispose();
+    github.dispose();
+  });
 }
 
 // Stage / unstage the active editor's file. `git add -- <path>` when staging,
