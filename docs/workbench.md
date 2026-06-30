@@ -39,6 +39,14 @@ opens as a center tab, not a dock — see docs/git/index.md.)
   on the active workbench (read lazily) and the window-level `Gtk.Paned` columns;
   the panel-tree operations it needs are injected by `AppWindow`. See
   [app-window.md](app-window.md).
+- **`WorkbenchManager`** (`src/ui/workbench/WorkbenchManager.ts`) — the per-person
+  workbench **lifecycle**: the `workbenches` map + the active one, and
+  `buildWorkbench` / `activateWorkbench` / `cycleWorkbench` / `reRootWorkbench`.
+- **`PaneItems`** (`src/ui/workbench/PaneItems.ts`) — the **tab/item-registry spine**
+  underneath every `Panel`: the per-widget registries for each kind of center tab +
+  their create/serialize/dispose/reopen lifecycle, the shared `DocumentRegistry`, and
+  the `openFile` funnel. The center built by `makeCenter()` and every tab op routes
+  through it. See [app-window.md](app-window.md).
 
 ## Dock visibility (toggleable docks)
 

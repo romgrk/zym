@@ -1,68 +1,80 @@
 # AppWindow decomposition
 
-`AppWindow` (`src/ui/AppWindow.ts`) is the top-level application window. Historically
-it was a God object (~3600 lines) that owned the window chrome **and** every feature's
+`AppWindow` (`src/ui/AppWindow.ts`) is the top-level application window. It was once a
+God object (~3600 lines) that owned the window chrome **and** every feature's
 orchestration (LSP, git, files, agents), the tab/item registry, workbench lifecycle,
-docks, and focus/pane navigation.
+docks, and focus/pane navigation. It is now a **composition root** (~1000 lines): build
+the GTK window + top-level layout, instantiate the collaborators, wire them, register
+the window-chrome commands, and handle present/geometry/shutdown.
 
-It is being refactored toward Atom's split: a thin **composition root** (build the
-GTK window + top-level layout, instantiate collaborators, wire them, handle
-present/geometry/shutdown) plus focused collaborators that each own one
-responsibility. The two collaborator idioms already in the codebase:
+Following Atom, the collaborators take two shapes, both already idiomatic in the codebase:
 
 - **Stateless command modules** — `registerXCommands(deps)` functions taking an
   explicit deps object and returning a `Disposable` (the `registerGithubCommands`
-  idiom). A feature owns its `*:` commands + their small pickers; anything stateful
-  (the active editor, the active workbench cwd/git, file-open, workspace-edit
-  application) is injected.
-- **State-owning controllers** — classes that own a slice of state and are
-  constructed by `AppWindow` with a deps object of lazy closures over the other
-  collaborators (so the mutually-recursive wiring resolves at call time, not
-  construction time).
+  idiom). A feature owns its `*:` commands + their small pickers. Anything app-wide
+  (the active editor, the active workbench, file-open, the picker host, notifications,
+  workspace-edit application) is read off the **`zym` global**, Atom-style — *not*
+  threaded through a deps object; only genuinely module-specific collaborators are
+  injected. See "the zym.workspace seam" below.
+- **State-owning controllers** — classes that own a slice of state, constructed by
+  `AppWindow` with a deps object whose late-bound entries are lazy closures over the
+  other collaborators, so the mutually-recursive wiring resolves at call time (not
+  construction time — `buildWorkbench` runs during construction before the view layer
+  exists).
 
-## Extracted so far
+## The collaborators
 
-- `src/ui/lspCommands.ts` — `registerLspCommands` (`lsp:*` / `tag:rename`):
-  navigation, references, symbol pickers, code actions, rename, format. The
-  GTK-free LSP core stays in `src/lsp/`; this is its GTK-facing command surface.
+Command modules (in/next to their feature folder):
+
+- `src/ui/lspCommands.ts` — `registerLspCommands` (`lsp:*` / `tag:rename`): navigation,
+  references, symbol pickers, code actions, rename, format. The GTK-free LSP core stays
+  in `src/lsp/`; this is its GTK-facing command surface. Injects only `documents`.
 - `src/ui/git/gitCommands.ts` — `registerGitCommands` (`git:*` repo ops): staging,
-  fetch/pull/push, branch, stash. Chains in `registerGithubCommands`.
-- `src/ui/fileCommands.ts` — `registerFileCommands` (`file:*`): open / save /
-  save-as / move / rename (with LSP reference rewrites).
-- `src/ui/workbench/WorkbenchView.ts` — `WorkbenchView`, the **active workbench's
-  view layer**: the window's sidebars (workbench list + agent secondary sidebar),
-  docks (reveal / toggle / show-hide), keyboard-focus memory, and
-  directional/cyclic pane navigation. It always acts on the active workbench (read
-  lazily) and attaches/detaches the window-level columns on their `Gtk.Paned`
-  splits; the panel-tree operations it needs (focus tab content, open a split view,
-  build the live diff, register a tab-close handler) are injected. This merges what
-  the plan called `FocusNavigator` + `DockController` into one cohesive controller,
-  because they share the active-workbench view state and splitting them would need
-  heavy mutual injection.
+  fetch/pull/push, branch, stash. Chains in `registerGithubCommands`. Injects only the
+  header's `github` service.
+- `src/ui/fileCommands.ts` — `registerFileCommands` (`file:*`): open / save / save-as /
+  move / rename (with LSP reference rewrites). Injects only `activeSavableSurface`.
 
-## Remaining
+State-owning controllers:
 
-The deeply-coupled runtime core, still in `AppWindow`, to be extracted in dependency
-order:
+- `src/ui/workbench/PaneItems.ts` — **the tab/item-registry spine** (Atom's `Workspace`
+  / `PaneContainer` / `TextEditorRegistry`). Owns every center-tab registry (editors /
+  terminals / headless agents / project-search & diff surfaces / action terminals) + the
+  shared `DocumentRegistry`, the create/attach/serialize/dispose/reopen lifecycle, the
+  `openFile` funnel + `activeEditor`, the active-surface resolvers, `applyWorkspaceEdit`,
+  and the search/diff/git-log view openers. Everything else depends on it.
+- `src/ui/workbench/WorkbenchManager.ts` — **per-person workbench lifecycle**: the
+  `workbenches` map + the active one, `buildWorkbench` / `activateWorkbench` /
+  `activateOwner` / `cycleWorkbench` / `reRootWorkbench` / `ownerWorkbenchCwd`. AppWindow
+  exposes the active workbench + map through getters so the rest of the shell reads them
+  unchanged.
+- `src/ui/workbench/WorkbenchView.ts` — **the active workbench's view layer**: the
+  window's sidebars (workbench list + agent secondary sidebar), docks (reveal / toggle /
+  show-hide), keyboard-focus memory, and directional/cyclic pane navigation. (Merges what
+  an earlier plan called `FocusNavigator` + `DockController`; they share the active-
+  workbench view state so heavily that splitting them would need heavy mutual injection.)
+- `src/ui/AgentController.ts` — **the agent feature**: launch / resume / close / restart /
+  branch / rename, send-to-agent + diff-review routing, auto-open changed files, the
+  per-agent subscriptions, viewed/attention tracking, agent session serialize+restore, and
+  the `agent:*` commands. Lands on four collaborators (`PaneItems` + `WorkbenchManager` +
+  the two agent widgets), reading the rest off the `zym` globals.
 
-1. **`PaneItems`** (the tab/item-registry spine) — the per-widget registries
-   (editors / terminals / conversations / project-search / action-terminals + their
-   subscriptions), `createEditorTab` / `createTerminalTab` / `makeCenter` /
-   `disposeChild` / `serializeChild` / `reopenTab`, the `openFile*` funnel +
-   `activeEditor`, the active-surface resolvers, `applyWorkspaceEdit`, and
-   `buildCurrentChangesDiff`. This is Atom's `Workspace` / `PaneContainer` /
-   `TextEditorRegistry` split. `zym.workspace` keeps delegating to it through the
-   existing provider seams (`setOpener` / `setActiveEditorProvider` / `setTabHost` /
-   …). Everything else depends on this, so it is the keystone.
-2. **`WorkbenchManager`** — the `workbenches` map + per-person workbench lifecycle
-   (`buildWorkbench` / `activateWorkbench` / `activateOwner` / `cycleWorkbench` /
-   `reRootWorkbench` / `ownerWorkbenchCwd`); publishes the active-workbench provider.
-3. **`AgentController`** — the agent feature: launch / close / restart / resume /
-   branch / rename, send-to-agent + diff-review routing, auto-open changed files,
-   per-agent subscriptions, viewed/attention tracking, agent session
-   serialize/restore, and the `agent:*` / `terminal:*` / `workbench:action-*`
-   commands.
+## The `zym.workspace` seam
 
-After those land, the residual command tables (diff/search, the remaining window /
-notification / config / session groups) move out with their controllers, leaving
-`AppWindow` as the composition root.
+`zym.workspace` (Atom's `atom.workspace`) is how a command module reaches app-wide state
+without a deps object. AppWindow injects the concrete impls once, on construction:
+`setOpener` / `setActiveEditorProvider` / `setActiveWorkbenchProvider` / `setTabReopener`
+/ `setTabHost` / `setReviewSink`, plus `setPickerHost` (the window-level overlay floating
+pickers mount into) and `setWorkspaceEditApplier` (the impl owns the editor registry, so
+it stays in `PaneItems`). Modules then call `zym.workspace.getActiveTextEditor()` /
+`getActiveWorkbench()` / `openFile()` / `getPickerHost()` / `applyWorkspaceEdit()` and the
+other `zym` managers (`zym.notifications`, `zym.window`, `zym.agents`, …) directly.
+
+## What stays in AppWindow
+
+The composition root: the GTK window + top-level `Gtk.Paned` layout (sidebar column +
+agent column + content overlay + toast overlay), constructing and wiring the collaborators
+above, the window-chrome command tables that are pure dispatch into them (`registerPane`/
+`Window`/`Terminal`/`Notification`/`Config`/`Session` commands), session save/restore
+wiring, LSP config plumbing, and shutdown (`teardownAndQuit` drains each collaborator's
+`dispose()`).
