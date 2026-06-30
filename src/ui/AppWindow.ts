@@ -20,7 +20,7 @@ type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 type ToastOverlay = InstanceType<typeof Adw.ToastOverlay>;
 import { FileTree } from './FileTree.ts';
 import { Panel, type PanelChild } from './Panel.ts';
-import { PanelGroup, type Direction, type RestoredChild } from './PanelGroup.ts';
+import { PanelGroup, type RestoredChild } from './PanelGroup.ts';
 import { TextEditor } from './TextEditor/index.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { Terminal, terminalTabTitle } from './Terminal.ts';
@@ -36,14 +36,13 @@ import { PROJECT_NAME } from './WorkbenchList.ts';
 import { Sidebar } from './Sidebar.ts';
 import { AgentSidebar } from './AgentSidebar.ts';
 import { HeaderBar } from './HeaderBar.ts';
-import { GitPanel } from './git/GitPanel.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { Icons } from './icons.ts';
 import { acquireGitRepo, releaseGitRepo } from '../git.ts';
 import { git, repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { GitLogView } from './git/GitLogView.ts';
-import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './workbench/Workbench.ts';
+import { Workbench, DOCK_SIDES } from './workbench/Workbench.ts';
 import { openScriptRunner, detectPackageManager } from './ScriptRunner.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
 import { openDiffCollapseGlobPicker } from './DiffCollapseGlobPicker.ts';
@@ -72,7 +71,6 @@ import { type Notification } from '../Notification.ts';
 import { NotificationLog } from './NotificationLog.ts';
 import { KeymapPanel } from './KeymapPanel.ts';
 import { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
-import { PluginManagerPanel } from './PluginManagerPanel.ts';
 import { type LspConfig } from '../lsp/LspManager.ts';
 import { normalizeWorkspaceEdit, applyTextEdits } from '../lsp/workspaceEdit.ts';
 import { uriToPath, type PositionEncoding } from '../lsp/position.ts';
@@ -88,19 +86,11 @@ import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
+import { WorkbenchView, SIDEBAR_WIDTH, AGENT_SIDEBAR_WIDTH } from './workbench/WorkbenchView.ts';
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 950;
 const TOAST_TIMEOUT = 15;
-// Expanded width (px) of the workbench sidebar — the full-height column at the very
-// left of the window, outside (left of) the header bar — and its collapsed width
-// (icons only). These are the two positions of the top-level sidebar↔content split.
-const SIDEBAR_WIDTH = 280;
-const SIDEBAR_COLLAPSED_WIDTH = 48;
-// Default width of the agent "secondary sidebar" column (the agent widget). Wider
-// than the file/Source-Control dock; resizable, and a dragged width is remembered
-// for the rest of the session (`agentSidebarWidth`).
-const AGENT_SIDEBAR_WIDTH = 480;
 
 addStyles(/* css */`
   .AppWindow--paned > separator { opacity: 0; }
@@ -111,12 +101,6 @@ type Widget = InstanceType<typeof Gtk.Widget>;
 export class AppWindow {
   private readonly app: Application;
   private readonly onQuit: () => void;
-
-  // Per-tab focus memory: the widget that last held keyboard focus inside each
-  // panel-tab child, so re-activating a panel restores focus to the exact same
-  // widget (e.g. an editor's search bar, not just the editor view). Keyed by the
-  // tab's content widget (the `.is-panel-child`); a WeakMap so closed tabs drop.
-  private readonly focusMemory = new WeakMap<Widget, Widget>();
 
   // Editor tabs in the active workbench's center, mapped from their root widget so the
   // active child can be resolved back to its editor regardless of which split it's in.
@@ -155,8 +139,6 @@ export class AppWindow {
   // of the window. Owns the `WorkbenchList` (`this.sidebar.list`); it's the start child
   // of `sidebarPaned`, whose width this window toggles on collapse/expand.
   private readonly sidebar: Sidebar;
-  private sidebarHidden = false; // user toggle (sidebar:toggle, `ctrl-w g s`); detaches the column entirely
-  private sidebarShownWidth = SIDEBAR_WIDTH; // split position captured on hide, re-applied on show
   // Maps an editor's root widget to its center tab handle, so a location jump can
   // reveal an already-open file instead of opening a duplicate tab.
   private readonly editorChildren = new Map<Widget, PanelChild>();
@@ -175,8 +157,6 @@ export class AppWindow {
   // Set once the user has confirmed an exit past unsaved work, so the re-entrant
   // close-request doesn't prompt again.
   private quitting = false;
-  // The plugin manager center tab handle; null after it is closed.
-  private pluginManagerTab: { root: Widget; child: PanelChild } | null = null;
   // The most recently focused agent — the default target for send-to-agent.
   private lastAgent: Agent | null = null;
   // The agent the user is currently looking at (its tab is the active one), so its
@@ -188,8 +168,6 @@ export class AppWindow {
   // `agentPaned` (whose position is its resizable width).
   private readonly agentSidebar: AgentSidebar;
   private readonly agentPaned: InstanceType<typeof Gtk.Paned>;
-  private agentSidebarWidth = AGENT_SIDEBAR_WIDTH; // last dragged width, re-applied on show
-  private agentSidebarHidden = false; // user toggle (agent-sidebar:toggle); hides the column even with an agent active
   private readonly toastOverlay: ToastOverlay;
   // Content-area overlay: hosts the active workbench (swapped on agent switch) and
   // the notification toasts — floats below the header bar, right of the sidebar.
@@ -231,6 +209,11 @@ export class AppWindow {
   // which-key hint overlay (continuations after a queued keymap prefix).
   private readonly whichKey: WhichKey;
 
+  // The active workbench's view layer: sidebars, docks, keyboard-focus memory, and
+  // directional/cyclic pane navigation. Constructed once the window-level columns
+  // (sidebar/agent paneds) exist; reads the active workbench lazily.
+  private readonly workbenchView: WorkbenchView;
+
   // Drives session save/restore/autosave; wired once the center + file tree exist.
   private sessionController!: SessionController;
 
@@ -258,8 +241,8 @@ export class AppWindow {
       getWorkbench: () => zym.workspace.getActiveWorkbench()!,
       onBranchPicker: () => openBranchPicker(this.overlay, this.workbench.cwd, this.workbench.git),
       onShowChecks: () => openGithubCIChecksPicker(this.overlay, this.workbench.cwd),
-      onOpenDiagnostics: () => this.toggleDiagnosticsPanel(),
-      onOpenLog: () => this.toggleNotificationLog(),
+      onOpenDiagnostics: () => this.workbenchView.toggleDiagnosticsPanel(),
+      onOpenLog: () => this.workbenchView.toggleNotificationLog(),
       // Pill + LSP indicator scope to the active workbench's worktree.
       ownsPath: (path) => this.ownerWorkbenchCwd(path) === this.workbench.cwd,
       ownsServer: (rootDir) => this.ownerWorkbenchCwd(rootDir) === this.workbench.cwd,
@@ -281,7 +264,7 @@ export class AppWindow {
         sizes: this.workbench.dockSizes(),
       }),
       applyDocks: (docks) => {
-        if (docks.notificationLog && this.workbench.bottomDock !== 'notifications') this.toggleNotificationLog();
+        if (docks.notificationLog && this.workbench.bottomDock !== 'notifications') this.workbenchView.toggleNotificationLog();
         // Apply per-side visibility *after* any content has been (re)established above,
         // so a side restored as hidden stays hidden even though its content is present.
         if (docks.visible)
@@ -338,7 +321,7 @@ export class AppWindow {
       onClose: (agent) => this.closeAgent(agent),
       onRename: (agent) => this.renameAgentPrompt(agent),
       onOpenChanges: (agent) => this.openAgentChanges(agent),
-      onToggleCollapsed: (collapsed) => this.setSidebarCollapsed(collapsed),
+      onToggleCollapsed: (collapsed) => this.workbenchView.setSidebarCollapsed(collapsed),
     });
 
     // The agent "secondary sidebar" sits between the WorkbenchList and the content,
@@ -352,12 +335,12 @@ export class AppWindow {
     this.agentPaned = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
     this.agentPaned.addCssClass('AppWindow--paned'); // hide the handle; the sidebar's own border is the divider
     this.agentPaned.setEndChild(this.toastOverlay);
-    this.agentPaned.setPosition(this.agentSidebarWidth);
+    this.agentPaned.setPosition(AGENT_SIDEBAR_WIDTH);
     this.agentPaned.setResizeStartChild(false);
     this.agentPaned.setShrinkStartChild(false);
     // Remember a dragged width so it survives switching away and back.
     this.agentPaned.on('notify::position', () => {
-      if (this.agentPaned.getStartChild()) this.agentSidebarWidth = this.agentPaned.getPosition();
+      if (this.agentPaned.getStartChild()) this.workbenchView.rememberAgentSidebarWidth(this.agentPaned.getPosition());
     });
 
     // Top-level horizontal split: the full-height WorkbenchList column on the start side,
@@ -395,9 +378,31 @@ export class AppWindow {
     this.window.setTitle(PROJECT_NAME); // OS taskbar label — the project, not the bare "node"
     this.window.setDefaultSize(DEFAULT_WIDTH, DEFAULT_HEIGHT);
     this.window.setContent(this.overlay);
+
+    // The active workbench's view layer (sidebars, docks, focus, pane navigation).
+    // Built now that the window-level columns exist; it reads the active workbench
+    // and the panel-tree operations it needs lazily through these callbacks.
+    this.workbenchView = new WorkbenchView({
+      window: this.window,
+      sidebar: this.sidebar,
+      agentSidebar: this.agentSidebar,
+      sidebarPaned: this.sidebarPaned,
+      agentPaned: this.agentPaned,
+      getWorkbench: () => this.workbench,
+      activeAgent: () => this.activeAgent,
+      activeEditorFile: () => this.activeEditor?.currentFile ?? null,
+      focusContent: (widget) => this.focusContent(widget),
+      openFileView: (path, panel) => this.openFileViewIn(path, panel),
+      openFile: (path) => this.openFile(path),
+      buildCurrentChangesDiff: (workbench) => this.buildCurrentChangesDiff(workbench),
+      setTabCloseHandler: (widget, fn) => this.tabCloseHandlers.set(widget, fn),
+      scheduleAutosave: () => this.sessionController.scheduleAutosave(),
+      toast: (message) => this.toast(message),
+    });
+
     // Track the focused widget per panel tab so each panel can restore focus to
-    // exactly where it was when it is re-activated (see focusMemory).
-    this.window.on('notify::focus-widget', () => this.rememberFocus());
+    // exactly where it was when it is re-activated (see WorkbenchView focus memory).
+    this.window.on('notify::focus-widget', () => this.workbenchView.rememberFocus());
     // A GtkPaned is a layout container and must never hold keyboard focus. Reparenting a
     // focused widget into a freshly-built split — opening a work area beside a focused
     // agent terminal to auto-open an edited file — makes GTK reassign focus onto a bare
@@ -542,31 +547,6 @@ export class AppWindow {
     // (the user workspace, or one of the relaunched agents) via activateWorkspace.
     const restored = willRestore && this.sessionController.restore();
     if (!restored && initialFile) this.openFile(initialFile);
-  }
-
-  // Apply the sidebar collapse/expand width to the top-level split: the list's robot
-  // button toggles between icons-only and icons+text and forwards the new state here.
-  private setSidebarCollapsed(collapsed: boolean): void {
-    this.sidebarPaned.setPosition(collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH);
-  }
-
-  // Toggle the workbench sidebar's visibility (sidebar:toggle, `ctrl-w g s`). Mirrors
-  // toggleAgentSidebar: detach/attach the top-level split's start child — rather than
-  // toggling `visible` — so an absent column leaves no stray handle, restoring its last
-  // width (collapsed or expanded) on show. Steers focus to the center when it hides out
-  // from under focus, into the list when freshly revealed.
-  private toggleSidebar(): void {
-    const focusWasInside = this.isFocusWithin(this.sidebar.root);
-    this.sidebarHidden = !this.sidebarHidden;
-    if (this.sidebarHidden) {
-      this.sidebarShownWidth = this.sidebarPaned.getPosition();
-      this.sidebarPaned.setStartChild(null);
-      if (focusWasInside) this.focusActivePane(); // it hid out from under focus
-    } else {
-      this.sidebarPaned.setStartChild(this.sidebar.root);
-      this.sidebarPaned.setPosition(this.sidebarShownWidth);
-      this.sidebar.list.focus(); // freshly revealed — focus into it
-    }
   }
 
   // Apply restored window geometry. Size only takes effect before the window is
@@ -1610,7 +1590,7 @@ export class AppWindow {
     // panel it may never open. The dock collapses out of the workbench when its last
     // tab closes (the reveal/focus path re-attaches it); the closure captures this
     // workbench's own `leftPanel`.
-    const leftPanel = new Panel({ onEmpty: () => this.detachDock(leftPanel) });
+    const leftPanel = new Panel({ onEmpty: () => this.workbenchView.detachDock(leftPanel) });
     const filesTab = leftPanel.add(fileTree.root, { title: `${fileIconGlyph('', true)}  Files` });
     filesTab.select();
 
@@ -1619,7 +1599,7 @@ export class AppWindow {
     // state survive and reopening never shows an empty panel. hideBottomDock acts on
     // the active workbench — the only one whose tab can be interactively closed.
     const notificationLog = new NotificationLog();
-    const notificationPanel = new Panel({ onTabCloseRequest: () => this.hideBottomDock('notifications') });
+    const notificationPanel = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('notifications') });
     notificationPanel.add(notificationLog.root, { title: 'Notifications' });
     // Scope this workbench's diagnostics to the files under its root (read live via
     // `owner`, so a re-root re-scopes it).
@@ -1627,10 +1607,10 @@ export class AppWindow {
       (target) => this.openOrFocusFile(target.path, [target.line, target.character]),
       (path) => this.ownerWorkbenchCwd(path) === this.workbenches.get(owner)?.cwd,
     );
-    const diagnosticsDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('diagnostics') });
+    const diagnosticsDock = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('diagnostics') });
     diagnosticsDock.add(diagnosticsPanel.root, { title: 'Diagnostics' });
     const keymapPanel = new KeymapPanel();
-    const keymapDock = new Panel({ onTabCloseRequest: () => this.hideBottomDock('keymap') });
+    const keymapDock = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('keymap') });
     keymapDock.add(keymapPanel.root, { title: 'Keybindings' });
 
     const workbench = new Workbench<'user' | Agent>(
@@ -1691,46 +1671,9 @@ export class AppWindow {
     this.sidebar.list.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
     this.headerBar.rebind(); // header branch/GitHub now reflect this workbench's root
     this.headerBar.refreshStatus(); // diagnostics pill + LSP indicator → this workbench
-    this.showAgentSidebar(this.activeAgent); // reveal this workbench's agent column (or hide it)
+    this.workbenchView.showAgentSidebar(this.activeAgent); // reveal this workbench's agent column (or hide it)
     this.updateViewedAgent();
-    this.focusActivePane();
-  }
-
-  // Reveal the agent "secondary sidebar" for `agent` (its widget becomes the visible
-  // stack child + the column is attached at its last width), or detach the column —
-  // when there's no agent (the user workbench) or the user has toggled it hidden
-  // (`agentSidebarHidden`). Attaching/detaching the Paned start child — rather than
-  // toggling visibility — keeps the column free of a stray handle when absent.
-  private showAgentSidebar(agent: Agent | null): void {
-    if (agent) this.agentSidebar.show(agent); // keep the stack on the active agent (+ its edited-files badge)
-    else this.agentSidebar.clearActive(); // user workbench — no agent to track
-    const show = agent !== null && !this.agentSidebarHidden;
-    if (show && !this.agentPaned.getStartChild()) {
-      this.agentPaned.setStartChild(this.agentSidebar.root);
-      this.agentPaned.setPosition(this.agentSidebarWidth);
-    } else if (!show && this.agentPaned.getStartChild()) {
-      this.agentPaned.setStartChild(null);
-    }
-  }
-
-  // Toggle the agent "secondary sidebar" visibility (agent-sidebar:toggle, `ctrl-w g a`).
-  // No-op + toast on the user workbench (nothing to toggle). Mirrors toggleDockSide:
-  // focus the agent when revealing, fall back to the center when hiding out from under
-  // focus.
-  private toggleAgentSidebar(): void {
-    const agent = this.activeAgent;
-    if (!agent) {
-      this.toast('No agent sidebar to toggle');
-      return;
-    }
-    const focusWasInside = this.isFocusWithin(this.agentSidebar.root);
-    this.agentSidebarHidden = !this.agentSidebarHidden;
-    this.showAgentSidebar(agent);
-    if (this.agentSidebarHidden) {
-      if (focusWasInside) this.focusActivePane(); // it hid out from under focus
-    } else {
-      agent.focus(); // freshly revealed — focus into it
-    }
+    this.workbenchView.focusActivePane();
   }
 
   // The open workbench whose root (cwd) most specifically contains `path` — the
@@ -1785,16 +1728,6 @@ export class AppWindow {
     });
   }
 
-  // The Panel currently shown in the bottom dock (`this.workbench.bottomDock`), or null.
-  private bottomDockPanel(): { root: Widget } | null {
-    switch (this.workbench.bottomDock) {
-      case 'notifications': return this.workbench.notificationPanel;
-      case 'diagnostics': return this.workbench.diagnosticsDock;
-      case 'keymap': return this.workbench.keymapDock;
-      default: return null;
-    }
-  }
-
   /** Show `agent`: activate its workbench (its widget lives in the agent sidebar). */
   private showAgent(agent: Agent): void {
     this.activateOwner(agent);
@@ -1842,22 +1775,22 @@ export class AppWindow {
   // returns to it.
   private registerPaneCommands() {
     zym.commands.add('.AppWindow', {
-      'pane:split-right': { didDispatch: () => this.splitPane('right'), description: 'Split the pane to the right' },
-      'pane:split-down': { didDispatch: () => this.splitPane('down'), description: 'Split the pane downward' },
-      'pane:close': { didDispatch: () => this.closePane(), description: 'Close the active pane' },
+      'pane:split-right': { didDispatch: () => this.workbenchView.splitPane('right'), description: 'Split the pane to the right' },
+      'pane:split-down': { didDispatch: () => this.workbenchView.splitPane('down'), description: 'Split the pane downward' },
+      'pane:close': { didDispatch: () => this.workbenchView.closePane(), description: 'Close the active pane' },
       // The lifecycle counterpart to closing a tab: rebuild the most recently closed
       // one from the workspace's reopen stack (cross-panel, so it lives here, not in
       // Panel's per-panel tab commands).
       'tab:reopen-last': { didDispatch: () => zym.workspace.reopenLastTab(), description: 'Reopen the last closed tab' },
-      'pane:focus-left': { didDispatch: () => this.navPane('left'), description: 'Focus the pane to the left' },
-      'pane:focus-right': { didDispatch: () => this.navPane('right'), description: 'Focus the pane to the right' },
-      'pane:focus-up': { didDispatch: () => this.navPane('up'), description: 'Focus the pane above' },
-      'pane:focus-down': { didDispatch: () => this.navPane('down'), description: 'Focus the pane below' },
-      'pane:focus-next': { didDispatch: () => this.focusNextPane(), description: 'Cycle to the next pane' },
+      'pane:focus-left': { didDispatch: () => this.workbenchView.navPane('left'), description: 'Focus the pane to the left' },
+      'pane:focus-right': { didDispatch: () => this.workbenchView.navPane('right'), description: 'Focus the pane to the right' },
+      'pane:focus-up': { didDispatch: () => this.workbenchView.navPane('up'), description: 'Focus the pane above' },
+      'pane:focus-down': { didDispatch: () => this.workbenchView.navPane('down'), description: 'Focus the pane below' },
+      'pane:focus-next': { didDispatch: () => this.workbenchView.focusNextPane(), description: 'Cycle to the next pane' },
       // Reveal+focus the file tree (re-adding it if the right dock had been collapsed
       // away by closing its last tab); Source Control opens as a center tab.
-      'file-tree:focus': { didDispatch: () => this.revealFileTree(), description: 'Focus the file tree' },
-      'git-panel:focus': { didDispatch: () => this.revealGitPanel(), description: 'Focus Source Control' },
+      'file-tree:focus': { didDispatch: () => this.workbenchView.revealFileTree(), description: 'Focus the file tree' },
+      'git-panel:focus': { didDispatch: () => this.workbenchView.revealGitPanel(), description: 'Focus Source Control' },
       'workbench-list:focus': { didDispatch: () => this.sidebar.list.focus(), description: 'Focus the workbench sidebar' },
       // Cycle the active workbench through [user, …agents] (the workbench-list order).
       'workbench:previous': { didDispatch: () => this.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
@@ -1875,16 +1808,16 @@ export class AppWindow {
         description: 'Switch to a workbench (the user or an agent)',
       },
       // Show/hide each dock side without discarding the panels it holds.
-      'dock:toggle-left': { didDispatch: () => this.toggleDockSide('left'), description: 'Toggle the left dock' },
-      'dock:toggle-right': { didDispatch: () => this.toggleDockSide('right'), description: 'Toggle the right dock (Files / Source Control)' },
-      'dock:toggle-top': { didDispatch: () => this.toggleDockSide('top'), description: 'Toggle the top dock' },
-      'dock:toggle-bottom': { didDispatch: () => this.toggleDockSide('bottom'), description: 'Toggle the bottom dock' },
-      'agent-sidebar:toggle': { didDispatch: () => this.toggleAgentSidebar(), description: 'Toggle the agent sidebar' },
-      'sidebar:toggle': { didDispatch: () => this.toggleSidebar(), description: 'Toggle the workbench sidebar' },
+      'dock:toggle-left': { didDispatch: () => this.workbenchView.toggleDockSide('left'), description: 'Toggle the left dock' },
+      'dock:toggle-right': { didDispatch: () => this.workbenchView.toggleDockSide('right'), description: 'Toggle the right dock (Files / Source Control)' },
+      'dock:toggle-top': { didDispatch: () => this.workbenchView.toggleDockSide('top'), description: 'Toggle the top dock' },
+      'dock:toggle-bottom': { didDispatch: () => this.workbenchView.toggleDockSide('bottom'), description: 'Toggle the bottom dock' },
+      'agent-sidebar:toggle': { didDispatch: () => this.workbenchView.toggleAgentSidebar(), description: 'Toggle the agent sidebar' },
+      'sidebar:toggle': { didDispatch: () => this.workbenchView.toggleSidebar(), description: 'Toggle the workbench sidebar' },
       'theme:select': { didDispatch: () => this.selectTheme(), description: 'Select the editor theme' },
-      'lsp:toggle-diagnostics-panel': { didDispatch: () => this.toggleDiagnosticsPanel(), description: 'Toggle the Diagnostics panel' },
-      'keymap:show': { didDispatch: () => this.toggleKeymapPanel(), description: 'Show all keybindings and their source' },
-      'plugin:open-manager': { didDispatch: () => this.openPluginManager(), description: 'Open the Plugin Manager' },
+      'lsp:toggle-diagnostics-panel': { didDispatch: () => this.workbenchView.toggleDiagnosticsPanel(), description: 'Toggle the Diagnostics panel' },
+      'keymap:show': { didDispatch: () => this.workbenchView.toggleKeymapPanel(), description: 'Show all keybindings and their source' },
+      'plugin:open-manager': { didDispatch: () => this.workbenchView.openPluginManager(), description: 'Open the Plugin Manager' },
     });
   }
 
@@ -1902,182 +1835,6 @@ export class AppWindow {
       saveConfig();
       this.toast(`Theme set to “${name}” — restart to apply`);
     });
-  }
-
-  // Show / hide a dock side (the dock-visibility toggle), keeping its panels intact.
-  // Showing moves focus into the dock; hiding falls focus back to the center when it
-  // was inside the dock. An empty side has nothing to toggle (reports a toast). The
-  // new layout is autosaved so it survives a restore.
-  private toggleDockSide(side: DockSide) {
-    if (!this.workbench.isDockOccupied(side)) {
-      this.toast(`No ${side} dock to toggle`);
-      return;
-    }
-    const focusWasInside = this.isFocusWithin(this.workbench.root) && this.isDockSideFocused(side);
-    this.workbench.toggleDock(side);
-    if (this.workbench.isDockVisible(side)) this.focusDockSide(side);
-    else if (focusWasInside) this.focusActivePane(); // dock hid out from under focus
-    this.sessionController.scheduleAutosave();
-  }
-
-  // Whether keyboard focus currently sits inside the named dock side's content.
-  private isDockSideFocused(side: DockSide): boolean {
-    if (side === 'right') return this.isFocusWithin(this.workbench.leftPanel.root);
-    if (side === 'bottom') {
-      const panel = this.bottomDockPanel();
-      return panel ? this.isFocusWithin(panel.root) : false;
-    }
-    return false; // left / top carry no built-in content yet
-  }
-
-  // Move focus into a freshly-shown dock side's content.
-  private focusDockSide(side: DockSide) {
-    if (side === 'right') {
-      this.focusSidePanel();
-    } else if (side === 'bottom') {
-      const panel = this.bottomDockPanel();
-      if (panel) this.focusDock(panel as Panel, () => this.focusBottomDockContent());
-    }
-    // left / top have no built-in content to focus yet.
-  }
-
-  // Focus whatever view currently fills the bottom dock.
-  private focusBottomDockContent() {
-    if (this.workbench.bottomDock === 'notifications') this.workbench.notificationLog.focus();
-    else if (this.workbench.bottomDock === 'diagnostics') this.workbench.diagnosticsPanel.focus();
-    else if (this.workbench.bottomDock === 'keymap') this.workbench.keymapPanel.focus();
-  }
-
-  // Toggle the Diagnostics panel in the bottom dock (replacing whatever was there).
-  // Only closes when it's already the *shown* content — if it's selected but the
-  // bottom dock was hidden (via the dock-visibility toggle), this re-reveals it.
-  private toggleDiagnosticsPanel() {
-    if (this.workbench.bottomDock === 'diagnostics' && this.workbench.isDockVisible('bottom')) {
-      this.setBottomDock(null);
-    } else {
-      this.setBottomDock('diagnostics');
-      this.workbench.diagnosticsPanel.focus();
-    }
-  }
-
-  // Toggle the keybinding reference list in the bottom dock.
-  private toggleKeymapPanel() {
-    if (this.workbench.bottomDock === 'keymap' && this.workbench.isDockVisible('bottom')) {
-      this.setBottomDock(null);
-    } else {
-      this.setBottomDock('keymap');
-      this.workbench.keymapPanel.focus();
-    }
-  }
-
-  // Open (or reveal) the Plugin Manager as a center tab. Reveals the existing tab
-  // when it is still hosted in a panel; opens a fresh one otherwise.
-  private openPluginManager() {
-    if (this.pluginManagerTab && Panel.containing(this.pluginManagerTab.root)) {
-      this.pluginManagerTab.child.select();
-      this.pluginManagerTab.root.grabFocus();
-      return;
-    }
-    const manager = new PluginManagerPanel();
-    const child = this.workbench.center.add(manager.root, { title: 'Plugin Manager', requireTabBar: true });
-    this.pluginManagerTab = { root: manager.root, child };
-    // Sever the panel's command reg + per-row switch handlers when its tab closes
-    // (disposeChild fires this), else the whole panel leaks per open/close (rule 2).
-    this.tabCloseHandlers.set(manager.root, () => { manager.dispose(); this.pluginManagerTab = null; });
-    manager.root.grabFocus();
-  }
-
-  // Dock the given panel into the active workbench's bottom slot (or clear it),
-  // tracking which is shown on the workbench itself (`workbench.bottomDock`). Each
-  // workbench owns its bottom dock independently, so it does NOT carry across to
-  // another person's workbench — switching simply shows that workbench's own slot.
-  private setBottomDock(which: BottomDock) {
-    this.workbench.bottomDock = which;
-    this.workbench.setBottom(this.bottomDockPanel());
-  }
-
-  // Hide the named bottom dock if it's the one shown (its tab-close request), and
-  // veto the underlying page close so the view persists for the next reopen.
-  // Returns false so Panel keeps the page intact. The hide is deferred out of the
-  // close-page signal emission, since it reparents the dock (an ancestor of the
-  // emitting tab view) and that's unsafe to do mid-emission.
-  private hideBottomDock(which: Exclude<BottomDock, null>): boolean {
-    setTimeout(() => {
-      if (this.workbench.bottomDock === which) this.setBottomDock(null);
-    }, 0);
-    return false;
-  }
-
-  // Collapse the left dock when its last tab is closed, so the center reclaims the
-  // space instead of showing the empty-state placeholder. The reveal/focus path
-  // re-attaches and repopulates it. Runs from onEmpty (page-detached, after the
-  // close completes), where the reparent is safe and synchronous (no one-frame
-  // flash of the empty state).
-  private detachDock(panel: Panel) {
-    if (panel === this.workbench.leftPanel) this.workbench.setRight(null);
-  }
-
-  // Reveal+focus the file tree in the right-side dock, re-attaching the dock panel
-  // and re-adding the tab if they were collapsed away by closing the dock's last
-  // tab. The panel is re-attached (rooted) *before* any re-add: adding to a
-  // detached, unrooted Adw.TabView yields a blank page.
-  private revealFileTree() {
-    if (this.workbench.leftPanel.root.getParent() === null)
-      this.workbench.setRight({ root: this.workbench.leftPanel.root });
-    if (!this.workbench.leftPanel.getChildren().includes(this.workbench.fileTree.root)) {
-      if (this.workbench.fileTree.root.getParent()) this.workbench.fileTree.root.unparent(); // drop any closed page
-      this.workbench.filesTab = this.workbench.leftPanel.add(this.workbench.fileTree.root, {
-        title: `${fileIconGlyph('', true)}  Files`,
-      });
-    }
-    this.workbench.filesTab.select();
-    this.workbench.fileTree.focus();
-  }
-
-  // Open (or reveal) Source Control as a tab in the active center panel — a normal
-  // tab, no longer docked on the right. Reveals the existing tab when it is still
-  // hosted in a panel; otherwise (re)adds it, unparenting any closed page first (the
-  // zombie rule). The GitPanel is lazily built once per workbench (ensureGitPanel)
-  // and reused across close/reopen.
-  private revealGitPanel() {
-    const gitPanel = this.ensureGitPanel(this.workbench);
-    if (this.workbench.center.reveal(gitPanel.root)) {
-      gitPanel.focus();
-      return;
-    }
-    // Still attached to the live window tree but not in this center — e.g. its tab was
-    // dragged into a dock (a Panel outside the center). Reveal it where it lives instead
-    // of unparenting it: unparenting a live page child corrupts it into a zombie that
-    // vanishes from the tree (the reveal rule in docs/panels.md). `getRoot()` is non-null
-    // only while it sits in the live tree, so it tells a live host from an orphaned page.
-    if (gitPanel.root.getRoot()) {
-      Panel.containing(gitPanel.root)?.reveal(gitPanel.root);
-      gitPanel.focus();
-      return;
-    }
-    if (gitPanel.root.getParent()) gitPanel.root.unparent(); // drop any closed/orphaned page
-    this.workbench.gitTab = this.workbench.center.add(gitPanel.root, {
-      title: `${Icons.git}  Git`,
-      requireTabBar: true,
-    });
-    gitPanel.focus();
-  }
-
-  // Lazily create this workbench's Source Control panel on first reveal — it isn't
-  // built at startup, so a workbench opens no git subscription until the user asks
-  // for it. Idempotent: returns the existing panel once created.
-  private ensureGitPanel(workbench: Workbench<'user' | Agent>): GitPanel {
-    if (workbench.gitPanel) return workbench.gitPanel;
-    const gitPanel = new GitPanel({
-      cwd: workbench.cwd,
-      git: workbench.git,
-      onOpenFile: (path) => this.openFile(path),
-      // Build the embedded live diff against THIS workbench's repo (l/enter/o reveals the
-      // selected change in it); the panel owns its lifecycle.
-      buildDiffView: () => this.buildCurrentChangesDiff(workbench),
-    });
-    workbench.gitPanel = gitPanel;
-    return gitPanel;
   }
 
   // Apply `lsp.*` config to the language-server manager.
@@ -2141,19 +1898,6 @@ export class AppWindow {
   // the cursor. Used by location jumps (diagnostics, go-to-definition, search).
   private openOrFocusFile(path: string, cursor: [number, number]): void {
     this.openFile(path).restoreCursor(cursor);
-  }
-
-  // Focus the file tree in the right-side dock; reveal it if the dock had been
-  // collapsed away. (Source Control is no longer a dock tab — it opens in the
-  // center via revealGitPanel.)
-  private focusSidePanel() {
-    if (this.workbench.leftPanel.root.getParent() === null || this.workbench.leftPanel.tabCount === 0) {
-      this.revealFileTree();
-      return;
-    }
-    const child = this.workbench.leftPanel.activeChild;
-    if (child && this.restoreTabFocus(child)) return;
-    this.workbench.fileTree.focus();
   }
 
   // Window-level file/edit operations, surfaced in the command palette and (for
@@ -2613,7 +2357,7 @@ export class AppWindow {
   // list) — no separate tab. The GitPanel owns the message → `git.commit` flow.
   private startCommit(amend = false) {
     if (!repoRoot(this.workbench.cwd)) return;
-    this.revealGitPanel();
+    this.workbenchView.revealGitPanel();
     this.workbench.gitPanel?.startCommit(amend);
   }
 
@@ -2622,7 +2366,7 @@ export class AppWindow {
   // central keymap.
   private registerNotificationCommands() {
     zym.commands.add('.AppWindow', {
-      'notifications:toggle-log': { didDispatch: () => this.toggleNotificationLog(), description: 'Toggle the notification log' },
+      'notifications:toggle-log': { didDispatch: () => this.workbenchView.toggleNotificationLog(), description: 'Toggle the notification log' },
       'notifications:clear': { didDispatch: () => zym.notifications.clear(), description: 'Clear notifications' },
       // Run the default action of the most recent notification that has one.
       'notifications:activate': { didDispatch: () => zym.notifications.activateLast(), description: 'Run the latest notification’s action' },
@@ -2691,272 +2435,13 @@ export class AppWindow {
     });
   }
 
-  // Toggle the notification log in the bottom dock (replacing whatever was there).
-  private toggleNotificationLog() {
-    if (this.workbench.bottomDock === 'notifications' && this.workbench.isDockVisible('bottom')) {
-      this.setBottomDock(null);
-    } else {
-      this.setBottomDock('notifications');
-      this.workbench.notificationLog.focus();
-    }
-  }
-
-  // Split the active center pane, opening the active editor's file in the new
-  // pane (vim-style) when there is one; otherwise leave it empty and focused.
-  private splitPane(direction: Direction) {
-    const path = this.activeEditor?.currentFile ?? null;
-    const pane = this.workbench.center.split(direction); // the new empty pane becomes active
-    // A second *view* of the same file (shared Document/model), not a reveal — so a
-    // split shows it side by side with independent cursors / scroll / folds.
-    if (path) this.openFileViewIn(path, pane);
-    else this.focusActivePane();
-  }
-
-  // `ctrl-w c` acts on the focused zone. In a dock it closes that dock's active
-  // tab — the dock collapses itself once its last tab goes, so focus then falls
-  // back to the center. In the center it closes the active split pane and focuses
-  // whatever pane takes its place.
-  private closePane() {
-    const dock = this.focusedDockPanel();
-    if (dock) {
-      dock.closeActiveTab();
-      if (dock.root.getParent() === null) this.focusActivePane(); // dock collapsed away
-      return;
-    }
-    this.workbench.center.closeActivePanel();
-    this.focusActivePane();
-  }
-
-  // The dock panel (left / agent / bottom) that currently holds keyboard focus, or
-  // null when focus is in the center or nowhere.
-  private focusedDockPanel(): Panel | null {
-    const docks: Panel[] = [this.workbench.leftPanel];
-    if (this.workbench.bottomDock === 'notifications') docks.push(this.workbench.notificationPanel);
-    else if (this.workbench.bottomDock === 'diagnostics') docks.push(this.workbench.diagnosticsDock);
-    else if (this.workbench.bottomDock === 'keymap') docks.push(this.workbench.keymapDock);
-    return docks.find((p) => this.isFocusWithin(p.root)) ?? null;
-  }
-
-  // The top-level focus zones: each dock section and the center, with how to move
-  // focus into each. Directional and cyclic pane navigation operate over these
-  // (within the center, navigation first moves between its own splits). Whatever
-  // currently occupies the bottom dock counts as a zone (so `ctrl-w j` reaches it).
-  private focusZones(): { root: Widget; focus: () => void }[] {
-    const zones: { root: Widget; focus: () => void }[] = [
-      // The file tree lives in the right-side dock (one zone); entering it focuses
-      // the tree (Source Control is a center tab now, not a dock tab).
-      { root: this.workbench.leftPanel.root, focus: () => this.focusSidePanel() },
-      // The agent list is its own full-height sidebar (left of everything); its
-      // geometry makes it the leftmost zone for directional pane navigation.
-      { root: this.sidebar.list.root, focus: () => this.sidebar.list.focus() },
-      { root: this.workbench.center.root, focus: () => this.focusActivePane() },
-    ];
-    // The agent "secondary sidebar" (when an agent workbench is active) is a zone too —
-    // its geometry (between the list and the center) places it for ctrl-w h/l.
-    if (this.activeAgent) {
-      const agent = this.activeAgent;
-      zones.push({ root: this.agentSidebar.root, focus: () => agent.focus() });
-    }
-    if (this.workbench.bottomDock === 'notifications')
-      zones.push({
-        root: this.workbench.notificationPanel.root,
-        focus: () => this.focusDock(this.workbench.notificationPanel, () => this.workbench.notificationLog.focus()),
-      });
-    else if (this.workbench.bottomDock === 'diagnostics')
-      zones.push({
-        root: this.workbench.diagnosticsDock.root,
-        focus: () => this.focusDock(this.workbench.diagnosticsDock, () => this.workbench.diagnosticsPanel.focus()),
-      });
-    else if (this.workbench.bottomDock === 'keymap')
-      zones.push({
-        root: this.workbench.keymapDock.root,
-        focus: () => this.focusDock(this.workbench.keymapDock, () => this.workbench.keymapPanel.focus()),
-      });
-    return zones;
-  }
-
-  // Directional focus: move between the center's splits first; on reaching the
-  // center's edge (or from a dock section) move to the nearest zone in that
-  // direction by on-screen geometry, so any dock arrangement works.
-  private navPane(direction: Direction) {
-    if (this.isFocusWithin(this.workbench.center.root) && this.workbench.center.focusDirection(direction)) {
-      this.focusActivePane();
-      return;
-    }
-    const zones = this.focusZones();
-    // The origin zone is wherever focus sits; when focus isn't clearly in any zone
-    // (e.g. an empty center pane that couldn't take keyboard focus) fall back to
-    // the center so directional navigation still has somewhere to start from.
-    const from =
-      zones.find((z) => this.isFocusWithin(z.root)) ??
-      zones.find((z) => z.root === this.workbench.center.root) ??
-      null;
-    // When leaving the center, navigate from the active leaf's rect (not the whole
-    // center area) so the adjacent dock is found relative to where focus sits.
-    const fromRect =
-      from && from.root === this.workbench.center.root
-        ? this.rectOf(this.workbench.center.activePanel.root)
-        : from
-          ? this.rectOf(from.root)
-          : null;
-    if (!fromRect) return;
-    this.nearestZone(zones, from, fromRect, direction)?.focus();
-  }
-
-  // Cycle focus to the next zone (`ctrl-w w`): within the center, cycle its
-  // splits; otherwise advance to the next zone in order, wrapping around.
-  private focusNextPane() {
-    if (this.isFocusWithin(this.workbench.center.root) && this.workbench.center.focusNext()) {
-      this.focusActivePane();
-      return;
-    }
-    const zones = this.focusZones();
-    const i = zones.findIndex((z) => this.isFocusWithin(z.root));
-    // Default the starting point to the center when focus isn't in any zone, so
-    // the cycle still advances from a sensible place.
-    const start = i >= 0 ? i : zones.findIndex((z) => z.root === this.workbench.center.root);
-    zones[(start + 1) % zones.length]?.focus();
-  }
-
-  // The nearest zone to `fromRect` in `direction`: its center must lie that way
-  // and it must overlap on the cross axis; ties favor the most-overlapping zone.
-  // (Same scoring as PanelGroup.focusDirection, applied across top-level zones.)
-  private nearestZone(
-    zones: { root: Widget; focus: () => void }[],
-    from: { root: Widget } | null,
-    fromRect: { x: number; y: number; w: number; h: number },
-    direction: Direction,
-  ): { focus: () => void } | null {
-    const fromCx = fromRect.x + fromRect.w / 2;
-    const fromCy = fromRect.y + fromRect.h / 2;
-    let best: { focus: () => void } | null = null;
-    let bestScore = Infinity;
-    for (const zone of zones) {
-      if (zone === from) continue;
-      const r = this.rectOf(zone.root);
-      if (!r || r.w <= 0 || r.h <= 0) continue;
-      const cx = r.x + r.w / 2;
-      const cy = r.y + r.h / 2;
-      let distance: number;
-      let overlap: number;
-      switch (direction) {
-        case 'left':
-          if (cx >= fromCx) continue;
-          distance = fromCx - cx;
-          overlap = span(fromRect.y, fromRect.h, r.y, r.h);
-          break;
-        case 'right':
-          if (cx <= fromCx) continue;
-          distance = cx - fromCx;
-          overlap = span(fromRect.y, fromRect.h, r.y, r.h);
-          break;
-        case 'up':
-          if (cy >= fromCy) continue;
-          distance = fromCy - cy;
-          overlap = span(fromRect.x, fromRect.w, r.x, r.w);
-          break;
-        case 'down':
-          if (cy <= fromCy) continue;
-          distance = cy - fromCy;
-          overlap = span(fromRect.x, fromRect.w, r.x, r.w);
-          break;
-      }
-      if (overlap <= 0) continue;
-      const score = distance - overlap * 0.001;
-      if (score < bestScore) {
-        bestScore = score;
-        best = zone;
-      }
-    }
-    return best;
-  }
-
-  // A widget's bounds relative to the workbench root (the common ancestor of all
-  // zones), or null if unavailable.
-  private rectOf(widget: Widget): { x: number; y: number; w: number; h: number } | null {
-    try {
-      const result: any = widget.computeBounds(this.workbench.root);
-      const rect = Array.isArray(result) ? result[1] : result;
-      if (!rect) return null;
-      return { x: rect.getX(), y: rect.getY(), w: rect.getWidth(), h: rect.getHeight() };
-    } catch {
-      return null;
-    }
-  }
-
-  // Move keyboard focus to the content of the active center pane (its editor or
-  // terminal); fall back to the panel's empty-state placeholder when it has no
-  // tabs, so an empty pane steals focus from whatever held it.
-  private focusActivePane() {
-    const widget = this.workbench.center.activePanel.activeChild;
-    if (!widget) {
-      // An agent workbench's center starts empty (the agent lives in the agent sidebar) —
-      // focus the agent rather than the welcome placeholder.
-      if (this.activeAgent) { this.activeAgent.focus(); return; }
-      this.workbench.center.activePanel.focusEmptyState();
-      return;
-    }
-    if (this.restoreTabFocus(widget)) return; // restore where focus last sat in this tab
+  // Focus the editor/terminal backing a center-tab content widget — the tail of the
+  // active-pane focus that WorkbenchView delegates back here, since the editor/terminal
+  // maps (the tab registry) live on the AppWindow.
+  private focusContent(widget: Widget): void {
     const editor = this.editors.get(widget);
-    if (editor) {
-      editor.focus();
-      return;
-    }
+    if (editor) { editor.focus(); return; }
     this.terminals.get(widget)?.focus();
-  }
-
-  // Record the currently focused widget against the panel tab that contains it,
-  // for restoreTabFocus. Driven by the window's notify::focus-widget.
-  private rememberFocus() {
-    const focus = this.window.getFocus();
-    if (!focus) return;
-    const child = this.panelChildAncestor(focus);
-    if (!child) return;
-    // Focus on the tab's own root (a terminal in normal mode, an empty pane) has no
-    // distinct inner target — drop any stale entry rather than leave one behind, so
-    // a later restore re-derives focus from the tab itself. Otherwise a terminal
-    // left in normal mode would resurrect the Vte it held in a previous insert
-    // session, focusing the child while the mode says normal (see Terminal).
-    if (child === focus) this.focusMemory.delete(child);
-    else this.focusMemory.set(child, focus);
-  }
-
-  // The panel-tab content widget (`.is-panel-child`, set by Panel.add) that
-  // contains `widget`, or null when it isn't inside a panel tab.
-  private panelChildAncestor(widget: Widget): Widget | null {
-    let cur: Widget | null = widget;
-    while (cur) {
-      if (cur.hasCssClass('is-panel-child')) return cur;
-      cur = cur.getParent();
-    }
-    return null;
-  }
-
-  // Restore focus to the widget that last held it inside `child`'s tab, if still
-  // valid (present in the window). Returns whether focus was restored, so callers
-  // can fall back to their default focus target.
-  private restoreTabFocus(child: Widget): boolean {
-    const remembered = this.focusMemory.get(child);
-    if (!remembered || remembered === child || remembered.getRoot() === null) return false;
-    return remembered.grabFocus();
-  }
-
-  // Focus a dock panel's active tab, restoring its remembered focus when known,
-  // else running the tab's default focus action.
-  private focusDock(panel: Panel, fallback: () => void) {
-    const child = panel.activeChild;
-    if (child && this.restoreTabFocus(child)) return;
-    fallback();
-  }
-
-  /** Whether keyboard focus currently sits inside `root`'s widget subtree. */
-  private isFocusWithin(root: Widget): boolean {
-    let current: Widget | null = this.window.getFocus();
-    while (current) {
-      if (current === root) return true;
-      current = current.getParent();
-    }
-    return false;
   }
 
   // --- Active editable surfaces (resolved from the focused tab) --------------
@@ -3009,13 +2494,6 @@ export class AppWindow {
   private toast(message: string) {
     zym.notifications.addInfo(message);
   }
-}
-
-// Overlap length of two 1-D segments [a0, a0+aLen] and [b0, b0+bLen]; <= 0 means
-// they don't overlap. Used by directional pane navigation to require cross-axis
-// alignment between zones.
-function span(a0: number, aLen: number, b0: number, bLen: number): number {
-  return Math.min(a0 + aLen, b0 + bLen) - Math.max(a0, b0);
 }
 
 function truncate(text: string, max: number): string {
