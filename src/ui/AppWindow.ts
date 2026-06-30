@@ -18,8 +18,6 @@ import Adw from 'gi:Adw-1';
 type Application = InstanceType<typeof Adw.Application>;
 type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 type ToastOverlay = InstanceType<typeof Adw.ToastOverlay>;
-import { FileTree } from './FileTree.ts';
-import { Panel } from './Panel.ts';
 import { TextEditor } from './TextEditor/index.ts';
 import { type AgentStatus, type AgentResume } from './AgentTerminal.ts';
 import type { Agent } from '../agents/types.ts';
@@ -32,9 +30,7 @@ import { PROJECT_NAME } from './WorkbenchList.ts';
 import { Sidebar } from './Sidebar.ts';
 import { AgentSidebar } from './AgentSidebar.ts';
 import { HeaderBar } from './HeaderBar.ts';
-import { fileIconGlyph } from './fileIcons.ts';
-import { acquireGitRepo, releaseGitRepo } from '../git.ts';
-import { repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
+import { repoRoot, listWorktrees } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { Workbench, DOCK_SIDES } from './workbench/Workbench.ts';
 import { openScriptRunner } from './ScriptRunner.ts';
@@ -58,9 +54,6 @@ import { zym } from '../zym.ts';
 import { fileTabsOf, type SessionParticipant, type WorkspaceState, type SessionState } from '../SessionManager.ts';
 import { SessionController } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
-import { NotificationLog } from './NotificationLog.ts';
-import { KeymapPanel } from './KeymapPanel.ts';
-import { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
 import { type LspConfig } from '../lsp/LspManager.ts';
 import { NotificationToasts } from './NotificationToasts.ts';
 import { loadKeymaps, ensureUserKeymap } from '../keymaps/load.ts';
@@ -75,6 +68,7 @@ import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
 import { WorkbenchView, SIDEBAR_WIDTH, AGENT_SIDEBAR_WIDTH } from './workbench/WorkbenchView.ts';
 import { PaneItems } from './workbench/PaneItems.ts';
+import { WorkbenchManager } from './workbench/WorkbenchManager.ts';
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 950;
@@ -140,8 +134,12 @@ export class AppWindow {
   // which one the overlay shows (activateWorkbench). `this.workbench` is the active
   // one; the rest live in `workbenches`, keyed by owner. All per-person state is read
   // straight off `this.workbench.*`.
-  private workbench!: Workbench<'user' | Agent>;
-  private readonly workbenches = new Map<'user' | Agent, Workbench<'user' | Agent>>();
+  // Per-person workbench lifecycle: the `workbenches` map + the active one, plus
+  // build / activate / cycle / re-root. AppWindow exposes the active workbench and the
+  // map through getters so the rest of the shell reads them unchanged.
+  private readonly workbenchManager: WorkbenchManager;
+  private get workbench(): Workbench<'user' | Agent> { return this.workbenchManager.active; }
+  private get workbenches(): Map<'user' | Agent, Workbench<'user' | Agent>> { return this.workbenchManager.workbenches; }
 
   // The window's Adwaita header bar: the branch button + GitHub PR/CI pill and the
   // per-workbench health cluster (diagnostics + LSP). It owns the git-chrome
@@ -176,21 +174,32 @@ export class AppWindow {
     // resolve the active workbench / sidebar once those exist.
     this.paneItems = new PaneItems({
       getWorkbench: () => this.workbench,
-      activateWorkbench: (workbench) => this.activateWorkbench(workbench),
-      activateOwner: (owner) => this.activateOwner(owner),
+      activateWorkbench: (workbench) => this.workbenchManager.activateWorkbench(workbench),
+      activateOwner: (owner) => this.workbenchManager.activateOwner(owner),
       onActiveTabChanged: () => this.onActiveTabChanged(),
       onReview: (message) => this.reviewToAgent(message),
       setModified: (modified) => this.sidebar.list.setModified(modified),
+    });
+    // Per-person workbench lifecycle. Its view/header/window-column deps are lazy
+    // getters since `buildWorkbench` runs below before those exist.
+    this.workbenchManager = new WorkbenchManager({
+      paneItems: this.paneItems,
+      getWorkbenchView: () => this.workbenchView,
+      getHeaderBar: () => this.headerBar,
+      getContentOverlay: () => this.contentOverlay,
+      getSidebar: () => this.sidebar,
+      activeAgent: () => this.activeAgent,
+      onActivated: () => this.updateViewedAgent(),
     });
 
     // Build the user's workbench first — its own center + Files/Source-Control +
     // bottom docks, and the (pooled) GitRepo for the window cwd that the header
     // chrome below binds to. Agents get their own (openAgent); no widget is shared
     // across workbenches, so a switch reparents nothing.
-    const userWorkbench = this.buildWorkbench('user', process.cwd());
-    this.workbench = userWorkbench; // the active workbench until a person is switched
+    const userWorkbench = this.workbenchManager.buildWorkbench('user', process.cwd());
+    this.workbenchManager.setActive(userWorkbench); // the active workbench until a person is switched
     // Publish the active-workbench provider now, before any consumer (the header bar
-    // below) reads it; activateWorkbench just re-points `this.workbench` behind it.
+    // below) reads it; activateWorkbench just re-points the active one behind it.
     zym.workspace.setActiveWorkbenchProvider(() => this.workbench);
 
     // The header bar's git chrome targets the *active* workbench's git/cwd;
@@ -204,8 +213,8 @@ export class AppWindow {
       onOpenDiagnostics: () => this.workbenchView.toggleDiagnosticsPanel(),
       onOpenLog: () => this.workbenchView.toggleNotificationLog(),
       // Pill + LSP indicator scope to the active workbench's worktree.
-      ownsPath: (path) => this.ownerWorkbenchCwd(path) === this.workbench.cwd,
-      ownsServer: (rootDir) => this.ownerWorkbenchCwd(rootDir) === this.workbench.cwd,
+      ownsPath: (path) => this.workbenchManager.ownerWorkbenchCwd(path) === this.workbench.cwd,
+      ownsServer: (rootDir) => this.workbenchManager.ownerWorkbenchCwd(rootDir) === this.workbench.cwd,
     });
 
     // Session save/restore/autosave is anchored to the user workbench (its center +
@@ -239,7 +248,7 @@ export class AppWindow {
       getActiveWorkspace: () => this.activeWorkspaceIndex(),
       activateWorkspace: (index, restored) => {
         const agent = index > 0 ? (restored[index - 1] as Agent | null) : null;
-        this.activateOwner(agent ?? 'user');
+        this.workbenchManager.activateOwner(agent ?? 'user');
       },
       getWindow: () => ({
         width: this.window.getWidth(),
@@ -275,7 +284,7 @@ export class AppWindow {
     // button forwards collapse/expand here to resize the split below.
     this.sidebar = new Sidebar({
       onActivate: (agent) => this.showAgent(agent),
-      onActivateUser: () => this.activateOwner('user'), // the user row → user workbench
+      onActivateUser: () => this.workbenchManager.activateOwner('user'), // the user row → user workbench
       onRestart: (agent) => this.restartAgent(agent),
       onStop: (agent) => agent.kill(),
       onClose: (agent) => this.closeAgent(agent),
@@ -516,7 +525,7 @@ export class AppWindow {
     // Every workbench (the user's + each agent's) owns its dock/center Panels + content
     // and a refcounted pooled git repo — dispose them as units (a shared root is only
     // freed when its last workbench releases it).
-    for (const wb of this.workbenches.values()) wb.dispose();
+    this.workbenchManager.dispose();
     // Drain any tab/agent subscriptions whose tabs weren't individually closed.
     this.paneItems.dispose();
     for (const subs of this.agentSubs.values()) subs.dispose();
@@ -595,7 +604,7 @@ export class AppWindow {
     this.paneItems.trackAgent(agent);
     // Background launch: build the agent's workbench and start it, but stay on the
     // current workbench and don't focus it (it's listed in the sidebar; switch to it later).
-    const workbench = this.buildWorkbench(agent, root);
+    const workbench = this.workbenchManager.buildWorkbench(agent, root);
     // Pipe the agent's `set_actions` straight into its workbench's action set (the
     // agent keeps no copy). The set is shown as buttons in the window header bar when
     // this workbench is active; pruning stale terminal tabs is driven off the workbench
@@ -606,7 +615,7 @@ export class AppWindow {
     // the secondarySidebar colors. It's hosted in the sidebar's stack now; activateWorkbench
     // makes it the visible one. The workbench center stays free as the work/review area.
     this.agentSidebar.addAgent(agent.root);
-    if (!options.background) this.activateWorkbench(workbench); // shows + reveals the agent column
+    if (!options.background) this.workbenchManager.activateWorkbench(workbench); // shows + reveals the agent column
     if (!options.background) this.updateViewedAgent(); // its workbench is now active — mark it viewed
     // Keep the secondary-sidebar header title in sync when this agent is the shown one.
     const agentSubs = new CompositeDisposable();
@@ -628,7 +637,7 @@ export class AppWindow {
     // The agent announced (via the set_worktree bridge tool) that it moved into a
     // different worktree — re-root its workbench to match.
     agentSubs.add(new Disposable(agent.onDidChangeWorktree(() => {
-      this.reRootWorkbench(workbench, agent.effectiveCwd);
+      this.workbenchManager.reRootWorkbench(workbench, agent.effectiveCwd);
       // Persist the worktree as a sidecar under the spawn dir's transcript dir (the
       // main dir, where the transcript lives) so a later resume can re-root to it.
       if (agent.sessionId) recordSessionWorktree(mainRoot, agent.sessionId, agent.effectiveCwd);
@@ -1111,7 +1120,7 @@ export class AppWindow {
     // Drop this workbench's action terminals (set_actions tabs in its center);
     // disposeChild won't reach them (they're terminals, not editors).
     if (workbench) this.paneItems.disposeWorkbenchActionTerminals(workbench);
-    if (this.workbench.owner === agent) this.activateOwner('user'); // swap away first
+    if (this.workbench.owner === agent) this.workbenchManager.activateOwner('user'); // swap away first
     this.workbenches.delete(agent); // its workbench (center + Files/Git + bottom + tabs) goes
     if (workbench) {
       // Tear down the editors that lived in this workbench — closing it drops their
@@ -1149,151 +1158,6 @@ export class AppWindow {
     });
   }
 
-  // Build a fresh center (one person's splittable editor area). Every center
-  /**
-   * Build a person's workbench rooted at `cwd`: acquire the (pooled) GitRepo for
-   * that root, construct its own center, Files tree, and bottom-dock widgets, then
-   * hand them to a `Workbench` (which docks the center, and the Files side dock for
-   * the user). Source Control is created lazily on first reveal (see ensureGitPanel).
-   * Nothing is shared with other workbenches, so a switch never reparents. Registers
-   * and returns the `Workbench`.
-   */
-  private buildWorkbench(owner: 'user' | Agent, cwd: string): Workbench<'user' | Agent> {
-    const git = acquireGitRepo(cwd);
-    const center = this.paneItems.makeCenter();
-    const fileTree = new FileTree({
-      rootPath: cwd,
-      onOpenFile: (path) => this.paneItems.openFile(path),
-      git,
-    });
-    // The file tree is the only tab in this right-side dock. Source Control (GitPanel)
-    // is created lazily on first reveal (ensureGitPanel / `git-panel:focus`) and opens
-    // as a center tab — not here — so a workbench doesn't construct a git-subscribing
-    // panel it may never open. The dock collapses out of the workbench when its last
-    // tab closes (the reveal/focus path re-attaches it); the closure captures this
-    // workbench's own `leftPanel`.
-    const leftPanel = new Panel({ onEmpty: () => this.workbenchView.detachDock(leftPanel) });
-    const filesTab = leftPanel.add(fileTree.root, { title: `${fileIconGlyph('', true)}  Files` });
-    filesTab.select();
-
-    // Each bottom dock is a single persistent view: closing its tab hides the dock
-    // (its toggle brings it back) rather than destroying the page, so its widget/
-    // state survive and reopening never shows an empty panel. hideBottomDock acts on
-    // the active workbench — the only one whose tab can be interactively closed.
-    const notificationLog = new NotificationLog();
-    const notificationPanel = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('notifications') });
-    notificationPanel.add(notificationLog.root, { title: 'Notifications' });
-    // Scope this workbench's diagnostics to the files under its root (read live via
-    // `owner`, so a re-root re-scopes it).
-    const diagnosticsPanel = new DiagnosticsPanel(
-      (target) => this.paneItems.openOrFocusFile(target.path, [target.line, target.character]),
-      (path) => this.ownerWorkbenchCwd(path) === this.workbenches.get(owner)?.cwd,
-    );
-    const diagnosticsDock = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('diagnostics') });
-    diagnosticsDock.add(diagnosticsPanel.root, { title: 'Diagnostics' });
-    const keymapPanel = new KeymapPanel();
-    const keymapDock = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('keymap') });
-    keymapDock.add(keymapPanel.root, { title: 'Keybindings' });
-
-    const workbench = new Workbench<'user' | Agent>(
-      owner,
-      {
-        cwd, git, center, fileTree, leftPanel, filesTab,
-        notificationLog, notificationPanel, diagnosticsPanel, diagnosticsDock,
-        keymapPanel, keymapDock,
-      },
-      { showSideDock: owner === 'user' },
-    );
-    // The workbench owns its runtime action set (seeded from `<cwd>/.zym/settings.json`,
-    // overwritable by an agent, run from `space x`); wire the terminal-action runner so
-    // a `terminal` action runs in a tab here and reports its run/stop state (it needs
-    // the workbench to host the tab), and prune orphaned action tabs when the set
-    // shrinks. The subscriptions live on plain-JS emitters collected with the workbench
-    // on dispose — hence the explicit `void` discard.
-    workbench.actions.setTerminalRunner({
-      run: (action) => this.paneItems.runWorkbenchActionInTerminal(workbench, action),
-      stop: (actionId) => this.paneItems.findActionTerminal(workbench, actionId)?.terminal.kill(),
-      isRunning: (actionId) => (this.paneItems.findActionTerminal(workbench, actionId)?.terminal.pid ?? null) !== null,
-      onDidChangeRunning: (cb) => {
-        const sub = this.paneItems.onActionTerminalChange((wb) => { if (wb === workbench) cb(); });
-        return () => sub.dispose();
-      },
-    });
-    void workbench.actions.onDidChange(() => this.paneItems.pruneActionTerminals(workbench));
-    this.workbenches.set(owner, workbench);
-    return workbench;
-  }
-
-  /** Activate the workbench owned by `owner`. */
-  private activateOwner(owner: 'user' | Agent): void {
-    const workbench = this.workbenches.get(owner);
-    if (workbench) this.activateWorkbench(workbench);
-  }
-
-  // Step the active workbench by `step` (−1 / +1) through the workbench-list order
-  // ([user, …agents]), wrapping around. No-op when the user is the only person.
-  private cycleWorkbench(step: number): void {
-    const owners: Array<'user' | Agent> = ['user', ...zym.agents.getAgents()];
-    if (owners.length < 2) return;
-    const current = owners.indexOf(this.workbench.owner);
-    const next = (current + step + owners.length) % owners.length;
-    this.activateOwner(owners[next]);
-  }
-
-  /**
-   * Activate `workbench`: make it the visible one (`this.workbench`). Nothing is
-   * reparented — every slot already belongs to it; the previously-active workbench is
-   * detached but alive (its tabs/terminal/editor state persist). All per-person state
-   * lives on the workbench itself, so there's nothing to save/restore on switch. Driven
-   * by the WorkbenchList / openAgent.
-   */
-  private activateWorkbench(workbench: Workbench<'user' | Agent>): void {
-    this.workbench = workbench;
-    this.contentOverlay.setChild(workbench.root); // show this workbench
-    this.sidebar.list.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
-    this.headerBar.rebind(); // header branch/GitHub now reflect this workbench's root
-    this.headerBar.refreshStatus(); // diagnostics pill + LSP indicator → this workbench
-    this.workbenchView.showAgentSidebar(this.activeAgent); // reveal this workbench's agent column (or hide it)
-    this.updateViewedAgent();
-    this.workbenchView.focusActivePane();
-  }
-
-  // The open workbench whose root (cwd) most specifically contains `path` — the
-  // longest matching prefix, so a file (or server root) inside a nested worktree is
-  // owned by that worktree, not its parent. Paths under no open root fall to the
-  // user workbench. Used to scope per-workbench diagnostics + the header LSP status.
-  private ownerWorkbenchCwd(path: string): string {
-    let best = process.cwd(); // user workbench root / fallback for orphan paths
-    for (const wb of this.workbenches.values()) {
-      if (isUnderRoot(path, wb.cwd) && wb.cwd.length > best.length) best = wb.cwd;
-    }
-    return best;
-  }
-
-  // Re-root an agent's workbench after it moves into a worktree: swap the pooled
-  // GitRepo and re-root the file tree + Source Control in place (the widgets/tabs
-  // stay put); if it's the active workbench, re-point the header chrome too.
-  private reRootWorkbench(workbench: Workbench<'user' | Agent>, newCwd: string): void {
-    if (newCwd === workbench.cwd) return;
-    // The worktree at newCwd may have been probed (and cached) as a non-repo before
-    // it existed; drop that stale entry so repoRoot resolves the new checkout.
-    invalidateRepoRoot(newCwd);
-    const oldGit = workbench.git;
-    const git = acquireGitRepo(newCwd); // acquire before release: a shared root keeps its repo
-    workbench.cwd = newCwd;
-    workbench.git = git;
-    workbench.fileTree.setRoot(newCwd, git);
-    workbench.gitPanel?.setRoot(newCwd, git); // null until lazily created; it'll pick up the new root on creation
-    // Re-point the gutters of editors already open in this workbench at the new repo.
-    this.paneItems.repointGutters(workbench, git);
-    releaseGitRepo(oldGit);
-    if (this.workbench === workbench) this.headerBar.rebind();
-    // Diagnostics ownership shifts on a re-root (paths under the old/new root change
-    // hands), so re-scope every workbench's panel and the active header status.
-    for (const wb of this.workbenches.values()) wb.diagnosticsPanel.refresh();
-    this.headerBar.refreshStatus();
-  }
-
   // The cooperative-detection safety net: if an agent created a worktree (spotted
   // by the Bash validator) but never announced it via set_worktree, warn once when
   // it next settles — its workbench won't have re-rooted to the worktree.
@@ -1310,7 +1174,7 @@ export class AppWindow {
 
   /** Show `agent`: activate its workbench (its widget lives in the agent sidebar). */
   private showAgent(agent: Agent): void {
-    this.activateOwner(agent);
+    this.workbenchManager.activateOwner(agent);
   }
 
   // --- Active-tab tracking ---------------------------------------------------
@@ -1360,8 +1224,8 @@ export class AppWindow {
       'git-panel:focus': { didDispatch: () => this.workbenchView.revealGitPanel(), description: 'Focus Source Control' },
       'workbench-list:focus': { didDispatch: () => this.sidebar.list.focus(), description: 'Focus the workbench sidebar' },
       // Cycle the active workbench through [user, …agents] (the workbench-list order).
-      'workbench:previous': { didDispatch: () => this.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
-      'workbench:next': { didDispatch: () => this.cycleWorkbench(1), description: 'Switch to the next workbench' },
+      'workbench:previous': { didDispatch: () => this.workbenchManager.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
+      'workbench:next': { didDispatch: () => this.workbenchManager.cycleWorkbench(1), description: 'Switch to the next workbench' },
       // Fuzzy-pick a workbench to switch to (the user / each agent) — same set the
       // cycle steps through; selecting one activates it.
       'workbench:picker': {
@@ -1370,7 +1234,7 @@ export class AppWindow {
             const wb = this.workbenches.get(owner);
             return wb ? [{ owner: wb.owner, cwd: wb.cwd, active: wb === this.workbench }] : [];
           }),
-          onActivate: (owner) => this.activateOwner(owner),
+          onActivate: (owner) => this.workbenchManager.activateOwner(owner),
         }),
         description: 'Switch to a workbench (the user or an agent)',
       },
@@ -1832,11 +1696,5 @@ export class AppWindow {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
-// Whether `path` is `root` itself or lives beneath it (a `root + sep` prefix, so
-// `/a/bc` doesn't count as under `/a/b`).
-function isUnderRoot(path: string, root: string): boolean {
-  return path === root || path.startsWith(root.endsWith(Path.sep) ? root : root + Path.sep);
 }
 
