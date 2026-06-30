@@ -32,6 +32,13 @@ opens as a center tab, not a dock — see docs/git/index.md.)
   content for an agent workbench. AppWindow attaches/detaches it on its own
   `agentPaned` and flips the visible stack page on switch (see docs/agents.md "agent
   secondary sidebar"). It's a top-level focus zone, so `ctrl-w h/l` reaches it.
+- **`WorkbenchView`** (`src/ui/workbench/WorkbenchView.ts`) — the **active
+  workbench's view layer**: it owns the sidebar/agent-sidebar reveal+toggle, the dock
+  reveal/toggle/show-hide, per-tab keyboard-focus memory, and directional/cyclic
+  pane navigation across the top-level focus zones (`focusZones`/`navPane`). It acts
+  on the active workbench (read lazily) and the window-level `Gtk.Paned` columns;
+  the panel-tree operations it needs are injected by `AppWindow`. See
+  [app-window.md](app-window.md).
 
 ## Dock visibility (toggleable docks)
 

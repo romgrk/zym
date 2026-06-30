@@ -16,6 +16,10 @@ should only be stated once; further mentions should point to other documents.
 
 - Use Atom as a model for the overall architecture.
 - Prefer idiomatic Node.js, only use GObject libraries when required.
+- The top-level window (`AppWindow`) is being decomposed from a God object into a
+  thin composition root plus focused collaborators (feature command modules + view
+  controllers). See [app-window.md](app-window.md) for the target shape, what's
+  extracted, and what's left.
 
 ## TypeScript
 
