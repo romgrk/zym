@@ -44,9 +44,6 @@ import { git, repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { GitLogView } from './git/GitLogView.ts';
 import { Workbench, DOCK_SIDES, type BottomDock, type DockSide } from './workbench/Workbench.ts';
-import { openFilePicker } from './FilePicker.ts';
-import { openFileOpener, openFolderPicker, openRenamePicker } from './FileOpener.ts';
-import { tildify } from '../util/tilde.ts';
 import { openScriptRunner, detectPackageManager } from './ScriptRunner.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
 import { openDiffCollapseGlobPicker } from './DiffCollapseGlobPicker.ts';
@@ -80,7 +77,6 @@ import { type LspConfig } from '../lsp/LspManager.ts';
 import { normalizeWorkspaceEdit, applyTextEdits } from '../lsp/workspaceEdit.ts';
 import { uriToPath, type PositionEncoding } from '../lsp/position.ts';
 import type { WorkspaceEdit } from 'vscode-languageserver-protocol';
-import { CancellationTokenSource } from 'vscode-languageserver-protocol';
 import { NotificationToasts } from './NotificationToasts.ts';
 import { loadKeymaps, ensureUserKeymap } from '../keymaps/load.ts';
 import { loadConfig, configPath } from '../config/load.ts';
@@ -91,6 +87,7 @@ import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
+import { registerFileCommands } from './fileCommands.ts';
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 950;
@@ -440,6 +437,15 @@ export class AppWindow {
     this.registerPaneCommands();
     this.registerWindowCommands();
     this.registerTerminalCommands();
+    registerFileCommands({
+      window: this.window,
+      overlay: this.overlay,
+      getCwd: () => this.workbench.cwd,
+      activeEditor: () => this.activeEditor,
+      openFile: (path) => this.openFile(path),
+      applyWorkspaceEdit: (edit, encoding) => this.applyWorkspaceEdit(edit, encoding),
+      activeSavableSurface: () => this.activeSavableSurface(),
+    });
     registerGitCommands({
       overlay: this.overlay,
       getCwd: () => this.workbench.cwd,
@@ -2154,37 +2160,11 @@ export class AppWindow {
   // most) on the space leader. Handlers only; bindings live in the central keymap.
   private registerWindowCommands() {
     zym.commands.add('.AppWindow', {
-      'file:open': { didDispatch: () => this.openDialog(), description: 'Open a file (dialog)' },
-      'file:find': {
-        didDispatch: () => openFilePicker(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
-        description: 'Find a file by name',
-      },
-      'file:open-path': {
-        didDispatch: () => openFileOpener(this.overlay, this.workbench.cwd, (path) => this.openFile(path)),
-        description: 'Open a file by path',
-      },
-      'file:move': {
-        didDispatch: () => this.moveActiveFile(),
-        description: 'Move the current file to another folder',
-        when: () => this.activeEditor?.currentFile != null,
-      },
-      'file:rename': {
-        didDispatch: () => this.renameActiveFile(),
-        description: 'Rename (or relocate) the current file',
-        when: () => this.activeEditor?.currentFile != null,
-      },
       'project:search': {
         didDispatch: () =>
           openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.openFile(path).restoreCursor(cursor)),
         description: 'Search file contents (ripgrep)',
       },
-      // Save commands only apply with an editor open.
-      'file:save': {
-        didDispatch: () => this.saveActive(),
-        description: 'Save the current file',
-        when: () => this.activeEditor !== null || this.activeSavableSurface() !== null,
-      },
-      'file:save-as': { didDispatch: () => this.saveAsDialog(), description: 'Save the current file as…', when: () => this.activeEditor !== null },
       'git:diff-current': {
         didDispatch: () => this.openCurrentFileDiff(),
         description: 'Diff the current file (working tree vs HEAD)',
@@ -2979,20 +2959,7 @@ export class AppWindow {
     return false;
   }
 
-  // --- File operations (routed to the active editor) -------------------------
-
-  private saveActive() {
-    // An editable multibuffer (project search OR diff) saves every file it touched, not one Document.
-    const surface = this.activeSavableSurface();
-    if (surface) {
-      surface.save();
-      return;
-    }
-    const editor = this.activeEditor;
-    if (!editor) return;
-    if (editor.currentFile) editor.save();
-    else this.saveAsDialog();
-  }
+  // --- Active editable surfaces (resolved from the focused tab) --------------
 
   /** The active center/focused child resolved to a widget, for surface lookups. */
   private activeChildWidget(): Widget | null {
@@ -3032,180 +2999,6 @@ export class AppWindow {
   private activeSearchResults(): SearchResultsView | null {
     const widget = this.activeChildWidget();
     return widget ? this.projectSearchViews.get(widget)?.results ?? null : null;
-  }
-
-  private openDialog() {
-    const dialog = new Gtk.FileDialog();
-    dialog.setTitle('Open File');
-    dialog.open(this.window, null, (self: any, result: any) => {
-      try {
-        const file = self.openFinish(result);
-        if (file) this.openFile(file.getPath());
-      } catch {
-        // The user dismissed the dialog; nothing to do.
-      }
-    });
-  }
-
-  private saveAsDialog() {
-    const editor = this.activeEditor;
-    if (!editor) return;
-    const dialog = new Gtk.FileDialog();
-    dialog.setTitle('Save File As');
-    if (editor.currentFile) dialog.setInitialName(Path.basename(editor.currentFile));
-    dialog.save(this.window, null, (self: any, result: any) => {
-      try {
-        const file = self.saveFinish(result);
-        if (file) editor.saveAs(file.getPath());
-      } catch {
-        // Cancelled.
-      }
-    });
-  }
-
-  /** Move the current file into a folder chosen from the directory-navigating
-   *  picker (folders only), keeping its name. */
-  private moveActiveFile() {
-    const editor = this.activeEditor;
-    const file = editor?.currentFile;
-    if (!editor || !file) return;
-    openFolderPicker(this.overlay, this.workbench.cwd, Path.dirname(file), (destDir) =>
-      this.relocateFile(editor, file, Path.join(destDir, Path.basename(file))),
-    );
-  }
-
-  /** Rename (or relocate) the current file by editing its full path in the picker. */
-  private renameActiveFile() {
-    const editor = this.activeEditor;
-    const file = editor?.currentFile;
-    if (!editor || !file) return;
-    openRenamePicker(this.overlay, this.workbench.cwd, file, (target) => this.relocateFile(editor, file, target));
-  }
-
-  /** Move/rename `from` → `to` on disk, prompting before clobbering an existing
-   *  file, then hand off to `performRelocate`. A no-op when the destination equals
-   *  the source (e.g. "move here" into the same folder, or rename to the same name). */
-  private relocateFile(editor: TextEditor, from: string, to: string) {
-    if (to === from) return;
-    if (Fs.existsSync(to)) {
-      const dialog = new Adw.AlertDialog({
-        heading: 'Overwrite file?',
-        body: `${tildify(to)} already exists. Replace it?`,
-      });
-      dialog.addResponse('cancel', 'Cancel');
-      dialog.addResponse('overwrite', 'Overwrite');
-      dialog.setResponseAppearance('overwrite', Adw.ResponseAppearance.DESTRUCTIVE);
-      dialog.setDefaultResponse('cancel');
-      dialog.setCloseResponse('cancel');
-      dialog.on('response', (response: string) => {
-        if (response === 'overwrite') void this.performRelocate(editor, from, to);
-      });
-      dialog.present(this.window);
-      return;
-    }
-    void this.performRelocate(editor, from, to);
-  }
-
-  /**
-   * The move behind `relocateFile`, run after any overwrite confirmation. First
-   * asks the language server how the move rewrites references in other files
-   * (`willRenameFiles`, cancellable, with a confirm before applying); then creates
-   * missing parents (mkdir -p), moves the file (copy+unlink across filesystems —
-   * EXDEV), re-points the open editor, and notifies the server (`didRenameFiles`).
-   */
-  private async performRelocate(editor: TextEditor, from: string, to: string) {
-    const rename = await this.collectRenameEdit(editor, from, to);
-    if (rename.cancelled) return; // user cancelled the willRename request
-
-    let refFiles = 0;
-    let refEdits = 0;
-    if (rename.edit) {
-      const { files } = normalizeWorkspaceEdit(rename.edit);
-      refFiles = files.length;
-      refEdits = files.reduce((n, f) => n + f.edits.length, 0);
-      // Confirm before touching other files; declining aborts the whole move so we
-      // never leave the file renamed with its references dangling.
-      if (refFiles > 0 && !(await this.confirmReferenceUpdate(from, refFiles, refEdits))) return;
-    }
-
-    // Apply the reference rewrites while everything is still at its old path (open
-    // files in their buffer, closed files on disk), then move + re-point + notify.
-    if (rename.edit) this.applyWorkspaceEdit(rename.edit, rename.encoding);
-    try {
-      Fs.mkdirSync(Path.dirname(to), { recursive: true });
-      try {
-        Fs.renameSync(from, to);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
-        Fs.copyFileSync(from, to); // cross-device: rename can't, so copy then drop the original
-        Fs.unlinkSync(from);
-      }
-    } catch (error) {
-      zym.notifications.addError('Move failed', { detail: (error as Error).message });
-      return;
-    }
-    editor.renameTo(to); // the open editor follows the file (keeps buffer/undo/cursor)
-    zym.lsp.didRenameFiles(from, to);
-    const inPlace = Path.dirname(from) === Path.dirname(to);
-    const base = inPlace ? `Renamed to ${Path.basename(to)}` : `Moved to ${tildify(to)}`;
-    const refs = refFiles > 0
-      ? ` — updated ${refEdits} reference${refEdits === 1 ? '' : 's'} in ${refFiles} file${refFiles === 1 ? '' : 's'}`
-      : '';
-    zym.notifications.addInfo(base + refs);
-  }
-
-  /**
-   * Ask the primary server how moving `from` → `to` rewrites other files. Shows a
-   * cancellable "Updating references…" toast — but only if the request is slow
-   * enough to outlast a short delay, so quick renames don't flash it. Returns the
-   * edit (possibly null when no server cares), or `{ cancelled }` if the user bailed.
-   */
-  private async collectRenameEdit(
-    editor: TextEditor,
-    from: string,
-    to: string,
-  ): Promise<{ cancelled: true } | { cancelled: false; edit: WorkspaceEdit | null; encoding: PositionEncoding }> {
-    const source = new CancellationTokenSource();
-    let cancelled = false;
-    let toast: ReturnType<typeof zym.notifications.addInfo> | undefined;
-    const spinner = setTimeout(() => {
-      toast = zym.notifications.addInfo('Updating references…', {
-        loading: true,
-        dismissable: true,
-        buttons: [{ text: 'Cancel', onDidClick: () => { cancelled = true; source.cancel(); } }],
-      });
-    }, 300);
-    let edit: WorkspaceEdit | null = null;
-    try {
-      edit = await zym.lsp.willRenameFiles(from, to, source.token);
-    } catch {
-      // Cancellation or a server error — fall through (a server error proceeds as a
-      // plain move; an explicit cancel is caught by the flag below).
-    } finally {
-      clearTimeout(spinner);
-      toast?.dismiss();
-    }
-    if (cancelled) return { cancelled: true };
-    return { cancelled: false, edit, encoding: zym.lsp.completionPositionEncoding(editor.lsp) ?? 'utf-16' };
-  }
-
-  /** Confirm applying the cross-file reference rewrites of a move (Move & Update / Cancel). */
-  private confirmReferenceUpdate(from: string, fileCount: number, editCount: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      const dialog = new Adw.AlertDialog({
-        heading: 'Update references?',
-        body:
-          `Moving ${Path.basename(from)} updates ${editCount} reference${editCount === 1 ? '' : 's'} ` +
-          `across ${fileCount} file${fileCount === 1 ? '' : 's'}.`,
-      });
-      dialog.addResponse('cancel', 'Cancel');
-      dialog.addResponse('move', 'Move & Update');
-      dialog.setResponseAppearance('move', Adw.ResponseAppearance.SUGGESTED);
-      dialog.setDefaultResponse('move');
-      dialog.setCloseResponse('cancel');
-      dialog.on('response', (response: string) => resolve(response === 'move'));
-      dialog.present(this.window);
-    });
   }
 
   // --- Window chrome helpers -------------------------------------------------
