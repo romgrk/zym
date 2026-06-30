@@ -138,7 +138,12 @@ Today:
   subscription needed. `]h`/`[h` translate the hunk rows document→screen; hunk
   actions unfold first so view==model.
 - LSP **requests** translate the other way: `lspCursor` is
-  `documentPointFromScreen(...)`.
+  `documentPointFromScreen(getCursorScreenPosition())` — feed it the *screen*
+  cursor, **not** `getCursorBufferPosition()`. The buffer cursor is already
+  unfolded source (`buffer == document` for a single file), so passing it to the
+  screen→document transform double-counts the fold and the request lands N lines
+  past the symbol (stale hover / wrong go-to-def). All three `lspCursor` callers
+  (LSP, the GitHub permalink line, git blame) want this document position.
 
 When adding a feature that renders document-space ranges (references peek, code
 lens, range code-actions, etc.) apply the same `viewRangeFromModel` /
