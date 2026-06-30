@@ -19,14 +19,10 @@ type Application = InstanceType<typeof Adw.Application>;
 type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 type ToastOverlay = InstanceType<typeof Adw.ToastOverlay>;
 import { FileTree } from './FileTree.ts';
-import { Panel, type PanelChild } from './Panel.ts';
-import { PanelGroup, type RestoredChild } from './PanelGroup.ts';
+import { Panel } from './Panel.ts';
 import { TextEditor } from './TextEditor/index.ts';
-import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
-import { Terminal, terminalTabTitle } from './Terminal.ts';
-import { AgentTerminal, type AgentStatus, type AgentResume } from './AgentTerminal.ts';
+import { type AgentStatus, type AgentResume } from './AgentTerminal.ts';
 import type { Agent } from '../agents/types.ts';
-import { type Action } from '../actions.ts';
 import { ensureProjectSettingsFile } from '../projectSettings.ts';
 import { openActionRunner } from './workbench/ActionPicker.ts';
 import { AgentConversation } from './AgentConversation.ts';
@@ -37,19 +33,14 @@ import { Sidebar } from './Sidebar.ts';
 import { AgentSidebar } from './AgentSidebar.ts';
 import { HeaderBar } from './HeaderBar.ts';
 import { fileIconGlyph } from './fileIcons.ts';
-import { Icons } from './icons.ts';
 import { acquireGitRepo, releaseGitRepo } from '../git.ts';
-import { git, repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
+import { repoRoot, invalidateRepoRoot, listWorktrees } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
-import { GitLogView } from './git/GitLogView.ts';
 import { Workbench, DOCK_SIDES } from './workbench/Workbench.ts';
-import { openScriptRunner, detectPackageManager } from './ScriptRunner.ts';
+import { openScriptRunner } from './ScriptRunner.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
 import { openDiffCollapseGlobPicker } from './DiffCollapseGlobPicker.ts';
 import { openSearchPicker } from './SearchPicker.ts';
-import { SearchResultsView } from './SearchResultsView.ts';
-import { ProjectSearchView } from './ProjectSearchView.ts';
-import { DiffView } from './DiffView.ts';
 import { openCommandPicker } from './CommandPicker.ts';
 import { openThemePicker } from './ThemePicker.ts';
 import { saveConfig } from '../config/load.ts';
@@ -64,29 +55,26 @@ import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
 import { zym } from '../zym.ts';
-import { type OpenTabOptions } from '../Workspace.ts';
-import { fileTabsOf, type SessionParticipant, type TabState, type WorkspaceState, type SessionState } from '../SessionManager.ts';
-import { SessionController, deserializeTab } from '../SessionController.ts';
+import { fileTabsOf, type SessionParticipant, type WorkspaceState, type SessionState } from '../SessionManager.ts';
+import { SessionController } from '../SessionController.ts';
 import { type Notification } from '../Notification.ts';
 import { NotificationLog } from './NotificationLog.ts';
 import { KeymapPanel } from './KeymapPanel.ts';
 import { DiagnosticsPanel } from '../lsp/diagnostics/DiagnosticsPanel.ts';
 import { type LspConfig } from '../lsp/LspManager.ts';
-import { normalizeWorkspaceEdit, applyTextEdits } from '../lsp/workspaceEdit.ts';
-import { uriToPath, type PositionEncoding } from '../lsp/position.ts';
-import type { WorkspaceEdit } from 'vscode-languageserver-protocol';
 import { NotificationToasts } from './NotificationToasts.ts';
 import { loadKeymaps, ensureUserKeymap } from '../keymaps/load.ts';
 import { loadConfig, configPath } from '../config/load.ts';
 import { setUserInjectionRules } from '../syntax/grammar.ts';
 import { parseInjectionRules } from '../syntax/userInjections.ts';
-import { CompositeDisposable, Disposable, Emitter, type DisposableLike } from '../util/eventKit.ts';
+import { CompositeDisposable, Disposable, type DisposableLike } from '../util/eventKit.ts';
 import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
 import { WorkbenchView, SIDEBAR_WIDTH, AGENT_SIDEBAR_WIDTH } from './workbench/WorkbenchView.ts';
+import { PaneItems } from './workbench/PaneItems.ts';
 
 const DEFAULT_WIDTH = 1400;
 const DEFAULT_HEIGHT = 950;
@@ -102,58 +90,18 @@ export class AppWindow {
   private readonly app: Application;
   private readonly onQuit: () => void;
 
-  // Editor tabs in the active workbench's center, mapped from their root widget so the
-  // active child can be resolved back to its editor regardless of which split it's in.
-  private readonly editors = new Map<Widget, TextEditor>();
-  // Which workbench each editor lives in, so a workbench re-root can re-point its
-  // editors' git gutters (kept in lockstep with `editors`).
-  private readonly editorOwners = new Map<Widget, Workbench<'user' | Agent>>();
-  // Open documents (text model + undo + file I/O), ref-counted. Editor tabs are views
-  // onto these — a split or the see-definition peek shares one document (A2 model).
-  private readonly documents = new DocumentRegistry();
-  // Per-editor `zym.workspace` registration (drives plugin `observeTextEditors`);
-  // disposed when the tab closes (see disposeChild).
-  private readonly editorRegistrations = new Map<Widget, Disposable>();
-  // Tab-lifetime subscriptions on the editor/terminal source (title + modified
-  // state), disposed in disposeChild so a closed tab leaves no handlers behind.
-  private readonly tabSubs = new Map<Widget, CompositeDisposable>();
+  // The tab/item-registry spine: every center-tab registry (editors, terminals, headless
+  // agents, project-search / diff surfaces, action terminals) + their lifecycle, the
+  // shared DocumentRegistry, and the `openFile` funnel. AppWindow delegates to it and
+  // `zym.workspace` is backed by it. Built in the constructor.
+  private readonly paneItems: PaneItems;
   // Per-agent subscriptions (title/status/worktree/files), disposed in closeAgent.
   private readonly agentSubs = new Map<Agent, CompositeDisposable>();
-  // Terminal tabs share the center panel with editors; tracked separately so the
-  // active child can be resolved back to its Terminal (it has no vim state).
-  private readonly terminals = new Map<Widget, Terminal>();
-  // Headless `claude-sdk` agents mounted as center tabs (keyed by their root
-  // widget), disposed when their tab closes (see disposeChild).
-  private readonly conversations = new Map<Widget, AgentConversation>();
-  // Terminal tabs opened for a `terminal` workbench action, keyed by the terminal's
-  // root widget. Re-running an action reuses its still-open tab (run the command in
-  // place); the tab is closed when the action is cleared, its workbench is closed, or
-  // the user closes the tab (see pruneActionTerminals / disposeChild).
-  private readonly actionTerminals = new Map<Widget, { workbench: Workbench<'user' | Agent>; actionId: string; terminal: Terminal; child: PanelChild }>();
-  // Fires (with the affected workbench) when a `terminal` action's command starts or
-  // exits, so that workbench's WorkbenchActions can re-emit a running change and the
-  // header bar's run/stop button updates. Driven by each action terminal's onRunningChange.
-  private readonly actionTerminalChanges = new Emitter();
 
   // The workbench sidebar: the full-height `.WorkbenchSidebar` column at the very left
   // of the window. Owns the `WorkbenchList` (`this.sidebar.list`); it's the start child
   // of `sidebarPaned`, whose width this window toggles on collapse/expand.
   private readonly sidebar: Sidebar;
-  // Maps an editor's root widget to its center tab handle, so a location jump can
-  // reveal an already-open file instead of opening a duplicate tab.
-  private readonly editorChildren = new Map<Widget, PanelChild>();
-  // Tab-hosted project-search surfaces (the search-entry header + its results multibuffer),
-  // keyed by root widget so the view is disposed (freeing its per-source DocumentSyntax parses)
-  // when its tab closes.
-  private readonly projectSearchViews = new Map<Widget, ProjectSearchView>();
-  // Teardown for a center tab, keyed by its root widget — run (and cleared) when the
-  // tab closes (see disposeChild). The generic seam behind `zym.workspace.openTab`'s
-  // `onClose`; the continuous-diff views (editable + read-only commit/branch) use it
-  // to dispose on close. DiffView.forRoot routes commands to the focused one.
-  private readonly tabCloseHandlers = new Map<Widget, () => void>();
-  // Session modified-status registrations (editors, running agents), keyed by the
-  // tab's root widget so the registration is disposed when the tab closes.
-  private readonly participants = new Map<Widget, DisposableLike>();
   // Set once the user has confirmed an exit past unsaved work, so the re-entrant
   // close-request doesn't prompt again.
   private quitting = false;
@@ -223,6 +171,18 @@ export class AppWindow {
 
     this.toastOverlay = new Adw.ToastOverlay();
 
+    // The tab/item-registry spine. Built first — `buildWorkbench` below makes each
+    // person's center through it. Its deps are lazy closures over `this`, so they
+    // resolve the active workbench / sidebar once those exist.
+    this.paneItems = new PaneItems({
+      getWorkbench: () => this.workbench,
+      activateWorkbench: (workbench) => this.activateWorkbench(workbench),
+      activateOwner: (owner) => this.activateOwner(owner),
+      onActiveTabChanged: () => this.onActiveTabChanged(),
+      onReview: (message) => this.reviewToAgent(message),
+      setModified: (modified) => this.sidebar.list.setModified(modified),
+    });
+
     // Build the user's workbench first — its own center + Files/Source-Control +
     // bottom docks, and the (pooled) GitRepo for the window cwd that the header
     // chrome below binds to. Agents get their own (openAgent); no widget is shared
@@ -255,9 +215,9 @@ export class AppWindow {
       root: process.cwd(),
       center: userWorkbench.center,
       fileTree: userWorkbench.fileTree,
-      serializeChild: (widget) => this.serializeChild(widget),
-      createEditorTab: (path, restore) => this.createEditorTab(path, restore),
-      createTerminalTab: (cwd) => this.createTerminalTab(cwd),
+      serializeChild: (widget) => this.paneItems.serializeChild(widget),
+      createEditorTab: (path, restore) => this.paneItems.createEditorTab(path, restore),
+      createTerminalTab: (cwd) => this.paneItems.createTerminalTab(cwd),
       getDocks: () => ({
         notificationLog: this.workbench.bottomDock === 'notifications',
         visible: this.workbench.dockVisibility(),
@@ -290,7 +250,7 @@ export class AppWindow {
       // Cache the unsaved contents of modified editors so a restore brings them back
       // (unsavedSnapshot also covers a restored tab not yet reopened).
       collectUnsaved: () =>
-        [...this.editors.values()].flatMap((e) => {
+        this.paneItems.allEditors().flatMap((e) => {
           const text = e.unsavedSnapshot();
           return e.currentFile && text !== null ? [{ path: e.currentFile, text }] : [];
         }),
@@ -390,12 +350,12 @@ export class AppWindow {
       agentPaned: this.agentPaned,
       getWorkbench: () => this.workbench,
       activeAgent: () => this.activeAgent,
-      activeEditorFile: () => this.activeEditor?.currentFile ?? null,
-      focusContent: (widget) => this.focusContent(widget),
-      openFileView: (path, panel) => this.openFileViewIn(path, panel),
-      openFile: (path) => this.openFile(path),
-      buildCurrentChangesDiff: (workbench) => this.buildCurrentChangesDiff(workbench),
-      setTabCloseHandler: (widget, fn) => this.tabCloseHandlers.set(widget, fn),
+      activeEditorFile: () => this.paneItems.activeEditor?.currentFile ?? null,
+      focusContent: (widget) => this.paneItems.focusContent(widget),
+      openFileView: (path, panel) => this.paneItems.openFileViewIn(path, panel),
+      openFile: (path) => this.paneItems.openFile(path),
+      buildCurrentChangesDiff: (workbench) => this.paneItems.buildCurrentChangesDiff(workbench),
+      setTabCloseHandler: (widget, fn) => this.paneItems.setTabCloseHandler(widget, fn),
       scheduleAutosave: () => this.sessionController.scheduleAutosave(),
       toast: (message) => this.toast(message),
     });
@@ -422,15 +382,15 @@ export class AppWindow {
     // Publish the window on the global registry and start the keymap manager's
     // CAPTURE-phase key controller.
     zym.window = this.window;
-    // Expose file-opening app-wide (reveal-if-open by default — see openFile).
+    // Expose file-opening app-wide (reveal-if-open by default — see PaneItems.openFile).
     zym.workspace.setOpener((path, options) => {
-      const editor = this.openFile(path);
+      const editor = this.paneItems.openFile(path);
       if (options?.cursor) editor.restoreCursor(options.cursor);
     });
-    zym.workspace.setActiveEditorProvider(() => this.activeEditor);
+    zym.workspace.setActiveEditorProvider(() => this.paneItems.activeEditor);
     // Expose closed-tab reopening app-wide; the history stack lives on the workspace.
-    zym.workspace.setTabReopener((state) => this.reopenTab(state));
-    zym.workspace.setTabHost((widget, options) => this.openCenterTab(widget, options));
+    zym.workspace.setTabReopener((state) => this.paneItems.reopenTab(state));
+    zym.workspace.setTabHost((widget, options) => this.paneItems.openCenterTab(widget, options));
     // Expose diff-review delivery app-wide so the decoupled commit/branch diff views (diffViews.ts)
     // can route comments to an agent without reaching into the AppWindow.
     zym.workspace.setReviewSink((message) => this.reviewToAgent(message));
@@ -438,7 +398,7 @@ export class AppWindow {
     // applier (its impl owns the editor registry) — app-wide so command modules reach
     // for the `zym.workspace` global instead of being handed these on every call.
     zym.workspace.setPickerHost(this.overlay);
-    zym.workspace.setWorkspaceEditApplier((edit, encoding) => this.applyWorkspaceEdit(edit, encoding));
+    zym.workspace.setWorkspaceEditApplier((edit, encoding) => this.paneItems.applyWorkspaceEdit(edit, encoding));
     zym.keymaps.initialize();
     // which-key hint: shows the continuations after a queued prefix (e.g. Space).
     this.whichKey = new WhichKey(this.contentOverlay);
@@ -450,12 +410,12 @@ export class AppWindow {
     // The command modules read the active editor / workbench / picker host / file-open
     // straight off the `zym` globals (Atom-style); only their genuinely module-specific
     // collaborators are injected here.
-    registerFileCommands({ activeSavableSurface: () => this.activeSavableSurface() });
+    registerFileCommands({ activeSavableSurface: () => this.paneItems.activeSavableSurface() });
     registerGitCommands({ github: this.headerBar.github });
     this.registerNotificationCommands();
     this.registerConfigCommands();
     this.registerSessionCommands();
-    registerLspCommands({ documents: this.documents });
+    registerLspCommands({ documents: this.paneItems.documents });
     this.keymapWatcher = loadKeymaps();
 
     // Seed/load the user config and keep it in sync with on-disk edits. Done
@@ -531,7 +491,7 @@ export class AppWindow {
     // restore() re-focuses the workbench that was active when the session was saved
     // (the user workspace, or one of the relaunched agents) via activateWorkspace.
     const restored = willRestore && this.sessionController.restore();
-    if (!restored && initialFile) this.openFile(initialFile);
+    if (!restored && initialFile) this.paneItems.openFile(initialFile);
   }
 
   // Apply restored window geometry. Size only takes effect before the window is
@@ -558,8 +518,7 @@ export class AppWindow {
     // freed when its last workbench releases it).
     for (const wb of this.workbenches.values()) wb.dispose();
     // Drain any tab/agent subscriptions whose tabs weren't individually closed.
-    for (const subs of this.tabSubs.values()) subs.dispose();
-    this.tabSubs.clear();
+    this.paneItems.dispose();
     for (const subs of this.agentSubs.values()) subs.dispose();
     this.agentSubs.clear();
     this.onQuit();
@@ -599,270 +558,6 @@ export class AppWindow {
     dialog.present(this.window);
   }
 
-  // --- Editor lifecycle ------------------------------------------------------
-
-  /** The TextEditor backing the focused tab, if any. Prefers whichever panel holds
-   *  keyboard focus (so a right-dock review editor receives editor commands), else
-   *  falls back to the center's active split. */
-  private get activeEditor(): TextEditor | null {
-    const focused = Panel.active?.activeChild;
-    const focusedEditor = focused ? this.editors.get(focused) : undefined;
-    if (focusedEditor) return focusedEditor;
-    const centerChild = this.workbench.center.activePanel.activeChild;
-    return centerChild ? this.editors.get(centerChild) ?? null : null;
-  }
-
-  /**
-   * Open `path` in a center tab and focus it — revealing an already-open editor
-   * for the file (in any split) instead of opening a duplicate tab. This is the
-   * single funnel every file-open goes through, so reveal-if-open is the default
-   * everywhere; it's also exposed app-wide as `zym.workspace.openFile`.
-   */
-  private openFile(path: string): TextEditor {
-    return this.openFileIn(path, this.targetPanelForNewFile());
-  }
-
-  // Where a newly-opened file should land: the center's open panel — the active
-  // split, or (in an agent workbench, when the agent panel itself is active) the
-  // work area beside it, created on demand. Files opened while focus sits in the
-  // file tree or a picker still follow the last active center split, since focusing
-  // those docks doesn't change which center leaf is active.
-  private targetPanelForNewFile(): Panel {
-    return this.workbench.center.openPanel;
-  }
-
-  // Open `path` as a tab in `panel` (the center's active leaf, or the right-dock
-  // editor group), revealing an already-open editor anywhere instead of opening a
-  // duplicate — a file is only ever backed by one editor. `focus` (default true)
-  // moves keyboard focus to it; callers opening several files at once suppress it
-  // and focus the one they want at the end.
-  private openFileIn(
-    path: string,
-    panel: Panel,
-    options: { focus?: boolean; owner?: Workbench<'user' | Agent>; select?: boolean } = {},
-  ): TextEditor {
-    const focus = options.focus ?? true;
-    const targetOwner = options.owner ?? this.workbench;
-    const existing = [...this.editors.entries()].find(
-      ([widget, editor]) => editor.currentFile === path && this.editorOwners.get(widget) === targetOwner,
-    )?.[1];
-    if (existing) {
-      if (options.select !== false) this.editorChildren.get(existing.root)?.select();
-      if (focus) existing.focus();
-      return existing;
-    }
-    return this.openFileViewIn(path, panel, { focus, owner: options.owner, select: options.select });
-  }
-
-  // Open a *new* view of `path` in `panel` — no reveal-if-open, so the same file can
-  // show in two panes as two views sharing one Document (live model + undo). Used by
-  // splitPane; openFileIn reveals instead. `owner` is the workbench the editor lives
-  // in (its git feeds the gutter); defaults to the active one.
-  private openFileViewIn(path: string, panel: Panel, options: { focus?: boolean; owner?: Workbench<'user' | Agent>; select?: boolean } = {}): TextEditor {
-    const { focus = true, owner = this.workbench, select } = options;
-    const built = this.createEditorTab(path, { owner, focus });
-    const child = panel.add(built.widget, {
-      title: built.title,
-      requireTabBar: built.requireTabBar,
-      select,
-    });
-    built.onAttached?.(child);
-    const editor = this.editors.get(built.widget)!;
-    if (focus) editor.focus();
-    return editor;
-  }
-
-  // Construct + wire a file editor tab WITHOUT attaching it to a panel. Shared by
-  // openFile (which adds it to the active panel) and session restore (which places
-  // it into the rebuilt workbench). The map is set before any attach so the first
-  // onActiveChanged resolves the active editor.
-  private createEditorTab(
-    path: string,
-    restore: {
-      cursor?: [number, number];
-      scroll?: number;
-      unsavedText?: string;
-      owner?: Workbench<'user' | Agent>;
-      focus?: boolean;
-    } = {},
-  ): RestoredChild {
-    const owner = restore.owner ?? this.workbench;
-    let child: PanelChild | null = null;
-    // A ref-counted shared Document from the registry: the first view to be *shown* loads
-    // it; a second view (split / restore) attaches to the already-loaded shared model.
-    const { document } = this.documents.acquire(path);
-    const editor = new TextEditor({
-      onClose: () => child?.close(),
-      git: owner.git, // the owning workbench's repo draws the gutter (follows re-root)
-      cwd: () => owner.cwd, // the LocationBar shortens paths against the workbench's (live) root
-      document,
-      onReleaseDocument: () => this.documents.release(document),
-      // `enter` (normal mode / visual selection) comments the line to an agent — same seam every
-      // diff's review routes through; with no agent running it opens the picker / launches one.
-      onComment: (message) => this.reviewToAgent(message),
-    });
-    this.editors.set(editor.root, editor);
-    this.editorOwners.set(editor.root, owner);
-    this.participants.set(editor.root, zym.session.registerParticipant(editor));
-    // Lazy open: assign the file now (title/dedup/serialize go live) but defer the read,
-    // parse, highlight, and LSP until this tab is first shown — a background or
-    // session-restored tab does no work until it's selected. The editor's activate()
-    // decides load-vs-attach off the shared document's loaded state.
-    editor.prepareFile(path, {
-      cursor: restore.cursor,
-      scroll: restore.scroll,
-      unsavedText: restore.unsavedText,
-      // focus: false (a background open — agent auto-open, session restore) loads and
-      // renders when shown, but doesn't grab focus; default true takes it.
-      focus: restore.focus,
-      // Announce to the workspace so editor-observing plugins (color preview, …) can
-      // attach; registered after load so their first pass sees the file's content.
-      onActivate: () => this.editorRegistrations.set(editor.root, zym.workspace.addTextEditor(editor)),
-    });
-    return {
-      widget: editor.root,
-      title: this.editorTabTitle(editor),
-      requireTabBar: true, // editors always show their filename tab, even when alone
-      onAttached: (attached) => {
-        child = attached;
-        this.editorChildren.set(editor.root, attached);
-        const sync = () => {
-          attached.setTitle(this.editorTabTitle(editor));
-          this.updateModifiedMarker();
-        };
-        this.tabSubs.get(editor.root)?.dispose(); // guard re-attach (tab moved between docks)
-        this.tabSubs.set(editor.root, new CompositeDisposable(
-          new Disposable(editor.onTitleChange(sync)),
-          new Disposable(editor.onModifiedChange(sync)),
-        ));
-      },
-    };
-  }
-
-  /** Open a new Terminal tab in the center panel and select it. */
-  private openTerminal(): Terminal {
-    const built = this.createTerminalTab(this.workbench.cwd);
-    const child = this.workbench.center.add(built.widget, { title: built.title });
-    built.onAttached?.(child);
-    const terminal = this.terminals.get(built.widget)!;
-    terminal.focus();
-    return terminal;
-  }
-
-  // Run a `package.json` script in a new terminal tab via the detected package
-  // manager. The shell runs `<pm> run <name>` then execs a login shell, so the
-  // tab stays open on the script's output (and ready to re-run) instead of
-  // closing the moment the script exits.
-  private runScript(name: string): void {
-    const cwd = this.workbench.cwd;
-    const detect = zym.config.get('scriptRunner.detectPackageManager');
-    const pm = detect ? detectPackageManager(cwd) : 'npm';
-    const shell = process.env.SHELL || '/bin/bash';
-    const run = `${pm} run ${name}`;
-    const built = this.createTerminalTab(cwd, {
-      command: [shell, '-l', '-c', `${run}; exec ${shell} -l`],
-      title: run,
-    });
-    const child = this.workbench.center.add(built.widget, { title: built.title });
-    built.onAttached?.(child);
-    this.terminals.get(built.widget)!.focus();
-  }
-
-  // Open a `terminal` workbench action in a dedicated terminal tab in that
-  // workbench's own center, so its output lands beside the work. The shell runs the
-  // command once and the tab stays on its output when it exits (no fresh shell is
-  // spawned). Re-running the same action reuses its still-open tab — the command
-  // runs again in place — instead of piling up a tab per run. The tab is cleaned up
-  // when the action is cleared (pruneActionTerminals) or its workbench is closed.
-  // (Terminal-less actions run as background processes in WorkbenchActions, not here.)
-  private runWorkbenchActionInTerminal(workbench: Workbench<'user' | Agent>, action: Action): void {
-    this.activateWorkbench(workbench); // run beside its workbench — switch to it if needed
-    const shell = process.env.SHELL || '/bin/bash';
-    const command = [shell, '-l', '-c', action.command];
-
-    // Reuse the action's existing tab if it's still around (it lingers on its output
-    // after the command exits): bring it forward and re-run the command in place.
-    const existing = this.findActionTerminal(workbench, action.id);
-    if (existing) {
-      existing.child.select();
-      existing.terminal.run(command);
-      existing.terminal.focus();
-      return;
-    }
-
-    const built = this.createTerminalTab(workbench.cwd, {
-      command,
-      title: action.label,
-      keepOpenOnExit: true, // stay on the output when the command exits; don't respawn a shell
-      transient: true, // too short-lived to restore — keep it out of the session
-      // Reflect the command's start/exit so the header run/stop button + icon update.
-      onRunningChange: () => this.actionTerminalChanges.emit('change', workbench),
-    });
-    const child = workbench.center.add(built.widget, { title: built.title });
-    built.onAttached?.(child);
-    const terminal = this.terminals.get(built.widget)!;
-    this.actionTerminals.set(built.widget, { workbench, actionId: action.id, terminal, child });
-    terminal.focus();
-  }
-
-  // The still-open terminal tab for `workbench`'s action, or null. (Closed tabs are
-  // dropped from the map by disposeChild, so a hit is always a live tab.)
-  private findActionTerminal(workbench: Workbench<'user' | Agent>, actionId: string) {
-    for (const entry of this.actionTerminals.values())
-      if (entry.workbench === workbench && entry.actionId === actionId) return entry;
-    return null;
-  }
-
-  // Close the terminal tabs of `workbench`'s actions that no longer exist — the set
-  // changed (agent set_actions, a reset, or a file edit) and dropped these, so their
-  // dedicated terminals are stale. Closing the tab tears down the rest via disposeChild.
-  private pruneActionTerminals(workbench: Workbench<'user' | Agent>): void {
-    const live = new Set(workbench.actions.actions.map((a) => a.id));
-    for (const entry of [...this.actionTerminals.values()])
-      if (entry.workbench === workbench && !live.has(entry.actionId)) entry.child.close();
-  }
-
-  // Construct + wire a terminal tab WITHOUT attaching it to a panel. Shared by
-  // openTerminal, the script runner, and session restore (a restored terminal is
-  // a fresh shell in cwd). `command`/`title` let a caller run something other than
-  // a login shell (e.g. a package script).
-  private createTerminalTab(cwd: string, options: { command?: string[]; title?: string; keepOpenOnExit?: boolean; transient?: boolean; onRunningChange?: () => void } = {}): RestoredChild {
-    let child: PanelChild | null = null;
-    const terminal = new Terminal({
-      cwd,
-      command: options.command,
-      title: options.title,
-      keepOpenOnExit: options.keepOpenOnExit,
-      transient: options.transient,
-      onRunningChange: options.onRunningChange,
-      // The shell exiting (`exit`/Ctrl-D) closes its tab. A `keepOpenOnExit` tab
-      // (an agent action) instead stays on its output and never fires this.
-      onExit: () => child?.close(),
-    });
-    this.terminals.set(terminal.root, terminal);
-    return {
-      widget: terminal.root,
-      title: terminalTabTitle(terminal),
-      onAttached: (attached) => {
-        child = attached;
-        this.tabSubs.get(terminal.root)?.dispose(); // guard re-attach
-        this.tabSubs.set(terminal.root, new CompositeDisposable(
-          new Disposable(terminal.onTitleChange(() => attached.setTitle(terminalTabTitle(terminal)))),
-        ));
-      },
-    };
-  }
-
-  // Serialize one center tab (editor/terminal/agent) to its session state, or
-  // null for a tab that shouldn't persist.
-  private serializeChild(widget: Widget): TabState | null {
-    const editor = this.editors.get(widget);
-    if (editor) return editor.serialize();
-    const terminal = this.terminals.get(widget);
-    if (terminal) return terminal.serialize();
-    return null;
-  }
-
   /**
    * Launch (or resume) an agent in its own workbench. The kind is an explicit
    * `options.kind`, else `claude-tui` for a resume (only it resumes a
@@ -894,11 +589,10 @@ export class AppWindow {
     if (root !== mainRoot && !Fs.existsSync(root)) root = mainRoot; // a vanished worktree → main dir
     const agent = AGENT_CONFIGS[kind].create({
       cwd: mainRoot, worktree: root, command: options.command, prompt: options.prompt, userPrompt: options.userPrompt, resume: options.resume, title: options.title,
-      onOpenFile: (path) => this.openFile(path),
+      onOpenFile: (path) => this.paneItems.openFile(path),
     });
-    // Track in the kind's map (terminal focus-routing / headless disposal key off these).
-    if (agent instanceof AgentTerminal) this.terminals.set(agent.root, agent);
-    else if (agent instanceof AgentConversation) this.conversations.set(agent.root, agent);
+    // Track in the tab registry (terminal focus-routing / headless disposal key off these).
+    this.paneItems.trackAgent(agent);
     // Background launch: build the agent's workbench and start it, but stay on the
     // current workbench and don't focus it (it's listed in the sidebar; switch to it later).
     const workbench = this.buildWorkbench(agent, root);
@@ -914,11 +608,12 @@ export class AppWindow {
     this.agentSidebar.addAgent(agent.root);
     if (!options.background) this.activateWorkbench(workbench); // shows + reveals the agent column
     if (!options.background) this.updateViewedAgent(); // its workbench is now active — mark it viewed
-    // A running agent reports as modified, so it's consulted before exit.
-    this.participants.set(agent.root, zym.session.registerParticipant(agent));
     // Keep the secondary-sidebar header title in sync when this agent is the shown one.
     const agentSubs = new CompositeDisposable();
     this.agentSubs.set(agent, agentSubs);
+    // A running agent reports as modified, so it's consulted before exit. Tracked on the
+    // agent's subscription bag (not a tab), torn down with the rest in closeAgent.
+    agentSubs.add(zym.session.registerParticipant(agent));
     agentSubs.add(new Disposable(agent.onTitleChange(() => {
       if (this.activeAgent === agent) this.agentSidebar.setTitle(agent.title);
     })));
@@ -973,10 +668,10 @@ export class AppWindow {
   // The editor context the send-to-agent commands push: the current selection, or
   // the active file's path (cwd-relative, trailing space). Empty when unavailable.
   private editorSelectionText(): string {
-    return this.activeEditor?.getSelectedText() ?? '';
+    return this.paneItems.activeEditor?.getSelectedText() ?? '';
   }
   private editorFileText(): string {
-    const file = this.activeEditor?.currentFile;
+    const file = this.paneItems.activeEditor?.currentFile;
     return file ? `${Path.relative(this.workbench.cwd, file)} ` : '';
   }
 
@@ -1121,7 +816,7 @@ export class AppWindow {
       if (!workbench || !state || state.kind !== 'agent') continue;
       out.push({
         root: workbench.cwd,
-        layout: workbench.center.serializeLayout((w) => this.serializeChild(w)),
+        layout: workbench.center.serializeLayout((w) => this.paneItems.serializeChild(w)),
         fileTree: { expanded: workbench.fileTree.serializeExpanded() },
         actions: workbench.actions.serialize(),
         agent: state,
@@ -1185,7 +880,7 @@ export class AppWindow {
       const panel = workbench.center.openPanel;
       for (const tab of fileTabsOf(ws.layout)) {
         if (Fs.existsSync(tab.path)) {
-          this.openFileIn(tab.path, panel, { focus: false, owner: workbench });
+          this.paneItems.openFileIn(tab.path, panel, { focus: false, owner: workbench });
         }
       }
     }
@@ -1364,11 +1059,11 @@ export class AppWindow {
     // per file), so it may not join the work area — skip it when choosing what to focus.
     let firstInPane: TextEditor | null = null;
     for (const path of files) {
-      const editor = this.openFileIn(path, panel, { focus: false });
+      const editor = this.paneItems.openFileIn(path, panel, { focus: false });
       if (!firstInPane && panel.getChildren().includes(editor.root)) firstInPane = editor;
     }
     if (firstInPane) {
-      this.editorChildren.get(firstInPane.root)?.select();
+      this.paneItems.editorChildFor(firstInPane.root)?.select();
       firstInPane.focus();
     }
   }
@@ -1380,7 +1075,7 @@ export class AppWindow {
   private autoOpenChangedFile(agent: Agent, path: string): void {
     const workbench = this.workbenches.get(agent);
     if (!workbench) return;
-    if ([...this.editors.values()].some((editor) => editor.currentFile === path)) return;
+    if (this.paneItems.editorForPath(path)) return;
     // openPanel splits the agent panel to the right on the first file, then reuses
     // that work area for the rest. Pass the agent's workbench as owner so the editor's
     // gutter uses *its* (worktree) git, not the active workbench's.
@@ -1390,7 +1085,7 @@ export class AppWindow {
     // see. Every later edit opens quietly as a background tab in the bar, so the agent's
     // edits never pull the view off whatever the user is looking at or editing.
     const select = panel.tabCount === 0;
-    this.openFileIn(path, panel, { focus: false, owner: workbench, select });
+    this.paneItems.openFileIn(path, panel, { focus: false, owner: workbench, select });
   }
 
   // Restart an agent: retire the old one and relaunch in place, resuming its claude
@@ -1415,30 +1110,21 @@ export class AppWindow {
     const workbench = this.workbenches.get(agent);
     // Drop this workbench's action terminals (set_actions tabs in its center);
     // disposeChild won't reach them (they're terminals, not editors).
-    for (const entry of [...this.actionTerminals.values()])
-      if (entry.workbench === workbench) this.disposeChild(entry.terminal.root);
+    if (workbench) this.paneItems.disposeWorkbenchActionTerminals(workbench);
     if (this.workbench.owner === agent) this.activateOwner('user'); // swap away first
     this.workbenches.delete(agent); // its workbench (center + Files/Git + bottom + tabs) goes
     if (workbench) {
       // Tear down the editors that lived in this workbench — closing it drops their
       // widgets but not their bookkeeping (gutter git subscription, LSP doc ref,
       // session participant, the editor→workbench entry that pins the workbench).
-      // Copy first: disposeChild mutates editorOwners.
-      for (const [widget, owner] of [...this.editorOwners]) {
-        if (owner === workbench) this.disposeChild(widget);
-      }
+      this.paneItems.disposeWorkbenchEditors(workbench);
       workbench.dispose(); // tears down every widget it owns (file tree, Source-Control,
       // dock + center Panels, bottom-dock content) and releases its pooled git repo
     }
-    this.participants.get(agent.root)?.dispose();
-    this.participants.delete(agent.root);
-    this.agentSubs.get(agent)?.dispose(); // title/status/worktree/files subscriptions
+    this.agentSubs.get(agent)?.dispose(); // title/status/worktree/files subs + the session participant
     this.agentSubs.delete(agent);
     this.agentSidebar.removeAgent(agent.root); // drop its page from the secondary-sidebar stack
-    this.terminals.get(agent.root)?.dispose(); // sever the AgentTerminal's Vte focus controller
-    this.terminals.delete(agent.root);
-    this.conversations.get(agent.root)?.dispose(); // headless agent: kill child + IPC watchers
-    this.conversations.delete(agent.root);
+    this.paneItems.disposeAgentWidget(agent); // sever the Vte focus controller / kill the headless child
     // Drop the last-focused pointer if it named this agent — otherwise currentAgent()
     // would resolve a retired, disposed agent and agent:restart / agent:resume would
     // act on a ghost. With it cleared, the commands' `when` guards correctly disable.
@@ -1464,95 +1150,6 @@ export class AppWindow {
   }
 
   // Build a fresh center (one person's splittable editor area). Every center
-  // shares the same callbacks — they operate on the shared per-widget maps, and
-  // only the *active* center fires interactive events (the others are detached).
-  private makeCenter(): PanelGroup {
-    return new PanelGroup({
-      onActiveChanged: () => this.onActiveTabChanged(),
-      onTabCloseRequest: (widget) => {
-        // An agent's terminal tab is never closed/destroyed here, whatever its state:
-        // closing it would kill a running agent and would drop a stopped one from the
-        // list — neither is what tab:close should do (retiring an agent is a separate
-        // command). Veto the close (the terminal stays put in its workbench, alive) and
-        // just return to the user's workbench, so the agent is one switch away (re-select
-        // it to bring it back). Defer the swap out of the close-page emission: it
-        // reparents the agent workbench (an ancestor of the emitting tab view), unsafe
-        // mid-emit.
-        const terminal = this.terminals.get(widget);
-        const owner: Agent | null = terminal instanceof AgentTerminal ? terminal : (this.conversations.get(widget) ?? null);
-        if (owner) {
-          if (this.workbench.owner === owner)
-            setTimeout(() => {
-              if (this.workbench.owner === owner) this.activateOwner('user');
-            }, 0);
-          return false;
-        }
-        return true;
-      },
-      // Agent tabs are vetoed above, so only editors / plain terminals reach here.
-      // Snapshot the tab's restorable state before disposeChild tears it down, so
-      // `tab:reopen-last` can rebuild it; tabs that don't persist (search-results /
-      // diff views) serialize to null and aren't recorded.
-      onClosed: (widget) => {
-        const state = this.serializeChild(widget);
-        if (state) zym.workspace.recordClosedTab(state);
-        this.disposeChild(widget);
-      },
-    });
-  }
-
-  // Drop a closed tab's bookkeeping (editor/terminal/agent maps + session
-  // registration) and run its close side effects. Shared by the center and the
-  // right-dock editor group, which host the same kinds of tab.
-  private disposeChild(widget: Widget): void {
-    this.tabSubs.get(widget)?.dispose(); // editor/terminal title + modified-state subscriptions
-    this.tabSubs.delete(widget);
-    this.participants.get(widget)?.dispose();
-    this.participants.delete(widget);
-    this.editorRegistrations.get(widget)?.dispose(); // detach observing plugins
-    this.editorRegistrations.delete(widget);
-    this.editors.get(widget)?.dispose(); // explicit teardown, not reliant on the GTK destroy signal
-    this.editors.delete(widget);
-    this.projectSearchViews.get(widget)?.dispose(); // free its results' per-source parses
-    this.projectSearchViews.delete(widget);
-    this.tabCloseHandlers.get(widget)?.(); // generic tab teardown (e.g. dispose a hosted diff view)
-    this.tabCloseHandlers.delete(widget);
-    this.editorOwners.delete(widget);
-    this.editorChildren.delete(widget);
-    this.terminals.get(widget)?.dispose(); // sever the Vte focus controller (rule 9)
-    this.terminals.delete(widget);
-    // A workbench-action terminal: kill any still-running command (e.g. a dev server)
-    // so a closed/cleared action leaves nothing behind, then drop it from the map and
-    // notify so the run/stop button drops back to "start" (the tab is gone — disposing
-    // the terminal severed its onRunningChange, so emit the change ourselves).
-    const actionTerminal = this.actionTerminals.get(widget);
-    actionTerminal?.terminal.kill();
-    actionTerminal?.terminal.dispose();
-    this.actionTerminals.delete(widget);
-    if (actionTerminal) this.actionTerminalChanges.emit('change', actionTerminal.workbench);
-    this.conversations.get(widget)?.dispose(); // kill the claude child + IPC watchers
-    this.conversations.delete(widget);
-    this.updateModifiedMarker(); // a closed editor no longer counts as unsaved
-  }
-
-  // Rebuild one closed tab from its serialized state — the reopener `zym.workspace`
-  // calls (it owns the history stack; the panel tree lives here). Reuses the same
-  // per-kind reconstruction as session restore (deserializeTab + the shared builders,
-  // so cursor/scroll come back too), then attaches the rebuilt tab to the active pane
-  // and focuses it. Returns false when it can't be rebuilt (e.g. a file deleted since
-  // it was closed), so the workspace skips it and tries the next entry.
-  private reopenTab(state: TabState): boolean {
-    const built = deserializeTab(state, {
-      createEditorTab: (path, restore) => this.createEditorTab(path, restore),
-      createTerminalTab: (cwd) => this.createTerminalTab(cwd),
-    });
-    if (!built) return false;
-    const child = this.workbench.center.add(built.widget, { title: built.title, requireTabBar: built.requireTabBar });
-    built.onAttached?.(child);
-    (this.editors.get(built.widget) ?? this.terminals.get(built.widget))?.focus();
-    return true;
-  }
-
   /**
    * Build a person's workbench rooted at `cwd`: acquire the (pooled) GitRepo for
    * that root, construct its own center, Files tree, and bottom-dock widgets, then
@@ -1563,10 +1160,10 @@ export class AppWindow {
    */
   private buildWorkbench(owner: 'user' | Agent, cwd: string): Workbench<'user' | Agent> {
     const git = acquireGitRepo(cwd);
-    const center = this.makeCenter();
+    const center = this.paneItems.makeCenter();
     const fileTree = new FileTree({
       rootPath: cwd,
-      onOpenFile: (path) => this.openFile(path),
+      onOpenFile: (path) => this.paneItems.openFile(path),
       git,
     });
     // The file tree is the only tab in this right-side dock. Source Control (GitPanel)
@@ -1589,7 +1186,7 @@ export class AppWindow {
     // Scope this workbench's diagnostics to the files under its root (read live via
     // `owner`, so a re-root re-scopes it).
     const diagnosticsPanel = new DiagnosticsPanel(
-      (target) => this.openOrFocusFile(target.path, [target.line, target.character]),
+      (target) => this.paneItems.openOrFocusFile(target.path, [target.line, target.character]),
       (path) => this.ownerWorkbenchCwd(path) === this.workbenches.get(owner)?.cwd,
     );
     const diagnosticsDock = new Panel({ onTabCloseRequest: () => this.workbenchView.hideBottomDock('diagnostics') });
@@ -1614,15 +1211,15 @@ export class AppWindow {
     // shrinks. The subscriptions live on plain-JS emitters collected with the workbench
     // on dispose — hence the explicit `void` discard.
     workbench.actions.setTerminalRunner({
-      run: (action) => this.runWorkbenchActionInTerminal(workbench, action),
-      stop: (actionId) => this.findActionTerminal(workbench, actionId)?.terminal.kill(),
-      isRunning: (actionId) => (this.findActionTerminal(workbench, actionId)?.terminal.pid ?? null) !== null,
+      run: (action) => this.paneItems.runWorkbenchActionInTerminal(workbench, action),
+      stop: (actionId) => this.paneItems.findActionTerminal(workbench, actionId)?.terminal.kill(),
+      isRunning: (actionId) => (this.paneItems.findActionTerminal(workbench, actionId)?.terminal.pid ?? null) !== null,
       onDidChangeRunning: (cb) => {
-        const sub = this.actionTerminalChanges.on('change', (wb) => { if (wb === workbench) cb(); });
+        const sub = this.paneItems.onActionTerminalChange((wb) => { if (wb === workbench) cb(); });
         return () => sub.dispose();
       },
     });
-    void workbench.actions.onDidChange(() => this.pruneActionTerminals(workbench));
+    void workbench.actions.onDidChange(() => this.paneItems.pruneActionTerminals(workbench));
     this.workbenches.set(owner, workbench);
     return workbench;
   }
@@ -1688,9 +1285,7 @@ export class AppWindow {
     workbench.fileTree.setRoot(newCwd, git);
     workbench.gitPanel?.setRoot(newCwd, git); // null until lazily created; it'll pick up the new root on creation
     // Re-point the gutters of editors already open in this workbench at the new repo.
-    for (const [root, owner] of this.editorOwners) {
-      if (owner === workbench) this.editors.get(root)?.setGitRepo(git);
-    }
+    this.paneItems.repointGutters(workbench, git);
     releaseGitRepo(oldGit);
     if (this.workbench === workbench) this.headerBar.rebind();
     // Diagnostics ownership shifts on a re-root (paths under the old/new root change
@@ -1728,19 +1323,6 @@ export class AppWindow {
     // Tab add/close/switch and split changes all route through here — a good,
     // cheap signal to (debounced-)persist the session.
     this.sessionController?.scheduleAutosave();
-  }
-
-  /** The tab title for an editor, prefixed with the modified dot when unsaved. */
-  private editorTabTitle(editor: TextEditor): string {
-    // A file changed underneath us takes precedence — it's the more urgent signal.
-    if (editor.hasDiskChange()) return `${Icons.warning} ${editor.title}`;
-    return editor.isModified() ? `${Icons.modified} ${editor.title}` : editor.title;
-  }
-
-  /** Show the sidebar-header unsaved dot when any open editor has unsaved edits. */
-  private updateModifiedMarker() {
-    const modified = [...this.editors.values()].some((e) => e.isModified());
-    this.sidebar.list.setModified(modified);
   }
 
   // --- Commands --------------------------------------------------------------
@@ -1842,7 +1424,7 @@ export class AppWindow {
 
   /** `diff:go-to-file` (`z /`) — pick a file in the active continuous diff and jump to its header. */
   private diffFilePicker() {
-    const diff = this.activeContinuousDiff();
+    const diff = this.paneItems.activeContinuousDiff();
     if (!diff) return;
     openDiffFilePicker(this.overlay, diff);
   }
@@ -1850,39 +1432,9 @@ export class AppWindow {
   /** `diff:collapse-files-matching` (`z x`) — collapse every file in the active diff matching a
    *  comma-separated glob filter typed into a picker. */
   private diffCollapseGlobPicker() {
-    const diff = this.activeContinuousDiff();
+    const diff = this.paneItems.activeContinuousDiff();
     if (!diff) return;
     openDiffCollapseGlobPicker(this.overlay, diff);
-  }
-
-  /**
-   * Apply an LSP `WorkspaceEdit`: open editors are edited in their buffer (single
-   * undo group, decorations refresh); files with no open editor are edited on
-   * disk. Returns how many files were touched and how many resource operations
-   * (create/rename/delete) were skipped. Shared by code actions / rename.
-   */
-  private applyWorkspaceEdit(edit: WorkspaceEdit, encoding: PositionEncoding): { applied: number; resourceOps: number } {
-    const { files, resourceOps } = normalizeWorkspaceEdit(edit);
-    for (const { uri, edits } of files) {
-      const path = uriToPath(uri);
-      const open = [...this.editors.values()].find((e) => e.currentFile === path);
-      if (open) {
-        open.applyLspEdits(edits, encoding);
-      } else {
-        try {
-          Fs.writeFileSync(path, applyTextEdits(Fs.readFileSync(path, 'utf8'), edits, encoding));
-        } catch {
-          // unreadable / unwritable — skip
-        }
-      }
-    }
-    return { applied: files.length, resourceOps };
-  }
-
-  // Open `path` (revealing an already-open tab, since openFile dedupes) and place
-  // the cursor. Used by location jumps (diagnostics, go-to-definition, search).
-  private openOrFocusFile(path: string, cursor: [number, number]): void {
-    this.openFile(path).restoreCursor(cursor);
   }
 
   // Window-level file/edit operations, surfaced in the command palette and (for
@@ -1891,13 +1443,13 @@ export class AppWindow {
     zym.commands.add('.AppWindow', {
       'project:search': {
         didDispatch: () =>
-          openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.openFile(path).restoreCursor(cursor)),
+          openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.paneItems.openFile(path).restoreCursor(cursor)),
         description: 'Search file contents (ripgrep)',
       },
       'git:diff-current': {
-        didDispatch: () => this.openCurrentFileDiff(),
+        didDispatch: () => this.paneItems.openCurrentFileDiff(),
         description: 'Diff the current file (working tree vs HEAD)',
-        when: () => this.activeEditor?.currentFile != null,
+        when: () => this.paneItems.activeEditor?.currentFile != null,
       },
       'git:start-commit': {
         didDispatch: () => this.startCommit(),
@@ -1909,15 +1461,15 @@ export class AppWindow {
         when: () => this.workbench.git.getHead() !== null,
       },
       'project:search-results': {
-        didDispatch: () => this.openProjectSearch(this.activeEditor?.getSelectedText().trim() ?? ''),
+        didDispatch: () => this.paneItems.openProjectSearch(this.paneItems.activeEditor?.getSelectedText().trim() ?? ''),
         description: 'Project search, seeded with the selected text (multibuffer)',
       },
       'project:search-open': {
-        didDispatch: () => this.openProjectSearch(''),
+        didDispatch: () => this.paneItems.openProjectSearch(''),
         description: 'Open project search (full-text, ripgrep) in a multibuffer',
       },
       'git:diff-current-changes': {
-        didDispatch: () => void this.openLiveDiff(),
+        didDispatch: () => void this.paneItems.openLiveDiff(),
         description: 'Diff working-tree changes (live, stageable)',
       },
       'git:diff-commit': {
@@ -1935,299 +1487,147 @@ export class AppWindow {
         when: () => this.workbench.git.getHead() !== null,
       },
       'git:log': {
-        didDispatch: () => this.openGitLog(),
+        didDispatch: () => this.paneItems.openGitLog(),
         description: 'Open the git log (history) viewer',
         when: () => this.workbench.git.getHead() !== null,
       },
       'diff:expand-context': {
-        didDispatch: () => this.activeContinuousDiff()?.expandContextAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.expandContextAtCursor(),
         description: 'Reveal more unchanged lines at the nearest gap',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:expand-all': {
-        didDispatch: () => this.activeContinuousDiff()?.expandAll(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.expandAll(),
         description: 'Reveal all unchanged lines (show the full files)',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:collapse-context': {
-        didDispatch: () => this.activeContinuousDiff()?.collapseContext(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.collapseContext(),
         description: 'Re-collapse expanded context back to the windowed diff',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:toggle-file': {
-        didDispatch: () => this.activeContinuousDiff()?.toggleFileCollapseAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.toggleFileCollapseAtCursor(),
         description: 'Collapse / expand the file under the cursor',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:collapse-file': {
-        didDispatch: () => this.activeContinuousDiff()?.collapseFileAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.collapseFileAtCursor(),
         description: 'Collapse the file under the cursor to its header',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:expand-file': {
-        didDispatch: () => this.activeContinuousDiff()?.expandFileAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.expandFileAtCursor(),
         description: 'Expand the file under the cursor back to its diff',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:next-file': {
-        didDispatch: () => this.activeContinuousDiff()?.nextFile(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.nextFile(),
         description: 'Move to the next file in the diff',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:prev-file': {
-        didDispatch: () => this.activeContinuousDiff()?.previousFile(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.previousFile(),
         description: 'Move to the previous file in the diff',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:go-to-file': {
         didDispatch: () => this.diffFilePicker(),
         description: 'Jump to a file in the diff…',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:collapse-all-files': {
-        didDispatch: () => this.activeContinuousDiff()?.collapseAllFiles(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.collapseAllFiles(),
         description: 'Collapse every file to a one-line header (overview)',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:collapse-files-matching': {
         didDispatch: () => this.diffCollapseGlobPicker(),
         description: 'Collapse files matching a glob…',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:expand-all-files': {
-        didDispatch: () => this.activeContinuousDiff()?.expandAllFiles(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.expandAllFiles(),
         description: 'Expand every collapsed file back to its diff',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'search:toggle-collapse': {
-        didDispatch: () => this.activeSearchResults()?.toggleCollapseAtCursor(),
+        didDispatch: () => this.paneItems.activeSearchResults()?.toggleCollapseAtCursor(),
         description: 'Collapse / expand the file under the cursor (search results)',
-        when: () => this.activeSearchResults() !== null,
+        when: () => this.paneItems.activeSearchResults() !== null,
       },
       'search:collapse-all': {
-        didDispatch: () => this.activeSearchResults()?.collapseAll(),
+        didDispatch: () => this.paneItems.activeSearchResults()?.collapseAll(),
         description: 'Collapse every file (search results)',
-        when: () => this.activeSearchResults() !== null,
+        when: () => this.paneItems.activeSearchResults() !== null,
       },
       'search:expand-all': {
-        didDispatch: () => this.activeSearchResults()?.expandAll(),
+        didDispatch: () => this.paneItems.activeSearchResults()?.expandAll(),
         description: 'Expand every file (search results)',
-        when: () => this.activeSearchResults() !== null,
+        when: () => this.paneItems.activeSearchResults() !== null,
       },
       // Unified hunk commands: the same `git:hunk-stage`/`git:hunk-unstage`/`git:hunk-revert`
       // (`space h s`/`u`/`r`) as the editor gutter, routed here for the continuous diff. The
       // continuous-diff editor is embedded (no gutter), so it never registers the editor's variant —
       // these AppWindow registrations are what the focus chain resolves while it's focused.
       'git:hunk-stage': {
-        didDispatch: () => this.activeContinuousDiff()?.stageHunkAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.stageHunkAtCursor(),
         description: 'Stage the hunk under the cursor (continuous diff)',
-        when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
+        when: () => this.paneItems.activeContinuousDiff()?.live === true, // staging is live-diff only
       },
       'git:hunk-unstage': {
-        didDispatch: () => this.activeContinuousDiff()?.unstageHunkAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.unstageHunkAtCursor(),
         description: 'Unstage the hunk under the cursor (continuous diff)',
-        when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
+        when: () => this.paneItems.activeContinuousDiff()?.live === true, // staging is live-diff only
       },
       'git:hunk-revert': {
-        didDispatch: () => this.activeContinuousDiff()?.revertHunkAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.revertHunkAtCursor(),
         description: 'Revert the hunk under the cursor (continuous diff)',
-        when: () => this.activeContinuousDiff()?.live === true, // revert restores to the index → live-diff only
+        when: () => this.paneItems.activeContinuousDiff()?.live === true, // revert restores to the index → live-diff only
       },
       'git:hunk-stage-next': {
-        didDispatch: () => this.activeContinuousDiff()?.stageHunkAndAdvance(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.stageHunkAndAdvance(),
         description: 'Stage the hunk under the cursor, then move to the next (continuous diff)',
-        when: () => this.activeContinuousDiff()?.live === true, // staging is live-diff only
+        when: () => this.paneItems.activeContinuousDiff()?.live === true, // staging is live-diff only
       },
       'diff:next-hunk': {
-        didDispatch: () => this.activeContinuousDiff()?.nextHunk(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.nextHunk(),
         description: 'Move to the next changed hunk (continuous diff)',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:prev-hunk': {
-        didDispatch: () => this.activeContinuousDiff()?.prevHunk(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.prevHunk(),
         description: 'Move to the previous changed hunk (continuous diff)',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'diff:review-comment': {
-        didDispatch: () => this.activeContinuousDiff()?.startComment(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.startComment(),
         description: 'Comment on the cursor/selection',
-        when: () => this.activeContinuousDiff()?.canComment === true, // any diff (routes to an agent)
+        when: () => this.paneItems.activeContinuousDiff()?.canComment === true, // any diff (routes to an agent)
       },
       'diff:review-toggle': {
-        didDispatch: () => this.activeContinuousDiff()?.toggleReviewMode(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.toggleReviewMode(),
         description: 'Toggle review mode',
-        when: () => this.activeContinuousDiff()?.canComment === true,
+        when: () => this.paneItems.activeContinuousDiff()?.canComment === true,
       },
       'diff:review-send': {
-        didDispatch: () => this.activeContinuousDiff()?.submitReview(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.submitReview(),
         description: 'Send the review',
-        when: () => this.activeContinuousDiff()?.canComment === true,
+        when: () => this.paneItems.activeContinuousDiff()?.canComment === true,
       },
       'diff:review-remove': {
-        didDispatch: () => this.activeContinuousDiff()?.removeCommentAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.removeCommentAtCursor(),
         description: 'Remove the comment under the cursor',
-        when: () => this.activeContinuousDiff()?.canComment === true,
+        when: () => this.paneItems.activeContinuousDiff()?.canComment === true,
       },
       'diff:open-file': {
-        didDispatch: () => this.activeContinuousDiff()?.openFileAtCursor(),
+        didDispatch: () => this.paneItems.activeContinuousDiff()?.openFileAtCursor(),
         description: 'Open the file/line under the cursor (continuous diff)',
-        when: () => this.activeContinuousDiff() !== null,
+        when: () => this.paneItems.activeContinuousDiff() !== null,
       },
       'app:quit': { didDispatch: () => this.onQuit(), description: 'Quit zym' },
       'command-palette:toggle': { didDispatch: () => openCommandPicker(this.overlay), description: 'Show all commands' },
     });
-  }
-
-  /** Open a read-only diff of the active file (working tree vs git HEAD) in a tab. */
-  private openCurrentFileDiff(): void {
-    const editor = this.activeEditor;
-    const path = editor?.currentFile;
-    if (!editor || !path) return;
-    const root = repoRoot(Path.dirname(path));
-    if (!root) {
-      this.toast('Not in a git repository');
-      return;
-    }
-    const current = editor.getText();
-    const rel = Path.relative(root, path);
-    git(root, ['show', `HEAD:${rel}`], (ok, stdout) => {
-      const head = ok ? stdout : ''; // untracked / new file → empty base (all added)
-      if (head === current) {
-        this.toast('No changes against HEAD');
-        return;
-      }
-      // One-file diff on the unified surface: OLD = HEAD blob, NEW = the editor's current
-      // text (incl. unsaved edits). Read-only snapshot (not backed by the live Document).
-      const name = Path.basename(path);
-      const view = new DiffView({
-        files: [{ path, oldText: head, newText: current }],
-        cwd: this.workbench.cwd,
-        onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
-        onSend: (message) => this.reviewToAgent(message), // comment/review → agent
-      });
-      const child = this.workbench.center.add(view.root, { title: `± ${name}`, requireTabBar: true });
-      this.tabCloseHandlers.set(view.root, () => view.dispose());
-      // Consult the diff on window close so unsent review comments aren't lost (disposeChild
-      // disposes this with the tab).
-      this.participants.set(view.root, zym.session.registerParticipant(view));
-      child.select();
-      view.focus();
-    });
-  }
-
-  /** Open the project-search surface in a tab: a debounced search entry + ripgrep flag
-   *  toggles over an editable results multibuffer (docs/text-editor/multibuffer.md). Seeded
-   *  with `initialQuery` (the editor selection for `space *`) or empty (`space p s`). */
-  private openProjectSearch(initialQuery: string): void {
-    const view = new ProjectSearchView({
-      cwd: this.workbench.cwd,
-      documents: this.documents,
-      initialQuery,
-      onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
-    });
-    const title = initialQuery ? `${Icons.search}  ${initialQuery}` : `${Icons.search}  Search`;
-    const child = this.workbench.center.add(view.root, { title, requireTabBar: true });
-    this.projectSearchViews.set(view.root, view); // disposeChild tears it down on close
-    child.select();
-    view.focus();
-  }
-
-  /** Host `widget` as a center tab: select, focus, and register its `onClose` teardown
-   *  (disposeChild runs it on close). Backs `zym.workspace.openTab` for any component. */
-  private openCenterTab(widget: Widget, options: OpenTabOptions): void {
-    const child = this.workbench.center.add(widget, { title: options.title, requireTabBar: options.requireTabBar });
-    if (options.onClose) this.tabCloseHandlers.set(widget, options.onClose);
-    child.select();
-    widget.grabFocus();
-  }
-
-  /** Build a live, editable working-tree DiffView for `workbench`'s changes: NEW side = each
-   *  changed file's current text (an open document's live text incl. unsaved edits, else from
-   *  disk; a deleted file → empty) backed by a live Document, OLD side = the HEAD blob. Null only
-   *  outside a repo; a clean working tree yields an empty diff (its "No changes" empty state).
-   *  Shared by the `git:diff-current-changes` center tab and the GitPanel's embedded diff (which
-   *  calls it through GitPanelOptions.buildDiffView). */
-  private async buildCurrentChangesDiff(workbench: Workbench<'user' | Agent>): Promise<DiffView | null> {
-    const cwd = workbench.cwd;
-    const root = repoRoot(cwd);
-    if (!root) return null;
-    const paths = [...workbench.git.getFileStatuses().keys()].sort();
-    const showHead = (rel: string): Promise<string> =>
-      new Promise((resolve) => git(root, ['show', `HEAD:${rel}`], (ok, out) => resolve(ok ? out : '')));
-    const files = await Promise.all(
-      paths.map(async (path) => {
-        const oldText = await showHead(Path.relative(root, path));
-        const open = this.documents.find(path);
-        let newText = open ? open.getText() : '';
-        let deleted = false;
-        if (!open) {
-          try {
-            newText = Fs.readFileSync(path, 'utf8');
-          } catch {
-            deleted = true; // gone from the working tree (and not held open) → a deletion
-          }
-        }
-        return { path, oldText, newText, deleted };
-      }),
-    );
-    return new DiffView({
-      files,
-      cwd,
-      editable: true,
-      live: true, // the staging surface: live worktree+index → staging markers + `space h s`/`space h u`
-      documents: this.documents,
-      git: workbench.git, // enables the staged/unstaged gutter marker + `space h s`/`space h u`
-      onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
-      // The view formats the comment/review; the host just delivers the string. `reviewToAgent`
-      // sends to the current agent (or opens the picker to choose/start one when none runs), so a
-      // review always reaches an agent — even from the user workbench.
-      onSend: (message) => this.reviewToAgent(message),
-    });
-  }
-
-  /** Show every changed file (working tree vs HEAD) as ONE continuous diff in a tab — the live,
-   *  editable staging surface (multibuffer; docs/text-editor/multibuffer.md). */
-  private async openLiveDiff(): Promise<void> {
-    const view = await this.buildCurrentChangesDiff(this.workbench);
-    if (!view) {
-      this.toast('Not in a git repository'); // a clean tree still opens the diff (its empty state)
-      return;
-    }
-    const title = () => {
-      const mod = view.isModified() ? `${Icons.modified} ` : '';
-      const review = view.reviewCount > 0 ? `  ${Icons.comment} ${view.reviewCount}` : '';
-      return `${mod}${Icons.git}  Diff${review}`;
-    };
-    const child = this.workbench.center.add(view.root, {
-      title: title(),
-      requireTabBar: true,
-    });
-    this.tabCloseHandlers.set(view.root, () => view.dispose()); // disposeChild tears it down on close
-    // Consult the diff on window close (unsaved edits OR unsent review comments). disposeChild
-    // disposes this registration with the tab.
-    this.participants.set(view.root, zym.session.registerParticipant(view));
-    view.onModifiedChange(() => child.setTitle(title())); // show the unsaved marker on edit/save
-    view.onReviewChange(() => child.setTitle(title())); // show the accumulated-review count
-    child.select();
-    view.focus();
-  }
-
-  // `git:log` — open the git history viewer as a single center tab. The viewer is a
-  // self-contained split (commit list | selected commit's diff); it hosts and disposes
-  // the embedded diff itself, so the host just opens + focuses the tab.
-  private openGitLog(): void {
-    const cwd = this.workbench.cwd;
-    if (!repoRoot(cwd)) {
-      this.toast('Not in a git repository');
-      return;
-    }
-    const view = new GitLogView({ cwd, git: this.workbench.git });
-    this.openCenterTab(view.root, {
-      title: `${Icons.git}  Log`,
-      requireTabBar: true,
-      onClose: () => view.dispose(),
-    });
-    view.focus(); // openCenterTab focuses the tab root; move focus into the commit list
   }
 
   // Terminal command: open a shell in a new center-panel tab. Handler only;
@@ -2248,9 +1648,9 @@ export class AppWindow {
         },
       });
     zym.commands.add('.AppWindow', {
-      'terminal:new': { didDispatch: () => this.openTerminal(), description: 'Open a new terminal' },
+      'terminal:new': { didDispatch: () => this.paneItems.openTerminal(), description: 'Open a new terminal' },
       'scripts:run': {
-        didDispatch: () => openScriptRunner(this.overlay, this.workbench.cwd, (name) => this.runScript(name)),
+        didDispatch: () => openScriptRunner(this.overlay, this.workbench.cwd, (name) => this.paneItems.runScript(name)),
         description: 'Run a package.json script in a terminal',
       },
       'agent:new': { didDispatch: () => launchAgent(), description: 'Start a new agent' },
@@ -2313,7 +1713,7 @@ export class AppWindow {
         when: () => this.workbench.actions.actions.length > 0,
       },
       'workbench:action-edit': {
-        didDispatch: () => this.openFile(ensureProjectSettingsFile(this.workbench.cwd)),
+        didDispatch: () => this.paneItems.openFile(ensureProjectSettingsFile(this.workbench.cwd)),
         description: 'Edit the project settings (.zym/settings.json)',
       },
       'workbench:action-reset': {
@@ -2394,8 +1794,8 @@ export class AppWindow {
   private registerConfigCommands() {
     zym.commands.add('.AppWindow', {
       'config:open-editor': { didDispatch: () => openConfigEditor(this.window), description: 'Open preferences' },
-      'config:open-as-text': { didDispatch: () => this.openFile(configPath()), description: 'Open config.json' },
-      'keymap:open-as-text': { didDispatch: () => this.openFile(ensureUserKeymap()), description: 'Edit the user keymap (keymap.json)' },
+      'config:open-as-text': { didDispatch: () => this.paneItems.openFile(configPath()), description: 'Open config.json' },
+      'keymap:open-as-text': { didDispatch: () => this.paneItems.openFile(ensureUserKeymap()), description: 'Edit the user keymap (keymap.json)' },
     });
   }
 
@@ -2418,57 +1818,6 @@ export class AppWindow {
         description: 'Restore the last session',
       },
     });
-  }
-
-  // Focus the editor/terminal backing a center-tab content widget — the tail of the
-  // active-pane focus that WorkbenchView delegates back here, since the editor/terminal
-  // maps (the tab registry) live on the AppWindow.
-  private focusContent(widget: Widget): void {
-    const editor = this.editors.get(widget);
-    if (editor) { editor.focus(); return; }
-    this.terminals.get(widget)?.focus();
-  }
-
-  // --- Active editable surfaces (resolved from the focused tab) --------------
-
-  /** The active center/focused child resolved to a widget, for surface lookups. */
-  private activeChildWidget(): Widget | null {
-    return Panel.active?.activeChild ?? this.workbench.center.activePanel.activeChild ?? null;
-  }
-
-  /** The project-search results multibuffer hosted by the active child, if any. */
-  private activeMultibuffer(): SearchResultsView | null {
-    const focused = Panel.active?.activeChild;
-    const focusedMb = focused ? this.projectSearchViews.get(focused)?.results : undefined;
-    if (focusedMb) return focusedMb;
-    const centerChild = this.workbench.center.activePanel.activeChild;
-    return centerChild ? this.projectSearchViews.get(centerChild)?.results ?? null : null;
-  }
-
-  /** The active editable surface (project-search or diff multibuffer) that owns a `save()`. */
-  private activeSavableSurface(): { save(): void } | null {
-    const widget = this.activeChildWidget();
-    if (!widget) return null;
-    return this.projectSearchViews.get(widget) ?? DiffView.forRoot(widget) ?? null;
-  }
-
-  /** The diff multibuffer the diff commands act on. Prefer the DiffView containing keyboard focus
-   *  (found by walking up from the focused widget) — that covers an *embedded* diff like the
-   *  GitPanel's, which isn't itself a center tab, so `activeChildWidget` (tab content) would resolve
-   *  to its host panel and miss it. Falls back to the active center tab's content. */
-  private activeContinuousDiff(): DiffView | null {
-    for (let w: Widget | null = this.window.getFocus(); w; w = w.getParent()) {
-      const diff = DiffView.forRoot(w);
-      if (diff) return diff;
-    }
-    const widget = this.activeChildWidget();
-    return widget ? DiffView.forRoot(widget) : null;
-  }
-
-  /** The search-results multibuffer hosted by the active child, if any (for the collapse commands). */
-  private activeSearchResults(): SearchResultsView | null {
-    const widget = this.activeChildWidget();
-    return widget ? this.projectSearchViews.get(widget)?.results ?? null : null;
   }
 
   // --- Window chrome helpers -------------------------------------------------
