@@ -16,6 +16,8 @@ import type { TextEditor } from './ui/TextEditor/index.ts';
 import type { TabState } from './SessionManager.ts';
 import { zym } from './zym.ts';
 import type { Workbench } from './ui/workbench/Workbench.ts';
+import type { WorkspaceEdit } from 'vscode-languageserver-protocol';
+import type { PositionEncoding } from './lsp/position.ts';
 
 export interface OpenFileOptions {
   /** Place the cursor at this `[row, column]` after opening/revealing. */
@@ -32,8 +34,11 @@ export interface OpenTabOptions {
 }
 
 type Widget = InstanceType<typeof Gtk.Widget>;
+type Overlay = InstanceType<typeof Gtk.Overlay>;
 type Opener = (path: string, options?: OpenFileOptions) => void;
 type ActiveEditorProvider = () => TextEditor | null;
+/** Apply an LSP WorkspaceEdit to open editors (their buffer) / closed files (on disk). */
+type WorkspaceEditApplier = (edit: WorkspaceEdit, encoding: PositionEncoding) => { applied: number; resourceOps: number };
 /** Rebuild a closed tab from its serialized state; returns whether it reopened (a
  *  file whose path no longer exists can't, so the stack moves on to the next entry). */
 type TabReopener = (state: TabState) => boolean;
@@ -61,6 +66,8 @@ export class Workspace {
   private activeWorkbenchProvider: ActiveWorkbenchProvider | null = null;
   private tabHost: TabHost | null = null;
   private reviewSink: ReviewSink | null = null;
+  private pickerHost: Overlay | null = null;
+  private workspaceEditApplier: WorkspaceEditApplier | null = null;
   private readonly editors = new Set<TextEditor>();
   private readonly observers = new Set<EditorObserver>();
   // Recently-closed tabs, most-recent last — the reopen stack for `reopenLastTab`.
@@ -155,6 +162,37 @@ export class Workspace {
       return;
     }
     this.reviewSink(message);
+  }
+
+  /** Wire the window-level overlay that hosts floating pickers (the AppWindow injects this). */
+  setPickerHost(host: Overlay): void {
+    this.pickerHost = host;
+  }
+
+  /** The window-level overlay that floating pickers mount into, so a command can open a
+   *  picker without threading the host through — the app-wide analog of AppWindow's private
+   *  `overlay`. Throws if used before the window registered it (a programming error). */
+  getPickerHost(): Overlay {
+    if (!this.pickerHost) throw new Error('zym.workspace.getPickerHost() called before the window registered a host');
+    return this.pickerHost;
+  }
+
+  /** Wire the workspace-edit applier (the AppWindow injects this, like `setOpener`) — the
+   *  concrete impl owns the editor registry, so it stays there. */
+  setWorkspaceEditApplier(applier: WorkspaceEditApplier): void {
+    this.workspaceEditApplier = applier;
+  }
+
+  /** Apply an LSP `WorkspaceEdit`: open editors are edited in their buffer (single undo group),
+   *  files with no open editor are edited on disk. Returns how many files were touched and how
+   *  many resource ops (create/rename/delete) were skipped. The seam code actions / rename / file
+   *  moves route through. No-op (with a warning) before the applier is wired. */
+  applyWorkspaceEdit(edit: WorkspaceEdit, encoding: PositionEncoding): { applied: number; resourceOps: number } {
+    if (!this.workspaceEditApplier) {
+      console.warn('zym.workspace.applyWorkspaceEdit called before an applier was registered');
+      return { applied: 0, resourceOps: 0 };
+    }
+    return this.workspaceEditApplier(edit, encoding);
   }
 
   // --- text-editor registry --------------------------------------------------

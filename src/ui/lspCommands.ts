@@ -4,12 +4,11 @@
  * of AppWindow so the LSP orchestration isn't tangled into the shell. The GTK-free LSP
  * core lives in `src/lsp/`; this module is the GTK-facing command surface over it.
  *
- * The active editor / cwd / file-open / workspace-edit application all depend on the
- * panel-tree state AppWindow owns, so they're injected as a deps object (the
- * `registerGithubCommands` idiom). Pure dispatch + the per-command pickers live here.
+ * Atom-style, the active editor, active workbench cwd, picker host, file-open, and
+ * workspace-edit application are read off the `zym` globals; only the shared document
+ * registry (a live peek attaches to an already-open document) is injected.
  */
 import * as Fs from 'node:fs';
-import Gtk from 'gi:Gtk-4.0';
 import { zym } from '../zym.ts';
 import { TextEditor } from './TextEditor/index.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
@@ -20,42 +19,34 @@ import { openReferencesPicker } from './ReferencesPicker.ts';
 import { openPicker, highlightSegment } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
 import { type NavigationKind, type LspDocument } from '../lsp/LspManager.ts';
-import { type PositionEncoding } from '../lsp/position.ts';
-import type { WorkspaceEdit, CodeAction, Command } from 'vscode-languageserver-protocol';
+import type { CodeAction, Command } from 'vscode-languageserver-protocol';
 import type { Disposable } from '../util/eventKit.ts';
 
 export interface LspCommandsDeps {
-  overlay: InstanceType<typeof Gtk.Overlay>;
-  /** The text editor backing the focused tab, if any. */
-  activeEditor: () => TextEditor | null;
-  /** The active workbench's root directory (for workspace-symbol scoping). */
-  getCwd: () => string;
-  /** Open (revealing an already-open tab) `path` and place the cursor. */
-  openOrFocusFile: (path: string, cursor: [number, number]) => void;
-  /** Apply an LSP WorkspaceEdit to open editors / on-disk files. */
-  applyWorkspaceEdit: (edit: WorkspaceEdit, encoding: PositionEncoding) => { applied: number; resourceOps: number };
   /** The shared document registry — a live peek attaches to an already-open document. */
   documents: DocumentRegistry;
-  toast: (message: string) => void;
 }
+
+const host = () => zym.workspace.getPickerHost();
+const activeEditor = () => zym.workspace.getActiveTextEditor();
 
 /** Register the window-level `lsp:*` / `tag:rename` commands on `.AppWindow`. */
 export function registerLspCommands(d: LspCommandsDeps): Disposable {
   return zym.commands.add('.AppWindow', {
-    'lsp:go-to-definition': { didDispatch: () => void goto(d, 'definition'), description: 'Go to definition' },
+    'lsp:go-to-definition': { didDispatch: () => void goto('definition'), description: 'Go to definition' },
     'lsp:peek-definition': { didDispatch: () => void peekDefinition(d), description: 'Peek definition (inline)' },
-    'lsp:go-to-declaration': { didDispatch: () => void goto(d, 'declaration'), description: 'Go to declaration' },
-    'lsp:go-to-type-definition': { didDispatch: () => void goto(d, 'typeDefinition'), description: 'Go to type definition' },
-    'lsp:go-to-implementation': { didDispatch: () => void goto(d, 'implementation'), description: 'Go to implementation' },
-    'lsp:find-references': { didDispatch: () => void findReferences(d), description: 'Find references' },
-    'lsp:workspace-symbols': { didDispatch: () => workspaceSymbolPicker(d), description: 'Go to workspace symbol…' },
-    'lsp:document-symbols': { didDispatch: () => void documentSymbolPicker(d), description: 'Go to symbol in document…' },
-    'lsp:hover': { didDispatch: () => void d.activeEditor()?.hover(), description: 'Show hover (type / docs)' },
-    'lsp:code-action': { didDispatch: () => void codeActionMenu(d), description: 'Code action / quick fix…' },
-    'lsp:rename': { didDispatch: () => renamePrompt(d), description: 'Rename symbol…' },
-    'tag:rename': { didDispatch: () => renameTagPrompt(d), description: 'Rename JSX/HTML tag pair…' },
-    'lsp:format': { didDispatch: () => void formatActive(d), description: 'Format document' },
-    'lsp:install-server': { didDispatch: () => installServerPicker(d), description: 'Install a language server…' },
+    'lsp:go-to-declaration': { didDispatch: () => void goto('declaration'), description: 'Go to declaration' },
+    'lsp:go-to-type-definition': { didDispatch: () => void goto('typeDefinition'), description: 'Go to type definition' },
+    'lsp:go-to-implementation': { didDispatch: () => void goto('implementation'), description: 'Go to implementation' },
+    'lsp:find-references': { didDispatch: () => void findReferences(), description: 'Find references' },
+    'lsp:workspace-symbols': { didDispatch: () => workspaceSymbolPicker(), description: 'Go to workspace symbol…' },
+    'lsp:document-symbols': { didDispatch: () => void documentSymbolPicker(), description: 'Go to symbol in document…' },
+    'lsp:hover': { didDispatch: () => void activeEditor()?.hover(), description: 'Show hover (type / docs)' },
+    'lsp:code-action': { didDispatch: () => void codeActionMenu(), description: 'Code action / quick fix…' },
+    'lsp:rename': { didDispatch: () => renamePrompt(), description: 'Rename symbol…' },
+    'tag:rename': { didDispatch: () => renameTagPrompt(), description: 'Rename JSX/HTML tag pair…' },
+    'lsp:format': { didDispatch: () => void formatActive(), description: 'Format document' },
+    'lsp:install-server': { didDispatch: () => installServerPicker(), description: 'Install a language server…' },
   });
 }
 
@@ -73,18 +64,18 @@ function wordUnderCursor(doc: LspDocument): string {
 
 // Resolve a navigation (definition/declaration/type-def/impl) at the active
 // editor's cursor and jump there, opening/revealing the target file.
-async function goto(d: LspCommandsDeps, kind: NavigationKind) {
-  const editor = d.activeEditor();
+async function goto(kind: NavigationKind) {
+  const editor = activeEditor();
   if (!editor) return;
   const target = await zym.lsp.goto(editor.lsp, kind);
   if (!target) return;
-  d.openOrFocusFile(target.path, [target.point.row, target.point.column]);
+  zym.workspace.openFile(target.path, { cursor: [target.point.row, target.point.column] });
 }
 
 // See-definition: inline the definition in a focusable peek below the cursor,
 // instead of jumping. Toggles closed if one is already open.
 async function peekDefinition(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+  const editor = activeEditor();
   if (!editor) return;
   if (editor.peekOpen) {
     editor.closePeek();
@@ -114,7 +105,7 @@ async function peekDefinition(d: LspCommandsDeps) {
   try {
     content = Fs.readFileSync(target.path, 'utf8');
   } catch {
-    d.toast(`Can't read ${target.path}`);
+    zym.notifications.addInfo(`Can't read ${target.path}`);
     return;
   }
   const { widget, height } = buildDefinitionPeek(target, content, () => editor.closePeek());
@@ -123,47 +114,48 @@ async function peekDefinition(d: LspCommandsDeps) {
 
 // Find references to the symbol at the cursor and present them in a picker (with
 // a source preview) to jump to one.
-async function findReferences(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+async function findReferences() {
+  const editor = activeEditor();
   if (!editor) return;
   const refs = await zym.lsp.references(editor.lsp);
   if (refs.length === 0) {
     zym.notifications.addInfo('No references found');
     return;
   }
-  openReferencesPicker(d.overlay, refs, (path, cursor) => d.openOrFocusFile(path, cursor));
+  openReferencesPicker(host(), refs, (path, cursor) => zym.workspace.openFile(path, { cursor }));
 }
 
 // Search project-wide symbols (via the active file's language server) in a
 // picker and jump to the chosen one.
-function workspaceSymbolPicker(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+function workspaceSymbolPicker() {
+  const editor = activeEditor();
   if (!editor) return;
   if (!zym.lsp.canWorkspaceSymbols(editor.lsp)) {
     zym.notifications.addInfo('No workspace symbol support for this file');
     return;
   }
-  openWorkspaceSymbolPicker(d.overlay, editor.lsp, d.getCwd(), (path, cursor) => d.openOrFocusFile(path, cursor));
+  const cwd = zym.workspace.getActiveWorkbench()!.cwd;
+  openWorkspaceSymbolPicker(host(), editor.lsp, cwd, (path, cursor) => zym.workspace.openFile(path, { cursor }));
 }
 
 // List the current file's symbol outline (via its language server) in a picker
 // and jump to the chosen one within the active editor.
-async function documentSymbolPicker(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+async function documentSymbolPicker() {
+  const editor = activeEditor();
   if (!editor) return;
   if (!zym.lsp.canDocumentSymbols(editor.lsp)) {
     zym.notifications.addInfo('No document symbol support for this file');
     return;
   }
-  await openDocumentSymbolPicker(d.overlay, editor.lsp, (cursor) => {
+  await openDocumentSymbolPicker(host(), editor.lsp, (cursor) => {
     editor.restoreCursor(cursor);
     editor.focus();
   }, editor.root);
 }
 
 // Offer code actions / quick-fixes at the cursor in a picker; apply the chosen one.
-async function codeActionMenu(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+async function codeActionMenu() {
+  const editor = activeEditor();
   if (!editor || !editor.currentFile) return;
   const actions = await zym.lsp.codeActions(editor.lsp);
   if (actions.length === 0) {
@@ -171,16 +163,16 @@ async function codeActionMenu(d: LspCommandsDeps) {
     return;
   }
   openPicker({
-    host: d.overlay,
+    host: host(),
     placeholder: 'Code action',
     items: actions.map((a, i) => ({ value: String(i), text: a.title })),
-    onSelect: (value) => void runCodeAction(d, editor, actions[Number(value)]),
+    onSelect: (value) => void runCodeAction(editor, actions[Number(value)]),
   });
 }
 
 // Apply a chosen code action: resolve its lazy edit, then apply it. Command-only
 // actions (workspace/executeCommand) and file resource ops aren't wired yet.
-async function runCodeAction(d: LspCommandsDeps, editor: TextEditor, action: Command | CodeAction) {
+async function runCodeAction(editor: TextEditor, action: Command | CodeAction) {
   const isBareCommand = typeof (action as Command).command === 'string' && !('kind' in action) && !('edit' in action);
   if (isBareCommand) {
     zym.notifications.addWarning(`LSP: "${action.title}" needs command execution (not yet supported)`);
@@ -192,34 +184,34 @@ async function runCodeAction(d: LspCommandsDeps, editor: TextEditor, action: Com
     return;
   }
   const encoding = zym.lsp.completionPositionEncoding(editor.lsp) ?? 'utf-16';
-  const { resourceOps } = d.applyWorkspaceEdit(resolved.edit, encoding);
+  const { resourceOps } = zym.workspace.applyWorkspaceEdit(resolved.edit, encoding);
   if (resourceOps > 0) {
     zym.notifications.addWarning(`LSP: "${action.title}" includes ${resourceOps} file operation(s) not yet applied`);
   }
 }
 
 // Prompt for a new name (prefilled with the symbol under the cursor) and rename.
-function renamePrompt(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+function renamePrompt() {
+  const editor = activeEditor();
   if (!editor || !editor.currentFile) return;
   if (!zym.lsp.canRename(editor.lsp)) {
     zym.notifications.addInfo('Rename is not available here');
     return;
   }
   openPicker({
-    host: d.overlay,
+    host: host(),
     placeholder: 'New name',
     query: wordUnderCursor(editor.lsp),
     items: [],
     actionWhenEmpty: true,
     onSelect: () => {}, // no items — the action row drives the rename
-    action: { label: (q) => `Rename to "${q}"`, run: (q) => void runRename(d, editor, q.trim()) },
+    action: { label: (q) => `Rename to "${q}"`, run: (q) => void runRename(editor, q.trim()) },
   });
 }
 
 // Rename the JSX/HTML tag at the cursor — both halves of the pair together.
-function renameTagPrompt(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+function renameTagPrompt() {
+  const editor = activeEditor();
   if (!editor) return;
   const names = editor.tagNamesAtCursor();
   if (!names) {
@@ -227,7 +219,7 @@ function renameTagPrompt(d: LspCommandsDeps) {
     return;
   }
   openPicker({
-    host: d.overlay,
+    host: host(),
     placeholder: 'New tag name',
     query: names[0].text,
     items: [],
@@ -240,7 +232,7 @@ function renameTagPrompt(d: LspCommandsDeps) {
   });
 }
 
-async function runRename(d: LspCommandsDeps, editor: TextEditor, newName: string) {
+async function runRename(editor: TextEditor, newName: string) {
   if (!newName) return;
   const edit = await zym.lsp.rename(editor.lsp, newName);
   if (!edit) {
@@ -248,14 +240,14 @@ async function runRename(d: LspCommandsDeps, editor: TextEditor, newName: string
     return;
   }
   const encoding = zym.lsp.completionPositionEncoding(editor.lsp) ?? 'utf-16';
-  const { applied, resourceOps } = d.applyWorkspaceEdit(edit, encoding);
+  const { applied, resourceOps } = zym.workspace.applyWorkspaceEdit(edit, encoding);
   if (resourceOps > 0) zym.notifications.addWarning(`Rename: ${resourceOps} file operation(s) not yet applied`);
   else zym.notifications.addInfo(`Renamed across ${applied} file${applied === 1 ? '' : 's'}`);
 }
 
 // Format the active document and apply the edits to its buffer.
-async function formatActive(d: LspCommandsDeps) {
-  const editor = d.activeEditor();
+async function formatActive() {
+  const editor = activeEditor();
   if (!editor || !editor.currentFile) return;
   const options = {
     tabSize: (zym.config.get('editor.tabLength') as number) ?? 2,
@@ -271,7 +263,7 @@ async function formatActive(d: LspCommandsDeps) {
 
 // Pick a language server to install (into the zym-managed dir). Already-
 // installed and in-progress servers are shown dimmed with a status note.
-function installServerPicker(d: LspCommandsDeps) {
+function installServerPicker() {
   const items = zym.lsp.installableServers().map((s) => {
     const status = s.installing ? 'installing…' : s.installed ? 'installed' : 'not installed';
     const text = `${s.name}  ${status}`;
@@ -282,7 +274,7 @@ function installServerPicker(d: LspCommandsDeps) {
     };
   });
   openPicker({
-    host: d.overlay,
+    host: host(),
     placeholder: 'Install language server',
     items,
     renderRow: (item, positions) => {

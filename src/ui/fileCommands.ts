@@ -3,15 +3,14 @@
  * save / save-as, and move / rename (with LSP-driven reference rewrites). Split out of
  * AppWindow so the file-operation orchestration isn't tangled into the shell.
  *
- * The active editor, active workbench cwd, file-open, the editable-surface `save()`
- * target, and workspace-edit application all depend on the panel-tree state AppWindow
- * owns, so they're injected as a deps object (the registerGithubCommands idiom).
+ * Atom-style, the active editor, active workbench cwd, picker host, file-open,
+ * workspace-edit application, and the parent window are read off the `zym` globals; only
+ * the active editable-surface `save()` target (tab-registry state) is injected.
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
-type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 import { zym } from '../zym.ts';
 import { TextEditor } from './TextEditor/index.ts';
 import { openFilePicker } from './FilePicker.ts';
@@ -24,49 +23,35 @@ import { CancellationTokenSource } from 'vscode-languageserver-protocol';
 import type { Disposable } from '../util/eventKit.ts';
 
 export interface FileCommandsDeps {
-  window: ApplicationWindow;
-  overlay: InstanceType<typeof Gtk.Overlay>;
-  /** The active workbench's root directory. */
-  getCwd: () => string;
-  /** The text editor backing the focused tab, if any. */
-  activeEditor: () => TextEditor | null;
-  /** Open (revealing an already-open tab) `path`. */
-  openFile: (path: string) => void;
-  /** Apply an LSP WorkspaceEdit to open editors / on-disk files. */
-  applyWorkspaceEdit: (edit: WorkspaceEdit, encoding: PositionEncoding) => { applied: number; resourceOps: number };
   /** The active editable surface (project-search or diff multibuffer) that owns a `save()`. */
   activeSavableSurface: () => { save(): void } | null;
 }
 
+const host = () => zym.workspace.getPickerHost();
+const cwd = () => zym.workspace.getActiveWorkbench()!.cwd;
+const win = () => zym.window!;
+
 /** Register the window-level `file:*` commands on `.AppWindow`. */
 export function registerFileCommands(d: FileCommandsDeps): Disposable {
-  const onEditorFile = () => d.activeEditor()?.currentFile != null;
+  const onEditorFile = () => zym.workspace.getActiveTextEditor()?.currentFile != null;
   return zym.commands.add('.AppWindow', {
-    'file:open': { didDispatch: () => openDialog(d), description: 'Open a file (dialog)' },
+    'file:open': { didDispatch: () => openDialog(), description: 'Open a file (dialog)' },
     'file:find': {
-      didDispatch: () => openFilePicker(d.overlay, d.getCwd(), (path) => d.openFile(path)),
+      didDispatch: () => openFilePicker(host(), cwd(), (path) => zym.workspace.openFile(path)),
       description: 'Find a file by name',
     },
     'file:open-path': {
-      didDispatch: () => openFileOpener(d.overlay, d.getCwd(), (path) => d.openFile(path)),
+      didDispatch: () => openFileOpener(host(), cwd(), (path) => zym.workspace.openFile(path)),
       description: 'Open a file by path',
     },
-    'file:move': {
-      didDispatch: () => moveActiveFile(d),
-      description: 'Move the current file to another folder',
-      when: onEditorFile,
-    },
-    'file:rename': {
-      didDispatch: () => renameActiveFile(d),
-      description: 'Rename (or relocate) the current file',
-      when: onEditorFile,
-    },
+    'file:move': { didDispatch: () => moveActiveFile(), description: 'Move the current file to another folder', when: onEditorFile },
+    'file:rename': { didDispatch: () => renameActiveFile(), description: 'Rename (or relocate) the current file', when: onEditorFile },
     'file:save': {
       didDispatch: () => saveActive(d),
       description: 'Save the current file',
-      when: () => d.activeEditor() !== null || d.activeSavableSurface() !== null,
+      when: () => zym.workspace.getActiveTextEditor() !== null || d.activeSavableSurface() !== null,
     },
-    'file:save-as': { didDispatch: () => saveAsDialog(d), description: 'Save the current file as…', when: () => d.activeEditor() !== null },
+    'file:save-as': { didDispatch: () => saveAsDialog(), description: 'Save the current file as…', when: () => zym.workspace.getActiveTextEditor() !== null },
   });
 }
 
@@ -77,32 +62,32 @@ function saveActive(d: FileCommandsDeps) {
     surface.save();
     return;
   }
-  const editor = d.activeEditor();
+  const editor = zym.workspace.getActiveTextEditor();
   if (!editor) return;
   if (editor.currentFile) editor.save();
-  else saveAsDialog(d);
+  else saveAsDialog();
 }
 
-function openDialog(d: FileCommandsDeps) {
+function openDialog() {
   const dialog = new Gtk.FileDialog();
   dialog.setTitle('Open File');
-  dialog.open(d.window, null, (self: any, result: any) => {
+  dialog.open(win(), null, (self: any, result: any) => {
     try {
       const file = self.openFinish(result);
-      if (file) d.openFile(file.getPath());
+      if (file) zym.workspace.openFile(file.getPath());
     } catch {
       // The user dismissed the dialog; nothing to do.
     }
   });
 }
 
-function saveAsDialog(d: FileCommandsDeps) {
-  const editor = d.activeEditor();
+function saveAsDialog() {
+  const editor = zym.workspace.getActiveTextEditor();
   if (!editor) return;
   const dialog = new Gtk.FileDialog();
   dialog.setTitle('Save File As');
   if (editor.currentFile) dialog.setInitialName(Path.basename(editor.currentFile));
-  dialog.save(d.window, null, (self: any, result: any) => {
+  dialog.save(win(), null, (self: any, result: any) => {
     try {
       const file = self.saveFinish(result);
       if (file) editor.saveAs(file.getPath());
@@ -114,27 +99,27 @@ function saveAsDialog(d: FileCommandsDeps) {
 
 /** Move the current file into a folder chosen from the directory-navigating
  *  picker (folders only), keeping its name. */
-function moveActiveFile(d: FileCommandsDeps) {
-  const editor = d.activeEditor();
+function moveActiveFile() {
+  const editor = zym.workspace.getActiveTextEditor();
   const file = editor?.currentFile;
   if (!editor || !file) return;
-  openFolderPicker(d.overlay, d.getCwd(), Path.dirname(file), (destDir) =>
-    relocateFile(d, editor, file, Path.join(destDir, Path.basename(file))),
+  openFolderPicker(host(), cwd(), Path.dirname(file), (destDir) =>
+    relocateFile(editor, file, Path.join(destDir, Path.basename(file))),
   );
 }
 
 /** Rename (or relocate) the current file by editing its full path in the picker. */
-function renameActiveFile(d: FileCommandsDeps) {
-  const editor = d.activeEditor();
+function renameActiveFile() {
+  const editor = zym.workspace.getActiveTextEditor();
   const file = editor?.currentFile;
   if (!editor || !file) return;
-  openRenamePicker(d.overlay, d.getCwd(), file, (target) => relocateFile(d, editor, file, target));
+  openRenamePicker(host(), cwd(), file, (target) => relocateFile(editor, file, target));
 }
 
 /** Move/rename `from` → `to` on disk, prompting before clobbering an existing
  *  file, then hand off to `performRelocate`. A no-op when the destination equals
  *  the source (e.g. "move here" into the same folder, or rename to the same name). */
-function relocateFile(d: FileCommandsDeps, editor: TextEditor, from: string, to: string) {
+function relocateFile(editor: TextEditor, from: string, to: string) {
   if (to === from) return;
   if (Fs.existsSync(to)) {
     const dialog = new Adw.AlertDialog({
@@ -147,12 +132,12 @@ function relocateFile(d: FileCommandsDeps, editor: TextEditor, from: string, to:
     dialog.setDefaultResponse('cancel');
     dialog.setCloseResponse('cancel');
     dialog.on('response', (response: string) => {
-      if (response === 'overwrite') void performRelocate(d, editor, from, to);
+      if (response === 'overwrite') void performRelocate(editor, from, to);
     });
-    dialog.present(d.window);
+    dialog.present(win());
     return;
   }
-  void performRelocate(d, editor, from, to);
+  void performRelocate(editor, from, to);
 }
 
 /**
@@ -162,7 +147,7 @@ function relocateFile(d: FileCommandsDeps, editor: TextEditor, from: string, to:
  * missing parents (mkdir -p), moves the file (copy+unlink across filesystems —
  * EXDEV), re-points the open editor, and notifies the server (`didRenameFiles`).
  */
-async function performRelocate(d: FileCommandsDeps, editor: TextEditor, from: string, to: string) {
+async function performRelocate(editor: TextEditor, from: string, to: string) {
   const rename = await collectRenameEdit(editor, from, to);
   if (rename.cancelled) return; // user cancelled the willRename request
 
@@ -174,12 +159,12 @@ async function performRelocate(d: FileCommandsDeps, editor: TextEditor, from: st
     refEdits = files.reduce((n, f) => n + f.edits.length, 0);
     // Confirm before touching other files; declining aborts the whole move so we
     // never leave the file renamed with its references dangling.
-    if (refFiles > 0 && !(await confirmReferenceUpdate(d, from, refFiles, refEdits))) return;
+    if (refFiles > 0 && !(await confirmReferenceUpdate(from, refFiles, refEdits))) return;
   }
 
   // Apply the reference rewrites while everything is still at its old path (open
   // files in their buffer, closed files on disk), then move + re-point + notify.
-  if (rename.edit) d.applyWorkspaceEdit(rename.edit, rename.encoding);
+  if (rename.edit) zym.workspace.applyWorkspaceEdit(rename.edit, rename.encoding);
   try {
     Fs.mkdirSync(Path.dirname(to), { recursive: true });
     try {
@@ -239,7 +224,7 @@ async function collectRenameEdit(
 }
 
 /** Confirm applying the cross-file reference rewrites of a move (Move & Update / Cancel). */
-function confirmReferenceUpdate(d: FileCommandsDeps, from: string, fileCount: number, editCount: number): Promise<boolean> {
+function confirmReferenceUpdate(from: string, fileCount: number, editCount: number): Promise<boolean> {
   return new Promise((resolve) => {
     const dialog = new Adw.AlertDialog({
       heading: 'Update references?',
@@ -253,6 +238,6 @@ function confirmReferenceUpdate(d: FileCommandsDeps, from: string, fileCount: nu
     dialog.setDefaultResponse('move');
     dialog.setCloseResponse('cancel');
     dialog.on('response', (response: string) => resolve(response === 'move'));
-    dialog.present(d.window);
+    dialog.present(win());
   });
 }

@@ -434,6 +434,11 @@ export class AppWindow {
     // Expose diff-review delivery app-wide so the decoupled commit/branch diff views (diffViews.ts)
     // can route comments to an agent without reaching into the AppWindow.
     zym.workspace.setReviewSink((message) => this.reviewToAgent(message));
+    // The window-level overlay floating pickers mount into, and the workspace-edit
+    // applier (its impl owns the editor registry) — app-wide so command modules reach
+    // for the `zym.workspace` global instead of being handed these on every call.
+    zym.workspace.setPickerHost(this.overlay);
+    zym.workspace.setWorkspaceEditApplier((edit, encoding) => this.applyWorkspaceEdit(edit, encoding));
     zym.keymaps.initialize();
     // which-key hint: shows the continuations after a queued prefix (e.g. Space).
     this.whichKey = new WhichKey(this.contentOverlay);
@@ -442,35 +447,15 @@ export class AppWindow {
     this.registerPaneCommands();
     this.registerWindowCommands();
     this.registerTerminalCommands();
-    registerFileCommands({
-      window: this.window,
-      overlay: this.overlay,
-      getCwd: () => this.workbench.cwd,
-      activeEditor: () => this.activeEditor,
-      openFile: (path) => this.openFile(path),
-      applyWorkspaceEdit: (edit, encoding) => this.applyWorkspaceEdit(edit, encoding),
-      activeSavableSurface: () => this.activeSavableSurface(),
-    });
-    registerGitCommands({
-      overlay: this.overlay,
-      getCwd: () => this.workbench.cwd,
-      getGit: () => this.workbench.git,
-      activeEditor: () => this.activeEditor,
-      github: this.headerBar.github,
-      toast: (message) => this.toast(message),
-    });
+    // The command modules read the active editor / workbench / picker host / file-open
+    // straight off the `zym` globals (Atom-style); only their genuinely module-specific
+    // collaborators are injected here.
+    registerFileCommands({ activeSavableSurface: () => this.activeSavableSurface() });
+    registerGitCommands({ github: this.headerBar.github });
     this.registerNotificationCommands();
     this.registerConfigCommands();
     this.registerSessionCommands();
-    registerLspCommands({
-      overlay: this.overlay,
-      activeEditor: () => this.activeEditor,
-      getCwd: () => this.workbench.cwd,
-      openOrFocusFile: (path, cursor) => this.openOrFocusFile(path, cursor),
-      applyWorkspaceEdit: (edit, encoding) => this.applyWorkspaceEdit(edit, encoding),
-      documents: this.documents,
-      toast: (message) => this.toast(message),
-    });
+    registerLspCommands({ documents: this.documents });
     this.keymapWatcher = loadKeymaps();
 
     // Seed/load the user config and keep it in sync with on-disk edits. Done
