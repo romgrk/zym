@@ -3,13 +3,13 @@
 An exhaustive list of every vim-mode keystroke zym binds today, the operation /
 command behind it, and the mode(s) it's active in — plus a **gaps** section for
 notable standard-vim keys we *don't* map. This is the audit companion to
-[vim-mode.md](vim-mode.md); the keymap data itself lives in
+[vim-mode.md](../docs/text-editor/vim-mode.md); the keymap data itself lives in
 `src/ui/TextEditor/vim/index.ts` (vim layer) with a few editor-level keys in
 `src/ui/TextEditor/TextEditor.ts` and app/diff overrides in
 `src/keymaps/default.ts`.
 
 Keystrokes are written in the canonical form (see
-[../commands-keymaps.md](../commands-keymaps.md)): lowercase, presses
+[commands-keymaps.md](../docs/commands-keymaps.md)): lowercase, presses
 space-separated, so `g g` is the two-press `gg` and `ctrl-v` is one chord.
 
 ## Modes & scopes
