@@ -3,15 +3,16 @@
 ## Install
 
 **`npm warn allow-scripts … not yet covered by allowScripts`, then `zym` fails
-to start.** npm skipped the native modules' install steps. Re-run with the
-scripts approved:
+to start.** npm skipped the native modules' install steps. Recent zym versions
+pre-approve them in the package manifest; if your npm doesn't honor that,
+re-run with the scripts approved explicitly:
 
 ```sh
 npm install -g zym-editor --allow-scripts=native-keymap,node-gtk
 ```
 
 With pnpm the equivalent gate is `pnpm approve-builds -g` after
-`pnpm add -g zym-editor`.
+`pnpm add -g zym-editor` (pnpm ignores manifest self-approval by design).
 
 **`Could not load namespace …` (Gtk, Adw, GtkSource, Vte) on launch.** A
 system library or its GObject-Introspection typelib is missing. Install the

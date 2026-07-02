@@ -1,5 +1,9 @@
 # Running & install
 
+Distribution channels: npm (`zym-editor`, the tarball described below) and the
+AUR (`zym-git`, a system package building master from GitHub — recipe, local
+test rig, and publish script in [`packaging/aur/`](../packaging/aur/README.md)).
+
 ## Dev
 
 `pnpm start [file]` runs `node --import node-gtk/register src/index.ts`. The
@@ -72,10 +76,13 @@ it locally.
   features) installs its binding via `node-pre-gyp` (prebuilt from S3, else a local
   build). pnpm gates dependency build scripts by default, so a `pnpm i -g` user must
   approve it: `pnpm approve-builds` (or `pnpm approve-builds -g` for a global
-  install). A package cannot pre-approve this — pnpm ignores any `pnpm` field in a
-  dependency's `package.json` (a security boundary). npm now gates install scripts
-  the same way: pass `--allow-scripts=native-keymap,node-gtk` (older npm ran build
-  scripts with no approval step). User-facing instructions live in
+  install). A package cannot pre-approve this for pnpm — it ignores any such field
+  in a dependency's `package.json` (a security boundary). npm gates install scripts
+  too, but **honors the top-level package's own `allowScripts` array** — zym's
+  `package.json` carries `"allowScripts": ["node-gtk", "native-keymap"]`, so a
+  plain `npm i -g zym-editor` works with no flag (fallback:
+  `--allow-scripts=native-keymap,node-gtk`; project-scoped installs need a
+  `.npmrc`, see `packaging/aur/PKGBUILD`). User-facing instructions live in
   `guide/getting-started.md` / `guide/troubleshooting.md`.
 - **System libraries** at runtime: GTK 4, libadwaita, GtkSourceView 5, Vte, and the
   GObject-introspection typelibs node-gtk loads namespaces from.

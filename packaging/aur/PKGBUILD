@@ -1,0 +1,109 @@
+# Maintainer: Rom Grk <rom7011@gmail.com>
+pkgname=zym-git
+_pkgname=zym
+pkgver=0.2.0.r0.g0000000
+pkgrel=1
+pkgdesc="A keyboard-driven modal code editor built with GTK 4 and GtkSourceView 5, with coding agents alongside"
+arch=('x86_64')
+url="https://github.com/romgrk/zym"
+license=('GPL-3.0-or-later')
+# Runtime: nodejs>=22.15 is the floor for the type-stripping launcher
+# (module.registerHooks / stripTypeScriptTypes). gtk4/libadwaita/gtksourceview5/
+# vte4 supply the typelibs the app loads; gobject-introspection-runtime supplies
+# libgirepository, which the node-gtk addon links against (not pulled in by gtk4).
+# git and ripgrep are spawned at runtime (src/git/cli.ts, project search) — the
+# editor's git integration and search are core features, so they are hard deps.
+depends=('nodejs>=22.15' 'gtk4' 'libadwaita' 'gtksourceview5' 'vte4'
+         'gobject-introspection-runtime' 'git' 'ripgrep')
+# Build: compiles the node-gtk (and native-keymap) addons from source against
+# system GTK/X11 — prebuilt binaries do not track Arch's rolling Node ABI.
+makedepends=('npm' 'node-gyp' 'python' 'pkgconf' 'gobject-introspection' 'cairo' 'glib2')
+# GitHub features (PR checkout/create, CI checks, issues) shell out to `gh`;
+# the default agent command is `claude` (config key agent.command). Both degrade
+# gracefully when absent.
+optdepends=('github-cli: GitHub integration — pull requests, CI checks, issues'
+            'claude-code: the default coding agent (agent.command)')
+provides=('zym')
+conflicts=('zym')
+install="$_pkgname.install"
+source=("$_pkgname::git+https://github.com/romgrk/zym.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/$_pkgname"
+  local ver
+  ver="$(sed -n 's/[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n1)"
+  printf '%s.r%s.g%s' "${ver:-0.0.0}" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/$_pkgname"
+  # Build against /usr/bin/node — the exact binary the launcher pins at runtime —
+  # so the compiled addon's ABI matches. In a clean chroot /usr/bin/node is the
+  # only node; outside one, this shields against an fnm/nvm node on PATH.
+  export PATH="/usr/bin:$PATH"
+  export npm_config_cache="$srcdir/.npm-cache"
+  # Project-scoped npm config (the env/flag forms are rejected or deprecated
+  # for these): compile node-gtk against the system GTK instead of downloading
+  # a prebuilt binary (prebuilts do not track Arch's rolling Node ABI), and
+  # approve the two native modules' install scripts (npm's allow-scripts gate).
+  printf 'build-from-source=true\nallow-scripts=node-gtk,native-keymap\n' > .npmrc
+  # The root `prepare` script is dev-only tooling (node-gtk typings for
+  # typecheck; the icon map is committed) — drop it rather than run it here.
+  npm pkg delete scripts.prepare
+  npm install --omit=dev --no-fund --no-audit
+  rm -f .npmrc
+}
+
+package() {
+  cd "$srcdir/$_pkgname"
+  local appdir="$pkgdir/usr/lib/$_pkgname"
+
+  # The app runs its TypeScript sources directly (Node type-stripping), so the
+  # source trees ship as-is alongside the built node_modules. The pruning below
+  # mirrors .npmignore: tests and proof-of-concept files never run in production.
+  install -d "$appdir"
+  cp -r bin src plugins assets scripts node_modules "$appdir/"
+  install -Dm644 package.json "$appdir/package.json"
+  rm -rf "$appdir/src/poc"
+  find "$appdir" -name '*.test.ts' -delete
+  # Compile intermediates; the addon loads from node-gtk/lib/binding/ (verified
+  # by booting a package with build/ removed).
+  rm -rf "$appdir/node_modules/node-gtk/build"
+
+  # Launcher: bin/zym.mjs installs the type-stripping + gi: import hooks itself
+  # and handles the subcommands (--help/--version/--install-desktop), so the
+  # wrapper only pins /usr/bin/node (matching the addon's ABI — a PATH node from
+  # a version manager could differ).
+  install -d "$pkgdir/usr/bin"
+  cat > "$pkgdir/usr/bin/$_pkgname" <<EOF
+#!/bin/sh
+exec /usr/bin/node /usr/lib/$_pkgname/bin/zym.mjs "\$@"
+EOF
+  chmod 755 "$pkgdir/usr/bin/$_pkgname"
+
+  # Desktop integration. The entry mirrors buildDesktopEntry() in
+  # scripts/install-desktop.ts (which serves per-user installs; this package
+  # installs system-wide, so Exec is simply the launcher on PATH).
+  install -d "$pkgdir/usr/share/applications"
+  cat > "$pkgdir/usr/share/applications/com.github.romgrk.zym.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Zym
+GenericName=Text Editor
+Comment=A modal source-code editor built with GTK 4 and GtkSourceView 5
+Exec=zym %f
+Icon=com.github.romgrk.zym
+Terminal=false
+Categories=Development;TextEditor;IDE;GTK;
+Keywords=editor;code;text;vim;source;
+MimeType=text/plain;
+StartupWMClass=com.github.romgrk.zym
+StartupNotify=true
+EOF
+  install -Dm644 assets/zym.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/com.github.romgrk.zym.svg"
+  install -Dm644 assets/zym-symbolic.svg \
+    "$pkgdir/usr/share/icons/hicolor/symbolic/apps/com.github.romgrk.zym-symbolic.svg"
+}

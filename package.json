@@ -25,6 +25,10 @@
   "engines": {
     "node": ">=22.15"
   },
+  "allowScripts": [
+    "node-gtk",
+    "native-keymap"
+  ],
   "type": "module",
   "main": "src/index.ts",
   "exports": {

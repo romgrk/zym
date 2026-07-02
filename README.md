@@ -49,10 +49,17 @@ sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-gtksource-5 gir1.2-vte-3.91
 then:
 
 ```sh
-npm install -g zym-editor --allow-scripts=native-keymap,node-gtk
+npm install -g zym-editor
 
 zym                    # open the editor
 zym --install-desktop  # add zym to your app launcher (optional)
+```
+
+On Arch, [`zym-git`](https://aur.archlinux.org/packages/zym-git) from the AUR
+replaces all of the above (dependencies and desktop entry included):
+
+```sh
+yay -S zym-git
 ```
 
 Details, pnpm instructions, and fixes for common problems:

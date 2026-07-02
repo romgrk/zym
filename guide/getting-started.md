@@ -5,6 +5,10 @@
 zym runs on Node.js and the GTK 4 stack. It is tested on Linux; macOS and
 Windows are not supported yet.
 
+**Arch Linux**: install [`zym-git`](https://aur.archlinux.org/packages/zym-git)
+from the AUR (`yay -S zym-git`) and skip everything below — dependencies,
+launcher, and desktop entry are all handled by the package.
+
 **1. System libraries** — GTK 4, libadwaita, GtkSourceView 5, and Vte (GTK 4
 build), with their GObject-Introspection typelibs:
 
@@ -27,12 +31,13 @@ one, install Node through [fnm](https://github.com/Schniz/fnm),
 **3. The editor:**
 
 ```sh
-npm install -g zym-editor --allow-scripts=native-keymap,node-gtk
+npm install -g zym-editor
 ```
 
-The `--allow-scripts` flag approves the two native modules (`node-gtk`,
-`native-keymap`) that need an install step — prebuilt binaries are downloaded
-when available. With pnpm, install then approve the builds:
+Two native modules (`node-gtk`, `native-keymap`) run an install step —
+prebuilt binaries are downloaded when available. zym's manifest pre-approves
+them for npm (the `allowScripts` field); pnpm ignores that field by design, so
+there you approve the builds yourself:
 
 ```sh
 pnpm add -g zym-editor
