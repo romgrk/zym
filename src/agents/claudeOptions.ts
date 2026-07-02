@@ -10,6 +10,7 @@ import type { LaunchOption } from './configs.ts';
 export const CLAUDE_MODELS: LaunchOption[] = [
   { value: 'claude-opus-4-8', label: 'opus', detail: 'most capable' },
   { value: 'claude-sonnet-4-6', label: 'sonnet', detail: 'fast, balanced' },
+  { value: 'claude-fable-5', label: 'fable', detail: 'most powerful' },
 ];
 export const CLAUDE_DEFAULT_MODEL = 'claude-opus-4-8';
 
