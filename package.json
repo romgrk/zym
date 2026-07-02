@@ -1,8 +1,30 @@
 {
   "name": "zym-editor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A modal source-code editor built with GTK 4, Adwaita and GtkSourceView 5, on node-gtk",
   "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/romgrk/zym.git"
+  },
+  "homepage": "https://github.com/romgrk/zym#readme",
+  "bugs": "https://github.com/romgrk/zym/issues",
+  "keywords": [
+    "editor",
+    "code-editor",
+    "text-editor",
+    "vim",
+    "gtk",
+    "gtk4",
+    "adwaita",
+    "gnome",
+    "lsp",
+    "tree-sitter",
+    "coding-agents"
+  ],
+  "engines": {
+    "node": ">=22.15"
+  },
   "type": "module",
   "main": "src/index.ts",
   "exports": {
@@ -36,7 +58,7 @@
     "diff": "^9.0.0",
     "marked": "^18.0.5",
     "native-keymap": "^3.3.9",
-    "node-gtk": "^3.0.0",
+    "node-gtk": "^4.0.1",
     "outdent": "^0.8.0",
     "postcss-selector-parser": "^7.1.4",
     "tree-sitter-wasms": "^0.1.13",
