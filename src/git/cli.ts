@@ -53,11 +53,15 @@ function decode(r: ProcResult, onDone: GitDone): void {
   onDone(r.ok, r.stdout.toString('utf8'), r.stderr.toString('utf8'));
 }
 
+// Every invocation is `git --no-optional-locks <cmd>` so background reads never
+// take `.git/index.lock` — see "Locking" in docs/git/index.md.
+const GIT_FLAGS = ['--no-optional-locks'];
+
 /** Run git asynchronously (callback form). Routed through the process runner so
  *  the big parent never forks; promises are starved under the GLib loop, so the
  *  whole git surface is callback-based. */
 export function git(cwd: string, args: string[], onDone: GitDone): void {
-  runProcess({ file: 'git', args, cwd }, (r) => decode(r, onDone));
+  runProcess({ file: 'git', args: [...GIT_FLAGS, ...args], cwd }, (r) => decode(r, onDone));
 }
 
 // --- repo topology (derived from the on-disk layout — no subprocess) ----------
@@ -307,7 +311,7 @@ export function applyPatch(
   opts: { cached?: boolean; reverse?: boolean },
   onDone: GitDone,
 ): void {
-  const args = ['apply', '--unidiff-zero', '--recount', '--whitespace=nowarn'];
+  const args = [...GIT_FLAGS, 'apply', '--unidiff-zero', '--recount', '--whitespace=nowarn'];
   if (opts.cached) args.push('--cached');
   if (opts.reverse) args.push('--reverse');
   args.push('-');
@@ -362,7 +366,7 @@ export function lastCommitMessage(root: string, onDone: (message: string) => voi
  *  fed on stdin via `--contents -`) so line numbers and uncommitted lines match what
  *  the user sees rather than the on-disk file. */
 export function blame(root: string, relPath: string, contents: string, onDone: GitDone): void {
-  const args = ['blame', '--line-porcelain', '--contents', '-', '--', relPath];
+  const args = [...GIT_FLAGS, 'blame', '--line-porcelain', '--contents', '-', '--', relPath];
   runProcess({ file: 'git', args, cwd: root, input: contents }, (r) => decode(r, onDone));
 }
 
@@ -370,7 +374,7 @@ export function blame(root: string, relPath: string, contents: string, onDone: G
  *  The cheap path for "what commit touched this one line" — used by the commit popover
  *  and PR-for-line lookup, independent of whether inline blame is on. */
 export function blameLine(root: string, relPath: string, line: number, contents: string, onDone: GitDone): void {
-  const args = ['blame', '-L', `${line},${line}`, '--line-porcelain', '--contents', '-', '--', relPath];
+  const args = [...GIT_FLAGS, 'blame', '-L', `${line},${line}`, '--line-porcelain', '--contents', '-', '--', relPath];
   runProcess({ file: 'git', args, cwd: root, input: contents }, (r) => decode(r, onDone));
 }
 

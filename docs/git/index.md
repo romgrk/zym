@@ -54,6 +54,22 @@ is **binary** (`src/process/codec.ts`): a length-prefixed frame whose
 stdout/stderr (up to 64 MiB) cross the pipe as raw bytes, never
 JSON-escaped.
 
+**Locking:** every invocation is `git --no-optional-locks <cmd>` (the flag
+must precede the subcommand; prepended centrally in `cli.ts`, equivalent to
+`GIT_OPTIONAL_LOCKS=0`, git ≥ 2.15). Plain `git status` / `git diff` are not
+read-only: they opportunistically refresh the index stat cache and rewrite the
+index under `.git/index.lock`. Since the reactive poll runs them constantly
+(watch events, heartbeat, panel refreshes), it would routinely hold that lock,
+and any concurrent real operation — a user/agent `git add`/`commit`/`rebase`
+in a terminal, or our own mutations — fails immediately with `Unable to
+create '.git/index.lock': File exists` (git never waits for a lock). Worse,
+the poll's own index rewrite fired the metadata watcher's `index` watch,
+scheduling yet another poll. The flag disables only those *optional*
+side-effect writes; mutations (`add`, `commit`, `apply --cached`, …) still
+take the mandatory index lock exactly as before. Trade-off: our reads never
+freshen the stat cache, so status re-verifies racily-dirty entries until a
+real index write lands — negligible next to lock contention.
+
 Repo topology is derived straight from the on-disk git layout — pure `fs`
 reads, no subprocess: `repoRoot` (walk up for `.git`, memoized),
 `worktreeInfo`, and `listWorktrees` (read `<common>/worktrees/*` + HEAD
