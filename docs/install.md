@@ -44,7 +44,9 @@ Subcommands, handled before any GTK is loaded:
 What must ship for the installed command to run: `bin/`, `scripts/`, `src/`
 (including the committed `src/icons.generated.ts`), `assets/`, `plugins/`,
 `package.json`. `.npmignore` keeps dev-only material (`docs/`, tests,
-`src/poc/`, `scripts/peek-demo.ts`, lint/ts config) out.
+`src/poc/`, `scripts/peek-demo.ts`, lint/ts config) out. `guide/` (the user
+manual) ships deliberately: it is small, and a future in-app help can render
+it locally.
 
 - `scripts/` **must** ship: nothing dev-only depends on it at install time, but
   `scripts/install-desktop.ts` backs `zym --install-desktop`, and keeping it in
@@ -66,13 +68,15 @@ What must ship for the installed command to run: `bin/`, `scripts/`, `src/`
 
 - **node** new enough for type stripping + `module.registerHooks` /
   `module.stripTypeScriptTypes` (node 22.15+ / 23.5+).
-- **node-gtk's native build.** node-gtk (`^3.0.0`, for the `gi:`/`register`
+- **node-gtk's native build.** node-gtk (`^4.0.1`, for the `gi:`/`register`
   features) installs its binding via `node-pre-gyp` (prebuilt from S3, else a local
   build). pnpm gates dependency build scripts by default, so a `pnpm i -g` user must
   approve it: `pnpm approve-builds` (or `pnpm approve-builds -g` for a global
   install). A package cannot pre-approve this — pnpm ignores any `pnpm` field in a
-  dependency's `package.json` (a security boundary). npm runs the build with no
-  approval step.
+  dependency's `package.json` (a security boundary). npm now gates install scripts
+  the same way: pass `--allow-scripts=native-keymap,node-gtk` (older npm ran build
+  scripts with no approval step). User-facing instructions live in
+  `guide/getting-started.md` / `guide/troubleshooting.md`.
 - **System libraries** at runtime: GTK 4, libadwaita, GtkSourceView 5, Vte, and the
   GObject-introspection typelibs node-gtk loads namespaces from.
 

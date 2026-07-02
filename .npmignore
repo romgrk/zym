@@ -4,17 +4,20 @@
 
 # Dev tooling & config
 .claude/
+.github/
 .prettierignore
 eslint.config.js
 eslint-rules/
 tsconfig.json
 AGENTS.md
+CLAUDE.md
 
-# Docs & media (not needed at runtime)
+# Internal docs & media (not needed at runtime). guide/ (the user manual)
+# ships — it is small and a future in-app help can render it locally.
 docs/
 img/
-# scripts/ ships: postinstall runs scripts/generate-icons.ts, and
-# scripts/install-desktop.ts backs `zym --install-desktop`.
+# scripts/ ships: scripts/install-desktop.ts backs `zym --install-desktop`,
+# and the prepare step (source installs) runs scripts/generate-icons.ts.
 
 # Tests
 **/*.test.ts

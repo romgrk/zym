@@ -12,6 +12,11 @@ that needs to be known globally should be in the `docs/`. Inline code comments
 can explain briefly, but should point to the documentation. In general, knowledge
 should only be stated once; further mentions should point to other documents.
 
+`docs/` is internal (agents and contributors, token-efficient). The **user
+manual lives in `guide/`** — narrative, GitHub-rendered, shipped in the npm
+tarball. A change that alters user-visible behavior (commands, keybindings,
+config keys, install) must update `guide/` too.
+
 ## Architecture
 
 - Use Atom as a model for the overall architecture.
@@ -205,7 +210,7 @@ visual + blockwise + multi-cursor, occurrence, surround, search via the
 `SearchBar`. The `:` ex-command line is won't-do. See
 [text-editor/vim-mode.md](text-editor/vim-mode.md) (and the exhaustive per-mode
 binding table in
-[text-editor/vim-keymap-reference.md](text-editor/vim-keymap-reference.md)).
+[text-editor/vim-keymap-reference.md](../guide/vim-keymap-reference.md)).
 Occurrence is unified with search (`g o` arms operators on the search matches) —
 [text-editor/occurrence-search.md](text-editor/occurrence-search.md).
 
