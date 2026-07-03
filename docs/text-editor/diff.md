@@ -56,9 +56,9 @@ flag (in `BlockDecorations`) clamps the overlay's Y to the scroll top and re-cla
 rides the text. To stop stacked pinned headers from accumulating, a sticky band is also clamped to sit
 no lower than just above the **next** sticky band (`nextStickyBandTop`), so an earlier file's header
 slides up and rides the text out of view as the next reaches the top — only the current (last-passed)
-file's header stays pinned. The opaque header fill (libadwaita's `--headerbar-bg-color` chrome band)
-lets it occlude the diff scrolling underneath — including the `⋯` gap bands and review-comment cards,
-which are kept strictly
+file's header stays pinned. The opaque header fill (libadwaita's `--card-bg-color` painted over an
+opaque `--window-bg-color` base, since the card color is translucent in dark) lets it occlude the diff
+scrolling underneath — including the `⋯` gap bands and review-comment cards, which are kept strictly
 **below** the headers in the overlay draw order (sticky bands stay at the `add_overlay` queue tail; see
 the z-order constraint in [inline-widgets.md](inline-widgets.md)).
 
@@ -75,10 +75,11 @@ subtitle). The gap bands read git-patch style: each shows the `@@ -old +new @@ s
 hunk that FOLLOWS it (byte-identical to what `git diff` prints above that hunk — see `windowHunkHeader`,
 which reuses git's default `,count`-elision and function-context heuristic), or a bare `⋯` for a
 trailing gap (no hunk follows, as git prints nothing there). When the line-number gutter is showing
-(`editor.diffLineNumbers`), the `@@ … @@` header just restates the old|new numbers, so it collapses to
-a bare `⋯` (`installOverlays` swaps the label, keyed on the displayed text so a live toggle rebuilds).
-Markers render in the editor foreground, same as the filename, on an opaque `--window-bg-color` band
-(one elevation step dimmer than the header's `--headerbar-bg-color`). The leading file-head gap (`'above'` the first content row) and between-window
+(`editor.diffLineNumbers`), the `@@ -old +new @@` range just restates the gutter, so `gapLabel` drops
+it and keeps only the trailing section context (a bare `⋯` when the hunk has none); `installOverlays`
+keys the band on the displayed text so a live toggle rebuilds it. Markers render in the editor
+foreground, same as the filename, on the same opaque card band as the file header (`--card-bg-color`
+over an opaque `--window-bg-color` base). The leading file-head gap (`'above'` the first content row) and between-window
 gaps (`'below'` the last shown row) — plus review-comment cards — are ordinary (non-sticky)
 `BlockDecorations`, the gaps `fullWidth: 'content'` so they span the full content width under the
 header and stay full-width while scrolling horizontally with the text (unlike the pinned header).

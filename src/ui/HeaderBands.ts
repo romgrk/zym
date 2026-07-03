@@ -20,10 +20,12 @@ import { escapeMarkup } from './proseMarkup.ts';
 addStyles(/* css */`
   .mb-header {
     padding: var(--t-spacing) calc(2 * var(--t-spacing));
-    /* An opaque, subtly-raised chrome band — libadwaita's header-bar surface, so it tracks the OS
-       light/dark theme. Replaces the old hard-coded white overlay (editor bg + 16% white), which
-       read too bright. Must stay opaque to occlude the diff scrolling underneath. */
-    background-color: var(--headerbar-bg-color);
+    /* The libadwaita "card" surface, so it tracks the OS light/dark theme. --card-bg-color is
+       translucent in dark, and this band must stay opaque to occlude the diff scrolling under it,
+       so it's painted over an opaque --window-bg-color base — exactly how a card sits on the window.
+       Replaces the old hard-coded editor-bg + 16% white overlay, which read too bright. */
+    background-color: var(--window-bg-color);
+    background-image: linear-gradient(var(--card-bg-color), var(--card-bg-color));
     border-radius: 5px;
   }
   .mb-header-icon { color: var(--t-ui-text-muted); }
@@ -36,9 +38,9 @@ addStyles(/* css */`
      using the shared list-selection idiom (docs/styling.md → --selection-bg): a NEUTRAL wash of the
      band's own foreground when the diff is unfocused — promoted to an ACCENT tint + accent outline
      only while the diff editor holds keyboard focus (:focus-within on its .zym-editor source view,
-     the header's overlay ancestor). The wash rides over the opaque base as a gradient image so the
-     band never turns translucent. The class lands on the .mb-header element itself (the widget IS
-     the row). */
+     the header's overlay ancestor). The wash replaces the card overlay (still over the opaque
+     --window-bg-color base, so the band never turns translucent). The class lands on the .mb-header
+     element itself (the widget IS the row). */
   .mb-header.mb-header-focused {
     background-image: linear-gradient(var(--selection-bg), var(--selection-bg));
   }
@@ -48,11 +50,14 @@ addStyles(/* css */`
     outline-offset: -1px;
   }
   /* Fold markers (the elided-gap bands): an OPAQUE band that must occlude the diff scrolling under
-     it (never transparent, so the rows behind it can't show through). One elevation step BELOW the
-     file header — libadwaita's window surface, so it reads as a recessed marker dimmer than the
-     header's --headerbar-bg-color band, and tracks the OS light/dark theme. No padding: a single
-     compact line with the marker text flush to the code column. */
-  .mb-gap { background-color: var(--window-bg-color); }
+     it (never transparent, so the rows behind it can't show through). Shares the file header's card
+     surface (--card-bg-color over an opaque --window-bg-color base) so the two chrome bands read as
+     one family (and track the OS theme together). No padding: a single compact line with the marker
+     text flush to the code column. */
+  .mb-gap {
+    background-color: var(--window-bg-color);
+    background-image: linear-gradient(var(--card-bg-color), var(--card-bg-color));
+  }
   /* The marker TEXT reads as the editor foreground dimmed via Adwaita's --dim-opacity (the muted
      idiom — dim the real foreground, not a grey). It lives on a child label so the dim never touches
      the band's opaque background. */

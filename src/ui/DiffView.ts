@@ -790,6 +790,14 @@ export class DiffView {
   private static gapKey(g: DiffMultiBuffer['gapAnchors'][number], label: string): string {
     return `${g.placement}\n${label}\n${g.revealRows.join(',')}`;
   }
+  /** The gap band's text. When the line-number gutter is on (`editor.diffLineNumbers`), the
+   *  `@@ -old +new @@` range just restates the gutter, so drop the range and keep only the trailing
+   *  section (the enclosing function-context git appends) — a bare `⋯` when the hunk has no section,
+   *  or for a trailing gap that never carried a range. */
+  private static gapLabel(rawLabel: string, showLineNumbers: boolean): string {
+    if (!showLineNumbers || !rawLabel.startsWith('@@')) return rawLabel;
+    return rawLabel.replace(/^@@ .*? @@/, '').trim() || '⋯';
+  }
   private installOverlays(dmb: DiffMultiBuffer): void {
     this.gapAnchors = dmb.gapAnchors; // kept for the keyboard expand (`expandContextAtCursor`)
     this.headerAnchors = dmb.headerAnchors;
@@ -823,12 +831,12 @@ export class DiffView {
     // `⋯` gaps (incl. the leading file-head gap, now its own band) + accumulated review-comment
     // cards stay ordinary (scrolling) block decorations.
     const specs: BlockDecorationSpec[] = [];
-    // The `@@ … @@` hunk header just restates the old|new line numbers, so collapse it to a bare `⋯`
-    // when the line-number gutter is showing (`editor.diffLineNumbers`); a trailing gap is already `⋯`.
+    // With the line-number gutter on (`editor.diffLineNumbers`) the `@@ -old +new @@` range restates
+    // the gutter, so drop it and keep just the trailing section context (see `gapLabel`).
     const showDiffLineNumbers = zym.config.get('editor.diffLineNumbers') === true;
     dmb.gapAnchors.forEach((g, i) => {
       const scope = new CompositeDisposable();
-      const label = showDiffLineNumbers ? '⋯' : g.label;
+      const label = DiffView.gapLabel(g.label, showDiffLineNumbers);
       specs.push({
         id: `gap:${i}`,
         key: DiffView.gapKey(g, label), // keyed on the DISPLAYED label so a live line-number toggle rebuilds it
