@@ -324,8 +324,11 @@ file's row (`selectRowForPath`, selection only — focus stays in the diff; the
 row stays visibly highlighted via the `#GitPanel row:selected` style). `ctrl-w l`
 moves focus list→diff, `ctrl-w h` moves diff→list, and `q` (normal mode) closes
 the diff back to just the list (`git-panel:focus-diff` / `git-panel:focus-list` /
-`git-panel:close-diff`, scoped `#GitPanel #GitPanelList` / `#GitPanel #TextEditor` /
-`#GitPanel #TextEditor.normal-mode`, mirroring the git-log viewer). With no
+`git-panel:close-diff`, scoped `#GitPanel #GitPanelList` /
+`#GitPanel #TextEditor:not(.insert-mode):not(.GitCommitInput)` /
+`#GitPanel #TextEditor.normal-mode`, mirroring the git-log viewer). `ctrl-w h` is
+excluded in insert mode so the editor's own insert `ctrl-w` (delete-word) fires
+immediately rather than stalling on the chord's partial-match timeout. With no
 `buildDiffView` wired, `l`/`enter`/`o` fall back to opening the file
 (`onOpenFile`). The diff is disposed with the panel.
 
