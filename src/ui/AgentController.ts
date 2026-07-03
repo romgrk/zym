@@ -157,10 +157,12 @@ export class AgentController {
     // crashes the agent), and every transcript lands under one project dir so
     // `--resume` always resolves. A worktree is an editor concern only: `root` re-roots
     // the workbench (Files/Git/gutters) and seeds the agent's effectiveCwd. See docs/agents.md.
-    // A freshly-launched agent belongs to (and roots in) the active project — its own
-    // repo/file tree + process spawn dir + transcript home — not the global primary. A
-    // restore passes an explicit root and keeps the primary main dir (single-project).
-    const mainRoot = options.root ? this.mainRoot() : this.d.workbenchManager.activeProjectRoot();
+    // The agent's process spawns in — and its transcripts land under — the active
+    // project's root (the launcher's `root` may be a worktree *under* it; the process
+    // never spawns in a worktree, per the cwd invariant). `activeProjectRoot` resolves
+    // the active workbench to its project, so launching from a second project spawns
+    // there, not the global primary. During restore the primary is active → primary.
+    const mainRoot = this.d.workbenchManager.activeProjectRoot();
     let root = options.root ?? mainRoot;
     if (root !== mainRoot && !Fs.existsSync(root)) root = mainRoot; // a vanished worktree → main dir
     const agent = AGENT_CONFIGS[kind].create({
