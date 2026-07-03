@@ -500,7 +500,8 @@ ahead-behind / HEAD sha) over a live `file:`/`author:`/word **search**
   `remote`, `tag`, or a detached `head` — dropping the symbolic `origin/HEAD` and
   non-branch/tag namespaces. The **current branch (and a detached HEAD) are not
   shown** — only *other* refs decorate (`head: true` is filtered out at the view).
-  Chips are color-coded by kind — local branches **info**, remote branches
+  Chips are color-coded by kind, using libadwaita's OS-following status colors so
+  they track the light/dark scheme — local branches **accent**, remote branches
   **warning**, tags **success**. The list never scrolls sideways
   (`scrolled` is `NEVER`/`AUTOMATIC`), so a crowded badge row ellipsizes its chips
   rather than widening. Only refs on the listed (HEAD-reachable) commits decorate —
