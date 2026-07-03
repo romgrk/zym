@@ -78,8 +78,6 @@ interface Filters {
 // The header padding, search-field margin, and commit-row padding share the same
 // base inset (2× the spacing token) so the chrome lines up.
 addStyles(`
-  /* Left column: the commit list, set off from the diff pane by a border. */
-  .GitLogView .gitlog-list-column { border-right: 1px solid var(--border-color); }
   .GitLogView .gitlog-header {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
@@ -227,7 +225,7 @@ export class GitLogView {
     this.empty.setVisible(false);
 
     // --- Left column: header / search / list, stacked. Its own box so the Paned can
-    // hold it whole and a border can set it off from the diff.
+    // hold it whole (the Paned's own handle separates it from the diff).
     const listColumn = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     listColumn.addCssClass('gitlog-list-column');
     listColumn.append(header);
