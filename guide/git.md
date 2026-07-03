@@ -54,6 +54,11 @@ re-collapses), and `] h`/`[ h` jump between hunks. `g d` opens the file at the
 line under the cursor. `enter` opens a review-comment box that can send the
 line and your comment to an agent.
 
+A large diff opens as an overview: any file with at least
+`editor.diffCollapseLines` changed lines (default 500; set it to 0 to disable)
+starts folded to its header, so you scan the file list first and open the ones
+you want with `z o` / `z r`.
+
 ## History
 
 `space g v` opens the git log viewer: a filterable commit list with a live diff

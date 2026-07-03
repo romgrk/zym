@@ -89,6 +89,14 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     description:
       'Show the old|new file line-number gutter in the diff view. The live staging diff keeps its staged/unstaged marker either way.',
   },
+  'editor.diffCollapseLines': {
+    type: 'integer',
+    default: 500,
+    minimum: 0,
+    maximum: 100000,
+    description:
+      'When a diff opens, files whose change (added + removed lines) is at least this many are folded to their header, so a large diff opens as a scannable overview (expand with z o / z r). 0 disables auto-folding.',
+  },
   'editor.locationBar': {
     type: 'boolean',
     default: true,

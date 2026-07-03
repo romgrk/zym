@@ -233,7 +233,12 @@ export class DiffView {
     // Resolve each side's source ONCE (live Document for the new side when editable, else a
     // disk snapshot; the old/base side is always a read-only blob), then diff + project.
     for (const file of this.files) this.ensureSources(file);
-    const dmb = this.buildDiff();
+    // At open, fold large files (change ≥ editor.diffCollapseLines) so a big diff opens as a scannable
+    // overview. The build folds them inline in a single pass; `seedAutoCollapse` then mirrors them into
+    // collapsedFiles so later re-diffs keep them folded, while `z o` / `z r` still expand them.
+    const autoCollapse = DiffView.autoCollapseThreshold();
+    const dmb = this.buildDiff(autoCollapse);
+    this.seedAutoCollapse(dmb, autoCollapse);
     this.dmb = dmb;
 
     const sourceBuffers = new Map([...this.sources].map(([key, e]) => [key, e.buffer] as const));
@@ -371,12 +376,14 @@ export class DiffView {
 
   /** Build the windowed diff from each file's base blob + its CURRENT new-side text (the live
    *  Document's text when editable, else the snapshot passed in). */
-  private buildDiff(): DiffMultiBuffer {
+  private buildDiff(autoCollapseAtLines?: number): DiffMultiBuffer {
     const files = this.files.map((f) => ({ ...f, newText: this.currentNewText(f), indexText: this.indexText.get(f.path) }));
     // Filename headers are widgets (not navigable buffer text), anchored above each file's rows.
     // `reveal` forces user-expanded (otherwise-elided) new-side rows visible (expand-context).
+    // `autoCollapseAtLines` is passed only on the FIRST build (open); re-diffs omit it so they honor
+    // the user's collapse set rather than re-folding a large file the user expanded.
     const reveal = this.revealAll ? () => true : (r: number) => this.revealedNewRows.has(r);
-    return buildDiffMultiBuffer(files, this.cwd, { headers: 'widget', reveal, collapsed: (p) => this.collapsedFiles.has(p) });
+    return buildDiffMultiBuffer(files, this.cwd, { headers: 'widget', reveal, collapsed: (p) => this.collapsedFiles.has(p), autoCollapseAtLines });
   }
 
   // --- expand context (reveal elided unchanged lines) ------------------------
@@ -462,6 +469,23 @@ export class DiffView {
     if (this.collapsedFiles.size === 0) return;
     this.collapsedFiles.clear();
     this.reDiff();
+  }
+
+  /** The `editor.diffCollapseLines` auto-fold threshold (change ≥ N lines folds a file on open), or
+   *  undefined when disabled (0 / unset). Read once at open and passed to the first `buildDiff`. */
+  private static autoCollapseThreshold(): number | undefined {
+    const n = zym.config.get('editor.diffCollapseLines');
+    return typeof n === 'number' && n > 0 ? n : undefined;
+  }
+
+  /** Mirror the files the build auto-folded (change ≥ `threshold`) into `collapsedFiles`, so later
+   *  re-diffs — which don't re-apply the threshold — keep them folded, while `z o` / `z r` still
+   *  expand them. No-op when auto-folding is disabled (`threshold` undefined). */
+  private seedAutoCollapse(dmb: DiffMultiBuffer, threshold: number | undefined): void {
+    if (threshold === undefined) return;
+    for (const h of dmb.headerAnchors) {
+      if (h.added + h.removed >= threshold) this.collapsedFiles.add(h.path);
+    }
   }
 
   /** The files whose (cwd-relative) path matches `pattern` — a comma-separated glob filter, each

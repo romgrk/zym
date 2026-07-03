@@ -94,6 +94,12 @@ export interface DiffLayoutOptions {
   /** Per-file collapse (widget mode): returns true for a file the user has collapsed, which then
    *  contributes ONLY its header row (no windows/gaps/decorations) — a one-line overview entry. */
   collapsed?: (path: string) => boolean;
+  /** Auto-fold (widget mode): a file whose change (added + removed) is at least this many lines is
+   *  emitted collapsed on open, so a large diff opens as an overview — folded inline here in the same
+   *  pass, no rebuild. The surface passes it only on the FIRST build and mirrors the folded paths
+   *  into its own collapse set, so later re-diffs (which omit this) keep the user's expand/collapse.
+   *  Undefined / ≤ 0 disables. */
+  autoCollapseAtLines?: number;
 }
 
 const newKey = (path: string): string => `new:${path}`;
@@ -187,8 +193,10 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
       headerAnchors.push({ path: file.path, label, viewRow: rowKinds.length, added, removed, deleted: file.deleted ?? false });
       items.push({ type: 'block', block: { kind: 'header', text: '' } });
       block('header');
-      // A COLLAPSED file contributes only its header row — no windows, gaps, or decorations.
-      if (opts.collapsed?.(file.path)) return;
+      // A COLLAPSED file contributes only its header row — no windows, gaps, or decorations. Either
+      // the surface folded it, or its change is big enough to auto-fold on open (`autoCollapseAtLines`).
+      const autoFold = opts.autoCollapseAtLines !== undefined && opts.autoCollapseAtLines > 0 && added + removed >= opts.autoCollapseAtLines;
+      if (opts.collapsed?.(file.path) || autoFold) return;
     } else {
       if (fileIndex > 0) {
         items.push({ type: 'block', block: { kind: 'blank', text: '' } });

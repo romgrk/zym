@@ -51,6 +51,24 @@ test('widget mode: a collapsed file contributes only its header row', () => {
   assert.ok(expanded.rowKinds.length > collapsed.rowKinds.length, 'collapse shrinks the row count');
 });
 
+test('widget mode: autoCollapseAtLines folds a big file inline, leaves a small one expanded', () => {
+  const big = { path: '/big.ts', oldText: 'o0\no1\no2\no3\no4\no5\n', newText: 'n0\nn1\nn2\nn3\nn4\nn5\n' }; // 6 del + 6 ins = 12
+  const small = { path: '/small.ts', oldText: 'p\nq\n', newText: 'p\nQ\n' }; // 1 del + 1 ins = 2
+  const files = [big, small];
+  const dmb = buildDiffMultiBuffer(files, undefined, { headers: 'widget', autoCollapseAtLines: 10 });
+  assert.equal(dmb.headerAnchors[0].added + dmb.headerAnchors[0].removed, 12, 'big.ts change is 12 lines (≥ threshold)');
+  // big.ts folds inline → its header is immediately followed by small.ts's header (it emitted nothing else).
+  assert.equal(dmb.rowKinds[0], 'header', 'big.ts header row');
+  assert.equal(dmb.rowKinds[1], 'header', 'small.ts header directly follows — big.ts folded to header-only');
+  // small.ts (2 lines < 10) stays expanded: it contributes diff rows after its header.
+  assert.ok(dmb.rowKinds.length > 2, 'small.ts is still expanded');
+  // Threshold not met / disabled → nothing folds (both expand).
+  const none = buildDiffMultiBuffer(files, undefined, { headers: 'widget', autoCollapseAtLines: 100 });
+  assert.ok(none.rowKinds.length > dmb.rowKinds.length, 'a higher threshold folds nothing, so more rows');
+  const off = buildDiffMultiBuffer(files, undefined, { headers: 'widget', autoCollapseAtLines: 0 });
+  assert.equal(off.rowKinds.length, none.rowKinds.length, '0 disables auto-fold (same as no fold)');
+});
+
 test('widget mode: an elided file head is its OWN `above` gap band (split from the header)', () => {
   // Change far from the top so the head elides into a LEADING gap.
   const head = Array.from({ length: 8 }, (_, i) => `h${i}`).join('\n');

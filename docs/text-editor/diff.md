@@ -84,7 +84,12 @@ gaps (`'below'` the last shown row) — plus review-comment cards — are ordina
 `BlockDecorations`, the gaps `fullWidth: 'content'` so they span the full content width under the
 header and stay full-width while scrolling horizontally with the text (unlike the pinned header).
 
-**Per-file folding & navigation** (vim-style, keyed by path in `DiffView.collapsedFiles`) — `z c` /
+**Per-file folding & navigation** (vim-style, keyed by path in `DiffView.collapsedFiles`). At open, a
+large diff auto-folds: the first build passes `buildDiffMultiBuffer`'s `autoCollapseAtLines`, which
+folds any file whose change (`added + removed`) meets `editor.diffCollapseLines` (default 500; 0
+disables) inline in the same pass — no rebuild — so a big diff opens as a scannable overview.
+`seedAutoCollapse` then mirrors those files into `collapsedFiles`; later re-diffs omit the threshold,
+so they honor the user's collapse set and never re-fold a file expanded with `z o` / `z r`. `z c` /
 `z o` (`diff:collapse-file` / `diff:expand-file`) close/open the file under the cursor, `z a`
 (`diff:toggle-file`) toggles it, and `z r` / `z m` (`diff:expand-all-files` / `diff:collapse-all-files`)
 open/close every file (a one-line-per-file overview). `z x` (`diff:collapse-files-matching`) collapses
