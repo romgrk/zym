@@ -2,9 +2,8 @@
  * WorkbenchList — the contents of the WorkbenchSidebar (the full-height column at the
  * very left of the window). The rail is grouped by **project**: each open project is a
  * section headed by its own **default workbench** row (which shows the project name),
- * followed by the agents launched under it (`getGroups`, from the host). A margin below
- * each section's last row separates the groups. See docs/session-management.md
- * "Multi-root".
+ * followed by the agents launched under it (`getGroups`, from the host). See
+ * docs/session-management.md "Multi-root".
  *
  * The top is an `Adw.HeaderBar` showing the active session name (see `setSessionName`);
  * it is hidden entirely for the unnamed/default session, so an unnamed window shows the
@@ -48,10 +47,6 @@ addStyles(/* css */`
   /* The default row's icon is dimmed to match the exited agent icon (muted foreground). */
   .Workbenchrow--user-icon {
     opacity: var(--dim-opacity);
-  }
-  /* Space after each project section (its last row) so groups read as separate. */
-  .WorkbenchRow--section-end {
-    margin-bottom: calc(3 * var(--t-spacing));
   }
   /* The default (header) row: dimmed and iconless — its text is the project name. */
   .WorkbenchRow--project {
@@ -235,7 +230,6 @@ export class WorkbenchList {
   }
 
   // Full (re)build of every row: per project, its default (header) row then its agents.
-  // The last row of each section is tagged `--section-end` for the trailing margin.
   private rebuild(): void {
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
@@ -252,12 +246,11 @@ export class WorkbenchList {
         { kind: 'project', project: group.project },
         ...group.agents.map((agent): Entry => ({ kind: 'agent', agent })),
       ];
-      entries.forEach((entry, index) => {
+      for (const entry of entries) {
         const handle = this.createHandle(entry);
-        if (index === entries.length - 1) handle.row.addCssClass('WorkbenchRow--section-end');
         this.handles.push(handle);
         this.listBox.append(handle.row);
-      });
+      }
     }
     this.applySelection();
   }
