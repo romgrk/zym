@@ -194,6 +194,14 @@ export class WorkbenchList {
     this.updateModifiedDot();
   }
 
+  /** Reflect the active session name in the header: the session name as the title
+   *  over the project name as subtitle, or the bare project name when the window is
+   *  in the unnamed/default session (docs/session-management.md). */
+  setSessionName(name: string | null): void {
+    this.headerTitle?.setTitle(name ?? PROJECT_NAME);
+    this.headerTitle?.setSubtitle(name ? PROJECT_NAME : '');
+  }
+
   // The dot shows only when there are unsaved edits and the sidebar is expanded
   // (collapsed has no room — the title is hidden too). Opacity keeps the slot fixed.
   private updateModifiedDot(): void {

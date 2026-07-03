@@ -127,8 +127,10 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space l R': 'lsp:rename', // "R"ename symbol
   'space l f': 'lsp:format', // "f"ormat document
   'space l l': 'lsp:toggle-diagnostics-panel', // "l"sp problems "l"ist
-  'space s s': 'session:save', // save the workspace session
-  'space s r': 'session:restore', // restore the saved session
+  'space s s': 'session:save', // save the session (names it if unnamed)
+  'space s a': 'session:save-as', // save the session under a name
+  'space s o': 'session:open', // open a saved session
+  'space s R': 'session:rename', // rename the current session
 };
 
 // Tab navigation. alt-, / alt-. switch to the previous / next tab; alt-1..8 jump

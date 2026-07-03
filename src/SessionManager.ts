@@ -12,12 +12,14 @@
  * UI layer (AppWindow), which registers them here.
  *
  * Storage: one JSON file per session under the XDG state dir
- * (`$XDG_STATE_HOME/zym/sessions/`, falling back to `~/.local/state`). The file
- * name is a hash of the primary root, unless the session is explicitly named (then
- * a slug of the name). The raw hash is never user-visible — `label()` resolves a
- * display string as `name ?? basename(primaryRoot)`. Writes are atomic
- * (temp + rename), and reads never throw: a missing/corrupt/old-version file
- * yields `null`, mirroring the config loader's "warn and skip" posture.
+ * (`$XDG_STATE_HOME/zym/sessions/`, falling back to `~/.local/state`). Sessions
+ * are **named-only** — the file name is a slug of the name, and `save()` refuses
+ * an unnamed state (the ephemeral default session never persists). `label()`
+ * resolves a display string as `name ?? basename(primaryRoot)`, the fallback
+ * covering legacy per-root files from the old autosave model (still readable via
+ * `load(root)` / listed for migration). Writes are atomic (temp + rename), and
+ * reads never throw: a missing/corrupt/old-version file yields `null`, mirroring
+ * the config loader's "warn and skip" posture.
  */
 import * as Fs from 'node:fs';
 import * as Os from 'node:os';
@@ -248,9 +250,15 @@ export class SessionManager {
     }
   }
 
-  /** Absolute path of the (unnamed) autosave session for a given root. */
+  /** Absolute path of the (legacy) per-root autosave file. Reads/deletes only —
+   *  the named-only model never *writes* here (see `save`). */
   pathForRoot(root: string): string {
     return Path.join(this.stateDir, this.fileName(undefined, root));
+  }
+
+  /** Absolute path of the file backing the named session `name`. */
+  pathForName(name: string): string {
+    return Path.join(this.stateDir, this.fileName(name, ''));
   }
 
   /** The user-facing label for a session: its name, else the primary basename. */
@@ -265,6 +273,10 @@ export class SessionManager {
    * sessions dir if needed. Throws only on a genuine filesystem failure.
    */
   save(state: SessionState): void {
+    // Named-only persistence: an unnamed/default session is ephemeral and must
+    // never reach disk (see docs/session-management.md "Session identity"). The
+    // SessionController gates on `currentName`; this is the backstop.
+    if (!state.name) throw new Error('[session] refusing to persist an unnamed session (a name is required)');
     Fs.mkdirSync(this.stateDir, { recursive: true });
     const stamped: SessionState = {
       ...state,
@@ -277,7 +289,13 @@ export class SessionManager {
     Fs.renameSync(tmp, path);
   }
 
-  /** Load the unnamed autosave session for `root`, or `null`. */
+  /** Load the named session `name`, or `null`. */
+  loadByName(name: string): SessionState | null {
+    return this.loadPath(this.pathForName(name));
+  }
+
+  /** Load the legacy per-root autosave file for `root`, or `null`. Retained so
+   *  old (pre-named-only) files can still be read/migrated; nothing writes here. */
   load(root: string): SessionState | null {
     return this.loadPath(this.pathForRoot(root));
   }
@@ -329,13 +347,50 @@ export class SessionManager {
     return out;
   }
 
-  /** Delete a session file (e.g. on explicit "forget session"). */
+  /** Delete a session — its json **and** its unsaved-buffer cache (e.g. on an
+   *  explicit "forget session"). */
   delete(state: SessionState): void {
     try {
       Fs.rmSync(this.pathFor(state));
     } catch {
       // already gone — nothing to do
     }
+    try {
+      Fs.rmSync(this.bufferDir(state), { recursive: true, force: true });
+    } catch {
+      // no cached buffers — nothing to do
+    }
+  }
+
+  /**
+   * Rename a persisted session: write it under `newName`, move its unsaved-buffer
+   * cache to follow the new filename, and remove the old file. Returns the renamed
+   * state (the caller adopts it as the new active identity). Also promotes a legacy
+   * no-name file to a named one.
+   */
+  rename(state: SessionState, newName: string): SessionState {
+    const oldPath = this.pathFor(state);
+    const oldBuffers = this.bufferDir(state);
+    const renamed: SessionState = { ...state, name: newName };
+    const newPath = this.pathFor(renamed);
+    this.save(renamed);
+    if (newPath !== oldPath) {
+      const newBuffers = this.bufferDir(renamed);
+      try {
+        if (Fs.existsSync(oldBuffers)) {
+          Fs.rmSync(newBuffers, { recursive: true, force: true });
+          Fs.renameSync(oldBuffers, newBuffers);
+        }
+      } catch {
+        // best effort — a lost buffer cache only costs unsaved-edit restoration
+      }
+      try {
+        Fs.rmSync(oldPath);
+      } catch {
+        // old file already gone
+      }
+    }
+    return renamed;
   }
 }
 

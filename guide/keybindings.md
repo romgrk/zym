@@ -100,8 +100,10 @@ See [Agents](agents.md); highlights:
 
 | Keys        | Command |
 | ----------- | ------- |
-| `space s s` | save the workspace session |
-| `space s r` | restore the saved session |
+| `space s s` | save the session (names it the first time) |
+| `space s a` | save the session under a name |
+| `space s o` | open a saved session |
+| `space s R` | rename the current session |
 | `space , ,` | preferences window |
 | `space , c` | edit `config.json` as text |
 | `space , k` | edit `keymap.json` as text |

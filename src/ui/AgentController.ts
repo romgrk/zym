@@ -648,6 +648,13 @@ export class AgentController {
     zym.agents.remove(agent);
   }
 
+  /** Close every open agent — the replace-semantics teardown `session:open` runs
+   *  before applying a different session. Snapshots first (`closeAgent` mutates the
+   *  registry) so the iteration isn't disturbed mid-loop. */
+  closeAllAgents(): void {
+    for (const agent of [...zym.agents.getAgents()]) this.closeAgent(agent);
+  }
+
   // Prompt for a new display name (pinned over the CLI's reported title).
   renameAgentPrompt(agent: Agent): void {
     openPicker({

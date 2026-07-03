@@ -74,6 +74,12 @@ export interface SessionControllerOptions {
    *  `activeWorkspace`; `restored[i]` is the handle `restoreAgent` returned for
    *  workspace `i + 1` (null when it couldn't relaunch). */
   activateWorkspace?: (index: number, restored: unknown[]) => void;
+  /** Close every open agent — the replace-semantics teardown `open()` runs before
+   *  applying a different session (docs/session-management.md). */
+  closeAllAgents?: () => void;
+  /** Notified whenever the active session name changes (save-as / open / rename /
+   *  forget) so the host can refresh the window title + sidebar header. */
+  onNameChange?: (name: string | null) => void;
 }
 
 export class SessionController {
@@ -84,9 +90,23 @@ export class SessionController {
   private missing: string[] = [];
   // The session being restored, so `deserialize` can read cached unsaved buffers.
   private restoringState: SessionState | null = null;
+  // The active session's name, or null for the ephemeral default session. This is
+  // the persistence gate: while null, autosave/flush/save all no-op and nothing
+  // ever reaches disk (docs/session-management.md "Session identity").
+  private currentName: string | null = null;
 
   constructor(opts: SessionControllerOptions) {
     this.opts = opts;
+  }
+
+  /** The active session's name, or null for the unnamed/default (ephemeral) session. */
+  get sessionName(): string | null {
+    return this.currentName;
+  }
+
+  private setName(name: string | null): void {
+    this.currentName = name;
+    this.opts.onNameChange?.(name);
   }
 
   // --- Serialize -------------------------------------------------------------
@@ -107,6 +127,7 @@ export class SessionController {
     const active = this.opts.getActiveWorkspace?.() ?? 0;
     return {
       version: SESSION_VERSION,
+      name: this.currentName ?? undefined,
       savedAt: '', // stamped by SessionManager.save
       workspaces,
       activeWorkspace: active >= 0 && active < workspaces.length ? active : 0,
@@ -116,8 +137,10 @@ export class SessionController {
   }
 
   /** Persist the current session now (best effort; never throws to the caller).
-   *  Also caches the unsaved contents of modified editors beside the session. */
+   *  Also caches the unsaved contents of modified editors beside the session.
+   *  **No-op for the unnamed/default session** — only a named session persists. */
   saveNow(): void {
+    if (this.currentName === null) return; // ephemeral default session — never persists
     try {
       const state = this.serialize();
       zym.session.save(state);
@@ -129,8 +152,9 @@ export class SessionController {
 
   // --- Autosave --------------------------------------------------------------
 
-  /** Schedule a debounced autosave, if `session.autosave` is enabled. */
+  /** Schedule a debounced autosave, if named and `session.autosave` is enabled. */
   scheduleAutosave(): void {
+    if (this.currentName === null) return; // nothing to autosave for the default session
     if (zym.config.get('session.autosave') !== true) return;
     if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
     const ms = Math.max(0, Number(zym.config.get('session.autosaveDebounceMs') ?? 1000));
@@ -140,28 +164,63 @@ export class SessionController {
     }, ms);
   }
 
-  /** Cancel any pending autosave and flush once on quit (if autosave is on). */
+  /** Cancel any pending autosave and flush once on quit (named + autosave on). */
   flush(): void {
     if (this.autosaveTimer) {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    if (zym.config.get('session.autosave') === true) this.saveNow();
+    if (this.currentName !== null && zym.config.get('session.autosave') === true) this.saveNow();
   }
 
-  // --- Restore ---------------------------------------------------------------
+  // --- Naming (save-as / rename / forget) ------------------------------------
+
+  /** Promote the current (usually unnamed) session to a named one and persist it.
+   *  Also forks a named session under a new name. */
+  saveAs(name: string): void {
+    this.setName(name);
+    this.saveNow();
+  }
+
+  /** Rename the active named session (moves its json + buffer cache). No-op on the
+   *  unnamed session — the host offers save-as there instead. */
+  renameTo(newName: string): void {
+    if (this.currentName === null) return;
+    this.saveNow(); // flush the latest state into the old-name file first
+    const state = zym.session.loadByName(this.currentName);
+    if (state) zym.session.rename(state, newName);
+    this.setName(newName);
+  }
+
+  /** Detach from the active name without deleting anything — the session becomes the
+   *  ephemeral default again (e.g. after the active session is forgotten). */
+  becomeUnnamed(): void {
+    this.setName(null);
+  }
+
+  // --- Open / apply ----------------------------------------------------------
 
   /**
-   * Restore the saved session for this root into the workbench, replacing the
-   * current layout. Returns false if there is no saved session. Missing files
-   * are skipped and reported; agents are recorded-only (not relaunched yet).
+   * Switch this window into `state` (a named session from the picker). Replace
+   * semantics: flush the current named session, tear down its agents, apply the
+   * target layout/agents/docks/window, and adopt its name.
    */
-  restore(): boolean {
-    const state = zym.session.load(this.opts.root);
-    if (!state) return false;
+  open(state: SessionState): void {
+    this.flush(); // persist the outgoing named session (no-op if unnamed)
+    this.opts.closeAllAgents?.(); // replace semantics — the old session's agents go
+    this.applyState(state);
+    this.setName(state.name ?? null);
+  }
+
+  /**
+   * Rebuild the live workbench from `state`, replacing the current layout. Missing
+   * files are skipped and reported; agent workspaces are relaunched (resumed).
+   * Relaunch is fine because `open()` is explicit, not a surprise.
+   */
+  applyState(state: SessionState): void {
     // workspaces[0] is the primary (user) root; the rest are agent workbenches.
     const user = state.workspaces[0];
-    if (!user) return false;
+    if (!user) return;
 
     this.missing = [];
     this.restoringState = state;
@@ -171,10 +230,9 @@ export class SessionController {
     if (state.docks) this.opts.applyDocks(state.docks);
     if (state.window) this.opts.applyWindow?.(state.window);
 
-    // Relaunch the agent workbenches (resumed to their conversation/worktree). This
-    // only runs on an explicit restore / opt-in launch, so re-running them is the
-    // user's intent, not a surprise. The returned handles are aligned with
-    // `workspaces[1..]` so `activateWorkspace` can focus the one that had focus.
+    // Relaunch the agent workbenches (resumed to their conversation/worktree). The
+    // returned handles are aligned with `workspaces[1..]` so `activateWorkspace` can
+    // focus the one that had focus.
     const restored: unknown[] = [];
     for (const ws of state.workspaces.slice(1)) {
       restored.push(ws.agent ? this.opts.restoreAgent?.(ws) ?? null : null);
@@ -191,18 +249,6 @@ export class SessionController {
         detail: 'They no longer exist on disk and were skipped while restoring the session.',
       });
     }
-    return true;
-  }
-
-  /** Should a bare launch (no explicit file arg) restore a saved session? */
-  shouldRestoreOnLaunch(): boolean {
-    return zym.config.get('session.restoreOnLaunch') === true && zym.session.load(this.opts.root) !== null;
-  }
-
-  /** The saved window geometry for this root, without a full restore — so the host
-   *  can size the window before mapping it (GTK4 ignores resize once shown). */
-  loadWindow(): SessionState['window'] {
-    return zym.session.load(this.opts.root)?.window;
   }
 
   // Rebuild one tab during restore. Files that vanished are skipped (and counted) and

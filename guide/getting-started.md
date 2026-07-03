@@ -128,10 +128,16 @@ it.
 
 ## Sessions
 
-`space s s` saves the workspace session for the current project root — open
-files (with cursor and scroll), unsaved buffers, terminals, agents, layout, and
-window geometry. `space s r` restores it. Closing the window prompts for
-unsaved work.
+A session is a named, reopenable snapshot of your workspace — open files (with
+cursor and scroll), unsaved buffers, terminals, agents, layout, and window
+geometry. A fresh window starts *unnamed*: it works normally but isn't saved
+anywhere. `space s s` names and saves it (it acts as "save as" the first time);
+once named, it autosaves as you work. `space s o` reopens a saved session,
+`space s a` forks the current one under a new name, and `space s R` renames it.
+
+Closing a window silently discards an *unnamed* session (only unsaved editor
+tabs prompt) — so save it with a name if you want it back. Sessions live under
+`~/.local/state/zym/` and are global, so `space s o` reaches any of them.
 
 ## Where things live
 

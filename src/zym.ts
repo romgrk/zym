@@ -208,12 +208,7 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
   'session.autosave': {
     type: 'boolean',
     default: true,
-    description: 'Persist the working state (layout, tabs, cursors) as it changes and on quit.',
-  },
-  'session.restoreOnLaunch': {
-    type: 'boolean',
-    default: false,
-    description: 'Reopen the saved session on startup (an explicit file arg always suppresses it).',
+    description: 'Autosave a named session (layout, tabs, cursors) as it changes and on quit. The unnamed/default session never persists.',
   },
   'session.promptOnExitWhenModified': {
     type: 'boolean',

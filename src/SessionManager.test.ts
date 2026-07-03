@@ -28,18 +28,19 @@ function sessionFor(root: string, name?: string): SessionState {
   return state;
 }
 
-test('save then load round-trips a session for a root', () => {
+test('save then loadByName round-trips a named session', () => {
   const { manager } = makeManager();
   const root = '/home/me/project';
   const tab: TabState = { kind: 'file', path: '/home/me/project/a.ts', cursor: [3, 5] };
-  const state = sessionFor(root);
+  const state = sessionFor(root, 'Work');
   state.workspaces[0].layout = { type: 'leaf', tabs: [tab], activeIndex: 0 };
 
   manager.save(state);
-  const loaded = manager.load(root);
+  const loaded = manager.loadByName('Work');
 
   assert.ok(loaded);
   assert.equal(loaded!.version, SESSION_VERSION);
+  assert.equal(loaded!.name, 'Work');
   assert.equal(loaded!.workspaces[0].root, root);
   assert.deepEqual(loaded!.workspaces[0].layout, { type: 'leaf', tabs: [tab], activeIndex: 0 });
 });
@@ -58,6 +59,7 @@ test('round-trips the focused workspace, active leaf, split position, and dock s
   };
   const state: SessionState = {
     version: SESSION_VERSION,
+    name: 'Split',
     savedAt: '',
     activeWorkspace: 1,
     workspaces: [
@@ -68,7 +70,7 @@ test('round-trips the focused workspace, active leaf, split position, and dock s
   };
 
   manager.save(state);
-  const loaded = manager.load(root)!;
+  const loaded = manager.loadByName('Split')!;
 
   assert.equal(loaded.activeWorkspace, 1);
   assert.deepEqual(loaded.workspaces[0].layout, layout);
@@ -77,21 +79,23 @@ test('round-trips the focused workspace, active leaf, split position, and dock s
 
 test('save stamps savedAt with an ISO timestamp', () => {
   const { manager } = makeManager();
-  const state = sessionFor('/r');
-  manager.save(state);
-  const loaded = manager.load('/r')!;
+  manager.save(sessionFor('/r', 'Stamp'));
+  const loaded = manager.loadByName('Stamp')!;
   assert.match(loaded.savedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test('unnamed sessions are stored under the root hash, named under the slug', () => {
+test('named sessions are stored under the name slug', () => {
   const { manager } = makeManager();
-  manager.save(sessionFor('/home/me/project'));
   manager.save(sessionFor('/home/me/project', 'My Cool Session!'));
 
   const files = Fs.readdirSync(manager.sessionsDir()).sort();
-  assert.equal(files.length, 2);
-  assert.ok(files.includes(`${manager.hashRoot('/home/me/project')}.json`));
-  assert.ok(files.includes('my-cool-session.json'));
+  assert.deepEqual(files, ['my-cool-session.json']);
+});
+
+test('save refuses an unnamed (ephemeral) session — nothing is written', () => {
+  const { manager } = makeManager();
+  assert.throws(() => manager.save(sessionFor('/home/me/project')), /unnamed/);
+  assert.equal(Fs.existsSync(manager.sessionsDir()), false);
 });
 
 test('label is the name when set, else the primary root basename', () => {
@@ -100,9 +104,9 @@ test('label is the name when set, else the primary root basename', () => {
   assert.equal(manager.label(sessionFor('/home/me/project', 'Work')), 'Work');
 });
 
-test('load returns null for a missing session', () => {
+test('loadByName returns null for a missing session', () => {
   const { manager } = makeManager();
-  assert.equal(manager.load('/nope'), null);
+  assert.equal(manager.loadByName('nope'), null);
 });
 
 test('loadPath returns null and does not throw on corrupt JSON', () => {
@@ -112,16 +116,15 @@ test('loadPath returns null and does not throw on corrupt JSON', () => {
   assert.equal(manager.loadPath(path), null);
 });
 
-test('load rejects an unsupported version', () => {
+test('loadByName rejects an unsupported version', () => {
   const { manager } = makeManager();
-  const state = sessionFor('/r');
-  manager.save(state);
+  manager.save(sessionFor('/r', 'Ver'));
   // Tamper with the version on disk.
-  const path = manager.pathForRoot('/r');
+  const path = manager.pathForName('Ver');
   const onDisk = JSON.parse(Fs.readFileSync(path, 'utf8'));
   onDisk.version = SESSION_VERSION + 1;
   Fs.writeFileSync(path, JSON.stringify(onDisk));
-  assert.equal(manager.load('/r'), null);
+  assert.equal(manager.loadByName('Ver'), null);
 });
 
 test('load rejects a structurally invalid session', () => {
@@ -131,24 +134,51 @@ test('load rejects a structurally invalid session', () => {
   assert.equal(manager.loadPath(Path.join(dir, 'x.json')), null);
 });
 
-test('list returns every valid session and skips junk', () => {
+test('list returns every valid session (named + legacy no-name) and skips junk', () => {
   const { manager } = makeManager();
-  manager.save(sessionFor('/a'));
+  manager.save(sessionFor('/a', 'Ay'));
   manager.save(sessionFor('/b', 'Bee'));
+  // A legacy no-name file (old per-root autosave) written straight to disk still
+  // surfaces in the picker for migration; nothing auto-loads it.
+  Fs.writeFileSync(manager.pathForRoot('/legacy'), JSON.stringify(sessionFor('/legacy')));
   Fs.writeFileSync(Path.join(manager.sessionsDir(), 'junk.json'), 'nope');
   Fs.writeFileSync(Path.join(manager.sessionsDir(), 'ignore.txt'), 'not json at all');
 
   const roots = manager.list().map((s) => s.workspaces[0].root).sort();
-  assert.deepEqual(roots, ['/a', '/b']);
+  assert.deepEqual(roots, ['/a', '/b', '/legacy']);
 });
 
-test('delete removes the session file', () => {
+test('delete removes the session file and its buffer cache', () => {
   const { manager } = makeManager();
-  const state = sessionFor('/r');
+  const state = sessionFor('/r', 'Doomed');
   manager.save(state);
-  assert.ok(manager.load('/r'));
+  manager.writeBuffers(state, [{ path: '/r/a.ts', text: 'unsaved' }]);
+  assert.ok(manager.loadByName('Doomed'));
+  const buffers = manager.pathForName('Doomed').replace(/\.json$/, '.buffers');
+  assert.ok(Fs.existsSync(buffers));
+
   manager.delete(state);
-  assert.equal(manager.load('/r'), null);
+  assert.equal(manager.loadByName('Doomed'), null);
+  assert.equal(Fs.existsSync(buffers), false);
+});
+
+test('rename moves the json and its buffer cache to the new name', () => {
+  const { manager } = makeManager();
+  const state = sessionFor('/r', 'Old Name');
+  manager.save(state);
+  manager.writeBuffers(state, [{ path: '/r/a.ts', text: 'draft' }]);
+
+  const renamed = manager.rename(state, 'New Name');
+  assert.equal(renamed.name, 'New Name');
+
+  // Old gone, new present, and the buffer cache followed the rename.
+  assert.equal(manager.loadByName('Old Name'), null);
+  const loaded = manager.loadByName('New Name');
+  assert.ok(loaded);
+  assert.equal(loaded!.workspaces[0].root, '/r');
+  assert.equal(manager.readBuffer(renamed, '/r/a.ts'), 'draft');
+  const oldBuffers = manager.pathForName('Old Name').replace(/\.json$/, '.buffers');
+  assert.equal(Fs.existsSync(oldBuffers), false);
 });
 
 test('collectModified returns only participants reporting modified, and respects deregistration', () => {

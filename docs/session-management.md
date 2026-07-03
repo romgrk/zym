@@ -9,40 +9,69 @@ unsaved work is never lost on exit.
 The core is implemented: `SessionManager` (`src/SessionManager.ts`,
 storage/format, exposed as `zym.session`) + `SessionController`
 (`src/SessionController.ts`, per-window policy), wired from
-`src/ui/AppWindow.ts`. The one large unbuilt feature is **named
-sessions** (its own section below).
+`src/ui/AppWindow.ts`.
+
+**Sessions are named-only** (the locked model — see "Session identity"
+below). A fresh window opens an **unnamed/default** session that is
+held in memory and *never persisted*: it is either promoted to a named
+session (`session:save`, which acts as save-as when unnamed) or
+discarded on close — only unsaved *editor tabs* prompt, never the
+session itself. A named session autosaves to
+`$XDG_STATE_HOME/zym/sessions/<slug(name)>.json` and is reopened
+explicitly through `session:open`. There is **no** automatic per-root
+session and **no** restore-on-launch. Multi-root (several projects in
+one window) rides on the same `workspaces[]` format; see the multi-root
+note below.
 
 This page covers the architecture; per-feature pages can split out
 later if they grow.
+
+## Session identity (locked)
+
+- A session is persisted **iff it has a name.** The runtime tracks a
+  `currentName: string | null` (`SessionController`); `null` = the
+  unnamed/default session, which never touches disk. Naming (via
+  save-as) is the *only* thing that promotes a window to a persisted,
+  autosaving session.
+- **`session:save` on an unnamed session behaves as save-as** — prompt
+  for a name, then persist (mirrors an editor's Save on an untitled
+  buffer). On a named session it flushes.
+- **Unnamed sessions are discarded silently on close.** The only exit
+  prompt is the existing modified-*editor* guard (unwritten file
+  edits) — losing an unnamed session loses layout/tabs/agent-set, never
+  file contents.
+- **No restore-on-launch.** A fresh `zym [dir]` always starts unnamed,
+  rooted at cwd (the cwd is still the active *project*; only the
+  working *set* is unpersisted). Reopening a session is the explicit
+  `session:open`.
+- **Storage is global and keyed by name.** `slug(name).json` under the
+  XDG sessions dir; discovery/switching is the `session:open` picker
+  over `zym.session.list()`. Legacy per-root `hash(root).json` files
+  from the old autosave model are still *listed* (labelled by
+  basename), so they remain openable — nothing auto-loads them.
 
 ## Decisions (locked)
 
 These shape everything below:
 
-- **Storage = central XDG state dir**, keyed by root path — *not*
+- **Storage = central XDG state dir**, keyed by **name** — *not*
   in-repo. A session lives at
-  `$XDG_STATE_HOME/zym/sessions/<filename>.json` (falling back to
-  `~/.local/state`). Clean, never pollutes the project, and the
-  natural home for a future "open another project's session" picker.
-- **Naming/identity:** the filename is a **hash of the primary root**
-  unless the user gives the session an explicit **name** (then a slug
-  of the name). The hash is opaque, so **wherever a text label is
-  needed** (picker, title) and there is no user name, show the
-  **primary root's directory basename**, never the raw hash. Label
-  resolution: `name ?? basename(primaryRoot)`.
-- **Lifecycle is configurable** (`session.*`), with these defaults:
-  - **Do not reopen on launch.** Restore is an explicit action
-    (`session:restore` / a picker), never automatic. (A
-    `session.restoreOnLaunch` opt-in exists for users who want it.)
-  - **Autosave silently** (debounced on change + on quit) so a manual
-    restore has something to load.
+  `$XDG_STATE_HOME/zym/sessions/<slug(name)>.json` (falling back to
+  `~/.local/state`). Clean, never pollutes the project, the natural
+  home for the `session:open` picker.
+- **Naming/identity:** persisted sessions are named; the filename is a
+  slug of the name. Label resolution is still
+  `name ?? basename(primaryRoot)` so a legacy no-name file (old
+  autosave) shows its root basename in the picker.
+- **Lifecycle** (`session.*`), with these defaults:
+  - **Never reopen on launch.** A window always starts unnamed;
+    reopening is the explicit `session:open`.
+  - **Autosave only a named session** (debounced on change + on quit).
+    The unnamed/default session never writes.
   - **Prompt on exit only if a widget reports modified data.** This
     requires a first-class **modified-status API/hook** that widgets
     expose (see below) — the centerpiece of this work, not an
     afterthought.
-- **An explicit file arg suppresses restore.** `zym foo.ts` means
-  "just open this"; restore never fires implicitly off a launch.
-  Restore is always the user asking for it.
 
 ## Constraints carried from the codebase
 
@@ -181,7 +210,7 @@ interface WorkspaceState {
 
 interface SessionState {
   version: number;              // SESSION_VERSION (currently 1)
-  name?: string;                // user-given; absent → label = basename(primaryRoot)
+  name?: string;                // persisted iff named; absent only on legacy no-name files
   savedAt: string;              // ISO timestamp, stamped by save()
   workspaces: WorkspaceState[]; // runtime writes one user workspace + one per live agent
   activeWorkspace: number;      // index into workspaces of the focused workbench (0 = user)
@@ -195,36 +224,38 @@ interface SessionState {
 }
 ```
 
-`workspaces[0].root` is the **primary root** — the hash source and the
-default label. `workspaces[0]` is always the **user** workspace; the
-runtime carries no root-switch yet, so restore rebuilds it and
-relaunches the rest as agent workbenches. `activeWorkspace` records the
-**focused workbench** at save time — 0 for the user, else the active
-agent's index — and restore re-activates it (`activateWorkspace`):
-focus follows the user back to wherever they were (the user workbench
-or one of the relaunched agents). Layering multi-root on later means:
-let the active-root switch swap which workspace drives
-`FileTree`/`GitRepo`/`GitBranchButton`/title — no format change.
+`workspaces[0].root` is the **primary root** — the default label
+source. `workspaces[0]` is always the **user** workspace; the runtime
+carries one project today, so restore rebuilds it and relaunches the
+rest as agent workbenches. `activeWorkspace` records the **focused
+workbench** at save time — 0 for the user, else the active agent's
+index — and restore re-activates it (`activateWorkspace`): focus
+follows the user back to wherever they were (the user workbench or one
+of the relaunched agents). Multi-root (above) generalizes `slice(1)`
+into "each workspace is a project or an agent."
 
 `SessionManager` resolves the path
-(`<state>/zym/sessions/<slug(name) ?? hash(primaryRoot)>.json`),
-reads/writes via sync `Fs` (mkdir -p, atomic temp+rename), and
-validates `version`. Loading is keyed by the current root's hash
-(`load(root)`), so a session is only ever loaded for its own root —
-there's no separate cross-root guard yet. The hash keeps filenames
-short and avoids path-length limits; the label never shows it (see
-Naming/identity).
+(`<state>/zym/sessions/<slug(name)>.json`), reads/writes via sync `Fs`
+(mkdir -p, atomic temp+rename), and validates `version`. Persisted
+sessions are always named, so the filename is the name slug;
+`loadByName(name)` reads one back and `list()` enumerates the dir for
+the `session:open` picker.
 
 ## Lifecycle
 
-- **Autosave** (`session.autosave`, default on): a debounced
-  `saveNow()` on layout/tab/cursor changes (hooking the same events
-  that drive the title and active-tab sync), plus a final flush in
-  `close-request`.
-- **Restore** is explicit: `session:restore` rebuilds the saved layout
-  for the current cwd (notifying on anything it had to skip).
-  `session.restoreOnLaunch` (default off) lets a bare `zym` launch
-  auto-restore; an explicit file arg always suppresses it.
+- **Autosave** (`session.autosave`, default on) — **named sessions
+  only.** A debounced `saveNow()` on layout/tab/cursor changes (hooking
+  the same events that drive the title and active-tab sync), plus a
+  final flush in `close-request`. When `currentName === null` the
+  autosave/flush/save paths all early-return, so the unnamed session
+  never touches disk.
+- **Open** is explicit: `session:open` picks a named session from
+  `zym.session.list()` and switches into it (flush the current named
+  session, close its agents, then `applyState` the target). There is no
+  launch restore. Because the switch tears down the current window's
+  editors, it is **guarded by the same unsaved-work prompt as quitting**
+  (`confirmUnsavedWork`, gated on `session.promptOnExitWhenModified`) —
+  so a switch never silently drops unwritten edits.
 - **Exit prompt**: `close-request` calls `collectModified()`. If
   non-empty (and `session.promptOnExitWhenModified`, default on),
   `close-request` blocks (`return true`) and shows an
@@ -237,95 +268,91 @@ Naming/identity).
 ## Config schema (`session.*`)
 
 ```ts
-session.autosave: boolean                  // default true
-session.restoreOnLaunch: boolean           // default false
+session.autosave: boolean                  // default true (named sessions only)
 session.promptOnExitWhenModified: boolean  // default true
 session.autosaveDebounceMs: integer        // default 1000
 ```
 
 Registered on `zym.config` like the rest; editable via the existing
-`ConfigEditor` for free.
+`ConfigEditor` for free. (`session.restoreOnLaunch` was removed with the
+named-only model — there is no launch restore.)
 
 ## Commands
 
-- `session:save` — force a save now (`space s s`).
-- `session:restore` — restore the current cwd's session into the
-  workbench (`space s r`).
-- `session:open` — picker over *all* stored sessions (other roots) —
-  **future**, pairs with multi-root.
+- `session:save` (`space s s`) — flush the active named session; on the
+  unnamed/default session it **acts as save-as** (prompt for a name,
+  then persist).
+- `session:save-as` (`space s a`) — always prompt for a name and save
+  under it (also forks a named session under a new name).
+- `session:open` (`space s o`) — picker over `zym.session.list()`
+  (label + `relativeTime(savedAt)`); switches into the chosen session.
+- `session:rename` — rename the active named session (moves the json +
+  its `.buffers`); no-op + toast on the unnamed session.
+- `session:delete` — picker → forget a session (its json + `.buffers`);
+  guards the active one.
 
 Handlers on `#AppWindow`; bindings in `src/keymaps/default.ts`.
 
-## Feature: named sessions (plan)
+## Feature: named sessions
 
-Goal: let a project keep **several named sessions** and switch between
-them — e.g. "review", "feature-x", "debugging" — instead of the single
-per-root autosave. Nothing in this section is wired into the runtime
-yet.
+Named sessions are the persistence model (see "Session identity"
+above): a window keeps **named, switchable working sets** — "review",
+"feature-x", "debugging" — and the unnamed default is ephemeral.
 
-**Storage groundwork is in place** (no format change needed):
-`SessionState.name?`; `SessionManager` keys files by `slug(name)` when
-named and `hash(root)` otherwise (`fileName()`, private), and
-`pathFor()` follows suit — so a named session writes its own json (and
-gets its own `<file>.buffers/` for free). Public helpers `list()`,
-`label(state)` (= `name ?? basename(root)`), and `delete(state)`
-exist. What's missing is the **runtime notion of an active session
-name** (no `currentName` anywhere yet) and the commands to drive it.
+### The runtime spine
 
-### The one runtime addition
+`SessionController` carries a `currentName: string | null` (null = the
+unnamed/default session):
 
-`SessionController` is keyed only by `root`, so its `serialize()`
-always writes the default (hash) file. Add a `currentName: string |
-null` (null = the default autosave session): `serialize()` stamps
-`state.name = currentName ?? undefined`, so autosave/flush target the
-*active named* file. Switching sessions sets it.
+- `serialize()` stamps `name: currentName ?? undefined`.
+- `scheduleAutosave()`, `flush()`, and `saveNow()` **early-return when
+  `currentName === null`** — the persistence gate. Nothing on disk for
+  an unnamed window.
+- `saveAs(name)` sets `currentName`, then `saveNow()`.
+- `open(state)` — flush the current named session, close its agents,
+  `applyState(state)` (the extracted body of the old `restore()`:
+  rebuild the user layout, relaunch agents, apply docks/window), and
+  set `currentName = state.name ?? null`.
+- `renameSession(newName)` / `deleteSession(state)` delegate to
+  `SessionManager`.
 
-### Commands (`#AppWindow`, bound in `keymaps/default.ts`)
+### SessionManager storage
 
-- `session:save-as` — prose-entry picker for a name → set
-  `currentName`, `saveNow()` (writes `<slug>.json`). "Save the current
-  workbench as a named session."
-- `session:open` — picker over this root's sessions (`list()` filtered
-  to `primaryRoot === cwd`, label + `relativeTime(savedAt)`, default
-  session included as its basename). Selecting **switches**: flush the
-  current session first, then load + apply the target (same path as
-  `restore`: rebuild user layout, relaunch agents, apply docks/window),
-  and set `currentName`. Replace semantics (the locked decision), so
-  the previous workbench is torn down.
-- `session:rename` — rename the active session (write under the new
-  name, delete the old file + its `.buffers`, update `currentName`).
-- `session:delete` — pick a session → `delete()` it (+ its buffer
-  dir); refuse/guard deleting the active one (or switch to default
-  first).
+- `fileName()`/`pathFor()` key by `slug(name)` (the `hash(root)` write
+  path is gone; writing an unnamed state is a bug). `pathForName(name)`
+  + `loadByName(name)` read one back.
+- `rename(state, newName)` writes the new json and **moves the
+  `.buffers/` dir**, then removes the old json.
+- `delete(state)` removes the json **and its `.buffers/`** (previously
+  it leaked the buffer dir).
+- `list()` still reads every `*.json`, so legacy no-name files surface
+  in the picker (labelled by basename via `label()`); nothing
+  auto-loads them.
 
-### Decisions to settle
+### Locked decisions (this feature)
 
-- **Default ↔ named relationship:** the unnamed hash session is the
-  implicit autosave; `save-as` forks the current state into a named
-  file and makes it active (the default file stays as-is). Confirm
-  fork-vs-move.
-- **Switching with live agents:** replace semantics tears down the
-  current workbench — running agents in the old session are closed
-  (consistent with `closeAgent`). Confirm vs. carry-over.
-- **Scope of `session:open`:** **this root only** for named sessions
-  (no window re-root). Cross-root open (other projects) stays the
-  separate multi-root item below — it needs the active-root switch
-  (now cheap given per-workbench cwd/git).
-- **Remember active across launches:** optionally persist the
-  last-active session name (tiny window-state) so a relaunch reopens
-  it; default launches the unnamed session.
+- **Unnamed close = silent discard.** Only the modified-editor prompt
+  fires; the session itself is never save-prompted.
+- **No restore-on-launch.** Always start unnamed.
+- **`session:save` on unnamed = save-as.**
+- **`session:open` uses replace semantics** — the current window is
+  torn down (agents closed) and the target applied.
 
-### Remaining / planned
+## Multi-root (several projects in one window)
 
-- [ ] `currentName` in `SessionController` (serialize stamps `name`;
-      save/flush target the named file); `session:save-as` +
-      `session:rename`.
-- [ ] `session:open` picker (this root) → flush-then-switch (reuse the
-      restore path).
-- [ ] `session:delete` + active-session guard; (later) persist
-      last-active across launches.
-- [ ] Cross-root `session:open` — folds into the multi-root item
-      below.
+The `workspaces[]` format already discriminates a **project** workspace
+(no `agent` field) from an **agent** workspace (`agent` present). Today
+the runtime builds one project workspace (`workspaces[0]`, the user)
+plus one per agent; `restore()`/`applyState()` hard-code
+`workspaces[0]` = user and `slice(1)` = agents. Multi-root is the
+runtime change of letting a window hold **several** project workspaces,
+switched from the WorkbenchList rail (the same one-active-root switch
+agents already use — `WorkbenchManager.reRootWorkbench` /
+`activateWorkbench`). It needs no session-format change: a named
+session's `workspaces[]` simply carries N projects + their agents, and
+`applyState` iterates (`agent ? relaunchAgent : buildProjectWorkbench`)
+instead of assuming a single user at index 0. Land the named-session
+model first (single project); layer multi-root on top.
 
 ## Edge cases
 
@@ -350,8 +377,8 @@ null` (null = the default autosave session): `serialize()` stamps
   relaunched **resumed** (`--resume <id>`, via `resumeOptions` — which
   relocates the transcript under the main dir and supplies the resume
   id, while `ws.root` overrides where the editor roots) and does *not*
-  re-run the original launch prompt. Relaunch is fine because restore is explicit
-  (or the opt-in `restoreOnLaunch`), not a surprise. An agent with no
+  re-run the original launch prompt. Relaunch is fine because `session:open`
+  is explicit, not a surprise. An agent with no
   session id is relaunched fresh with its prompt; one already open is
   skipped (no duplicate). After relaunch, the agent's work-area
   **files are reopened** from its saved layout (rooted in that
@@ -364,14 +391,13 @@ null` (null = the default autosave session): `serialize()` stamps
 
 ## Remaining / planned
 
-- [ ] Named sessions — see the section above ("Remaining / planned"
-      list there).
-- [ ] Multi-root sessions + `session:open` picker — co-design with
-      agent worktrees.
+- [x] Named sessions (the persistence model) — `currentName`,
+      save/save-as/open/rename/delete, name-keyed storage.
+- [ ] Multi-root: hold several project workspaces in one window,
+      switched from the WorkbenchList rail (see the multi-root note);
+      builds on the named-session spine.
 
 ## Open questions
 
-None blocking for the built core. The remaining design debates
-(default ↔ named relationship, switching with live agents, persisting
-the last-active session) all sit under the unbuilt named-sessions
-feature; see "Decisions to settle" there.
+None blocking. Multi-root is the next runtime step and needs no
+session-format change.
