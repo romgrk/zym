@@ -81,8 +81,8 @@ What already exists and is reused, not rebuilt:
   (no leak). The agent column is a top-level **focus zone** (`focusZones`), so geometry-
   based `ctrl-w h/l` reaches it, and `agent-sidebar:toggle` (`ctrl-w g a`) hides/shows it
   (`agentSidebarHidden` — a no-op + toast on the user workbench). Each agent workbench is
-  serialized as a `WorkspaceState` and relaunched resumed on session restore (work-area
-  file-tab layout still deferred).
+  serialized as an `AgentState` under its project and relaunched resumed on session
+  restore (work-area file-tab layout still deferred).
 - **`src/ui/AgentTerminal.ts`** *(the `claude-tui` kind)* — a `Terminal`
   subclass that spawns the agent CLI (`agent.command` config, default
   `['claude']`); the Claude integration lives in

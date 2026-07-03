@@ -20,10 +20,10 @@ import { type AgentStatus, type AgentResume } from './AgentTerminal.ts';
 import { AgentConversation } from './AgentConversation.ts';
 import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
 import { listResumableSessions, recordSessionWorktree, relativeTime, relocateTranscriptToMainRoot, type AgentSession } from '../agentSessions.ts';
-import { type WorkspaceState, fileTabsOf } from '../SessionManager.ts';
+import { type AgentState, fileTabsOf } from '../SessionManager.ts';
 import type { TextEditor } from './TextEditor/index.ts';
 import type { Workbench } from './workbench/Workbench.ts';
-import { type Owner, isProject, isAgent } from './workbench/Owner.ts';
+import { type Owner, isAgent } from './workbench/Owner.ts';
 import type { PaneItems } from './workbench/PaneItems.ts';
 import type { WorkbenchManager } from './workbench/WorkbenchManager.ts';
 import type { AgentSidebar } from './AgentSidebar.ts';
@@ -364,48 +364,13 @@ export class AgentController {
     };
   }
 
-  // One WorkspaceState per open agent workbench (its root + center layout + the agent's
-  // relaunch identity), for the session. The layout is recorded for forward-compat;
-  // restore currently only relaunches the agent (see restoreAgent).
-  serializeAgentWorkspaces(): WorkspaceState[] {
-    const out: WorkspaceState[] = [];
-    for (const agent of zym.agents.getAgents()) {
-      const workbench = this.d.workbenchManager.workbenches.get(agent);
-      const state = agent.serialize();
-      if (!workbench || !state || state.kind !== 'agent') continue;
-      out.push({
-        root: workbench.cwd,
-        layout: workbench.center.serializeLayout((w) => this.d.paneItems.serializeChild(w)),
-        fileTree: { expanded: workbench.fileTree.serializeExpanded() },
-        actions: workbench.actions.serialize(),
-        agent: state,
-      });
-    }
-    return out;
-  }
-
-  // The index, into the serialized workspaces, of the workbench that currently has focus:
-  // 0 for the user, else the active agent's position among the serialized agent workspaces.
-  activeWorkspaceIndex(): number {
-    if (isProject(this.workbench.owner)) return 0;
-    let i = 1;
-    for (const agent of zym.agents.getAgents()) {
-      const workbench = this.d.workbenchManager.workbenches.get(agent);
-      const state = agent.serialize();
-      if (!workbench || !state || state.kind !== 'agent') continue;
-      if (agent === this.workbench.owner) return i;
-      i++;
-    }
-    return 0;
-  }
 
   // Relaunch an agent workbench from its saved workspace, resumed to its conversation/
   // worktree. A session that's since vanished falls back to a bare resume; an agent that
   // never reported a session id is relaunched fresh with its original prompt. Returns the
   // relaunched agent (or null when skipped) so the caller can re-focus the saved workbench.
-  restoreAgent(ws: WorkspaceState): Agent | null {
-    const a = ws.agent;
-    if (!a) return null;
+  restoreAgent(state: AgentState): Agent | null {
+    const a = state.agent;
     // Don't duplicate an agent that's already open (explicit restore over a live session).
     if (a.sessionId && zym.agents.getAgents().some((ag) => ag.sessionId === a.sessionId)) return null;
     // Restore as the kind that was saved (older sessions have no tag → claude-tui).
@@ -413,14 +378,14 @@ export class AgentController {
     let agent: Agent;
     if (a.sessionId) {
       const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);
-      // The saved workbench cwd (`ws.root`) is authoritative for where the editor roots —
+      // The saved workbench cwd (`state.root`) is authoritative for where the editor roots —
       // `resumeOptions` still relocates the transcript + supplies the resume id + title, but
       // its transcript-derived root is overridden by the recorded one.
       agent = session
-        ? this.openAgent({ ...this.resumeOptions(session), root: ws.root, kind })
-        : this.openAgent({ kind, root: ws.root, resume: { sessionId: a.sessionId } });
+        ? this.openAgent({ ...this.resumeOptions(session), root: state.root, kind })
+        : this.openAgent({ kind, root: state.root, resume: { sessionId: a.sessionId } });
     } else {
-      agent = this.openAgent({ kind, root: ws.root, prompt: a.prompt });
+      agent = this.openAgent({ kind, root: state.root, prompt: a.prompt });
     }
     // Reopen the files that were in this agent's work area. The agent leaf itself is
     // recreated by openAgent; the work-area split geometry isn't preserved.
@@ -428,9 +393,9 @@ export class AgentController {
     if (workbench) {
       // Restore the workbench's live action set (a resuming agent may re-report and
       // overwrite it on its next set_actions — the intended precedence).
-      if (ws.actions) workbench.actions.restore(ws.actions);
+      if (state.workbench.actions) workbench.actions.restore(state.workbench.actions);
       const panel = workbench.center.openPanel;
-      for (const tab of fileTabsOf(ws.layout)) {
+      for (const tab of fileTabsOf(state.workbench.layout)) {
         if (Fs.existsSync(tab.path)) {
           this.d.paneItems.openFileIn(tab.path, panel, { focus: false, owner: workbench });
         }

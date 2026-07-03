@@ -14,10 +14,8 @@
  */
 import * as Fs from 'node:fs';
 import { zym } from './zym.ts';
-import { SESSION_VERSION, type SessionState, type TabState, type WorkspaceState } from './SessionManager.ts';
-import type { Action } from './actions.ts';
-import type { PanelGroup, RestoredChild } from './ui/PanelGroup.ts';
-import type { FileTree } from './ui/FileTree.ts';
+import { SESSION_VERSION, type SessionState, type TabState, type ProjectState } from './SessionManager.ts';
+import type { RestoredChild } from './ui/PanelGroup.ts';
 import type { DockSide } from './ui/workbench/Workbench.ts';
 
 export interface SessionDocks {
@@ -31,12 +29,6 @@ export interface SessionDocks {
 }
 
 export interface SessionControllerOptions {
-  /** The workspace root this session belongs to (the window cwd). */
-  root: string;
-  center: PanelGroup;
-  fileTree: FileTree;
-  /** Serialize one tab's widget to its persistent state (`null` to skip). */
-  serializeChild: Parameters<PanelGroup['serializeLayout']>[0];
   /** Build a file editor tab for restore (no panel attach); `null` to skip. The
    *  restore carries the saved cursor, scroll, and any cached unsaved content. */
   createEditorTab: (
@@ -45,35 +37,25 @@ export interface SessionControllerOptions {
   ) => RestoredChild | null;
   /** Build a terminal tab for restore (no panel attach); `null` to skip. */
   createTerminalTab: (cwd: string) => RestoredChild | null;
+  /** Snapshot every open project (its default workbench + the agents under it) for
+   *  serialization; `projects[0]` is the primary. */
+  serializeProjects: () => ProjectState[];
+  /** The focused owner at save time — a project index, plus an agent index within it
+   *  when an agent workbench is active. */
+  getActive: () => SessionState['active'];
+  /** Rebuild the whole window from a saved session — projects + their agents + docks +
+   *  window + focus — using `buildChild` (this controller's per-tab deserialize, which
+   *  carries the unsaved-buffer cache + missing-file tracking) for editor/terminal tabs.
+   *  Owns activation order: a project must be active while its agents relaunch so they
+   *  associate with it. */
+  restoreSession: (state: SessionState, buildChild: (tab: TabState) => RestoredChild | null) => void;
   /** Current window-level dock state, for serialization. */
   getDocks: () => SessionDocks;
-  /** Apply restored window-level dock state. */
-  applyDocks: (docks: SessionDocks) => void;
   /** Current window geometry, for serialization (omit if unavailable). */
   getWindow?: () => SessionState['window'];
-  /** Apply restored window geometry. */
-  applyWindow?: (window: NonNullable<SessionState['window']>) => void;
   /** The unsaved contents of currently-modified editors, cached so a restore can
    *  bring the edits back. */
   collectUnsaved?: () => { path: string; text: string }[];
-  /** The user workbench's live action set (docs/workbench.md), for
-   *  serialization; an empty set is omitted from the saved workspace. */
-  serializeUserActions?: () => Action[];
-  /** Apply a restored action set to the user workbench. */
-  restoreUserActions?: (actions: Action[]) => void;
-  /** One `WorkspaceState` per open agent workbench (root + layout + `agent`
-   *  identity), appended after the user workspace. Empty when no agents. */
-  serializeAgentWorkspaces?: () => WorkspaceState[];
-  /** Relaunch an agent workbench (resumed) from its saved workspace; returns a handle
-   *  (the relaunched agent) so `activateWorkspace` can focus it, or null on failure. */
-  restoreAgent?: (workspace: WorkspaceState) => unknown;
-  /** Index into the serialized workspaces of the workbench that currently has focus
-   *  (0 = the user workspace, n = the nth agent workspace). Used for serialization. */
-  getActiveWorkspace?: () => number;
-  /** Focus the restored active workspace after a restore. `index` is the saved
-   *  `activeWorkspace`; `restored[i]` is the handle `restoreAgent` returned for
-   *  workspace `i + 1` (null when it couldn't relaunch). */
-  activateWorkspace?: (index: number, restored: unknown[]) => void;
   /** Close every open agent — the replace-semantics teardown `open()` runs before
    *  applying a different session (docs/session-management.md). */
   closeAllAgents?: () => void;
@@ -111,26 +93,17 @@ export class SessionController {
 
   // --- Serialize -------------------------------------------------------------
 
-  /** Snapshot the live workbench as a session for this root. */
+  /** Snapshot the live window (all projects + their agents) as a session. */
   serialize(): SessionState {
-    const user: WorkspaceState = {
-      root: this.opts.root,
-      layout: this.opts.center.serializeLayout(this.opts.serializeChild),
-      fileTree: { expanded: this.opts.fileTree.serializeExpanded() },
-    };
-    const userActions = this.opts.serializeUserActions?.();
-    if (userActions && userActions.length > 0) user.actions = userActions;
-    // The user workspace is primary (index 0); each open agent workbench follows.
-    const workspaces = [user, ...(this.opts.serializeAgentWorkspaces?.() ?? [])];
-    // The focused workbench is restored as the active one; clamp a stale index to a
-    // workspace that actually exists.
-    const active = this.opts.getActiveWorkspace?.() ?? 0;
+    const projects = this.opts.serializeProjects();
+    // Clamp a stale active reference to a project that actually exists.
+    const active = this.opts.getActive();
     return {
       version: SESSION_VERSION,
       name: this.currentName ?? undefined,
       savedAt: '', // stamped by SessionManager.save
-      workspaces,
-      activeWorkspace: active >= 0 && active < workspaces.length ? active : 0,
+      projects,
+      active: active.project >= 0 && active.project < projects.length ? active : { project: 0 },
       docks: this.opts.getDocks(),
       window: this.opts.getWindow?.(),
     };
@@ -213,35 +186,16 @@ export class SessionController {
   }
 
   /**
-   * Rebuild the live workbench from `state`, replacing the current layout. Missing
-   * files are skipped and reported; agent workspaces are relaunched (resumed).
-   * Relaunch is fine because `open()` is explicit, not a surprise.
+   * Rebuild the live window from `state`, replacing the current projects/agents. The
+   * per-project widget walk + activation is delegated to `restoreSession` (the host owns
+   * the collaborators); this layer wraps it with the unsaved-buffer cache + missing-file
+   * bookkeeping. Relaunch is fine because `open()` is explicit, not a surprise.
    */
   applyState(state: SessionState): void {
-    // workspaces[0] is the primary (user) root; the rest are agent workbenches.
-    const user = state.workspaces[0];
-    if (!user) return;
-
     this.missing = [];
     this.restoringState = state;
-    this.opts.center.restoreLayout(user.layout, (tab) => this.deserialize(tab));
-    if (user.fileTree) this.opts.fileTree.restoreExpanded(user.fileTree.expanded);
-    if (user.actions) this.opts.restoreUserActions?.(user.actions);
-    if (state.docks) this.opts.applyDocks(state.docks);
-    if (state.window) this.opts.applyWindow?.(state.window);
-
-    // Relaunch the agent workbenches (resumed to their conversation/worktree). The
-    // returned handles are aligned with `workspaces[1..]` so `activateWorkspace` can
-    // focus the one that had focus.
-    const restored: unknown[] = [];
-    for (const ws of state.workspaces.slice(1)) {
-      restored.push(ws.agent ? this.opts.restoreAgent?.(ws) ?? null : null);
-    }
+    this.opts.restoreSession(state, (tab) => this.deserialize(tab));
     this.restoringState = null;
-
-    // Re-focus the workbench that was active when the session was saved (the user
-    // workspace, or one of the relaunched agents).
-    this.opts.activateWorkspace?.(state.activeWorkspace, restored);
 
     if (this.missing.length > 0) {
       const n = this.missing.length;

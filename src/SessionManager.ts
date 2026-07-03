@@ -28,8 +28,9 @@ import { createHash } from 'node:crypto';
 import { Disposable } from './util/eventKit.ts';
 import type { Action } from './actions.ts';
 
-/** Current on-disk format version. Bumped only on an incompatible change. */
-export const SESSION_VERSION = 1;
+/** Current on-disk format version. Bumped only on an incompatible change. (v2: nested
+ *  `projects[]` — was a flat `workspaces[]`; older files fall to "warn and ignore".) */
+export const SESSION_VERSION = 2;
 
 // --- State shapes (see docs/session-management.md) --------------------------
 
@@ -39,7 +40,7 @@ export type TabState =
   | { kind: 'terminal'; cwd: string }
   | { kind: 'agent'; command: string[]; cwd: string; prompt?: string; sessionId?: string; agentKind?: 'claude-tui' | 'claude-sdk' };
 
-/** The split tree of one workspace: `leaf` tab strips joined by `split` panes. */
+/** The split tree of one workbench: `leaf` tab strips joined by `split` panes. */
 export type PanelNode =
   | { type: 'leaf'; tabs: TabState[]; activeIndex: number; active?: boolean }
   | {
@@ -50,37 +51,48 @@ export type PanelNode =
       end: PanelNode;
     };
 
-/**
- * One root's working state. A window switches its active root by swapping which
- * WorkspaceState is live (re-rooting FileTree/GitRepo/title). The MVP runtime
- * only ever has one, but the format carries a list so multi-root is a later
- * runtime change rather than a format migration.
- */
-export interface WorkspaceState {
-  root: string;
-  layout: PanelNode;
-  fileTree?: { expanded: string[] };
-  /** The workbench's live action set at save time (docs/workbench.md),
-   *  restored so a workbench's set survives an editor restart. Omitted when empty. */
-  actions?: Action[];
-  /** Present → this workspace is an agent's workbench (relaunch the agent on
-   *  restore, resumed to its conversation/worktree). Absent → the user workbench. */
-  agent?: AgentTabState;
-}
-
 /** The `agent` variant of TabState — an agent workbench's relaunch identity. */
 export type AgentTabState = Extract<TabState, { kind: 'agent' }>;
 
+/**
+ * A workbench's restorable content — the split layout, file-tree expansion, and the
+ * runnable action set (docs/workbench.md). Shared by a project's default workbench and
+ * by each of its agents. `actions` is omitted when empty.
+ */
+export interface WorkbenchState {
+  layout: PanelNode;
+  fileTree?: { expanded: string[] };
+  actions?: Action[];
+}
+
+/** An agent workbench's restore record: where it roots (its worktree), its content,
+ *  and its relaunch identity (resumed to its conversation on restore). */
+export interface AgentState {
+  root: string;
+  workbench: WorkbenchState;
+  agent: AgentTabState;
+}
+
+/** One open project: its root, its default ("you") workbench, and the agents launched
+ *  under it. A window switches its active owner (a project default or an agent) from
+ *  the rail — see docs/session-management.md "Multi-root". */
+export interface ProjectState {
+  root: string;
+  workbench: WorkbenchState;
+  agents: AgentState[];
+}
+
 export interface SessionState {
   version: number;
-  /** User-given name; absent → labelled by the primary root's basename. */
+  /** Persisted iff named; absent only on legacy no-name files. */
   name?: string;
   /** ISO timestamp, stamped by `save`. */
   savedAt: string;
-  /** At least one; `workspaces[0]` is the primary root (hash/label source). */
-  workspaces: WorkspaceState[];
-  /** Index into `workspaces` of the active root. MVP: always 0. */
-  activeWorkspace: number;
+  /** The open projects; `projects[0]` is the primary (label source). At least one. */
+  projects: ProjectState[];
+  /** The focused owner: a project index, plus an agent index within it when one of the
+   *  project's agent workbenches is active (absent → the project's default workbench). */
+  active: { project: number; agent?: number };
   /** Window-level, shared across workspaces. `visible` is the per-side dock-
    *  visibility toggle (left/right/top/bottom); absent in pre-existing sessions,
    *  treated as all-shown on restore. `sizes` holds each side's resized extent
@@ -180,7 +192,7 @@ export class SessionManager {
 
   /** The primary root of a session — the hash/label source. */
   primaryRoot(state: SessionState): string {
-    return state.workspaces[0]?.root ?? '';
+    return state.projects[0]?.root ?? '';
   }
 
   /** A short, stable, filesystem-safe hash of a root path. */
@@ -408,9 +420,9 @@ function isSessionState(value: unknown): value is SessionState {
   if (value === null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
   if (typeof v.version !== 'number') return false;
-  if (typeof v.activeWorkspace !== 'number') return false;
-  if (!Array.isArray(v.workspaces) || v.workspaces.length === 0) return false;
-  return v.workspaces.every(
-    (w) => w !== null && typeof w === 'object' && typeof (w as WorkspaceState).root === 'string',
+  if (v.active === null || typeof v.active !== 'object') return false;
+  if (!Array.isArray(v.projects) || v.projects.length === 0) return false;
+  return v.projects.every(
+    (p) => p !== null && typeof p === 'object' && typeof (p as ProjectState).root === 'string',
   );
 }

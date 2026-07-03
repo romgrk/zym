@@ -8,6 +8,7 @@ import {
   SESSION_VERSION,
   type SessionState,
   type TabState,
+  type AgentTabState,
 } from './SessionManager.ts';
 
 // Each test gets its own temp state dir, so the on-disk format is exercised for
@@ -17,12 +18,13 @@ function makeManager(): { manager: SessionManager; dir: string } {
   return { manager: new SessionManager(dir), dir };
 }
 
+// One project, its default workbench empty, no agents.
 function sessionFor(root: string, name?: string): SessionState {
   const state: SessionState = {
     version: SESSION_VERSION,
     savedAt: '',
-    activeWorkspace: 0,
-    workspaces: [{ root, layout: { type: 'leaf', tabs: [], activeIndex: 0 } }],
+    active: { project: 0 },
+    projects: [{ root, workbench: { layout: { type: 'leaf', tabs: [], activeIndex: 0 } }, agents: [] }],
   };
   if (name) state.name = name;
   return state;
@@ -33,7 +35,7 @@ test('save then loadByName round-trips a named session', () => {
   const root = '/home/me/project';
   const tab: TabState = { kind: 'file', path: '/home/me/project/a.ts', cursor: [3, 5] };
   const state = sessionFor(root, 'Work');
-  state.workspaces[0].layout = { type: 'leaf', tabs: [tab], activeIndex: 0 };
+  state.projects[0].workbench.layout = { type: 'leaf', tabs: [tab], activeIndex: 0 };
 
   manager.save(state);
   const loaded = manager.loadByName('Work');
@@ -41,30 +43,36 @@ test('save then loadByName round-trips a named session', () => {
   assert.ok(loaded);
   assert.equal(loaded!.version, SESSION_VERSION);
   assert.equal(loaded!.name, 'Work');
-  assert.equal(loaded!.workspaces[0].root, root);
-  assert.deepEqual(loaded!.workspaces[0].layout, { type: 'leaf', tabs: [tab], activeIndex: 0 });
+  assert.equal(loaded!.projects[0].root, root);
+  assert.deepEqual(loaded!.projects[0].workbench.layout, { type: 'leaf', tabs: [tab], activeIndex: 0 });
 });
 
-test('round-trips the focused workspace, active leaf, split position, and dock sizes', () => {
+test('round-trips the focused agent, active leaf, split position, and dock sizes', () => {
   const { manager } = makeManager();
   const root = '/home/me/project';
-  // A split whose end leaf is the focused one; a resized divider; a second
-  // (agent) workspace that is the active one; per-side dock extents.
-  const layout: SessionState['workspaces'][number]['layout'] = {
+  // A split whose end leaf is the focused one; a resized divider; an agent under the
+  // project that is the active owner; per-side dock extents.
+  const layout: SessionState['projects'][number]['workbench']['layout'] = {
     type: 'split',
     orientation: 'horizontal',
     position: 480,
     start: { type: 'leaf', tabs: [], activeIndex: 0 },
     end: { type: 'leaf', tabs: [], activeIndex: 0, active: true },
   };
+  const agentTab: AgentTabState = { kind: 'agent', command: ['claude'], cwd: '/home/me/project/.worktrees/agent' };
   const state: SessionState = {
     version: SESSION_VERSION,
     name: 'Split',
     savedAt: '',
-    activeWorkspace: 1,
-    workspaces: [
-      { root, layout },
-      { root: '/home/me/project/.worktrees/agent', layout: { type: 'leaf', tabs: [], activeIndex: 0 } },
+    active: { project: 0, agent: 0 },
+    projects: [
+      {
+        root,
+        workbench: { layout },
+        agents: [
+          { root: '/home/me/project/.worktrees/agent', workbench: { layout: { type: 'leaf', tabs: [], activeIndex: 0 } }, agent: agentTab },
+        ],
+      },
     ],
     docks: { notificationLog: false, sizes: { right: 320, bottom: 180 } },
   };
@@ -72,8 +80,8 @@ test('round-trips the focused workspace, active leaf, split position, and dock s
   manager.save(state);
   const loaded = manager.loadByName('Split')!;
 
-  assert.equal(loaded.activeWorkspace, 1);
-  assert.deepEqual(loaded.workspaces[0].layout, layout);
+  assert.deepEqual(loaded.active, { project: 0, agent: 0 });
+  assert.deepEqual(loaded.projects[0].workbench.layout, layout);
   assert.deepEqual(loaded.docks?.sizes, { right: 320, bottom: 180 });
 });
 
@@ -144,7 +152,7 @@ test('list returns every valid session (named + legacy no-name) and skips junk',
   Fs.writeFileSync(Path.join(manager.sessionsDir(), 'junk.json'), 'nope');
   Fs.writeFileSync(Path.join(manager.sessionsDir(), 'ignore.txt'), 'not json at all');
 
-  const roots = manager.list().map((s) => s.workspaces[0].root).sort();
+  const roots = manager.list().map((s) => s.projects[0].root).sort();
   assert.deepEqual(roots, ['/a', '/b', '/legacy']);
 });
 
@@ -175,7 +183,7 @@ test('rename moves the json and its buffer cache to the new name', () => {
   assert.equal(manager.loadByName('Old Name'), null);
   const loaded = manager.loadByName('New Name');
   assert.ok(loaded);
-  assert.equal(loaded!.workspaces[0].root, '/r');
+  assert.equal(loaded!.projects[0].root, '/r');
   assert.equal(manager.readBuffer(renamed, '/r/a.ts'), 'draft');
   const oldBuffers = manager.pathForName('Old Name').replace(/\.json$/, '.buffers');
   assert.equal(Fs.existsSync(oldBuffers), false);

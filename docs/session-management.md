@@ -20,7 +20,7 @@ session itself. A named session autosaves to
 `$XDG_STATE_HOME/zym/sessions/<slug(name)>.json` and is reopened
 explicitly through `session:open`. There is **no** automatic per-root
 session and **no** restore-on-launch. Multi-root (several projects in
-one window) rides on the same `workspaces[]` format; see the multi-root
+one window) rides on the same `projects[]` format; see the multi-root
 note below.
 
 This page covers the architecture; per-feature pages can split out
@@ -75,16 +75,12 @@ These shape everything below:
 
 ## Constraints carried from the codebase
 
-- **Single-rooted today, multi-root-ready format.** `process.cwd()`
-  feeds `FileTree`, `GitRepo`, and `PROJECT_NAME`; the app opens one
-  `initialFile`, so the runtime is single-root. But the **storage
-  format is shaped for multi-root now** (a list of *workspaces* with
-  one active — see below), so adding the active-root switch later is a
-  runtime change, not a format migration. The target model is
-  agents.md's "the window holds the active root; viewing an agent in
-  another worktree switches the active root (FileTree, GitRepo,
-  GitBranchButton, title)" — i.e. **one active root at a time,
-  switchable**, not several folders shown at once.
+- **One active root at a time, switchable — multi-root.** A window
+  holds several projects; the active one drives `FileTree` / `GitRepo` /
+  `GitBranchButton` / title, and switching owner (project or agent) from
+  the rail swaps them (per agents.md). Not several folders shown at
+  once. The storage `projects[]` format mirrors this (see below and the
+  "Multi-root" section).
 - **Sync `Fs` at startup/save is fine.** The "no node I/O on the main
   path" rule is about async `child_process`/promises starved by the
   GLib loop; `config/load.ts` already does synchronous
@@ -199,21 +195,21 @@ type PanelNode =
   | { type: 'split'; orientation: 'horizontal' | 'vertical';
       position: number; start: PanelNode; end: PanelNode };                    // position = the resized Gtk.Paned divider
 
-// One root's working state. A window switches its active root by swapping which
-// WorkspaceState is live (re-rooting FileTree/GitRepo/title) — see agents.md.
-interface WorkspaceState {
-  root: string;                 // the cwd / worktree path
-  layout: PanelNode;
-  fileTree?: { expanded: string[] };
-  agent?: AgentTabState;        // present → this is an agent workbench (relaunch on restore)
-}
+// A workbench's restorable content — shared by a project's default workbench and its agents.
+interface WorkbenchState { layout: PanelNode; fileTree?: { expanded: string[] }; actions?: Action[] }
+
+// An agent workbench: where it roots (its worktree) + content + relaunch identity.
+interface AgentState { root: string; workbench: WorkbenchState; agent: AgentTabState }
+
+// One open project: its root, its default ("you") workbench, and its agents.
+interface ProjectState { root: string; workbench: WorkbenchState; agents: AgentState[] }
 
 interface SessionState {
-  version: number;              // SESSION_VERSION (currently 1)
+  version: number;              // SESSION_VERSION (currently 2 — nested projects[])
   name?: string;                // persisted iff named; absent only on legacy no-name files
   savedAt: string;              // ISO timestamp, stamped by save()
-  workspaces: WorkspaceState[]; // runtime writes one user workspace + one per live agent
-  activeWorkspace: number;      // index into workspaces of the focused workbench (0 = user)
+  projects: ProjectState[];     // one per open project; projects[0] is the primary
+  active: { project: number; agent?: number };  // the focused owner (agent absent → project default)
   // window-level, shared. `visible` = per-side dock-visibility toggle
   // (left/right/top/bottom); absent → all sides shown. `sizes` = each side's resized
   // extent (width left/right, height top/bottom) so a dragged Gtk.Paned is restored.
@@ -224,15 +220,16 @@ interface SessionState {
 }
 ```
 
-`workspaces[0].root` is the **primary root** — the default label
-source. `workspaces[0]` is always the **user** workspace; the runtime
-carries one project today, so restore rebuilds it and relaunches the
-rest as agent workbenches. `activeWorkspace` records the **focused
-workbench** at save time — 0 for the user, else the active agent's
-index — and restore re-activates it (`activateWorkspace`): focus
-follows the user back to wherever they were (the user workbench or one
-of the relaunched agents). Multi-root (above) generalizes `slice(1)`
-into "each workspace is a project or an agent."
+`projects[0].root` is the **primary root** — the default label source.
+The format mirrors the live model exactly: a **project** groups its
+default (**"you"**) **workbench** with the **agents** launched under it.
+`serialize` (in AppWindow, which holds the workbench collaborators) walks
+`workbenchManager.projectGroups()`; `applyState` → `restoreSession`
+rebuilds each project (`projects[0]` restores into the primary built at
+startup; the rest via `addProject`), relaunching each project's agents
+while that project is active so they associate with it. `active` records
+the focused owner and is re-activated last. ("Workbench state" replaced
+the former "workspace" — see the terminology note in the runtime.)
 
 `SessionManager` resolves the path
 (`<state>/zym/sessions/<slug(name)>.json`), reads/writes via sync `Fs`
@@ -370,15 +367,11 @@ group). Commands:
 - `project:close` (`space p c`) — closes the active project (never the
   last one); agents rooted under it keep running in their own worktrees.
 
-**Persistence is not yet multi-project.** `serialize()`/`applyState()`
-still record just the primary project (`workspaces[0]`) + agents, and
-`session:open` resets extra projects (`closeNonPrimaryProjects`) before
-applying. The format already supports N projects — `workspaces[]`
-discriminates a **project** workspace (no `agent`) from an **agent** one
-(`agent` present) — so finishing this is the runtime change of
-`serialize` emitting one workspace per project and `applyState`
-iterating (`agent ? relaunchAgent : buildProjectWorkbench`) instead of
-assuming a single project at index 0.
+**Persistence is multi-project** (format v2, nested `projects[]`).
+`serialize` records every open project (its default workbench + its
+agents); `restoreSession` rebuilds them all, and `session:open` still
+resets extra projects (`closeNonPrimaryProjects`) before applying so a
+switch is deterministic.
 
 ## Edge cases
 
@@ -393,16 +386,15 @@ assuming a single project at index 0.
   re-marks them modified (`Document.restoreUnsaved`). Path + cursor +
   scroll are stored regardless; the exit prompt remains the guard for
   unwritten work.
-- **Agents** are recorded as their own workspaces (one
-  `WorkspaceState` per agent workbench, marked by an `agent` field —
-  its relaunch identity from `AgentTerminal.serialize`) after the
-  primary (user) workspace. Each workspace's `root` is the agent's
+- **Agents** are recorded as `AgentState` entries under their project
+  (`ProjectState.agents`), each carrying its relaunch identity
+  (`AgentTerminal.serialize`). An `AgentState.root` is the agent's
   **workbench cwd** (its worktree); restore re-roots the editor there
-  directly (`openAgent({ root: ws.root })`), so it needs no
+  directly (`openAgent({ root: state.root })`), so it needs no
   set_worktree re-announce from the agent. On **restore** each is
   relaunched **resumed** (`--resume <id>`, via `resumeOptions` — which
   relocates the transcript under the main dir and supplies the resume
-  id, while `ws.root` overrides where the editor roots) and does *not*
+  id, while `state.root` overrides where the editor roots) and does *not*
   re-run the original launch prompt. Relaunch is fine because `session:open`
   is explicit, not a surprise. An agent with no
   session id is relaunched fresh with its prompt; one already open is
@@ -419,11 +411,9 @@ assuming a single project at index 0.
 
 - [x] Named sessions (the persistence model) — `currentName`,
       save/save-as/open/rename/delete, name-keyed storage.
-- [ ] Multi-root: hold several project workspaces in one window,
-      switched from the WorkbenchList rail (see the multi-root note);
-      builds on the named-session spine.
+- [x] Multi-root: several projects per window (rail-switched), persisted
+      in the nested `projects[]` format (v2).
 
 ## Open questions
 
-None blocking. Multi-root is the next runtime step and needs no
-session-format change.
+None blocking.

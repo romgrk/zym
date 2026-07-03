@@ -16,7 +16,6 @@ import Adw from 'gi:Adw-1';
 type Application = InstanceType<typeof Adw.Application>;
 type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 type ToastOverlay = InstanceType<typeof Adw.ToastOverlay>;
-import type { Agent } from '../agents/types.ts';
 import { ensureProjectSettingsFile } from '../projectSettings.ts';
 import { openActionRunner } from './workbench/ActionPicker.ts';
 import { PROJECT_NAME } from './WorkbenchList.ts';
@@ -42,8 +41,9 @@ import { openBranchPicker } from './git/BranchPicker.ts';
 import { openGithubCIChecksPicker } from './GithubCIChecksPicker.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
 import { zym } from '../zym.ts';
-import { type SessionParticipant, type SessionState } from '../SessionManager.ts';
-import { SessionController } from '../SessionController.ts';
+import { type SessionParticipant, type SessionState, type ProjectState, type WorkbenchState, type AgentState, type TabState } from '../SessionManager.ts';
+import { SessionController, type SessionDocks } from '../SessionController.ts';
+import { type RestoredChild } from './PanelGroup.ts';
 import { type Notification } from '../Notification.ts';
 import { type LspConfig } from '../lsp/LspManager.ts';
 import { NotificationToasts } from './NotificationToasts.ts';
@@ -209,45 +209,27 @@ export class AppWindow {
       ownsServer: (rootDir) => this.workbenchManager.ownerWorkbenchCwd(rootDir) === this.workbench.cwd,
     });
 
-    // Session save/restore/autosave is anchored to the user workbench (its center +
-    // file tree). The builders construct (but don't attach) a tab during restore;
-    // PanelGroup.restoreLayout places them into the tree.
+    // Session save/restore/autosave. The controller owns the envelope + persistence
+    // policy; the per-project widget walk (serialize all projects, rebuild them on
+    // restore) lives here in AppWindow, which holds the collaborators. The builders
+    // construct (but don't attach) a tab during restore; PanelGroup.restoreLayout places
+    // them into the tree.
     this.sessionController = new SessionController({
-      root: process.cwd(),
-      center: userWorkbench.center,
-      fileTree: userWorkbench.fileTree,
-      serializeChild: (widget) => this.paneItems.serializeChild(widget),
       createEditorTab: (path, restore) => this.paneItems.createEditorTab(path, restore),
       createTerminalTab: (cwd) => this.paneItems.createTerminalTab(cwd),
+      serializeProjects: () => this.serializeProjects(),
+      getActive: () => this.activeOwnerRef(),
+      restoreSession: (state, buildChild) => this.restoreSession(state, buildChild),
       getDocks: () => ({
         notificationLog: this.workbench.bottomDock === 'notifications',
         visible: this.workbench.dockVisibility(),
         sizes: this.workbench.dockSizes(),
       }),
-      applyDocks: (docks) => {
-        if (docks.notificationLog && this.workbench.bottomDock !== 'notifications') this.workbenchView.toggleNotificationLog();
-        // Apply per-side visibility *after* any content has been (re)established above,
-        // so a side restored as hidden stays hidden even though its content is present.
-        if (docks.visible)
-          for (const side of DOCK_SIDES) this.workbench.setDockVisible(side, docks.visible[side] !== false);
-        // Restore resized dock extents last, once each side's visibility is settled.
-        if (docks.sizes) this.workbench.setDockSizes(docks.sizes);
-      },
-      serializeUserActions: () => userWorkbench.actions.serialize(),
-      restoreUserActions: (actions) => userWorkbench.actions.restore(actions),
-      serializeAgentWorkspaces: () => this.agentController.serializeAgentWorkspaces(),
-      restoreAgent: (ws) => this.agentController.restoreAgent(ws),
-      getActiveWorkspace: () => this.agentController.activeWorkspaceIndex(),
-      activateWorkspace: (index, restored) => {
-        const agent = index > 0 ? (restored[index - 1] as Agent | null) : null;
-        this.workbenchManager.activateOwner(agent ?? this.workbenchManager.primaryProject);
-      },
       getWindow: () => ({
         width: this.window.getWidth(),
         height: this.window.getHeight(),
         maximized: this.window.isMaximized(),
       }),
-      applyWindow: (geom) => this.applyWindowGeometry(geom),
       // Cache the unsaved contents of modified editors so a restore brings them back
       // (unsavedSnapshot also covers a restored tab not yet reopened).
       collectUnsaved: () =>
@@ -1144,6 +1126,93 @@ export class AppWindow {
       return;
     }
     this.workbenchManager.closeProject(owner);
+  }
+
+  // --- Session serialize / restore (multi-project) ---------------------------
+
+  // Snapshot one workbench's restorable content (split layout + file-tree expansion +
+  // its runnable action set, omitted when empty).
+  private serializeWorkbench(wb: Workbench<Owner>): WorkbenchState {
+    const state: WorkbenchState = {
+      layout: wb.center.serializeLayout((w) => this.paneItems.serializeChild(w)),
+      fileTree: { expanded: wb.fileTree.serializeExpanded() },
+    };
+    const actions = wb.actions.serialize();
+    if (actions.length > 0) state.actions = actions;
+    return state;
+  }
+
+  // Every open project (its default workbench + the agents grouped under it), in rail order.
+  private serializeProjects(): ProjectState[] {
+    return this.workbenchManager.projectGroups().map(({ project, agents }): ProjectState => {
+      const pw = this.workbenches.get(project)!;
+      return {
+        root: pw.cwd,
+        workbench: this.serializeWorkbench(pw),
+        agents: agents.flatMap((agent): AgentState[] => {
+          const aw = this.workbenches.get(agent);
+          const identity = agent.serialize();
+          if (!aw || !identity || identity.kind !== 'agent') return [];
+          return [{ root: aw.cwd, workbench: this.serializeWorkbench(aw), agent: identity }];
+        }),
+      };
+    });
+  }
+
+  // The focused owner as a { project, agent? } reference into the serialized projects.
+  private activeOwnerRef(): SessionState['active'] {
+    const owner = this.workbench.owner;
+    const groups = this.workbenchManager.projectGroups();
+    if (isProject(owner)) {
+      const project = groups.findIndex((g) => g.project === owner);
+      return { project: project < 0 ? 0 : project };
+    }
+    for (let project = 0; project < groups.length; project++) {
+      const agent = groups[project].agents.indexOf(owner);
+      if (agent >= 0) return { project, agent };
+    }
+    return { project: 0 };
+  }
+
+  // Rebuild the window from a saved session: restore each project's default workbench,
+  // relaunch its agents (with that project active so they associate correctly), apply the
+  // window-level docks (to the primary) + geometry, then focus the saved owner.
+  private restoreSession(state: SessionState, buildChild: (tab: TabState) => RestoredChild | null): void {
+    state.projects.forEach((p, index) => {
+      // projects[0] is the primary (already built at startup — restore into it); the rest
+      // are opened fresh.
+      const project = index === 0 ? this.workbenchManager.primaryProject : this.workbenchManager.addProject(p.root);
+      const wb = this.workbenches.get(project);
+      if (!wb) return;
+      wb.center.restoreLayout(p.workbench.layout, buildChild);
+      if (p.workbench.fileTree) wb.fileTree.restoreExpanded(p.workbench.fileTree.expanded);
+      if (p.workbench.actions) wb.actions.restore(p.workbench.actions);
+      // A project must be active while its agents relaunch, so agentProject binds to it.
+      this.workbenchManager.activateOwner(project);
+      if (index === 0 && state.docks) this.applyDocks(state.docks); // window docks → the primary
+      for (const agent of p.agents) this.agentController.restoreAgent(agent);
+    });
+    if (state.window) this.applyWindowGeometry(state.window);
+    this.activateSavedOwner(state.active);
+  }
+
+  // Focus the owner active at save time (a project's default workbench, or one of its agents).
+  private activateSavedOwner(active: SessionState['active']): void {
+    const group = this.workbenchManager.projectGroups()[active.project];
+    if (!group) return;
+    const owner = active.agent != null ? (group.agents[active.agent] ?? group.project) : group.project;
+    this.workbenchManager.activateOwner(owner);
+  }
+
+  // Apply window-level dock state (notification log, per-side visibility, resized extents)
+  // to the active workbench.
+  private applyDocks(docks: SessionDocks): void {
+    if (docks.notificationLog && this.workbench.bottomDock !== 'notifications') this.workbenchView.toggleNotificationLog();
+    // Apply per-side visibility *after* content is (re)established, so a side restored as
+    // hidden stays hidden even though its content is present.
+    if (docks.visible) for (const side of DOCK_SIDES) this.workbench.setDockVisible(side, docks.visible[side] !== false);
+    // Restore resized dock extents last, once each side's visibility is settled.
+    if (docks.sizes) this.workbench.setDockSizes(docks.sizes);
   }
 
   // Reflect the active session name in the window title (OS taskbar) and the sidebar
