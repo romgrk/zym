@@ -345,9 +345,21 @@ unnamed/default session):
 former `'user'` singleton. `WorkbenchManager` holds an ordered
 `projects[]` (the primary is `projects[0]`, the fallback owner) with
 `addProject(root)` / `closeProject` / `closeNonPrimaryProjects` and a
-`did-change-projects` emitter; the WorkbenchList rail renders
-`[…projects, …agents]` and switches between them (the same one-active-
-root switch agents already use — `activateWorkbench`). Commands:
+`did-change-projects` emitter.
+
+**Each workbench belongs to a project, and the rail groups by it.** A
+`Project` is a *grouping*: its own **default ("you") workbench** (the
+owner) plus the agents launched under it. The association is explicit
+(`agentProject`, set in `buildWorkbench` to the project active at launch)
+— *not* the agent's cwd, since agents always spawn under the primary main
+dir (agents.md cwd invariant). `projectOf(owner)` / `activeProject()` /
+`projectGroups()` expose it; the WorkbenchList rail renders each project
+as a section (its name a `setHeaderFunc` header) over its default row +
+agent rows, and switches between owners (the same one-active-root switch
+agents already use — `activateWorkbench`). The rail rebuilds on
+`did-change-projects` (emitted from `buildWorkbench` *after* the workbench
++ association exist — the agent's own `did-add-agent` fires too early to
+group). Commands:
 
 - `project:open` (`space p o`) — a folder picker; opens the chosen
   folder as a project workbench and switches to it (dedups an

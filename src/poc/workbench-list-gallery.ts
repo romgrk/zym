@@ -93,7 +93,7 @@ app.on('activate', () => {
     const list = new WorkbenchList({
       onActivate: (a) => process.stderr.write(`[POC] activate ${a.title}\n`),
       onActivateProject: (p) => process.stderr.write(`[POC] activate project ${p.title}\n`),
-      getProjects: () => [createProject(process.cwd())],
+      getGroups: () => [{ project: createProject(process.cwd()), agents: zym.agents.getAgents() }],
     });
     list.root.setSizeRequest(SIDEBAR_WIDTH, -1);
 

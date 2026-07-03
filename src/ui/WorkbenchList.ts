@@ -1,21 +1,22 @@
 /*
  * WorkbenchList — the contents of the WorkbenchSidebar (the full-height column at the
- * very left of the window). Each entry maps to a workbench owner: the open **projects**
- * first (`getProjects`, in rail order — the primary is always present, so the list is
- * never empty), then the running **agents** (`zym.agents`). See
- * docs/session-management.md "Multi-root".
+ * very left of the window). The rail is grouped by **project**: each open project is a
+ * section (its name as a header via `setHeaderFunc`) holding its workbenches — the
+ * project's own **default ("you") workbench** first, then the agents launched under it
+ * (`getGroups`, from the host). See docs/session-management.md "Multi-root".
  *
  * The top is an `Adw.HeaderBar` showing the active session name (see `setSessionName`)
  * and a button that toggles the sidebar between collapsed (icons only) and expanded
  * (icons + text); the host wires the actual width change via `onToggleCollapsed`.
  *
- * Activating a project row invokes `onActivateProject`; an agent row invokes
- * `onActivate`. Each agent row shows a status indicator + title and stays in sync as
- * agents launch, exit, or rename; a project open/close rebuilds the rail wholesale.
+ * Activating a default (project) row invokes `onActivateProject`; an agent row invokes
+ * `onActivate`. The rail rebuilds wholesale when the owner set changes (project or agent
+ * workbench opened/closed) — grouping/order can shift, so there's no per-row animation.
  *
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
  */
+import * as Os from 'node:os';
 import * as Path from 'node:path';
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
@@ -23,46 +24,57 @@ import Adw from 'gi:Adw-1';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import { ImageIcons } from '../icons.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
-import { fileIconGlyph } from './fileIcons.ts';
 import type { Agent } from '../agents/types.ts';
 import { type Owner, type Project } from './workbench/Owner.ts';
 
+// The default-row leading icon size — matches the agent status icon so the rows line up.
+const USER_ICON_SIZE = 16;
 // Project name shown in the sidebar header fallback: the last path component of the cwd.
 export const PROJECT_NAME = Path.basename(process.cwd());
-// Add/remove animation duration: each row rides in/out inside a Gtk.Revealer that
-// slides its height open (on launch) or shut (on close).
-const ROW_TRANSITION_MS = 250;
 
 addStyles(/* css */`
-  /* The unsaved-changes marker (a small dot) next to the project title — warning-colored. */
+  /* The unsaved-changes marker (a small dot) next to the session title — warning-colored. */
   .zym-modified-dot { color: var(--t-ui-status-warning); }
-  
+
   .WorkbenchRow {
     padding: calc(0.4 * var(--t-spacing)) calc(2 * var(--t-spacing));
   }
   .Workbenchrow--icon {
     margin-right: calc(1.5 * var(--t-spacing));
   }
-  
   .Workbenchrow--label {
     font-weight: bold;
   }
-  /* The user row's icon is dimmed to match the exited agent icon (muted foreground). */
+  /* The default row's icon is dimmed to match the exited agent icon (muted foreground). */
   .Workbenchrow--user-icon {
     opacity: var(--dim-opacity);
   }
+  /* A project section header (the project name above its workbenches). */
+  .WorkbenchSection {
+    font-weight: bold;
+    opacity: var(--dim-opacity);
+    padding: calc(0.6 * var(--t-spacing)) calc(2 * var(--t-spacing)) calc(0.2 * var(--t-spacing));
+  }
 `);
+
+/** A project and the agents launched under it — the rail's grouped unit. */
+export interface ProjectGroup {
+  project: Project;
+  agents: Agent[];
+}
 
 export interface WorkbenchListOptions {
   /** Fired when an agent row is activated (clicked / Enter). */
   onActivate?: (agent: Agent) => void;
-  /** Fired when a project row is activated. */
+  /** Fired when a project's default row is activated. */
   onActivateProject?: (project: Project) => void;
-  /** The open projects, in rail order (rendered before the agents). */
-  getProjects?: () => Project[];
-  /** Subscribe to project open/close so the rail rebuilds; returns an unsubscribe. */
+  /** The open projects with their agents, in rail order. */
+  getGroups?: () => ProjectGroup[];
+  /** Subscribe to owner-set changes (project/agent opened or closed) so the rail
+   *  rebuilds; returns an unsubscribe. */
   onProjectsChanged?: (callback: () => void) => { dispose(): void };
   /** Fired when the robot button toggles collapse; the host resizes the sidebar. */
   onToggleCollapsed?: (collapsed: boolean) => void;
@@ -78,19 +90,15 @@ export interface WorkbenchListOptions {
   onOpenChanges?: (agent: Agent) => void;
 }
 
-// A list entry: one of the open projects, or one of the running agents.
+// A list entry: a project's default ("you") workbench, or one of its agents.
 type Entry = { kind: 'project'; project: Project } | { kind: 'agent'; agent: Agent };
 
-// A built row: its entry, the ListBoxRow, the Revealer that animates it in/out, and
-// the per-row unsubscribes (title + status + files). `removing` marks a row that is
-// playing its collapse transition — it stays in the list box until the animation
-// ends, but is excluded from navigation/selection in the meantime.
+// A built row: its entry, the ListBoxRow, and the per-row unsubscribes (agent
+// title/status). Rebuilt wholesale, so there's no removal/animation bookkeeping.
 interface RowHandle {
   entry: Entry;
   row: InstanceType<typeof Gtk.ListBoxRow>;
-  revealer: InstanceType<typeof Gtk.Revealer>;
   unsubs: Array<() => void>;
-  removing: boolean;
 }
 
 export class WorkbenchList {
@@ -99,14 +107,11 @@ export class WorkbenchList {
   private readonly listBox: InstanceType<typeof Gtk.ListBox>;
   private readonly scrolled: InstanceType<typeof Gtk.ScrolledWindow>;
   private readonly options: WorkbenchListOptions;
-  // The built rows, in list-box order (projects first, then agents in launch order).
-  // Includes rows mid-removal (`removing`) until their collapse transition finishes.
+  private readonly userName: string;
+  // The built rows, in list-box order (each project's default row then its agents).
   private handles: RowHandle[] = [];
-  // Outstanding timer IDs for in-flight row transitions, cancelled on dispose
-  // (and on a full rebuild) so a deferred callback never touches a freed widget.
-  private timers = new Set<NodeJS.Timeout>();
   // The owner whose row is selected (kept stable across rebuilds); null selects the
-  // first project row by default. Reflects the active workbench's owner; see AppWindow.
+  // first default row by default. Reflects the active workbench's owner; see AppWindow.
   private selected: Owner | null = null;
   // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
   // header-bar sidebar toggle button.
@@ -114,7 +119,7 @@ export class WorkbenchList {
   // The active session's name in the header bar (empty for the unnamed/default
   // session); hidden while collapsed (the bar is too narrow to show it).
   private headerTitle: InstanceType<typeof Adw.WindowTitle> | null = null;
-  // The unsaved-changes marker shown after the project title; toggled via opacity
+  // The unsaved-changes marker shown after the session title; toggled via opacity
   // (slot always reserved) and hidden while collapsed. `modified` is the last state.
   private modifiedDot: InstanceType<typeof Gtk.Label> | null = null;
   private modified = false;
@@ -122,8 +127,9 @@ export class WorkbenchList {
 
   constructor(options: WorkbenchListOptions = {}) {
     this.options = options;
+    this.userName = Os.userInfo().username;
 
-    // An Adw.ToolbarView holds the project-title header bar as a top bar over the
+    // An Adw.ToolbarView holds the session-title header bar as a top bar over the
     // scrollable workbench list, so the bar matches the window header beside it and
     // the view manages the seam (and undershoot shadow) between header and list.
     this.root = new Adw.ToolbarView();
@@ -135,23 +141,25 @@ export class WorkbenchList {
     this.root.setContent(this.scrolled);
 
     this.listBox = new Gtk.ListBox();
-    this.listBox.addCssClass('navigation-sidebar')
+    this.listBox.addCssClass('navigation-sidebar');
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
+    // A project's default row carries a section header (the project name) above it.
+    this.listBox.setHeaderFunc((row: any) => this.updateHeader(row));
     this.subs.connect(this.listBox, 'row-activated', (row: any) => {
       const handle = this.handleForRow(row);
-      if (handle && !handle.removing) this.activate(handle.entry);
+      if (handle) this.activate(handle.entry);
     });
     this.scrolled.setChild(this.listBox);
 
     this.registerCommands();
 
-    // Reconcile the list whenever the global agent set changes — added/removed
-    // agents animate their rows in/out rather than snapping the whole list.
-    this.subs.add(zym.agents.onDidAddAgent(() => this.syncAgents()));
-    this.subs.add(zym.agents.onDidRemoveAgent(() => this.syncAgents()));
-    // A project open/close rebuilds the rail wholesale (rare; no per-row animation).
+    // Rebuild when the owner set changes: project add/close and agent-workbench build
+    // both fire `did-change-projects` from WorkbenchManager (the latter after the
+    // workbench + its project association exist — the agent's own `did-add-agent`
+    // fires too early to group). Agent removal comes through the registry.
     const projectsSub = this.options.onProjectsChanged?.(() => this.rebuild());
     if (projectsSub) this.subs.add(projectsSub);
+    this.subs.add(zym.agents.onDidRemoveAgent(() => this.rebuild()));
     this.rebuild();
   }
 
@@ -160,9 +168,9 @@ export class WorkbenchList {
     return this.collapsed;
   }
 
-  // The sidebar header bar: an Adw.HeaderBar (so its height/chrome matches the
-  // window header bar beside it) showing the project name as its centered title.
-  // `.workbench-header` lets the chrome theme the bar.
+  // The sidebar header bar: an Adw.HeaderBar (so its height/chrome matches the window
+  // header bar beside it) showing the active session name. `.workbench-header` lets the
+  // chrome theme the bar.
   private buildHeader(): InstanceType<typeof Adw.HeaderBar> {
     const bar = new Adw.HeaderBar();
     bar.addCssClass('workbench-header');
@@ -177,7 +185,7 @@ export class WorkbenchList {
     this.headerTitle.setTooltipText(process.cwd());
     bar.packStart(this.headerTitle);
 
-    // Unsaved-changes marker — a warning-colored dot right after the project title,
+    // Unsaved-changes marker — a warning-colored dot right after the session title,
     // shown when any open editor has unsaved edits (driven by the host via
     // `setModified`). Toggled with opacity so its slot never shifts the title.
     this.modifiedDot = iconLabel(Icons.modified);
@@ -209,8 +217,7 @@ export class WorkbenchList {
     this.modifiedDot?.setCanTarget(visible);
   }
 
-  // Toggle collapsed (icons only) ↔ expanded (icons + text): re-render the rows and
-  // let the host resize the sidebar.
+  // Toggle collapsed (icons only) ↔ expanded (icons + text): re-render and resize.
   private toggleCollapsed(): void {
     this.collapsed = !this.collapsed;
     this.headerTitle?.setVisible(!this.collapsed); // no room for the title at 48px
@@ -219,12 +226,15 @@ export class WorkbenchList {
     this.options.onToggleCollapsed?.(this.collapsed);
   }
 
-  // Full, un-animated (re)build of every row — used for the initial render and the
-  // collapse toggle (which re-renders all rows with different content). Add/remove of
-  // individual agents goes through `syncAgents` instead, so it can animate.
+  // Live groups from the host (empty until wired). The rail is never truly empty — the
+  // primary project is always present.
+  private groups(): ProjectGroup[] {
+    return this.options.getGroups?.() ?? [];
+  }
+
+  // Full (re)build of every row: each project's default row, then its agents. The
+  // section headers are attached by `setHeaderFunc` (re-run via invalidateHeaders).
   private rebuild(): void {
-    for (const id of this.timers) clearTimeout(id);
-    this.timers.clear();
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
 
@@ -235,144 +245,75 @@ export class WorkbenchList {
       child = next;
     }
 
-    // Projects come first (rail order), agents follow in launch order. Rows are built
-    // already-revealed so the initial render snaps in without a transition.
-    const entries: Entry[] = [
-      ...this.projects().map((project): Entry => ({ kind: 'project', project })),
-      ...zym.agents.getAgents().map((agent): Entry => ({ kind: 'agent', agent })),
-    ];
+    const entries: Entry[] = [];
+    for (const group of this.groups()) {
+      entries.push({ kind: 'project', project: group.project });
+      for (const agent of group.agents) entries.push({ kind: 'agent', agent });
+    }
     for (const entry of entries) {
-      const handle = this.createHandle(entry, true);
+      const handle = this.createHandle(entry);
       this.handles.push(handle);
       this.listBox.append(handle.row);
     }
-
+    this.listBox.invalidateHeaders(); // re-attach project section headers to the new rows
     this.applySelection();
   }
 
-  // Reconcile the agent rows against `zym.agents`: animate out rows whose agent has
-  // gone, animate in rows for newly-launched agents (appended in launch order). The
-  // always-present user row is left untouched.
-  private syncAgents(): void {
-    const agents = zym.agents.getAgents();
-    const present = new Set(agents);
-
-    // Animate out rows whose agent is no longer live.
-    for (const handle of this.handles) {
-      if (handle.removing || handle.entry.kind !== 'agent') continue;
-      if (!present.has(handle.entry.agent)) this.animateOut(handle);
+  // Attach a project section header above each project's default row (expanded only).
+  private updateHeader(row: InstanceType<typeof Gtk.ListBoxRow>): void {
+    const handle = this.handleForRow(row);
+    if (!this.collapsed && handle?.entry.kind === 'project') {
+      const label = new Gtk.Label({ label: handle.entry.project.title, xalign: 0, ellipsize: Pango.EllipsizeMode.END });
+      label.addCssClass('WorkbenchSection');
+      row.setHeader(label);
+    } else {
+      row.setHeader(null);
     }
-
-    // Animate in rows for agents that don't have one yet (excludes rows mid-removal).
-    const shown = new Set<Agent>();
-    for (const handle of this.handles) {
-      if (!handle.removing && handle.entry.kind === 'agent') shown.add(handle.entry.agent);
-    }
-    for (const agent of agents) {
-      if (shown.has(agent)) continue;
-      const handle = this.createHandle({ kind: 'agent', agent }, false);
-      this.handles.push(handle);
-      this.listBox.append(handle.row);
-      this.animateIn(handle);
-    }
-
-    this.applySelection();
   }
 
-  // Build a row for `entry`, wrapping its content in a Revealer that slides the row's
-  // height open/shut. `reveal` is the revealer's initial state: true snaps the row in
-  // (rebuild), false leaves it collapsed for `animateIn` to play.
-  private createHandle(entry: Entry, reveal: boolean): RowHandle {
+  private createHandle(entry: Entry): RowHandle {
     const unsubs: Array<() => void> = [];
     const content =
       entry.kind === 'project'
-        ? this.buildProjectContent(entry.project)
+        ? this.buildDefaultContent()
         : this.buildAgentContent(entry.agent, unsubs);
-
-    const revealer = new Gtk.Revealer({
-      // Fade + height-slide (rather than a hard SLIDE_DOWN): the opacity ramp masks
-      // the content reflow and the accent/separator borders on the half-height row.
-      transitionType: Gtk.RevealerTransitionType.FADE_SLIDE_DOWN,
-      transitionDuration: ROW_TRANSITION_MS,
-      revealChild: reveal,
-    });
-    revealer.setChild(content);
 
     const row = new Gtk.ListBoxRow();
     row.addCssClass('WorkbenchRow');
-    row.setChild(revealer);
-    return { entry, row, revealer, unsubs, removing: false };
+    row.setChild(content);
+    return { entry, row, unsubs };
   }
 
-  // Play the slide-open transition. The flip to revealed is deferred one loop turn so
-  // the revealer animates from collapsed rather than snapping straight to shown.
-  private animateIn(handle: RowHandle): void {
-    this.defer(0, () => {
-      if (!handle.removing) handle.revealer.setRevealChild(true);
-    });
-  }
-
-  // Play the slide-shut transition, then drop the row from the list. The row is marked
-  // `removing` (so it leaves navigation/selection at once) and its subscriptions are
-  // cut immediately — only the visual collapse waits for the timer.
-  private animateOut(handle: RowHandle): void {
-    if (handle.removing) return;
-    handle.removing = true;
-    handle.row.setSelectable(false);
-    handle.row.setActivatable(false);
-    for (const unsub of handle.unsubs) unsub();
-    handle.unsubs = [];
-    handle.revealer.setRevealChild(false);
-    this.defer(ROW_TRANSITION_MS, () => {
-      this.listBox.remove(handle.row);
-      this.handles = this.handles.filter((h) => h !== handle);
-    });
-  }
-
-  // Run `fn` after `ms` (0 → next tick), tracking the timer so a dispose/rebuild
-  // can cancel it before it touches a freed widget.
-  private defer(ms: number, fn: () => void): void {
-    const id = setTimeout(() => {
-      this.timers.delete(id);
-      fn();
-    }, ms > 0 ? ms : 0);
-    this.timers.add(id);
-  }
-
-  // The row content box carrying the. When collapsed it holds only the leading
-  // icon; expanded, the icon plus the trailing widgets.
+  // The row content box. When collapsed it holds only the leading icon; expanded, the
+  // icon plus the trailing widgets.
   private rowContent(icon: InstanceType<typeof Gtk.Widget>, ...trailing: InstanceType<typeof Gtk.Widget>[]): InstanceType<typeof Gtk.Box> {
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-    icon.addCssClass('Workbenchrow--icon')
+    icon.addCssClass('Workbenchrow--icon');
     box.append(icon);
     if (!this.collapsed) for (const w of trailing) box.append(w);
     return box;
   }
 
-  // Live projects from the host (empty until wired). The rail is never truly empty —
-  // the primary project is always present.
-  private projects(): Project[] {
-    return this.options.getProjects?.() ?? [];
-  }
-
-  // A project row: a dimmed folder glyph + the project's title (its root basename).
-  private buildProjectContent(project: Project): InstanceType<typeof Gtk.Box> {
-    const icon = iconLabel(fileIconGlyph('', true));
-    icon.addCssClass('Workbenchrow--user-icon'); // dimmed, matching the old user icon
-    const label = new Gtk.Label({ label: project.title, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
+  // A project's default ("you") workbench row: a dimmed person icon + the username —
+  // where you edit the project directly, mirroring the 'user' workbench on master. The
+  // project name lives in the section header above it, not here.
+  private buildDefaultContent(): InstanceType<typeof Gtk.Box> {
+    const icon = ImageIcons.USER(USER_ICON_SIZE);
+    icon.addCssClass('Workbenchrow--user-icon');
+    const label = new Gtk.Label({ label: this.userName, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label');
     return this.rowContent(icon, label);
   }
 
-  // An agent row's content. Subscriptions (status/mode/title/files) are pushed onto
-  // `unsubs`, which the row's handle owns and tears down when the row goes away.
+  // An agent row's content. Subscriptions (status/title) are pushed onto `unsubs`,
+  // which the row's handle owns and tears down when the row goes away.
   private buildAgentContent(
     agent: Agent,
     unsubs: Array<() => void>,
   ): InstanceType<typeof Gtk.Box> {
-    // Status indicator (shared with the conversation footer): a bundled symbolic
-    // icon — dot (idle/waiting), loading (working), circle outline (disconnected) —
-    // swapped in place as the status changes. Shown in both modes; kept in sync.
+    // Status indicator (shared with the conversation footer): a bundled symbolic icon —
+    // dot (idle/waiting), loading (working), circle outline (disconnected) — swapped in
+    // place as the status changes. Shown in both modes; kept in sync.
     const status = createAgentStatusIcon(agent);
     unsubs.push(status.dispose);
     const dot = status.widget;
@@ -380,26 +321,20 @@ export class WorkbenchList {
     if (this.collapsed) return this.rowContent(dot); // icon only
 
     const label = new Gtk.Label({ xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
-    label.addCssClass('Workbenchrow--label'); // same title font as the user row
+    label.addCssClass('Workbenchrow--label'); // same title font as the default row
     label.setText(agent.title);
     unsubs.push(agent.onTitleChange(() => label.setText(agent.title)));
 
-    // Single-line row: [status dot | name]. The edited-files badge now lives on the
+    // Single-line row: [status dot | name]. The edited-files badge lives on the
     // agent-sidebar header (AgentSidebar), reflecting the active agent, not per-row.
     return this.rowContent(dot, label);
-  }
-
-  // The live rows (everything not mid-removal) — the source of truth for navigation
-  // and selection, which must ignore rows that are animating out.
-  private liveHandles(): RowHandle[] {
-    return this.handles.filter((h) => !h.removing);
   }
 
   private handleForRow(row: InstanceType<typeof Gtk.ListBoxRow>): RowHandle | undefined {
     return this.handles.find((h) => h.row === row);
   }
 
-  // Activate an entry: switch to the project's workbench, or reveal the agent.
+  // Activate an entry: switch to the project's default workbench, or reveal the agent.
   private activate(entry: Entry | undefined): void {
     if (!entry) return;
     if (entry.kind === 'project') this.options.onActivateProject?.(entry.project);
@@ -417,10 +352,10 @@ export class WorkbenchList {
     zym.commands.add(this.root, {
       'core:down': { didDispatch: () => this.moveSelection(1), description: 'Move down' },
       'core:up': { didDispatch: () => this.moveSelection(-1), description: 'Move up' },
-      'core:top': { didDispatch: () => this.selectLiveIndex(0), description: 'Go to the top' }, // `g g`
-      'core:bottom': { didDispatch: () => this.selectLiveIndex(this.liveHandles().length - 1), description: 'Go to the bottom' }, // `G`
+      'core:top': { didDispatch: () => this.selectIndex(0), description: 'Go to the top' }, // `g g`
+      'core:bottom': { didDispatch: () => this.selectIndex(this.handles.length - 1), description: 'Go to the bottom' }, // `G`
       'core:right': { didDispatch: () => this.activate(this.selectedEntry()), description: 'Reveal the selection' },
-      // Lifecycle on the selected row (a no-op on the user row).
+      // Lifecycle on the selected row (a no-op on a project's default row).
       'agent:restart': { didDispatch: () => this.withSelectedAgent((a) => this.options.onRestart?.(a)), description: 'Restart the selected agent' },
       'agent:rename': { didDispatch: () => this.withSelectedAgent((a) => this.options.onRename?.(a)), description: 'Rename the selected agent' },
       'agent:stop': { didDispatch: () => this.withSelectedAgent((a) => this.options.onStop?.(a)), description: 'Stop the selected agent' },
@@ -441,19 +376,16 @@ export class WorkbenchList {
   }
 
   private moveSelection(delta: number): void {
-    const live = this.liveHandles();
     const selectedRow = this.listBox.getSelectedRow();
-    const current = selectedRow ? live.findIndex((h) => h.row === selectedRow) : -1;
-    this.selectLiveIndex(current + delta);
+    const current = selectedRow ? this.handles.findIndex((h) => h.row === selectedRow) : -1;
+    this.selectIndex(current + delta);
   }
 
-  // Select (and scroll/focus) the live row at `index`, clamped into range. Indexing is
-  // over the live rows, so rows animating out don't count as positions.
-  private selectLiveIndex(index: number): void {
-    const live = this.liveHandles();
-    if (live.length === 0) return;
-    const clamped = Math.max(0, Math.min(index, live.length - 1));
-    const handle = live[clamped];
+  // Select (and scroll/focus) the row at `index`, clamped into range.
+  private selectIndex(index: number): void {
+    if (this.handles.length === 0) return;
+    const clamped = Math.max(0, Math.min(index, this.handles.length - 1));
+    const handle = this.handles[clamped];
     this.listBox.selectRow(handle.row);
     handle.row.grabFocus();
   }
@@ -461,7 +393,7 @@ export class WorkbenchList {
   /** Move keyboard focus into the list (so its scoped bindings apply and the
    *  pane-navigation commands see focus as being within the workbench list). */
   focus(): void {
-    const row = this.listBox.getSelectedRow() ?? this.liveHandles()[0]?.row;
+    const row = this.listBox.getSelectedRow() ?? this.handles[0]?.row;
     if (row) row.grabFocus();
     else this.listBox.grabFocus();
   }
@@ -473,17 +405,14 @@ export class WorkbenchList {
     this.applySelection();
   }
 
-  // Reflect `this.selected` onto the list box (the first project row when nothing is
+  // Reflect `this.selected` onto the list box (the first default row when nothing is
   // selected, so a row is always highlighted).
   private applySelection(): void {
-    const live = this.liveHandles();
-    const handle = live.find((h) => this.entryOwner(h.entry) === this.selected) ?? live[0];
+    const handle = this.handles.find((h) => this.entryOwner(h.entry) === this.selected) ?? this.handles[0];
     if (handle) this.listBox.selectRow(handle.row);
   }
 
   dispose(): void {
-    for (const id of this.timers) clearTimeout(id);
-    this.timers.clear();
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
     this.subs.dispose();

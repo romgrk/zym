@@ -54,13 +54,18 @@ export class WorkbenchManager {
   // The open project owners, in rail order (the first is the primary). Agents live in
   // `zym.agents`; this is the projects half of the rail's `[...projects, ...agents]`.
   readonly projects: Project[] = [];
+  // Which project each agent belongs to — the project active when the agent was
+  // launched (not derivable from its cwd: agents always spawn under the primary
+  // main dir, see the cwd invariant in agents.md). Drives the rail grouping.
+  private readonly agentProject = new Map<Agent, Project>();
   private readonly emitter = new Emitter();
 
   constructor(deps: WorkbenchManagerDeps) {
     this.d = deps;
   }
 
-  /** Notified when a project is opened or closed, so the rail can rebuild. */
+  /** Notified when the owner set changes (project opened/closed, agent workbench built
+   *  or removed) so the rail can rebuild. */
   onDidChangeProjects(callback: () => void): Disposable {
     return this.emitter.on('did-change-projects', callback);
   }
@@ -69,6 +74,27 @@ export class WorkbenchManager {
    *  agent workbench closes, and the session's primary root. */
   get primaryProject(): Project {
     return this.projects[0];
+  }
+
+  /** The project an owner belongs to: a project is itself; an agent is the project it
+   *  was launched under (else the primary). */
+  projectOf(owner: Owner): Project {
+    return isProject(owner) ? owner : (this.agentProject.get(owner) ?? this.primaryProject);
+  }
+
+  /** The active workbench's project (the launch context for a new agent). */
+  activeProject(): Project {
+    return this.projectOf(this.activeWorkbench.owner);
+  }
+
+  /** The rail's grouped view: each project with the agents that belong to it (launch
+   *  order). An agent whose project was closed is regrouped under the primary. */
+  projectGroups(): { project: Project; agents: Agent[] }[] {
+    const agents = zym.agents.getAgents();
+    return this.projects.map((project) => ({
+      project,
+      agents: agents.filter((agent) => this.projectOf(agent) === project),
+    }));
   }
 
   /** The active workbench (the one the window currently shows). */
@@ -148,7 +174,17 @@ export class WorkbenchManager {
     });
     void workbench.actions.onDidChange(() => this.d.paneItems.pruneActionTerminals(workbench));
     this.workbenches.set(owner, workbench);
-    if (isProject(owner) && !this.projects.includes(owner)) this.projects.push(owner);
+    if (isProject(owner)) {
+      if (!this.projects.includes(owner)) this.projects.push(owner);
+    } else {
+      // Associate the agent with the project active at launch (its workbench + the
+      // active context both exist now, before activateWorkbench switches away).
+      this.agentProject.set(owner, this.activeProject());
+    }
+    // Fired after the workbench + any agent association exist, so a rail rebuild groups
+    // it correctly (the agent's own `did-add-agent` fires from its constructor, before
+    // this workbench was built — too early to group).
+    this.emitter.emit('did-change-projects');
     return workbench;
   }
 
@@ -164,8 +200,7 @@ export class WorkbenchManager {
     const existing = this.projects.find((p) => this.workbenches.get(p)?.cwd === root);
     if (existing) return existing;
     const project = createProject(root);
-    this.buildWorkbench(project, root); // registers into projects[] + workbenches
-    this.emitter.emit('did-change-projects');
+    this.buildWorkbench(project, root); // registers into projects[] + workbenches (+ emits)
     return project;
   }
 
@@ -184,6 +219,8 @@ export class WorkbenchManager {
     const i = this.projects.indexOf(project);
     if (i >= 0) this.projects.splice(i, 1);
     this.workbenches.delete(project);
+    // Its agents keep running but their project is gone — regroup them under the primary.
+    for (const [agent, proj] of this.agentProject) if (proj === project) this.agentProject.set(agent, this.primaryProject);
     this.d.paneItems.disposeWorkbenchEditors(workbench);
     workbench.dispose(); // tears down its Panels/content + releases its pooled git repo
     this.emitter.emit('did-change-projects');

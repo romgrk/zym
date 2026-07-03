@@ -46,7 +46,11 @@ opens as a center tab, not a dock — see docs/git/index.md.)
   `projects[]` (primary first), `buildWorkbench` / `activateWorkbench` /
   `cycleWorkbench` / `reRootWorkbench`, and the multi-project
   `addProject` / `closeProject` / `closeNonPrimaryProjects` (+ a
-  `did-change-projects` emitter the rail rebuilds on).
+  `did-change-projects` emitter the rail rebuilds on). It also owns the
+  **agent→project association** (`agentProject`, set in `buildWorkbench` to the
+  active project at launch) and exposes it via `projectOf` / `activeProject` /
+  `projectGroups` — the rail's grouped `{ project, agents }[]`. See
+  docs/session-management.md "Multi-root".
 - **`PaneItems`** (`src/ui/workbench/PaneItems.ts`) — the **tab/item-registry spine**
   underneath every `Panel`: the per-widget registries for each kind of center tab +
   their create/serialize/dispose/reopen lifecycle, the shared `DocumentRegistry`, and

@@ -286,7 +286,7 @@ export class AppWindow {
     this.sidebar = new Sidebar({
       onActivate: (agent) => this.agentController.showAgent(agent),
       onActivateProject: (project) => this.workbenchManager.activateOwner(project),
-      getProjects: () => this.workbenchManager.projects,
+      getGroups: () => this.workbenchManager.projectGroups(),
       onProjectsChanged: (cb) => this.workbenchManager.onDidChangeProjects(cb),
       onRestart: (agent) => this.agentController.restartAgent(agent),
       onStop: (agent) => agent.kill(),
