@@ -542,8 +542,7 @@ export class GitLogView {
     const result = await this.git.revert(commit.sha);
     if (this.disposed) return;
     if (result.isOk()) {
-      zym.notifications.addSuccess(`Reverted ${commit.shortSha}`);
-      this.load(); // the revert added a commit — refresh the list (and re-select the top)
+      this.load(); // success is silent; the revert added a commit — refresh the list (re-select the top)
     } else {
       zym.notifications.addError('Revert failed', { detail: result.unwrapErr().message.trim() });
     }

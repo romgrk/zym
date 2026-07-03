@@ -434,8 +434,7 @@ export class GitPanel {
       }
       void this.git.commit(msgPath, amend).then((result) => {
         if (result.isOk()) {
-          zym.notifications.addSuccess(amend ? 'Amended HEAD' : 'Committed');
-          this.closeCommit();
+          this.closeCommit(); // success is silent — the change list refreshes on onChange
         } else {
           zym.notifications.addError(amend ? 'Amend failed' : 'Commit failed', { detail: result.unwrapErr().message.trim() });
         }

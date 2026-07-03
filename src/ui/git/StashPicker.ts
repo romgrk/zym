@@ -20,7 +20,6 @@ const RUN: Record<StashAction, (git: GitRepo, ref: string) => Promise<GitOpResul
   apply: (git, ref) => git.stashApply(ref),
   drop: (git, ref) => git.stashDrop(ref),
 };
-const PAST: Record<StashAction, string> = { pop: 'popped', apply: 'applied', drop: 'dropped' };
 
 export function openStashPicker(host: Overlay, cwd: string, action: StashAction, git: GitRepo): void {
   const root = repoRoot(cwd);
@@ -55,8 +54,8 @@ export function openStashPicker(host: Overlay, cwd: string, action: StashAction,
         const ref = refByLabel.get(label);
         if (!ref) return;
         void RUN[action](git, ref).then((result) => {
-          if (result.isOk()) zym.notifications.addSuccess(`Stash ${PAST[action]}`);
-          else zym.notifications.addError(`Stash ${action} failed`, { detail: result.unwrapErr().message.trim() });
+          // Success is silent — only failures notify.
+          if (result.isErr()) zym.notifications.addError(`Stash ${action} failed`, { detail: result.unwrapErr().message.trim() });
         });
       },
     });

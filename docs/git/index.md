@@ -554,9 +554,12 @@ interval) can be added as we iterate.
 
 ## Shared concerns
 
-- **Errors & feedback**: every mutation reports through
-  `zym.notifications` (success info / failure error). The failure detail is
-  git's own output — `mutate` takes **stderr, then stdout** as a fallback,
+- **Errors & feedback**: mutations are **silent on success** — the panel,
+  gutter, and branch indicator already reflect the change, so a success toast
+  is just noise. Only **failures** notify (`zym.notifications.addError`); a
+  neutral info toast still explains a no-op (e.g. "No stashes", "Not in a git
+  repository"). The failure detail is git's own output — `mutate` takes
+  **stderr, then stdout** as a fallback,
   because git writes some failure reasons to stdout rather than stderr
   (notably `git commit`'s "nothing to commit …", the common empty-index case);
   surfacing only stderr there left an unactionable placeholder. `AppWindow` also
