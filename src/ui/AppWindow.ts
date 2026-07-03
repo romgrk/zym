@@ -630,7 +630,7 @@ export class AppWindow {
       // cycle steps through; selecting one activates it.
       'workbench:picker': {
         didDispatch: () => openWorkbenchPicker(this.overlay, {
-          workbenches: ([...this.workbenchManager.projects, ...zym.agents.getAgents()] as Owner[]).flatMap((owner) => {
+          workbenches: this.workbenchManager.orderedOwners().flatMap((owner) => {
             const wb = this.workbenches.get(owner);
             return wb ? [{ owner: wb.owner, cwd: wb.cwd, active: wb === this.workbench }] : [];
           }),

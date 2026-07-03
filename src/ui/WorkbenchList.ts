@@ -26,7 +26,6 @@ import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
-import { fileIconGlyph } from './fileIcons.ts';
 import type { Agent } from '../agents/types.ts';
 import { type Owner, type Project } from './workbench/Owner.ts';
 
@@ -52,7 +51,11 @@ addStyles(/* css */`
   }
   /* Space after each project section (its last row) so groups read as separate. */
   .WorkbenchRow--section-end {
-    margin-bottom: calc(1.5 * var(--t-spacing));
+    margin-bottom: calc(3 * var(--t-spacing));
+  }
+  /* The default (header) row: dimmed and iconless — its text is the project name. */
+  .WorkbenchRow--project {
+    opacity: var(--dim-opacity);
   }
 `);
 
@@ -261,6 +264,7 @@ export class WorkbenchList {
 
     const row = new Gtk.ListBoxRow();
     row.addCssClass('WorkbenchRow');
+    if (entry.kind === 'project') row.addCssClass('WorkbenchRow--project'); // dimmed header
     row.setChild(content);
     return { entry, row, unsubs };
   }
@@ -275,16 +279,16 @@ export class WorkbenchList {
     return box;
   }
 
-  // A project's default workbench row — the section header: a dimmed folder glyph + the
-  // project name (its root basename). It's still an activatable workbench row (editing
-  // the project directly, like the 'user' workbench on master); its name just *is* the
-  // project's, so the agents below read as belonging to it.
+  // A project's default workbench row — the section header: no icon, just the project
+  // name (its root basename), dimmed via the row's `--project` class. It's still an
+  // activatable workbench row (editing the project directly, like the 'user' workbench on
+  // master); its name just *is* the project's, so the agents below belong to it.
   private buildProjectContent(project: Project): InstanceType<typeof Gtk.Box> {
-    const icon = iconLabel(fileIconGlyph('', true));
-    icon.addCssClass('Workbenchrow--user-icon'); // dimmed folder glyph
+    const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
     const label = new Gtk.Label({ label: project.title, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label');
-    return this.rowContent(icon, label);
+    box.append(label);
+    return box;
   }
 
   // An agent row's content. Subscriptions (status/title) are pushed onto `unsubs`,

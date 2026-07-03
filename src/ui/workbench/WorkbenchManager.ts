@@ -55,8 +55,9 @@ export class WorkbenchManager {
   // `zym.agents`; this is the projects half of the rail's `[...projects, ...agents]`.
   readonly projects: Project[] = [];
   // Which project each agent belongs to — the project active when the agent was
-  // launched (not derivable from its cwd: agents always spawn under the primary
-  // main dir, see the cwd invariant in agents.md). Drives the rail grouping.
+  // launched. Kept explicit (rather than derived from the agent's cwd) since it's known
+  // directly at launch and survives the agent re-rooting into a worktree. Drives the
+  // rail grouping. A fresh agent also roots in this project (see activeProjectRoot).
   private readonly agentProject = new Map<Agent, Project>();
   private readonly emitter = new Emitter();
 
@@ -95,6 +96,20 @@ export class WorkbenchManager {
       project,
       agents: agents.filter((agent) => this.projectOf(agent) === project),
     }));
+  }
+
+  /** Every owner in the exact order the rail shows them (each project then its agents),
+   *  so the workbench cycle (`super-,` / `.`) steps in sidebar order. */
+  orderedOwners(): Owner[] {
+    const owners: Owner[] = [];
+    for (const { project, agents } of this.projectGroups()) owners.push(project, ...agents);
+    return owners;
+  }
+
+  /** The active project's root — where a freshly-launched agent roots (its process spawn
+   *  dir, editor, and transcript home), rather than the global primary. */
+  activeProjectRoot(): string {
+    return this.workbenches.get(this.activeProject())?.cwd ?? process.cwd();
   }
 
   /** The active workbench (the one the window currently shows). */
@@ -231,10 +246,10 @@ export class WorkbenchManager {
     for (const project of this.projects.slice(1)) this.closeProject(project);
   }
 
-  // Step the active workbench by `step` (−1 / +1) through the workbench-list order
-  // ([…projects, …agents]), wrapping around. No-op with a single owner.
+  // Step the active workbench by `step` (−1 / +1) through the rail order (each project
+  // then its agents), wrapping around. No-op with a single owner.
   cycleWorkbench(step: number): void {
-    const owners: Owner[] = [...this.projects, ...zym.agents.getAgents()];
+    const owners = this.orderedOwners();
     if (owners.length < 2) return;
     const current = owners.indexOf(this.activeWorkbench.owner);
     const next = (current + step + owners.length) % owners.length;

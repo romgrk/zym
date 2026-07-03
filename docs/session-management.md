@@ -350,9 +350,11 @@ former `'user'` singleton. `WorkbenchManager` holds an ordered
 **Each workbench belongs to a project, and the rail groups by it.** A
 `Project` is a *grouping*: its own **default ("you") workbench** (the
 owner) plus the agents launched under it. The association is explicit
-(`agentProject`, set in `buildWorkbench` to the project active at launch)
-— *not* the agent's cwd, since agents always spawn under the primary main
-dir (agents.md cwd invariant). `projectOf(owner)` / `activeProject()` /
+(`agentProject`, set in `buildWorkbench` to the project active at launch);
+a freshly-launched agent also *roots* in that project
+(`activeProjectRoot` — its process spawn dir, editor, and transcript home),
+not the global primary. The workbench cycle (`super-,` / `.`) steps in
+sidebar order via `orderedOwners()`. `projectOf(owner)` / `activeProject()` /
 `projectGroups()` expose it; the WorkbenchList rail renders each project
 as a section **headed by its default workbench row** (which shows the
 project name) over its agent rows, a margin separating the groups, and
