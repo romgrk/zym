@@ -6,9 +6,9 @@
  * each section's last row separates the groups. See docs/session-management.md
  * "Multi-root".
  *
- * The top is an `Adw.HeaderBar` showing the active session name (see `setSessionName`)
- * and a button that toggles the sidebar between collapsed (icons only) and expanded
- * (icons + text); the host wires the actual width change via `onToggleCollapsed`.
+ * The top is an `Adw.HeaderBar` showing the active session name (see `setSessionName`);
+ * it is hidden entirely for the unnamed/default session, so an unnamed window shows the
+ * rail flush to the top.
  *
  * Activating a default (project) row invokes `onActivateProject`; an agent row invokes
  * `onActivate`. The rail rebuilds wholesale when the owner set changes (project or agent
@@ -114,8 +114,11 @@ export class WorkbenchList {
   // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
   // header-bar sidebar toggle button.
   private collapsed = false;
-  // The active session's name in the header bar (empty for the unnamed/default
-  // session); hidden while collapsed (the bar is too narrow to show it).
+  // The sidebar header bar (the session-name bar). Hidden entirely for the
+  // unnamed/default session — it only carries the name, so an unnamed window shows the
+  // rail flush to the top. `setSessionName` reveals it once the session is named.
+  private headerBar: InstanceType<typeof Adw.HeaderBar> | null = null;
+  // The active session's name in the header bar; hidden while collapsed (too narrow).
   private headerTitle: InstanceType<typeof Adw.WindowTitle> | null = null;
   // The unsaved-changes marker shown after the session title; toggled via opacity
   // (slot always reserved) and hidden while collapsed. `modified` is the last state.
@@ -168,9 +171,11 @@ export class WorkbenchList {
   // chrome theme the bar.
   private buildHeader(): InstanceType<typeof Adw.HeaderBar> {
     const bar = new Adw.HeaderBar();
+    this.headerBar = bar;
     bar.addCssClass('workbench-header');
     bar.setShowStartTitleButtons(false);
     bar.setShowEndTitleButtons(false);
+    bar.setVisible(false); // unnamed by default — shown once the session is named
 
     // The active session's name — empty until a session is named (`setSessionName`).
     // Hidden when collapsed (no room in 48px). Packed at the start (not the centered
@@ -198,10 +203,12 @@ export class WorkbenchList {
     this.updateModifiedDot();
   }
 
-  /** Reflect the active session name in the header — just the name, empty for the
-   *  unnamed/default session (docs/session-management.md). */
+  /** Reflect the active session name in the header. The header bar shows only for a
+   *  named session — the unnamed/default session hides it entirely so the rail sits
+   *  flush to the top (docs/session-management.md). */
   setSessionName(name: string | null): void {
     this.headerTitle?.setTitle(name ?? '');
+    this.headerBar?.setVisible(name != null);
   }
 
   // The dot shows only when there are unsaved edits and the sidebar is expanded
