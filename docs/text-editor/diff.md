@@ -45,9 +45,9 @@ true`) — the widget sits OVER its own line (the line is grown to the widget's 
 lands *on the headerband* (`j`/`k` stops there). The caret box itself is **suppressed** on the header
 rows (a `no-cursor` decoration) and the band reads as **selected** instead (`.mb-header-focused`) —
 both owned by `StickyHeaders` (see below) — so it's clear the cursor is on the header without a stray
-box over the filename. That selection follows the shared list idiom (`--selection-bg` /
-`--selection-bg-focus`): a neutral foreground wash when the diff is unfocused, an accent tint + accent
-outline only while the diff editor holds keyboard focus (`:focus-within`). Being
+box over the filename. That selection shows as an **outline only** (the background never changes): a
+neutral hairline when the diff is unfocused, promoted to the accent colour only while the diff editor
+holds keyboard focus (`:focus-within`). Being
 an ordinary text-window `add_overlay` child it **scrolls
 natively** — smooth on a touchpad, never swallows scroll (it bubbles to the view), and is **clipped to
 the viewport by the text view** (so nothing draws over the tab bar). A single click on a header does
@@ -58,9 +58,9 @@ flag (in `BlockDecorations`) clamps the overlay's Y to the scroll top and re-cla
 rides the text. To stop stacked pinned headers from accumulating, a sticky band is also clamped to sit
 no lower than just above the **next** sticky band (`nextStickyBandTop`), so an earlier file's header
 slides up and rides the text out of view as the next reaches the top — only the current (last-passed)
-file's header stays pinned. The opaque header fill (libadwaita's `--card-bg-color` painted over an
-opaque `--window-bg-color` base, since the card color is translucent in dark) lets it occlude the diff
-scrolling underneath — including the `⋯` gap bands and review-comment cards, which are kept strictly
+file's header stays pinned. The opaque header fill (libadwaita's `--thumbnail-bg-color`) lets it
+occlude the diff scrolling underneath — including the `⋯` gap bands and review-comment cards, which
+are kept strictly
 **below** the headers in the overlay draw order (sticky bands stay at the `add_overlay` queue tail; see
 the z-order constraint in [inline-widgets.md](inline-widgets.md)).
 
@@ -80,8 +80,8 @@ trailing gap (no hunk follows, as git prints nothing there). When the line-numbe
 (`editor.diffLineNumbers`), the `@@ -old +new @@` range just restates the gutter, so `gapLabel` drops
 it and keeps only the trailing section context (a bare `⋯` when the hunk has none); `installOverlays`
 keys the band on the displayed text so a live toggle rebuilds it. Markers render in the editor
-foreground, same as the filename, on the same opaque card band as the file header (`--card-bg-color`
-over an opaque `--window-bg-color` base). The leading file-head gap (`'above'` the first content row) and between-window
+foreground, same as the filename, on the same opaque `--thumbnail-bg-color` band as the file header.
+The leading file-head gap (`'above'` the first content row) and between-window
 gaps (`'below'` the last shown row) — plus review-comment cards — are ordinary (non-sticky)
 `BlockDecorations`, the gaps `fullWidth: 'content'` so they span the full content width under the
 header and stay full-width while scrolling horizontally with the text (unlike the pinned header).

@@ -21,12 +21,9 @@ import { escapeMarkup } from './proseMarkup.ts';
 addStyles(/* css */`
   .mb-header {
     padding: var(--t-spacing) calc(2 * var(--t-spacing));
-    /* The libadwaita "card" surface, so it tracks the OS light/dark theme. --card-bg-color is
-       translucent in dark, and this band must stay opaque to occlude the diff scrolling under it,
-       so it's painted over an opaque --window-bg-color base — exactly how a card sits on the window.
-       Replaces the old hard-coded editor-bg + 16% white overlay, which read too bright. */
-    background-color: var(--window-bg-color);
-    background-image: linear-gradient(var(--card-bg-color), var(--card-bg-color));
+    /* libadwaita's thumbnail surface — opaque (so the band occludes the diff scrolling under it) and
+       tracks the OS light/dark theme. Replaces the old hard-coded editor-bg + 16% white overlay. */
+    background-color: var(--thumbnail-bg-color);
     border-radius: 5px;
   }
   .mb-header-icon { color: var(--t-ui-text-muted); }
@@ -35,29 +32,26 @@ addStyles(/* css */`
   .mb-header-del { color: var(--t-ui-status-error); }
   /* An unsaved (modified) diff file: warning-coloured path led by a warning dot. */
   .mb-header-modified { color: var(--t-ui-status-warning); }
-  /* The header whose (read-only) line the caret sits on (sticky-diff navigation) reads as SELECTED,
-     using the shared list-selection idiom (docs/styling.md → --selection-bg): a NEUTRAL wash of the
-     band's own foreground when the diff is unfocused — promoted to an ACCENT tint + accent outline
-     only while the diff editor holds keyboard focus (:focus-within on its .zym-editor source view,
-     the header's overlay ancestor). The wash replaces the card overlay (still over the opaque
-     --window-bg-color base, so the band never turns translucent). The class lands on the .mb-header
-     element itself (the widget IS the row). */
+  /* The header whose (read-only) line the caret sits on (sticky-diff navigation) reads as SELECTED
+     via an OUTLINE only — the background never changes. A neutral hairline when the diff is
+     unfocused, promoted to the accent colour only while the diff editor holds keyboard focus
+     (:focus-within on its .zym-editor source view, the header's overlay ancestor). The class lands
+     on the .mb-header element itself (the widget IS the row). */
   .mb-header.mb-header-focused {
-    background-image: linear-gradient(var(--selection-bg), var(--selection-bg));
-  }
-  .zym-editor:focus-within .mb-header.mb-header-focused {
-    background-image: linear-gradient(var(--selection-bg-focus), var(--selection-bg-focus));
-    outline: 1px solid var(--accent-color);
+    outline: 1px solid var(--border-color);
     outline-offset: -1px;
   }
+  .zym-editor:focus-within .mb-header.mb-header-focused {
+    outline-color: var(--accent-color);
+  }
   /* Fold markers (the elided-gap bands): an OPAQUE band that must occlude the diff scrolling under
-     it (never transparent, so the rows behind it can't show through). Shares the file header's card
-     surface (--card-bg-color over an opaque --window-bg-color base) so the two chrome bands read as
-     one family (and track the OS theme together). No padding: a single compact line with the marker
-     text flush to the code column. */
+     it (never transparent, so the rows behind it can't show through). Shares the file header's
+     --thumbnail-bg-color surface so the two chrome bands read as one family. Half a line of vertical
+     breathing room (0.5em; GTK CSS has no lh unit) + the header's horizontal inset so the marker
+     lines up under the filename. */
   .mb-gap {
-    background-color: var(--window-bg-color);
-    background-image: linear-gradient(var(--card-bg-color), var(--card-bg-color));
+    background-color: var(--thumbnail-bg-color);
+    padding: 0.5em calc(2 * var(--t-spacing));
   }
   /* The marker TEXT reads as the editor foreground dimmed via Adwaita's --dim-opacity (the muted
      idiom — dim the real foreground, not a grey). It lives on a child label so the dim never touches
