@@ -29,7 +29,6 @@ import Gdk from 'gi:Gdk-4.0';
 import { Terminal, type TerminalOptions } from './Terminal.ts';
 import type { Agent, AgentDriver, AgentDriverFactory, AgentHost, AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 import type { WorkbenchActions } from './workbench/WorkbenchActions.ts';
-import { worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
 import type { TabState } from '../SessionManager.ts';
@@ -38,9 +37,6 @@ export type { AgentMode, AgentResume, AgentStatus } from '../agents/types.ts';
 export type { WorktreeInfo } from '../git.ts';
 
 export interface AgentTerminalOptions extends TerminalOptions {
-  /** The worktree the agent logically works in — seeds `effectiveCwd` (the workbench
-   *  root) while the process spawns in `cwd` (the main dir). Defaults to `cwd`. */
-  worktree?: string;
   /** An initial prompt to launch the agent with (appended to its argv). */
   prompt?: string;
   /** Resume a past conversation rather than starting a new one. */
@@ -72,14 +68,10 @@ export class AgentTerminal extends Terminal implements Agent {
   // agent keeps no action copy — it pipes its reported set_actions straight in. Null
   // until bound (set_actions only arrives once the agent runs, well after binding).
   private boundActions: WorkbenchActions | null = null;
-  // The worktree the agent logically works in (the workbench root): seeded from
-  // `options.worktree` (else the spawn cwd) and updated when the agent moves via the
-  // set_worktree bridge tool. Distinct from `this.cwd`, the process's (main-dir) cwd.
-  private _effectiveCwd: string;
-  // The git worktree the agent is in, computed lazily from `_effectiveCwd` and
-  // cached; recomputed on a cwd change. `null` = not inside a repo.
-  private _worktree: WorktreeInfo | null | undefined;
-  private readonly worktreeHandlers: Array<() => void> = [];
+  // Notified when the agent announces (set_worktree) a move into a new cwd — the host
+  // re-roots the agent's workbench there. The agent stores no editor cwd of its own;
+  // the workbench (`workbench.cwd`) is the single source of truth.
+  private readonly worktreeHandlers: Array<(cwd: string) => void> = [];
   // A worktree the Bash validator saw the agent create but which it hasn't yet
   // announced via set_worktree (cleared when it does); drives the warning toast.
   private _pendingWorktree: string | null = null;
@@ -111,7 +103,6 @@ export class AgentTerminal extends Terminal implements Agent {
     this.driverFactory = options.driverFactory;
     this.baseCommand = baseCommand;
     this.launchPrompt = options.prompt;
-    this._effectiveCwd = options.worktree ?? this.cwd;
     this.root.addCssClass('AgentTerminal');
     this.applyThemeColors();
 
@@ -178,20 +169,9 @@ export class AgentTerminal extends Terminal implements Agent {
     };
   }
 
-  /** The git worktree the agent runs in, or null when its cwd isn't in a repo. */
-  get worktree(): WorktreeInfo | null {
-    if (this._worktree === undefined) this._worktree = worktreeInfo(this._effectiveCwd);
-    return this._worktree;
-  }
-
-  /** The agent's current working directory — its launch cwd, or a worktree it has
-   *  since moved into (reported via the set_worktree bridge tool). */
-  get effectiveCwd(): string {
-    return this._effectiveCwd;
-  }
-
-  /** Subscribe to the agent moving into a different git worktree. Returns unsub. */
-  onDidChangeWorktree(callback: () => void): () => void {
+  /** Subscribe to the agent moving into a different git worktree (the new cwd is
+   *  passed). Returns unsub. */
+  onDidChangeWorktree(callback: (cwd: string) => void): () => void {
     this.worktreeHandlers.push(callback);
     return () => {
       const index = this.worktreeHandlers.indexOf(callback);
@@ -208,14 +188,12 @@ export class AgentTerminal extends Terminal implements Agent {
     this._pendingWorktree = null;
   }
 
-  // The agent moved into `cwd` (set_worktree): recompute the worktree, drop any
-  // pending validator warning (it did announce), and notify.
-  private setEffectiveCwd(cwd: string): void {
-    if (cwd === this._effectiveCwd) return;
-    this._effectiveCwd = cwd;
-    this._worktree = worktreeInfo(cwd);
+  // The agent announced (set_worktree) a move into `cwd`: drop any pending validator
+  // warning (it did announce) and notify so the host re-roots this agent's workbench
+  // (which dedups a no-op move). The agent keeps no cwd of its own.
+  private announceWorktree(cwd: string): void {
     this._pendingWorktree = null;
-    for (const handler of this.worktreeHandlers) handler();
+    for (const handler of this.worktreeHandlers) handler(cwd);
   }
 
   // A pinned name (`agent:rename`) wins, then Claude's own session name (its
@@ -292,16 +270,15 @@ export class AgentTerminal extends Terminal implements Agent {
     return this.driver?.sessionId ?? null;
   }
 
-  /** Session state: base argv + the workbench (worktree) cwd + prompt, plus the
-   *  session id so a restore can resume the conversation rather than start over. The
-   *  cwd recorded is `effectiveCwd` (the worktree the editor roots at), not the
-   *  process spawn dir (always the main dir) — restore re-roots there. */
+  /** Session state: base argv + prompt + session id so a restore can resume the
+   *  conversation. The editor root (worktree) is captured by the enclosing `AgentState.root`
+   *  (= the workbench cwd), not here — this `cwd` is just the process spawn dir. */
   serialize(): TabState | null {
     return {
       kind: 'agent',
       agentKind: 'claude-tui',
       command: this.baseCommand,
-      cwd: this.effectiveCwd,
+      cwd: this.cwd,
       prompt: this.launchPrompt,
       sessionId: this.sessionId ?? undefined,
     };
@@ -366,7 +343,7 @@ export class AgentTerminal extends Terminal implements Agent {
         this._sessionName = name;
         this.emitTitleChange();
       },
-      onCwd: (cwd) => this.setEffectiveCwd(cwd),
+      onCwd: (cwd) => this.announceWorktree(cwd),
       onWorktreeCreated: (path) => { this._pendingWorktree = path; },
       // Pipe the agent's reported set_actions straight into its workbench's set (bound
       // via bindActions, before the agent can report). The agent holds no copy.

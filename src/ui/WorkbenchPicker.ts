@@ -22,6 +22,7 @@ import { iconSpan } from './icons.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
+import { worktreeInfo } from '../git.ts';
 import { type Owner, isProject } from './workbench/Owner.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -87,7 +88,8 @@ function workbenchDetail(wb: WorkbenchInfo): string {
   if (wb.active) {
     parts.push(`<span foreground="${HIGHLIGHT_COLOR}" face="Sans" line_height="${PROSE_LINE_HEIGHT}">current</span>`);
   }
-  const worktree = isProject(wb.owner) ? null : agentWorktreeMarkup(wb.owner.worktree);
+  // Compute the agent's worktree badge from its workbench cwd (the source of truth).
+  const worktree = isProject(wb.owner) ? null : agentWorktreeMarkup(worktreeInfo(wb.cwd));
   parts.push(
     worktree ??
       `<span alpha="55%" face="Sans" line_height="${PROSE_LINE_HEIGHT}">${escapeMarkup(Path.basename(wb.cwd))}</span>`,

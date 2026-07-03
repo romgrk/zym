@@ -81,7 +81,6 @@ export type AgentDriverFactory = (baseCommand: string[], resume?: AgentResume) =
 
 import Gtk from 'gi:Gtk-4.0';
 import type { TabState } from '../SessionManager.ts';
-import type { WorktreeInfo } from '../git.ts';
 import type { Action } from '../actions.ts';
 import type { WorkbenchActions } from '../ui/workbench/WorkbenchActions.ts';
 
@@ -108,8 +107,6 @@ export interface Agent {
   readonly status: AgentStatus;
   readonly permissionMode: AgentMode;
   readonly changedFiles: string[];
-  readonly worktree: WorktreeInfo | null;
-  readonly effectiveCwd: string;
   readonly sessionId: string | null;
   readonly renamed: boolean;
   readonly exited: boolean;
@@ -120,7 +117,10 @@ export interface Agent {
   onDidChangeStatus(callback: () => void): () => void;
   onDidChangePermissionMode(callback: () => void): () => void;
   onDidChangeFiles(callback: () => void): () => void;
-  onDidChangeWorktree(callback: () => void): () => void;
+  /** The agent announced (via set_worktree) that it moved into `cwd` — the host re-roots
+   *  the agent's workbench there (workbench.cwd is the single source of truth for the
+   *  editor root; the agent no longer stores it). */
+  onDidChangeWorktree(callback: (cwd: string) => void): () => void;
   onDidChangeAttention(callback: () => void): () => void;
 
   /** Spawn/begin the agent after it has been mounted. A host that spawns in its

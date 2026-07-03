@@ -474,14 +474,18 @@ announcing.
   (`~/.claude/projects/<encoded-main-dir>`), so `claude --resume <id>` always
   resolves — no relocation dance, no "resume into a vanished cwd".
 - **editor root** (`workbench.cwd`) — the worktree the user sees: Files/Git/gutters.
-  Seeded from `openAgent({ root })` and moved by `set_worktree` (`reRootWorkbench`).
+  **The single source of truth for where the agent's editor is rooted** — the agent
+  stores no cwd of its own. Seeded from `openAgent({ root })` (→ `buildWorkbench(agent,
+  root)`) and moved by `set_worktree`, which the agent surfaces as a cwd on
+  `onDidChangeWorktree` for `reRootWorkbench` to apply.
 - **where the agent edits** — the worktree, reached via the agent's own Bash `cd`
   / absolute paths; `set_worktree` keeps the editor root in step.
 
-So `openAgent` spawns at `mainRoot` and threads the worktree separately as
-`AgentLaunch.worktree` (→ the agent's `effectiveCwd`, seeding the workbench root);
-a vanished `root` falls back to `mainRoot`. Resume/branch/restart pass the worktree
-as `root` (editor only) — they never put it on the process cwd. The trade-off: the
+So `openAgent` spawns at `mainRoot` and threads the worktree separately as `root`,
+which roots the agent's **workbench** (not the agent); a vanished `root` falls back to
+`mainRoot`. Resume/branch/restart pass the worktree as `root` (editor only) — reading
+it back from `workbench.cwd` (`agentRoot`) — and never put it on the process cwd. The
+trade-off: the
 transcript records the *main dir* as Claude's cwd, not the worktree (already true
 for dynamic moves) — recovered by the `<id>.zym-worktree` sidecar (*Resume* below).
 

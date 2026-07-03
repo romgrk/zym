@@ -20,7 +20,6 @@ import Adw from 'gi:Adw-1';
 import { addStyles } from '../styles.ts';
 import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
-import { worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { TextEditor, createInput } from './TextEditor/TextEditor.ts';
 import { createSlashCommandSource } from './TextEditor/createSlashCommandSource.ts';
 import { MarkdownView } from './markdown/MarkdownView.ts';
@@ -215,9 +214,6 @@ export interface AgentConversationOptions {
   /** The directory claude is spawned in — always the editor's main dir (the cwd
    *  invariant), never a worktree. See docs/agents.md. */
   cwd: string;
-  /** The worktree the agent logically works in — seeds `effectiveCwd` (the workbench
-   *  root) while the process spawns in `cwd`. Defaults to `cwd`. */
-  worktree?: string;
   /** Base argv (default `['claude']`). */
   command?: string[];
   /** Resume a past conversation (`--resume`/`--continue`) instead of starting fresh.
@@ -360,22 +356,16 @@ export class AgentConversation implements Agent {
   private autoNaming = false;
   private disposed = false;
   private _changedFiles: string[] = [];
-  // The worktree the agent logically works in (the workbench root): seeded from
-  // `options.worktree` (else the spawn cwd) and updated when the agent moves via the
-  // set_worktree bridge tool. Distinct from `this.cwd`, the process's (main-dir) cwd.
-  private _effectiveCwd: string;
-  private _worktree: WorktreeInfo | null | undefined;
   private _viewed = false;
   private _acknowledged = true;
   private readonly statusHandlers: Array<() => void> = [];
   private readonly fileHandlers: Array<() => void> = [];
   private readonly titleHandlers: Array<() => void> = [];
   private readonly attentionHandlers: Array<() => void> = [];
-  private readonly worktreeHandlers: Array<() => void> = [];
+  private readonly worktreeHandlers: Array<(cwd: string) => void> = [];
 
   constructor(options: AgentConversationOptions) {
     this.cwd = options.cwd;
-    this._effectiveCwd = options.worktree ?? options.cwd;
     this.launchPrompt = options.prompt;
     this.userPrompt = options.userPrompt;
     this.baseCommand = options.command;
@@ -634,7 +624,6 @@ export class AgentConversation implements Agent {
   get status(): AgentStatus { return this._status; }
   get permissionMode(): AgentMode { return this._permissionMode; }
   get changedFiles(): string[] { return this._changedFiles.slice(); }
-  get effectiveCwd(): string { return this._effectiveCwd; }
   get sessionId(): string | null { return this.session.sessionId; }
   get renamed(): boolean { return this._displayName !== null; }
   get exited(): boolean { return this._status === 'disconnected'; }
@@ -647,18 +636,10 @@ export class AgentConversation implements Agent {
     return [this.subagentView.headerButton.button, this.monitorView.headerButton.button];
   }
 
-  get worktree(): WorktreeInfo | null {
-    if (this._worktree === undefined) this._worktree = worktreeInfo(this._effectiveCwd);
-    return this._worktree;
-  }
-
-  // The agent moved into `cwd` (set_worktree): recompute the worktree and notify so
-  // AppWindow re-roots this agent's workbench.
-  private setEffectiveCwd(cwd: string): void {
-    if (cwd === this._effectiveCwd) return;
-    this._effectiveCwd = cwd;
-    this._worktree = worktreeInfo(cwd);
-    for (const handler of this.worktreeHandlers) handler();
+  // The agent announced (set_worktree) a move into `cwd`: notify so AppWindow re-roots
+  // this agent's workbench (which dedups a no-op move). The agent keeps no cwd of its own.
+  private announceWorktree(cwd: string): void {
+    for (const handler of this.worktreeHandlers) handler(cwd);
   }
 
   get needsAttention(): boolean {
@@ -699,17 +680,16 @@ export class AgentConversation implements Agent {
 
   clearUnannouncedWorktree(): void { /* no worktree validator for sdk */ }
 
-  /** Session state: base argv + the workbench (worktree) cwd + prompt + session id,
-   *  tagged `claude-sdk` so a restore relaunches this native host (not the terminal
-   *  agent) and resumes the conversation rather than starting over. The cwd recorded
-   *  is `effectiveCwd` (the worktree the editor roots at), not the process spawn dir
-   *  (always the main dir) — restore re-roots there. */
+  /** Session state: base argv + prompt + session id, tagged `claude-sdk` so a restore
+   *  relaunches this native host (not the terminal agent) and resumes the conversation.
+   *  The editor root (worktree) is captured by the enclosing `AgentState.root` (= the
+   *  workbench cwd), not here — this `cwd` is just the process spawn dir. */
   serialize(): TabState | null {
     return {
       kind: 'agent',
       agentKind: 'claude-sdk',
       command: this.baseCommand ?? ['claude'],
-      cwd: this.effectiveCwd,
+      cwd: this.cwd,
       prompt: this.launchPrompt,
       // Fall back to the resume id: a lazily-resumed agent that the user hasn't
       // sent a turn to yet has no live (init-reported) session id, but must still
@@ -736,7 +716,7 @@ export class AgentConversation implements Agent {
   onTitleChange(cb: () => void): () => void { return push(this.titleHandlers, cb); }
   onDidChangeAttention(cb: () => void): () => void { return push(this.attentionHandlers, cb); }
   onDidChangePermissionMode(cb: () => void): () => void { return push(this.permissionModeHandlers, cb); }
-  onDidChangeWorktree(cb: () => void): () => void { return push(this.worktreeHandlers, cb); }
+  onDidChangeWorktree(cb: (cwd: string) => void): () => void { return push(this.worktreeHandlers, cb); }
 
   dispose(): void {
     this.disposed = true; // an in-flight auto-rename must not touch a torn-down view
@@ -899,7 +879,7 @@ export class AgentConversation implements Agent {
       // Pipe the agent's set_actions straight into its workbench's set (bound via
       // bindActions); the controller's change re-renders the header-bar buttons.
       this.session.onActions(({ actions }) => this.boundActions?.setFromAgent(actions)),
-      this.session.onCwd(({ cwd }) => this.setEffectiveCwd(cwd)),
+      this.session.onCwd(({ cwd }) => this.announceWorktree(cwd)),
       this.session.onMode(() => {
         this._permissionMode = this.session.permissionMode;
         this.updateFooter();
@@ -1281,7 +1261,7 @@ export class AgentConversation implements Agent {
 }
 
 /** Push `cb` onto `list` and return an unsubscribe that splices it out. */
-function push(list: Array<() => void>, cb: () => void): () => void {
+function push<T>(list: T[], cb: T): () => void {
   list.push(cb);
   return () => {
     const i = list.indexOf(cb);

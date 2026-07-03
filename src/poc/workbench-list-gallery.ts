@@ -36,8 +36,6 @@ function mockAgent(title: string, status: AgentStatus): Agent {
     status,
     permissionMode: 'default',
     changedFiles: [],
-    worktree: null,
-    effectiveCwd: process.cwd(),
     sessionId: null,
     renamed: false,
     exited: status === 'disconnected',

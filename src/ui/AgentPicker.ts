@@ -22,6 +22,7 @@ import * as Path from 'node:path';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
 import { listResumableSessions, relativeTime, type AgentSession } from '../agentSessions.ts';
 import { zym } from '../zym.ts';
+import type { WorktreeInfo } from '../git.ts';
 import type { Agent } from '../agents/types.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -44,6 +45,9 @@ export interface AgentPickerOptions {
   sessionRoots?: string[];
   /** Entry placeholder (e.g. "Send to agent…"). Defaults to "Open agent or conversation…". */
   placeholder?: string;
+  /** A live agent's worktree (for the right-aligned branch badge), computed from its
+   *  workbench cwd by the caller (the agent no longer stores it). */
+  agentWorktree?: (agent: Agent) => WorktreeInfo | null;
 }
 
 type Entry =
@@ -88,7 +92,7 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
         // The shared status indicator before the title; the title can carry
         // `backtick` spans (claude reports them), rendered as prose. A linked-
         // worktree badge, when present, is shown right-aligned as the detail.
-        const worktree = agentWorktreeMarkup(entry.agent.worktree);
+        const worktree = agentWorktreeMarkup(options.agentWorktree?.(entry.agent) ?? null);
         const lead = agentStatusMarkup(entry.agent.status);
         return renderRowSingleLine({
           main: `${lead} ${proseMarkup(item.text, positions)}`,

@@ -57,10 +57,6 @@ export interface AgentLaunch {
    *  (the cwd invariant), never a worktree, so its OS cwd can't be removed out from
    *  under it and `--resume` resolves under one project dir. See docs/agents.md. */
   cwd: string;
-  /** The worktree the agent logically works in: seeds its `effectiveCwd` and roots
-   *  its workbench (Files/Git/gutters). Distinct from `cwd` (the process spawn dir);
-   *  defaults to `cwd` when the agent runs in the main dir. */
-  worktree?: string;
   /** Base argv (default `['claude']`). */
   command?: string[];
   /** An initial prompt to launch with — what the agent is told (may include zym's
@@ -94,7 +90,6 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
     create: (l) =>
       new AgentTerminal({
         cwd: l.cwd,
-        worktree: l.worktree,
         command: l.command,
         prompt: l.prompt,
         resume: l.resume,
@@ -105,7 +100,7 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   'claude-sdk': {
     kind: 'claude-sdk',
     options: claudeSdkLaunchOptions,
-    create: (l) => new AgentConversation({ cwd: l.cwd, worktree: l.worktree, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile }),
+    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile }),
   },
 };
 

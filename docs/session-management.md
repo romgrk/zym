@@ -106,10 +106,11 @@ These shape everything below:
     model).
   - **`Terminal`** — a shell; only its `cwd` is meaningful (process
     can't restore).
-  - **`AgentTerminal`** — `command` + `cwd` + launch `prompt`; process
-    relaunch-only. The `cwd` recorded is the **workbench (worktree) cwd**
-    (`effectiveCwd`), not the process spawn dir (always the main dir — see the cwd
-    invariant in agents.md); restore re-roots the editor there.
+  - **`AgentTerminal`** — `command` + launch `prompt`; process
+    relaunch-only. The editor root (worktree) is captured by the enclosing
+    **`AgentState.root`** (= the agent's workbench cwd, the single source of
+    truth); the `agent`'s own serialized `cwd` is just the process spawn dir.
+    Restore re-roots the editor at `AgentState.root`.
 - **`FileTree` (left dock)** — `rootPath` + which directories are
   expanded.
 - **`AgentManager` (`zym.agents`)** — the live agent registry.

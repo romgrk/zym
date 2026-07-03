@@ -33,7 +33,7 @@ import { openAgentLauncher, launchPrompt, type LauncherMode } from './AgentLaunc
 import { openPicker } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
-import { listWorktrees } from '../git.ts';
+import { listWorktrees, worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { CompositeDisposable, Disposable } from '../util/eventKit.ts';
 
 type Wb = Workbench<Owner>;
@@ -101,6 +101,7 @@ export class AgentController {
         didDispatch: () => openAgentPicker(this.host(), {
           onActivate: (agent) => this.showAgent(agent),
           sessionRoots: this.agentSessionRoots(),
+          agentWorktree: (agent) => this.agentWorktree(agent),
           // Resume restoring the conversation's branch/worktree/cwd (see resumeOptions).
           onResume: (session) => this.openAgent(this.resumeOptions(session)),
           onStart: (prompt) => this.openAgent({ prompt }),
@@ -155,18 +156,18 @@ export class AgentController {
     // Invariant: the agent *process* always spawns in the editor's main dir, never a
     // worktree — its OS cwd then can't sit inside a worktree that gets removed (which
     // crashes the agent), and every transcript lands under one project dir so
-    // `--resume` always resolves. A worktree is an editor concern only: `root` re-roots
-    // the workbench (Files/Git/gutters) and seeds the agent's effectiveCwd. See docs/agents.md.
-    // The agent's process spawns in — and its transcripts land under — the active
-    // project's root (the launcher's `root` may be a worktree *under* it; the process
-    // never spawns in a worktree, per the cwd invariant). `activeProjectRoot` resolves
-    // the active workbench to its project, so launching from a second project spawns
-    // there, not the global primary. During restore the primary is active → primary.
+    // `--resume` always resolves. The worktree is an editor concern only: `root` roots the
+    // agent's *workbench* (Files/Git/gutters), which owns the editor cwd — the agent stores
+    // none. The process spawns in — and transcripts land under — the active project's root
+    // (the launcher's `root` may be a worktree *under* it; the process never spawns in a
+    // worktree). `activeProjectRoot` resolves the active workbench to its project, so
+    // launching from a second project spawns there, not the global primary. During restore
+    // the primary is active → primary. See docs/agents.md.
     const mainRoot = this.d.workbenchManager.activeProjectRoot();
     let root = options.root ?? mainRoot;
     if (root !== mainRoot && !Fs.existsSync(root)) root = mainRoot; // a vanished worktree → main dir
     const agent = AGENT_CONFIGS[kind].create({
-      cwd: mainRoot, worktree: root, command: options.command, prompt: options.prompt, userPrompt: options.userPrompt, resume: options.resume, title: options.title,
+      cwd: mainRoot, command: options.command, prompt: options.prompt, userPrompt: options.userPrompt, resume: options.resume, title: options.title,
       onOpenFile: (path) => this.d.paneItems.openFile(path),
     });
     // Track in the tab registry (terminal focus-routing / headless disposal key off these).
@@ -201,13 +202,13 @@ export class AgentController {
       // On settle, flag a worktree it created but never announced (validator).
       if (agent.status === 'idle') this.warnUnannouncedWorktree(agent);
     })));
-    // The agent announced (via the set_worktree bridge tool) that it moved into a
-    // different worktree — re-root its workbench to match.
-    agentSubs.add(new Disposable(agent.onDidChangeWorktree(() => {
-      this.d.workbenchManager.reRootWorkbench(workbench, agent.effectiveCwd);
+    // The agent announced (via the set_worktree bridge tool) that it moved into `cwd` —
+    // re-root its workbench to match (workbench.cwd becomes the editor root).
+    agentSubs.add(new Disposable(agent.onDidChangeWorktree((cwd) => {
+      this.d.workbenchManager.reRootWorkbench(workbench, cwd);
       // Persist the worktree as a sidecar under the spawn dir's transcript dir so a later
       // resume can re-root to it.
-      if (agent.sessionId) recordSessionWorktree(mainRoot, agent.sessionId, agent.effectiveCwd);
+      if (agent.sessionId) recordSessionWorktree(mainRoot, agent.sessionId, cwd);
     })));
     // When the agent edits files, re-check git now instead of waiting for the poll, so its
     // changes surface in Source Control promptly, and (when enabled) auto-open each newly-
@@ -282,6 +283,7 @@ export class AgentController {
     }
     openAgentPicker(this.host(), {
       placeholder: 'Send review to agent…',
+      agentWorktree: (agent) => this.agentWorktree(agent),
       onActivate: (agent) => this.deliverToAgent(agent, message, { submit: true }),
       // A highlighted, always-present "Send to new agent" entry → the launcher (pick model /
       // permission / worktree), then deliver the review to the agent it starts.
@@ -310,6 +312,7 @@ export class AgentController {
     if (!text) return;
     openAgentPicker(this.host(), {
       placeholder: 'Send to agent…',
+      agentWorktree: (agent) => this.agentWorktree(agent),
       onActivate: (agent) => this.deliverToAgent(agent, text),
       onStart: (prompt) => this.deliverToAgent(this.openAgent({ prompt }), text),
     });
@@ -346,6 +349,20 @@ export class AgentController {
    *  fixed for the process's life and never a throw-away worktree. See docs/agents.md. */
   private mainRoot(): string {
     return process.cwd();
+  }
+
+  /** A live agent's editor root — its workbench cwd (the single source of truth for
+   *  where the agent's editor is rooted), falling back to the main dir if it has no
+   *  workbench. Replaces the former `agent.effectiveCwd`. */
+  private agentRoot(agent: Agent): string {
+    return this.d.workbenchManager.workbenches.get(agent)?.cwd ?? this.mainRoot();
+  }
+
+  /** A live agent's worktree (the branch badge in the pickers), from its workbench cwd
+   *  — replaces the former `agent.worktree`. Null when it has no workbench yet. */
+  private agentWorktree(agent: Agent): WorktreeInfo | null {
+    const cwd = this.d.workbenchManager.workbenches.get(agent)?.cwd;
+    return cwd ? worktreeInfo(cwd) : null;
   }
 
   // `openAgent` options to resume `session`. The process spawns in the main dir (the cwd
@@ -525,7 +542,7 @@ export class AgentController {
     // Branch into the same kind as the source agent, its editor rooted at the same worktree.
     this.openAgent({
       kind: agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui',
-      root: agent.effectiveCwd,
+      root: this.agentRoot(agent),
       resume: { sessionId, fork: true },
       title: `${agent.title} (branch)`,
     });
@@ -588,7 +605,7 @@ export class AgentController {
     // Both kinds resume by session id now; fork a copy if the agent is still live so the
     // original keeps running. The editor re-roots to its (possibly moved) worktree.
     const resume = agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
-    const root = agent.effectiveCwd;
+    const root = this.agentRoot(agent);
     this.closeAgent(agent);
     this.openAgent({ kind, resume, title, root });
   }
