@@ -113,8 +113,8 @@ export class WorkbenchList {
   // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
   // header-bar sidebar toggle button.
   private collapsed = false;
-  // The project-name title in the header bar; hidden while collapsed (the bar is
-  // too narrow to show it).
+  // The active session's name in the header bar (empty for the unnamed/default
+  // session); hidden while collapsed (the bar is too narrow to show it).
   private headerTitle: InstanceType<typeof Adw.WindowTitle> | null = null;
   // The unsaved-changes marker shown after the project title; toggled via opacity
   // (slot always reserved) and hidden while collapsed. `modified` is the last state.
@@ -169,10 +169,11 @@ export class WorkbenchList {
     bar.setShowStartTitleButtons(false);
     bar.setShowEndTitleButtons(false);
 
-    // The project name (cwd basename); hidden when collapsed (no room in 48px).
-    // Packed at the start (not the centered title slot) so it aligns left.
+    // The active session's name — empty until a session is named (`setSessionName`).
+    // Hidden when collapsed (no room in 48px). Packed at the start (not the centered
+    // title slot) so it aligns left.
     bar.setTitleWidget(new Gtk.Box()); // clear the centered title slot
-    this.headerTitle = new Adw.WindowTitle({ title: PROJECT_NAME });
+    this.headerTitle = new Adw.WindowTitle({ title: '' });
     this.headerTitle.setTooltipText(process.cwd());
     bar.packStart(this.headerTitle);
 
@@ -194,12 +195,10 @@ export class WorkbenchList {
     this.updateModifiedDot();
   }
 
-  /** Reflect the active session name in the header: the session name as the title
-   *  over the project name as subtitle, or the bare project name when the window is
-   *  in the unnamed/default session (docs/session-management.md). */
+  /** Reflect the active session name in the header — just the name, empty for the
+   *  unnamed/default session (docs/session-management.md). */
   setSessionName(name: string | null): void {
-    this.headerTitle?.setTitle(name ?? PROJECT_NAME);
-    this.headerTitle?.setSubtitle(name ? PROJECT_NAME : '');
+    this.headerTitle?.setTitle(name ?? '');
   }
 
   // The dot shows only when there are unsaved edits and the sidebar is expanded
