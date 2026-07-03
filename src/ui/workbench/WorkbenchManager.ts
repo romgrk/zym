@@ -46,6 +46,9 @@ export interface WorkbenchManagerDeps {
   /** Schedule a session autosave (a project's action-set change isn't a tab/layout
    *  change, so it needs its own nudge to reach the persisted session state). */
   scheduleAutosave: () => void;
+  /** Close an agent for good (terminate + drop its workbench) — closing a project
+   *  closes the agents launched under it. */
+  closeAgent: (agent: Agent) => void;
 }
 
 export class WorkbenchManager {
@@ -227,23 +230,30 @@ export class WorkbenchManager {
     return project;
   }
 
-  /** Close a project's workbench (its editors + action terminals go). Never closes the
-   *  last project; an active project hands off to another first. Agents rooted under it
-   *  keep running (their own worktrees). Fires `did-change-projects`. */
+  /** Close a project and every workbench under it — the agents launched under it plus
+   *  its own default workbench (editors + action terminals). Never closes the last
+   *  project; an active project hands off to another first. Fires `did-change-projects`. */
   closeProject(project: Project): void {
     if (this.projects.length <= 1) return; // always keep at least one project open
     const workbench = this.workbenches.get(project);
     if (!workbench) return;
-    this.d.paneItems.disposeWorkbenchActionTerminals(workbench);
-    if (this.activeWorkbench === workbench) {
-      const fallback = this.projects.find((p) => p !== project) ?? this.primaryProject;
-      this.activateOwner(fallback);
+    // If the active owner belongs to this project (its default or one of its agents),
+    // switch to another project first — so nothing we're about to dispose is active
+    // (and closing the agents below never re-activates a workbench we're tearing down).
+    const fallback = this.projects.find((p) => p !== project) ?? this.primaryProject;
+    if (this.projectOf(this.activeWorkbench.owner) === project) this.activateOwner(fallback);
+    // Close the agents launched under this project (each tears down its own workbench).
+    // `getAgents()` is a snapshot, so closing — which mutates the registry — is safe.
+    for (const agent of zym.agents.getAgents()) {
+      if (this.agentProject.get(agent) === project) {
+        this.agentProject.delete(agent);
+        this.d.closeAgent(agent);
+      }
     }
     const i = this.projects.indexOf(project);
     if (i >= 0) this.projects.splice(i, 1);
     this.workbenches.delete(project);
-    // Its agents keep running but their project is gone — regroup them under the primary.
-    for (const [agent, proj] of this.agentProject) if (proj === project) this.agentProject.set(agent, this.primaryProject);
+    this.d.paneItems.disposeWorkbenchActionTerminals(workbench);
     this.d.paneItems.disposeWorkbenchEditors(workbench);
     workbench.dispose(); // tears down its Panels/content + releases its pooled git repo
     this.emitter.emit('did-change-projects');

@@ -365,8 +365,8 @@ group). Commands:
 - `project:open` (`space p o`) — a folder picker; opens the chosen
   folder as a project workbench and switches to it (dedups an
   already-open root).
-- `project:close` (`space p c`) — closes the active project (never the
-  last one); agents rooted under it keep running in their own worktrees.
+- `project:close` (`space p c`) — closes the active project and every
+  workbench under it (its agents + default workbench); never the last one.
 
 **Persistence is multi-project** (format v2, nested `projects[]`).
 `serialize` records every open project (its default workbench + its

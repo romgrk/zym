@@ -182,6 +182,7 @@ export class AppWindow {
       activeAgent: () => this.agentController.activeAgent,
       onActivated: () => this.agentController.updateViewedAgent(),
       scheduleAutosave: () => this.sessionController.scheduleAutosave(),
+      closeAgent: (agent) => this.agentController.closeAgent(agent),
     });
 
     // Build the user's workbench first — its own center + Files/Source-Control +
@@ -1115,7 +1116,8 @@ export class AppWindow {
     );
   }
 
-  // Close the active project (never the last one). Agents rooted under it keep running.
+  // Close the active project and everything under it — its agents + default workbench
+  // (never the last project).
   private closeActiveProject(): void {
     const owner = this.workbench.owner;
     if (!isProject(owner)) {
