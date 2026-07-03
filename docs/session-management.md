@@ -354,9 +354,10 @@ owner) plus the agents launched under it. The association is explicit
 — *not* the agent's cwd, since agents always spawn under the primary main
 dir (agents.md cwd invariant). `projectOf(owner)` / `activeProject()` /
 `projectGroups()` expose it; the WorkbenchList rail renders each project
-as a section (its name a `setHeaderFunc` header) over its default row +
-agent rows, and switches between owners (the same one-active-root switch
-agents already use — `activateWorkbench`). The rail rebuilds on
+as a section **headed by its default workbench row** (which shows the
+project name) over its agent rows, a margin separating the groups, and
+switches between owners (the same one-active-root switch agents already
+use — `activateWorkbench`). The rail rebuilds on
 `did-change-projects` (emitted from `buildWorkbench` *after* the workbench
 + association exist — the agent's own `did-add-agent` fires too early to
 group). Commands:

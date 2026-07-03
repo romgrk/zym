@@ -1,9 +1,10 @@
 /*
  * WorkbenchList — the contents of the WorkbenchSidebar (the full-height column at the
  * very left of the window). The rail is grouped by **project**: each open project is a
- * section (its name as a header via `setHeaderFunc`) holding its workbenches — the
- * project's own **default ("you") workbench** first, then the agents launched under it
- * (`getGroups`, from the host). See docs/session-management.md "Multi-root".
+ * section headed by its own **default workbench** row (which shows the project name),
+ * followed by the agents launched under it (`getGroups`, from the host). A margin below
+ * each section's last row separates the groups. See docs/session-management.md
+ * "Multi-root".
  *
  * The top is an `Adw.HeaderBar` showing the active session name (see `setSessionName`)
  * and a button that toggles the sidebar between collapsed (icons only) and expanded
@@ -16,7 +17,6 @@
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
  */
-import * as Os from 'node:os';
 import * as Path from 'node:path';
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
@@ -24,14 +24,12 @@ import Adw from 'gi:Adw-1';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import { ImageIcons } from '../icons.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
+import { fileIconGlyph } from './fileIcons.ts';
 import type { Agent } from '../agents/types.ts';
 import { type Owner, type Project } from './workbench/Owner.ts';
 
-// The default-row leading icon size — matches the agent status icon so the rows line up.
-const USER_ICON_SIZE = 16;
 // Project name shown in the sidebar header fallback: the last path component of the cwd.
 export const PROJECT_NAME = Path.basename(process.cwd());
 
@@ -52,11 +50,9 @@ addStyles(/* css */`
   .Workbenchrow--user-icon {
     opacity: var(--dim-opacity);
   }
-  /* A project section header (the project name above its workbenches). */
-  .WorkbenchSection {
-    font-weight: bold;
-    opacity: var(--dim-opacity);
-    padding: calc(0.6 * var(--t-spacing)) calc(2 * var(--t-spacing)) calc(0.2 * var(--t-spacing));
+  /* Space after each project section (its last row) so groups read as separate. */
+  .WorkbenchRow--section-end {
+    margin-bottom: calc(1.5 * var(--t-spacing));
   }
 `);
 
@@ -107,7 +103,6 @@ export class WorkbenchList {
   private readonly listBox: InstanceType<typeof Gtk.ListBox>;
   private readonly scrolled: InstanceType<typeof Gtk.ScrolledWindow>;
   private readonly options: WorkbenchListOptions;
-  private readonly userName: string;
   // The built rows, in list-box order (each project's default row then its agents).
   private handles: RowHandle[] = [];
   // The owner whose row is selected (kept stable across rebuilds); null selects the
@@ -127,7 +122,6 @@ export class WorkbenchList {
 
   constructor(options: WorkbenchListOptions = {}) {
     this.options = options;
-    this.userName = Os.userInfo().username;
 
     // An Adw.ToolbarView holds the session-title header bar as a top bar over the
     // scrollable workbench list, so the bar matches the window header beside it and
@@ -143,8 +137,6 @@ export class WorkbenchList {
     this.listBox = new Gtk.ListBox();
     this.listBox.addCssClass('navigation-sidebar');
     this.listBox.setSelectionMode(Gtk.SelectionMode.SINGLE);
-    // A project's default row carries a section header (the project name) above it.
-    this.listBox.setHeaderFunc((row: any) => this.updateHeader(row));
     this.subs.connect(this.listBox, 'row-activated', (row: any) => {
       const handle = this.handleForRow(row);
       if (handle) this.activate(handle.entry);
@@ -232,8 +224,8 @@ export class WorkbenchList {
     return this.options.getGroups?.() ?? [];
   }
 
-  // Full (re)build of every row: each project's default row, then its agents. The
-  // section headers are attached by `setHeaderFunc` (re-run via invalidateHeaders).
+  // Full (re)build of every row: per project, its default (header) row then its agents.
+  // The last row of each section is tagged `--section-end` for the trailing margin.
   private rebuild(): void {
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
@@ -245,37 +237,26 @@ export class WorkbenchList {
       child = next;
     }
 
-    const entries: Entry[] = [];
     for (const group of this.groups()) {
-      entries.push({ kind: 'project', project: group.project });
-      for (const agent of group.agents) entries.push({ kind: 'agent', agent });
+      const entries: Entry[] = [
+        { kind: 'project', project: group.project },
+        ...group.agents.map((agent): Entry => ({ kind: 'agent', agent })),
+      ];
+      entries.forEach((entry, index) => {
+        const handle = this.createHandle(entry);
+        if (index === entries.length - 1) handle.row.addCssClass('WorkbenchRow--section-end');
+        this.handles.push(handle);
+        this.listBox.append(handle.row);
+      });
     }
-    for (const entry of entries) {
-      const handle = this.createHandle(entry);
-      this.handles.push(handle);
-      this.listBox.append(handle.row);
-    }
-    this.listBox.invalidateHeaders(); // re-attach project section headers to the new rows
     this.applySelection();
-  }
-
-  // Attach a project section header above each project's default row (expanded only).
-  private updateHeader(row: InstanceType<typeof Gtk.ListBoxRow>): void {
-    const handle = this.handleForRow(row);
-    if (!this.collapsed && handle?.entry.kind === 'project') {
-      const label = new Gtk.Label({ label: handle.entry.project.title, xalign: 0, ellipsize: Pango.EllipsizeMode.END });
-      label.addCssClass('WorkbenchSection');
-      row.setHeader(label);
-    } else {
-      row.setHeader(null);
-    }
   }
 
   private createHandle(entry: Entry): RowHandle {
     const unsubs: Array<() => void> = [];
     const content =
       entry.kind === 'project'
-        ? this.buildDefaultContent()
+        ? this.buildProjectContent(entry.project)
         : this.buildAgentContent(entry.agent, unsubs);
 
     const row = new Gtk.ListBoxRow();
@@ -294,13 +275,14 @@ export class WorkbenchList {
     return box;
   }
 
-  // A project's default ("you") workbench row: a dimmed person icon + the username —
-  // where you edit the project directly, mirroring the 'user' workbench on master. The
-  // project name lives in the section header above it, not here.
-  private buildDefaultContent(): InstanceType<typeof Gtk.Box> {
-    const icon = ImageIcons.USER(USER_ICON_SIZE);
-    icon.addCssClass('Workbenchrow--user-icon');
-    const label = new Gtk.Label({ label: this.userName, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
+  // A project's default workbench row — the section header: a dimmed folder glyph + the
+  // project name (its root basename). It's still an activatable workbench row (editing
+  // the project directly, like the 'user' workbench on master); its name just *is* the
+  // project's, so the agents below read as belonging to it.
+  private buildProjectContent(project: Project): InstanceType<typeof Gtk.Box> {
+    const icon = iconLabel(fileIconGlyph('', true));
+    icon.addCssClass('Workbenchrow--user-icon'); // dimmed folder glyph
+    const label = new Gtk.Label({ label: project.title, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label');
     return this.rowContent(icon, label);
   }
