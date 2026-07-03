@@ -295,9 +295,16 @@ export class DiffView {
       zym.config.get('editor.diffLineNumbers') === true,
     );
     // Live-toggle the number columns without reopening the diff (observe fires immediately, a
-    // no-op re-set of the value already passed above).
+    // no-op re-set of the value already passed above). Also refresh the gap bands so the
+    // `@@ … @@` ⇄ `⋯` swap tracks the toggle — skipping the immediate fire, since installOverlays
+    // runs right below at construction.
+    let firstLineNumberObserve = true;
     this.disposables.add(
-      zym.config.observe('editor.diffLineNumbers', (v) => this.lineNumbers?.setShowLineNumbers(v === true)),
+      zym.config.observe('editor.diffLineNumbers', (v) => {
+        this.lineNumbers?.setShowLineNumbers(v === true);
+        if (firstLineNumberObserve) { firstLineNumberObserve = false; return; }
+        this.installOverlays(this.dmb);
+      }),
     );
 
     this.installOverlays(dmb);
@@ -780,8 +787,8 @@ export class DiffView {
   private isFileModified(path: string): boolean {
     return this.sources.get(newKey(path))?.document?.isModified() ?? false;
   }
-  private static gapKey(g: DiffMultiBuffer['gapAnchors'][number]): string {
-    return `${g.placement}\n${g.label}\n${g.revealRows.join(',')}`;
+  private static gapKey(g: DiffMultiBuffer['gapAnchors'][number], label: string): string {
+    return `${g.placement}\n${label}\n${g.revealRows.join(',')}`;
   }
   private installOverlays(dmb: DiffMultiBuffer): void {
     this.gapAnchors = dmb.gapAnchors; // kept for the keyboard expand (`expandContextAtCursor`)
@@ -816,18 +823,22 @@ export class DiffView {
     // `⋯` gaps (incl. the leading file-head gap, now its own band) + accumulated review-comment
     // cards stay ordinary (scrolling) block decorations.
     const specs: BlockDecorationSpec[] = [];
+    // The `@@ … @@` hunk header just restates the old|new line numbers, so collapse it to a bare `⋯`
+    // when the line-number gutter is showing (`editor.diffLineNumbers`); a trailing gap is already `⋯`.
+    const showDiffLineNumbers = zym.config.get('editor.diffLineNumbers') === true;
     dmb.gapAnchors.forEach((g, i) => {
       const scope = new CompositeDisposable();
+      const label = showDiffLineNumbers ? '⋯' : g.label;
       specs.push({
         id: `gap:${i}`,
-        key: DiffView.gapKey(g),
+        key: DiffView.gapKey(g, label), // keyed on the DISPLAYED label so a live line-number toggle rebuilds it
         anchor: { viewRow: g.viewRow },
         placement: g.placement,
         // The `⋯ N unchanged lines` band spans the FULL content width and rides the text, so it stays
         // full-width at any horizontal scroll (like the file header above it, but scrolling not pinned).
         fullWidth: 'content',
         // Clicking the gap reveals a chunk of its elided lines (`fromTop` = which end first).
-        build: () => buildGapWidget(scope, g.label, () => this.revealChunk(g.revealRows, g.fromTop)),
+        build: () => buildGapWidget(scope, label, () => this.revealChunk(g.revealRows, g.fromTop)),
         dispose: () => scope.dispose(),
       });
     });

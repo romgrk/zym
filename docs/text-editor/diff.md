@@ -74,8 +74,11 @@ removed file, and **only** the filename (the elided file head is now its own gap
 subtitle). The gap bands read git-patch style: each shows the `@@ -old +new @@ section` header of the
 hunk that FOLLOWS it (byte-identical to what `git diff` prints above that hunk — see `windowHunkHeader`,
 which reuses git's default `,count`-elision and function-context heuristic), or a bare `⋯` for a
-trailing gap (no hunk follows, as git prints nothing there). Markers render in the editor foreground,
-same as the filename. The leading file-head gap (`'above'` the first content row) and between-window
+trailing gap (no hunk follows, as git prints nothing there). When the line-number gutter is showing
+(`editor.diffLineNumbers`), the `@@ … @@` header just restates the old|new numbers, so it collapses to
+a bare `⋯` (`installOverlays` swaps the label, keyed on the displayed text so a live toggle rebuilds).
+Markers render in the editor foreground, same as the filename, on an opaque `--window-bg-color` band
+(one elevation step dimmer than the header's `--headerbar-bg-color`). The leading file-head gap (`'above'` the first content row) and between-window
 gaps (`'below'` the last shown row) — plus review-comment cards — are ordinary (non-sticky)
 `BlockDecorations`, the gaps `fullWidth: 'content'` so they span the full content width under the
 header and stay full-width while scrolling horizontally with the text (unlike the pinned header).

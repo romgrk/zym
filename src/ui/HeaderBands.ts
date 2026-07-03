@@ -47,11 +47,12 @@ addStyles(/* css */`
     outline: 1px solid var(--accent-color);
     outline-offset: -1px;
   }
-  /* Fold markers (the elided-gap bands) get ~half a line of breathing room above and below (0.5em;
-     GTK CSS has no lh unit), and the header's horizontal inset so they line up under the filename.
-     An OPAQUE grey fill — like a header band, they're never transparent (the text behind must never
-     show through): a solid blend of the editor background toward grey. */
-  .mb-gap { background-color: color-mix(in srgb, var(--t-ui-editor-background), #808080 15%); padding: 0.5em calc(2 * var(--t-spacing)); }
+  /* Fold markers (the elided-gap bands): an OPAQUE band that must occlude the diff scrolling under
+     it (never transparent, so the rows behind it can't show through). One elevation step BELOW the
+     file header — libadwaita's window surface, so it reads as a recessed marker dimmer than the
+     header's --headerbar-bg-color band, and tracks the OS light/dark theme. No padding: a single
+     compact line with the marker text flush to the code column. */
+  .mb-gap { background-color: var(--window-bg-color); }
   /* The marker TEXT reads as the editor foreground dimmed via Adwaita's --dim-opacity (the muted
      idiom — dim the real foreground, not a grey). It lives on a child label so the dim never touches
      the band's opaque background. */
