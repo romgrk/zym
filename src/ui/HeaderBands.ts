@@ -20,8 +20,10 @@ import { escapeMarkup } from './proseMarkup.ts';
 addStyles(/* css */`
   .mb-header {
     padding: var(--t-spacing) calc(2 * var(--t-spacing));
-    background-color: var(--t-ui-editor-background);
-    background-image: linear-gradient(rgba(255 255 255 / 16%), rgba(255 255 255 / 16%));
+    /* An opaque, subtly-raised chrome band — libadwaita's header-bar surface, so it tracks the OS
+       light/dark theme. Replaces the old hard-coded white overlay (editor bg + 16% white), which
+       read too bright. Must stay opaque to occlude the diff scrolling underneath. */
+    background-color: var(--headerbar-bg-color);
     border-radius: 5px;
   }
   .mb-header-icon { color: var(--t-ui-text-muted); }
@@ -30,11 +32,19 @@ addStyles(/* css */`
   .mb-header-del { color: var(--t-ui-status-error); }
   /* An unsaved (modified) diff file: warning-coloured path led by a warning dot. */
   .mb-header-modified { color: var(--t-ui-status-warning); }
-  /* The header whose (read-only) line the caret sits on (sticky-diff navigation) reads as focused.
-     The class lands on the .mb-header element itself (the header widget IS the row). */
+  /* The header whose (read-only) line the caret sits on (sticky-diff navigation) reads as SELECTED,
+     using the shared list-selection idiom (docs/styling.md → --selection-bg): a NEUTRAL wash of the
+     band's own foreground when the diff is unfocused — promoted to an ACCENT tint + accent outline
+     only while the diff editor holds keyboard focus (:focus-within on its .zym-editor source view,
+     the header's overlay ancestor). The wash rides over the opaque base as a gradient image so the
+     band never turns translucent. The class lands on the .mb-header element itself (the widget IS
+     the row). */
   .mb-header.mb-header-focused {
-    background-image: linear-gradient(rgba(255 255 255 / 26%), rgba(255 255 255 / 26%));
-    outline: 1px solid var(--t-ui-text-accent);
+    background-image: linear-gradient(var(--selection-bg), var(--selection-bg));
+  }
+  .zym-editor:focus-within .mb-header.mb-header-focused {
+    background-image: linear-gradient(var(--selection-bg-focus), var(--selection-bg-focus));
+    outline: 1px solid var(--accent-color);
     outline-offset: -1px;
   }
   /* Fold markers (the elided-gap bands) get ~half a line of breathing room above and below (0.5em;

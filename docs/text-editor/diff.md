@@ -43,8 +43,11 @@ Each file's header is an **empty, read-only, navigable `block` row** (the file's
 the filename widget **covers** as an `on`-placed `sticky` `BlockDecoration` (`placement: 'on', sticky:
 true`) — the widget sits OVER its own line (the line is grown to the widget's height), so the caret
 lands *on the headerband* (`j`/`k` stops there). The caret box itself is **suppressed** on the header
-rows (a `no-cursor` decoration) and the band reads `.focused` instead — both owned by `StickyHeaders`
-(see below) — so it's clear the cursor is on the header without a stray box over the filename. Being
+rows (a `no-cursor` decoration) and the band reads as **selected** instead (`.mb-header-focused`) —
+both owned by `StickyHeaders` (see below) — so it's clear the cursor is on the header without a stray
+box over the filename. That selection follows the shared list idiom (`--selection-bg` /
+`--selection-bg-focus`): a neutral foreground wash when the diff is unfocused, an accent tint + accent
+outline only while the diff editor holds keyboard focus (`:focus-within`). Being
 an ordinary text-window `add_overlay` child it **scrolls
 natively** — smooth on a touchpad, never swallows scroll (it bubbles to the view), stays click-to-jump,
 and is **clipped to the viewport by the text view** (so nothing draws over the tab bar). The `sticky`
@@ -53,8 +56,9 @@ flag (in `BlockDecorations`) clamps the overlay's Y to the scroll top and re-cla
 rides the text. To stop stacked pinned headers from accumulating, a sticky band is also clamped to sit
 no lower than just above the **next** sticky band (`nextStickyBandTop`), so an earlier file's header
 slides up and rides the text out of view as the next reaches the top — only the current (last-passed)
-file's header stays pinned. The opaque header fill (editor background + tint) lets it occlude the diff
-scrolling underneath — including the `⋯` gap bands and review-comment cards, which are kept strictly
+file's header stays pinned. The opaque header fill (libadwaita's `--headerbar-bg-color` chrome band)
+lets it occlude the diff scrolling underneath — including the `⋯` gap bands and review-comment cards,
+which are kept strictly
 **below** the headers in the overlay draw order (sticky bands stay at the `add_overlay` queue tail; see
 the z-order constraint in [inline-widgets.md](inline-widgets.md)).
 
