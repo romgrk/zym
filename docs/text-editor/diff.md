@@ -49,8 +49,10 @@ box over the filename. That selection follows the shared list idiom (`--selectio
 `--selection-bg-focus`): a neutral foreground wash when the diff is unfocused, an accent tint + accent
 outline only while the diff editor holds keyboard focus (`:focus-within`). Being
 an ordinary text-window `add_overlay` child it **scrolls
-natively** — smooth on a touchpad, never swallows scroll (it bubbles to the view), stays click-to-jump,
-and is **clipped to the viewport by the text view** (so nothing draws over the tab bar). The `sticky`
+natively** — smooth on a touchpad, never swallows scroll (it bubbles to the view), and is **clipped to
+the viewport by the text view** (so nothing draws over the tab bar). A single click on a header does
+nothing (it no longer opens the file); a **double-click toggles the file's fold** (`toggleFileCollapse`,
+the pointer equivalent of `z a`). The `sticky`
 flag (in `BlockDecorations`) clamps the overlay's Y to the scroll top and re-clamps it on every
 `value-changed`, so once a file scrolls past the top its header **pins** there; below the top it just
 rides the text. To stop stacked pinned headers from accumulating, a sticky band is also clamped to sit

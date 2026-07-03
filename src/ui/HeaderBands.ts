@@ -5,8 +5,9 @@
  * drops the icon and bolds the whole path uniformly, turning it warning-coloured with a
  * leading dot when the file has unsaved edits, and adds a collapse chevron + `+N −M` stats
  * (`HeaderWidgetOptions`). The widget isn't navigable/selectable buffer text; the diff places
- * it OVER a read-only header row (sticky), search anchors it above the first row. Clicking it
- * jumps to the file.
+ * it OVER a read-only header row (sticky), search anchors it above the first row. The builder
+ * reports the click's press count to the surface (see `onActivate`): search jumps to the file on
+ * a click, the diff ignores a single click and toggles the file's fold on a double-click.
  */
 import * as Path from 'node:path';
 import Gtk from 'gi:Gtk-4.0';
@@ -86,14 +87,16 @@ export interface HeaderWidgetOptions {
 }
 
 /** The header widget for one excerpt: `label` is the display path, `path` selects the file-type
- *  icon, `onActivate` fires on click (jump to the file), `options` picks the look (see
- *  `HeaderWidgetOptions`). A leading `⋯` gap is a SEPARATE gap band (`buildGapWidget`), not part of
- *  the header. The header row IS the returned widget. */
+ *  icon, `onActivate` fires on click with the press count (1 = single, 2 = double), so a surface can
+ *  distinguish a single- from a double-click (search jumps on either; the diff toggles the fold on a
+ *  double-click and ignores a single one), `options` picks the look (see `HeaderWidgetOptions`). A
+ *  leading `⋯` gap is a SEPARATE gap band (`buildGapWidget`), not part of the header. The header row
+ *  IS the returned widget. */
 export function buildHeaderWidget(
   scope: CompositeDisposable,
   label: string,
   path: string,
-  onActivate: () => void,
+  onActivate: (nPress: number) => void,
   options: HeaderWidgetOptions = {},
 ): InstanceType<typeof Gtk.Widget> {
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
@@ -147,9 +150,9 @@ export function buildHeaderWidget(
     }
   }
 
-  // Click the header → jump to the file.
+  // Click the header → hand the press count to the surface (single vs double).
   const click = new Gtk.GestureClick();
-  click.on('released', () => onActivate());
+  click.on('released', (nPress: number) => onActivate(nPress));
   scope.addController(row, click); // severed when this band's widget is dropped (rule 9)
   return row;
 }

@@ -430,14 +430,18 @@ export class DiffView {
 
   // --- per-file collapse -----------------------------------------------------
 
-  /** Collapse / expand the file under the cursor — collapsed, it folds to just its (navigable)
-   *  header row; the caret recovers onto that header (see reDiff). */
+  /** Collapse / expand `path` — collapsed, it folds to just its (navigable) header row; the caret
+   *  recovers onto that header (see reDiff). Drives the header double-click and the cursor toggle. */
+  toggleFileCollapse(path: string): void {
+    if (this.collapsedFiles.has(path)) this.collapsedFiles.delete(path);
+    else this.collapsedFiles.add(path);
+    this.reDiff();
+  }
+
+  /** Collapse / expand the file under the cursor (`z a`). */
   toggleFileCollapseAtCursor(): void {
     const hit = this.fileAtViewRow(this.cursorRow());
-    if (!hit) return;
-    if (this.collapsedFiles.has(hit.path)) this.collapsedFiles.delete(hit.path);
-    else this.collapsedFiles.add(hit.path);
-    this.reDiff();
+    if (hit) this.toggleFileCollapse(hit.path);
   }
 
   /** Collapse the file under the cursor to its header (`z c`, vim's close-fold). No-op if already
@@ -842,7 +846,9 @@ export class DiffView {
             scope,
             h.label,
             h.path,
-            () => this.onActivate?.({ path: h.path, row: 0 }),
+            // Single click does nothing (a header click no longer opens the file); a double-click
+            // toggles the file's fold — the pointer equivalent of `z a`.
+            (nPress) => { if (nPress === 2) this.toggleFileCollapse(h.path); },
             // Diff look: no file-type icon, bold the whole path, flag unsaved edits (warning + dot),
             // plus the collapse chevron + `+N −M` stats, and a `(deleted)` tag for a removed file.
             { icon: false, boldPath: true, modified, collapsed, added: h.added, removed: h.removed, deleted: h.deleted },

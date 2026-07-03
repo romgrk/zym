@@ -50,7 +50,8 @@ Inside a multi-file diff, `z`-prefixed keys manage the view: `z j`/`z k` step
 between files, `z /` jumps to one by name, `z c`/`z o`/`z a` close/open/toggle
 the file under the cursor, `z m`/`z r` close/open all, `z .` expands the elided
 unchanged lines at the nearest `⋯` gap (`z >` reveals whole files, `z <`
-re-collapses), and `] h`/`[ h` jump between hunks. `g d` opens the file at the
+re-collapses), and `] h`/`[ h` jump between hunks. Double-clicking a file's
+header toggles its fold too. `g d` opens the file at the
 line under the cursor. `enter` opens a review-comment box that can send the
 line and your comment to an agent.
 
