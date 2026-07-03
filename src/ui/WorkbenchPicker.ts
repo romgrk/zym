@@ -22,15 +22,15 @@ import { iconSpan } from './icons.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
-import type { Agent } from '../agents/types.ts';
+import { type Owner, isProject } from './workbench/Owner.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 const USER_GLYPH = NERDFONT.SOCIAL.USER; // the user's own workbench (matches the sidebar)
 
 export interface WorkbenchInfo {
-  /** The person who owns the workbench: the literal `'user'`, or an Agent. */
-  owner: 'user' | Agent;
+  /** Who owns the workbench: a project, or an Agent. */
+  owner: Owner;
   /** The workbench's current root directory (an agent may sit in a worktree). */
   cwd: string;
   /** Whether this is the currently-shown workbench. */
@@ -38,11 +38,11 @@ export interface WorkbenchInfo {
 }
 
 export interface WorkbenchPickerOptions {
-  /** The open workbenches, in sidebar order ([user, …agents]). */
+  /** The open workbenches, in sidebar order ([…projects, …agents]). */
   workbenches: WorkbenchInfo[];
   /** Activate the chosen workbench (AppWindow.activateOwner). */
-  onActivate: (owner: 'user' | Agent) => void;
-  /** Label for the user's workbench. Defaults to the OS username (as the sidebar). */
+  onActivate: (owner: Owner) => void;
+  /** Label for a project workbench. Defaults to the OS username (as the sidebar). */
   userName?: string;
 }
 
@@ -53,7 +53,7 @@ export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptio
   // on `data`; the matched `text` is the person's label (username / agent title).
   const items: PickerItem[] = options.workbenches.map((wb, i) => ({
     value: `workbench:${i}`,
-    text: wb.owner === 'user' ? userName : wb.owner.title,
+    text: isProject(wb.owner) ? userName : wb.owner.title,
     data: wb,
   }));
 
@@ -66,7 +66,7 @@ export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptio
       const wb = item.data as WorkbenchInfo;
       // The leading glyph mirrors the sidebar: a person icon for the user, the
       // shared status indicator for an agent.
-      const lead = wb.owner === 'user' ? iconSpan(USER_GLYPH) : agentStatusMarkup(wb.owner.status);
+      const lead = isProject(wb.owner) ? iconSpan(USER_GLYPH) : agentStatusMarkup(wb.owner.status);
       return renderRowSingleLine({
         main: `${lead} ${proseMarkup(item.text, positions)}`,
         detail: workbenchDetail(wb),
@@ -87,7 +87,7 @@ function workbenchDetail(wb: WorkbenchInfo): string {
   if (wb.active) {
     parts.push(`<span foreground="${HIGHLIGHT_COLOR}" face="Sans" line_height="${PROSE_LINE_HEIGHT}">current</span>`);
   }
-  const worktree = wb.owner === 'user' ? null : agentWorktreeMarkup(wb.owner.worktree);
+  const worktree = isProject(wb.owner) ? null : agentWorktreeMarkup(wb.owner.worktree);
   parts.push(
     worktree ??
       `<span alpha="55%" face="Sans" line_height="${PROSE_LINE_HEIGHT}">${escapeMarkup(Path.basename(wb.cwd))}</span>`,

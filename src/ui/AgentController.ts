@@ -23,6 +23,7 @@ import { listResumableSessions, recordSessionWorktree, relativeTime, relocateTra
 import { type WorkspaceState, fileTabsOf } from '../SessionManager.ts';
 import type { TextEditor } from './TextEditor/index.ts';
 import type { Workbench } from './workbench/Workbench.ts';
+import { type Owner, isProject, isAgent } from './workbench/Owner.ts';
 import type { PaneItems } from './workbench/PaneItems.ts';
 import type { WorkbenchManager } from './workbench/WorkbenchManager.ts';
 import type { AgentSidebar } from './AgentSidebar.ts';
@@ -35,7 +36,7 @@ import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { listWorktrees } from '../git.ts';
 import { CompositeDisposable, Disposable } from '../util/eventKit.ts';
 
-type Wb = Workbench<'user' | Agent>;
+type Wb = Workbench<Owner>;
 
 export interface AgentControllerDeps {
   paneItems: PaneItems;
@@ -69,7 +70,7 @@ export class AgentController {
 
   /** The agent whose workbench is active, if any. */
   get activeAgent(): Agent | null {
-    return this.workbench.owner === 'user' ? null : this.workbench.owner;
+    return isAgent(this.workbench.owner) ? this.workbench.owner : null;
   }
 
   // The launcher gathers the prompt + model / permission mode / effort / kind + a worktree
@@ -381,7 +382,7 @@ export class AgentController {
   // The index, into the serialized workspaces, of the workbench that currently has focus:
   // 0 for the user, else the active agent's position among the serialized agent workspaces.
   activeWorkspaceIndex(): number {
-    if (this.workbench.owner === 'user') return 0;
+    if (isProject(this.workbench.owner)) return 0;
     let i = 1;
     for (const agent of zym.agents.getAgents()) {
       const workbench = this.d.workbenchManager.workbenches.get(agent);
@@ -477,7 +478,7 @@ export class AgentController {
   // The sidebar selection follows the active workbench's owner (which person you're
   // viewing), not focus.
   updateAgentHighlight(): void {
-    this.d.sidebar.list.selectAgent(this.workbench.owner === 'user' ? null : this.workbench.owner);
+    this.d.sidebar.list.selectAgent(isAgent(this.workbench.owner) ? this.workbench.owner : null);
   }
 
   // Tell each agent whether the user is currently looking at it — only the agent whose
@@ -630,7 +631,7 @@ export class AgentController {
     // Drop this workbench's action terminals (set_actions tabs in its center); disposeChild
     // won't reach them (they're terminals, not editors).
     if (workbench) this.d.paneItems.disposeWorkbenchActionTerminals(workbench);
-    if (this.workbench.owner === agent) this.d.workbenchManager.activateOwner('user'); // swap away first
+    if (this.workbench.owner === agent) this.d.workbenchManager.activateOwner(this.d.workbenchManager.primaryProject); // swap away first
     this.d.workbenchManager.workbenches.delete(agent); // its workbench (center + Files/Git + bottom + tabs) goes
     if (workbench) {
       // Tear down the editors that lived in this workbench — closing it drops their widgets

@@ -16,6 +16,7 @@ type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 type Widget = InstanceType<typeof Gtk.Widget>;
 import type { Agent } from '../../agents/types.ts';
 import { Workbench, type BottomDock, type DockSide } from './Workbench.ts';
+import { type Owner } from './Owner.ts';
 import { Panel } from '../Panel.ts';
 import type { PanelChild } from '../Panel.ts';
 import type { Direction } from '../PanelGroup.ts';
@@ -53,7 +54,7 @@ export interface WorkbenchViewDeps {
   sidebarPaned: InstanceType<typeof Gtk.Paned>;
   agentPaned: InstanceType<typeof Gtk.Paned>;
   /** The active workbench (switches on person change). */
-  getWorkbench: () => Workbench<'user' | Agent>;
+  getWorkbench: () => Workbench<Owner>;
   /** The agent whose workbench is active, if any. */
   activeAgent: () => Agent | null;
   /** The active editor's file path, for the vim-style split-opens-it behaviour. */
@@ -65,7 +66,7 @@ export interface WorkbenchViewDeps {
   /** Open (revealing) `path` — the GitPanel's row activation. */
   openFile: (path: string) => unknown;
   /** Build the live, editable working-tree diff for `workbench` (GitPanel embeds it). */
-  buildCurrentChangesDiff: (workbench: Workbench<'user' | Agent>) => Promise<DiffView | null>;
+  buildCurrentChangesDiff: (workbench: Workbench<Owner>) => Promise<DiffView | null>;
   /** Register a tab-close teardown on a center widget (the PaneItems seam). */
   setTabCloseHandler: (widget: Widget, fn: () => void) => void;
   scheduleAutosave: () => void;
@@ -92,7 +93,7 @@ export class WorkbenchView {
     this.d = deps;
   }
 
-  private get workbench(): Workbench<'user' | Agent> {
+  private get workbench(): Workbench<Owner> {
     return this.d.getWorkbench();
   }
 
@@ -333,7 +334,7 @@ export class WorkbenchView {
   // Lazily create this workbench's Source Control panel on first reveal — it isn't
   // built at startup, so a workbench opens no git subscription until the user asks
   // for it. Idempotent: returns the existing panel once created.
-  ensureGitPanel(workbench: Workbench<'user' | Agent>): GitPanel {
+  ensureGitPanel(workbench: Workbench<Owner>): GitPanel {
     if (workbench.gitPanel) return workbench.gitPanel;
     const gitPanel = new GitPanel({
       cwd: workbench.cwd,

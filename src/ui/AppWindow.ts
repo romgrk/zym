@@ -26,6 +26,7 @@ import { HeaderBar } from './HeaderBar.ts';
 import { repoRoot } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { Workbench, DOCK_SIDES } from './workbench/Workbench.ts';
+import { type Owner, createProject } from './workbench/Owner.ts';
 import { openScriptRunner } from './ScriptRunner.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
 import { openDiffCollapseGlobPicker } from './DiffCollapseGlobPicker.ts';
@@ -124,8 +125,8 @@ export class AppWindow {
   // build / activate / cycle / re-root. AppWindow exposes the active workbench and the
   // map through getters so the rest of the shell reads them unchanged.
   private readonly workbenchManager: WorkbenchManager;
-  private get workbench(): Workbench<'user' | Agent> { return this.workbenchManager.active; }
-  private get workbenches(): Map<'user' | Agent, Workbench<'user' | Agent>> { return this.workbenchManager.workbenches; }
+  private get workbench(): Workbench<Owner> { return this.workbenchManager.active; }
+  private get workbenches(): Map<Owner, Workbench<Owner>> { return this.workbenchManager.workbenches; }
 
   // The window's Adwaita header bar: the branch button + GitHub PR/CI pill and the
   // per-workbench health cluster (diagnostics + LSP). It owns the git-chrome
@@ -164,7 +165,7 @@ export class AppWindow {
     this.paneItems = new PaneItems({
       getWorkbench: () => this.workbench,
       activateWorkbench: (workbench) => this.workbenchManager.activateWorkbench(workbench),
-      activateOwner: (owner) => this.workbenchManager.activateOwner(owner),
+      activatePrimaryProject: () => this.workbenchManager.activateOwner(this.workbenchManager.primaryProject),
       onActiveTabChanged: () => this.onActiveTabChanged(),
       onReview: (message) => this.agentController.reviewToAgent(message),
       setModified: (modified) => this.sidebar.list.setModified(modified),
@@ -185,8 +186,9 @@ export class AppWindow {
     // bottom docks, and the (pooled) GitRepo for the window cwd that the header
     // chrome below binds to. Agents get their own (openAgent); no widget is shared
     // across workbenches, so a switch reparents nothing.
-    const userWorkbench = this.workbenchManager.buildWorkbench('user', process.cwd());
-    this.workbenchManager.setActive(userWorkbench); // the active workbench until a person is switched
+    const primaryProject = createProject(process.cwd());
+    const userWorkbench = this.workbenchManager.buildWorkbench(primaryProject, process.cwd());
+    this.workbenchManager.setActive(userWorkbench); // the active workbench until an owner is switched
     // Publish the active-workbench provider now, before any consumer (the header bar
     // below) reads it; activateWorkbench just re-points the active one behind it.
     zym.workspace.setActiveWorkbenchProvider(() => this.workbench);
@@ -237,7 +239,7 @@ export class AppWindow {
       getActiveWorkspace: () => this.agentController.activeWorkspaceIndex(),
       activateWorkspace: (index, restored) => {
         const agent = index > 0 ? (restored[index - 1] as Agent | null) : null;
-        this.workbenchManager.activateOwner(agent ?? 'user');
+        this.workbenchManager.activateOwner(agent ?? this.workbenchManager.primaryProject);
       },
       getWindow: () => ({
         width: this.window.getWidth(),
@@ -277,7 +279,7 @@ export class AppWindow {
     // button forwards collapse/expand here to resize the split below.
     this.sidebar = new Sidebar({
       onActivate: (agent) => this.agentController.showAgent(agent),
-      onActivateUser: () => this.workbenchManager.activateOwner('user'), // the user row → user workbench
+      onActivateUser: () => this.workbenchManager.activateOwner(this.workbenchManager.primaryProject), // the user row → primary project
       onRestart: (agent) => this.agentController.restartAgent(agent),
       onStop: (agent) => agent.kill(),
       onClose: (agent) => this.agentController.closeAgent(agent),
@@ -617,13 +619,13 @@ export class AppWindow {
       // cycle steps through; selecting one activates it.
       'workbench:picker': {
         didDispatch: () => openWorkbenchPicker(this.overlay, {
-          workbenches: (['user', ...zym.agents.getAgents()] as Array<'user' | Agent>).flatMap((owner) => {
+          workbenches: ([...this.workbenchManager.projects, ...zym.agents.getAgents()] as Owner[]).flatMap((owner) => {
             const wb = this.workbenches.get(owner);
             return wb ? [{ owner: wb.owner, cwd: wb.cwd, active: wb === this.workbench }] : [];
           }),
           onActivate: (owner) => this.workbenchManager.activateOwner(owner),
         }),
-        description: 'Switch to a workbench (the user or an agent)',
+        description: 'Switch to a workbench (a project or an agent)',
       },
       // Show/hide each dock side without discarding the panels it holds.
       'dock:toggle-left': { didDispatch: () => this.workbenchView.toggleDockSide('left'), description: 'Toggle the left dock' },

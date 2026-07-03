@@ -27,9 +27,9 @@ import { DiagnosticsPanel } from '../../lsp/diagnostics/DiagnosticsPanel.ts';
 import { KeymapPanel } from '../KeymapPanel.ts';
 import { fileIconGlyph } from '../fileIcons.ts';
 import { acquireGitRepo, releaseGitRepo, invalidateRepoRoot } from '../../git.ts';
+import { type Owner, type Project, isProject } from './Owner.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
-type Owner = 'user' | Agent;
 type Wb = Workbench<Owner>;
 
 export interface WorkbenchManagerDeps {
@@ -47,12 +47,21 @@ export interface WorkbenchManagerDeps {
 export class WorkbenchManager {
   private readonly d: WorkbenchManagerDeps;
   private activeWorkbench!: Wb;
-  // Every person (the user, each agent) owns a self-contained `Workbench`; switching
-  // person just swaps which one the overlay shows. Keyed by owner.
+  // Every owner (each project, each agent) owns a self-contained `Workbench`; switching
+  // owner just swaps which one the overlay shows. Keyed by owner.
   readonly workbenches = new Map<Owner, Wb>();
+  // The open project owners, in rail order (the first is the primary). Agents live in
+  // `zym.agents`; this is the projects half of the rail's `[...projects, ...agents]`.
+  readonly projects: Project[] = [];
 
   constructor(deps: WorkbenchManagerDeps) {
     this.d = deps;
+  }
+
+  /** The primary (first-opened) project — the fallback owner to activate when an
+   *  agent workbench closes, and the session's primary root. */
+  get primaryProject(): Project {
+    return this.projects[0];
   }
 
   /** The active workbench (the one the window currently shows). */
@@ -114,7 +123,7 @@ export class WorkbenchManager {
         notificationLog, notificationPanel, diagnosticsPanel, diagnosticsDock,
         keymapPanel, keymapDock,
       },
-      { showSideDock: owner === 'user' },
+      { showSideDock: isProject(owner) },
     );
     // The workbench owns its runtime action set (seeded from `<cwd>/.zym/settings.json`,
     // overwritable by an agent, run from `space x`); wire the terminal-action runner so a
@@ -132,6 +141,7 @@ export class WorkbenchManager {
     });
     void workbench.actions.onDidChange(() => this.d.paneItems.pruneActionTerminals(workbench));
     this.workbenches.set(owner, workbench);
+    if (isProject(owner) && !this.projects.includes(owner)) this.projects.push(owner);
     return workbench;
   }
 
@@ -142,9 +152,9 @@ export class WorkbenchManager {
   }
 
   // Step the active workbench by `step` (−1 / +1) through the workbench-list order
-  // ([user, …agents]), wrapping around. No-op when the user is the only person.
+  // ([…projects, …agents]), wrapping around. No-op with a single owner.
   cycleWorkbench(step: number): void {
-    const owners: Owner[] = ['user', ...zym.agents.getAgents()];
+    const owners: Owner[] = [...this.projects, ...zym.agents.getAgents()];
     if (owners.length < 2) return;
     const current = owners.indexOf(this.activeWorkbench.owner);
     const next = (current + step + owners.length) % owners.length;
@@ -160,7 +170,7 @@ export class WorkbenchManager {
   activateWorkbench(workbench: Wb): void {
     this.activeWorkbench = workbench;
     this.d.getContentOverlay().setChild(workbench.root); // show this workbench
-    this.d.getSidebar().list.selectAgent(workbench.owner === 'user' ? null : workbench.owner);
+    this.d.getSidebar().list.selectAgent(isProject(workbench.owner) ? null : workbench.owner);
     this.d.getHeaderBar().rebind(); // header branch/GitHub now reflect this workbench's root
     this.d.getHeaderBar().refreshStatus(); // diagnostics pill + LSP indicator → this workbench
     this.d.getWorkbenchView().showAgentSidebar(this.d.activeAgent()); // reveal/hide this workbench's agent column

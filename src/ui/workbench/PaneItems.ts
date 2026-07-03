@@ -18,6 +18,7 @@ import { zym } from '../../zym.ts';
 import { Panel, type PanelChild } from '../Panel.ts';
 import { PanelGroup, type RestoredChild } from '../PanelGroup.ts';
 import type { Workbench } from './Workbench.ts';
+import { type Owner } from './Owner.ts';
 import type { Agent } from '../../agents/types.ts';
 import { type Action } from '../../actions.ts';
 import { TextEditor } from '../TextEditor/index.ts';
@@ -41,15 +42,15 @@ import type { WorkspaceEdit } from 'vscode-languageserver-protocol';
 import { CompositeDisposable, Disposable, Emitter, type DisposableLike } from '../../util/eventKit.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
-type Wb = Workbench<'user' | Agent>;
+type Wb = Workbench<Owner>;
 
 export interface PaneItemsDeps {
   /** The active workbench (switches on person change). */
   getWorkbench: () => Wb;
   /** Activate a workbench (the action-terminal runner runs beside its workbench). */
   activateWorkbench: (workbench: Wb) => void;
-  /** Activate the workbench owned by `owner` (the agent-tab close veto returns to the user). */
-  activateOwner: (owner: 'user' | Agent) => void;
+  /** Activate the primary project (the agent-tab close veto returns there). */
+  activatePrimaryProject: () => void;
   /** Fired when the active split/tab changes (agent highlight / viewed + autosave). */
   onActiveTabChanged: () => void;
   /** Deliver a diff/comment review to an agent (editor `enter`, diff `onSend`). */
@@ -389,7 +390,7 @@ export class PaneItems {
         if (owner) {
           if (this.workbench.owner === owner)
             setTimeout(() => {
-              if (this.workbench.owner === owner) this.d.activateOwner('user');
+              if (this.workbench.owner === owner) this.d.activatePrimaryProject();
             }, 0);
           return false;
         }
