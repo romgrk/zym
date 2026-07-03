@@ -181,6 +181,7 @@ export class AppWindow {
       getSidebar: () => this.sidebar,
       activeAgent: () => this.agentController.activeAgent,
       onActivated: () => this.agentController.updateViewedAgent(),
+      scheduleAutosave: () => this.sessionController.scheduleAutosave(),
     });
 
     // Build the user's workbench first — its own center + Files/Source-Control +

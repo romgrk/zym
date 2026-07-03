@@ -43,6 +43,9 @@ export interface WorkbenchManagerDeps {
   activeAgent: () => Agent | null;
   /** Run after a switch settles (mark the now-active agent viewed). */
   onActivated: () => void;
+  /** Schedule a session autosave (a project's action-set change isn't a tab/layout
+   *  change, so it needs its own nudge to reach the persisted session state). */
+  scheduleAutosave: () => void;
 }
 
 export class WorkbenchManager {
@@ -187,7 +190,12 @@ export class WorkbenchManager {
         return () => sub.dispose();
       },
     });
-    void workbench.actions.onDidChange(() => this.d.paneItems.pruneActionTerminals(workbench));
+    void workbench.actions.onDidChange(() => {
+      this.d.paneItems.pruneActionTerminals(workbench);
+      // A project's action-set change (reset / edit / a plugin) belongs in the session;
+      // agents' set_actions are transient (re-reported on resume), so don't autosave those.
+      if (isProject(owner)) this.d.scheduleAutosave();
+    });
     this.workbenches.set(owner, workbench);
     if (isProject(owner)) {
       if (!this.projects.includes(owner)) this.projects.push(owner);
