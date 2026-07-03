@@ -139,6 +139,14 @@ Closing a window silently discards an *unnamed* session (only unsaved editor
 tabs prompt) — so save it with a name if you want it back. Sessions live under
 `~/.local/state/zym/` and are global, so `space s o` reaches any of them.
 
+## Projects
+
+One window can hold several projects. `space p o` opens another folder as a
+project (its own file tree, Source Control, and tabs); it appears in the
+left rail beside the first, and you switch between them there (or with
+`super-,` / `super-.`). `space p c` closes the active project. Agents you
+launch in a project stay running even if you close it.
+
 ## Where things live
 
 zym follows the XDG base directories:

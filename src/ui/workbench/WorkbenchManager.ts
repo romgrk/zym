@@ -27,7 +27,8 @@ import { DiagnosticsPanel } from '../../lsp/diagnostics/DiagnosticsPanel.ts';
 import { KeymapPanel } from '../KeymapPanel.ts';
 import { fileIconGlyph } from '../fileIcons.ts';
 import { acquireGitRepo, releaseGitRepo, invalidateRepoRoot } from '../../git.ts';
-import { type Owner, type Project, isProject } from './Owner.ts';
+import { type Owner, type Project, isProject, createProject } from './Owner.ts';
+import { Emitter, type Disposable } from '../../util/eventKit.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 type Wb = Workbench<Owner>;
@@ -53,9 +54,15 @@ export class WorkbenchManager {
   // The open project owners, in rail order (the first is the primary). Agents live in
   // `zym.agents`; this is the projects half of the rail's `[...projects, ...agents]`.
   readonly projects: Project[] = [];
+  private readonly emitter = new Emitter();
 
   constructor(deps: WorkbenchManagerDeps) {
     this.d = deps;
+  }
+
+  /** Notified when a project is opened or closed, so the rail can rebuild. */
+  onDidChangeProjects(callback: () => void): Disposable {
+    return this.emitter.on('did-change-projects', callback);
   }
 
   /** The primary (first-opened) project — the fallback owner to activate when an
@@ -151,6 +158,42 @@ export class WorkbenchManager {
     if (workbench) this.activateWorkbench(workbench);
   }
 
+  /** Open a project rooted at `root` (building its workbench), or return the already-open
+   *  one for that root (dedup). The caller activates it. Fires `did-change-projects`. */
+  addProject(root: string): Project {
+    const existing = this.projects.find((p) => this.workbenches.get(p)?.cwd === root);
+    if (existing) return existing;
+    const project = createProject(root);
+    this.buildWorkbench(project, root); // registers into projects[] + workbenches
+    this.emitter.emit('did-change-projects');
+    return project;
+  }
+
+  /** Close a project's workbench (its editors + action terminals go). Never closes the
+   *  last project; an active project hands off to another first. Agents rooted under it
+   *  keep running (their own worktrees). Fires `did-change-projects`. */
+  closeProject(project: Project): void {
+    if (this.projects.length <= 1) return; // always keep at least one project open
+    const workbench = this.workbenches.get(project);
+    if (!workbench) return;
+    this.d.paneItems.disposeWorkbenchActionTerminals(workbench);
+    if (this.activeWorkbench === workbench) {
+      const fallback = this.projects.find((p) => p !== project) ?? this.primaryProject;
+      this.activateOwner(fallback);
+    }
+    const i = this.projects.indexOf(project);
+    if (i >= 0) this.projects.splice(i, 1);
+    this.workbenches.delete(project);
+    this.d.paneItems.disposeWorkbenchEditors(workbench);
+    workbench.dispose(); // tears down its Panels/content + releases its pooled git repo
+    this.emitter.emit('did-change-projects');
+  }
+
+  /** Close every non-primary project (a session switch resets to the primary root). */
+  closeNonPrimaryProjects(): void {
+    for (const project of this.projects.slice(1)) this.closeProject(project);
+  }
+
   // Step the active workbench by `step` (−1 / +1) through the workbench-list order
   // ([…projects, …agents]), wrapping around. No-op with a single owner.
   cycleWorkbench(step: number): void {
@@ -170,7 +213,7 @@ export class WorkbenchManager {
   activateWorkbench(workbench: Wb): void {
     this.activeWorkbench = workbench;
     this.d.getContentOverlay().setChild(workbench.root); // show this workbench
-    this.d.getSidebar().list.selectAgent(isProject(workbench.owner) ? null : workbench.owner);
+    this.d.getSidebar().list.selectOwner(workbench.owner);
     this.d.getHeaderBar().rebind(); // header branch/GitHub now reflect this workbench's root
     this.d.getHeaderBar().refreshStatus(); // diagnostics pill + LSP indicator → this workbench
     this.d.getWorkbenchView().showAgentSidebar(this.d.activeAgent()); // reveal/hide this workbench's agent column

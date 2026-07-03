@@ -1,23 +1,21 @@
 /*
  * WorkbenchList — the contents of the WorkbenchSidebar (the full-height column at the
- * very left of the window). Each entry is (will be) associated with a particular
- * workbench workbench: the first ("default", selected-by-default) entry is the
- * **user** (rendered as a pseudo-agent), the rest are the running terminal agents
- * (`zym.agents`). The list is never empty — the user entry is always present —
- * so there is no empty state.
+ * very left of the window). Each entry maps to a workbench owner: the open **projects**
+ * first (`getProjects`, in rail order — the primary is always present, so the list is
+ * never empty), then the running **agents** (`zym.agents`). See
+ * docs/session-management.md "Multi-root".
  *
- * The top is an `Adw.HeaderBar` whose only content is a robot **button** that
- * toggles the sidebar between collapsed (icons only) and expanded (icons + text);
- * the host wires the actual width change via `onToggleCollapsed`.
+ * The top is an `Adw.HeaderBar` showing the active session name (see `setSessionName`)
+ * and a button that toggles the sidebar between collapsed (icons only) and expanded
+ * (icons + text); the host wires the actual width change via `onToggleCollapsed`.
  *
- * Activating an agent entry invokes `onActivate`; the user entry invokes
- * `onActivateUser`. Each agent row shows a status indicator + title + a changed-
- * files badge and stays in sync as agents launch, exit, or rename.
+ * Activating a project row invokes `onActivateProject`; an agent row invokes
+ * `onActivate`. Each agent row shows a status indicator + title and stays in sync as
+ * agents launch, exit, or rename; a project open/close rebuilds the rail wholesale.
  *
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
  */
-import * as Os from 'node:os';
 import * as Path from 'node:path';
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
@@ -25,14 +23,13 @@ import Adw from 'gi:Adw-1';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import { ImageIcons } from '../icons.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
+import { fileIconGlyph } from './fileIcons.ts';
 import type { Agent } from '../agents/types.ts';
+import { type Owner, type Project } from './workbench/Owner.ts';
 
-// The user row's leading icon size — matches the agent status icon so the two rows line up.
-const USER_ICON_SIZE = 16;
-// Project name shown in the sidebar header: the last path component of the cwd.
+// Project name shown in the sidebar header fallback: the last path component of the cwd.
 export const PROJECT_NAME = Path.basename(process.cwd());
 // Add/remove animation duration: each row rides in/out inside a Gtk.Revealer that
 // slides its height open (on launch) or shut (on close).
@@ -61,8 +58,12 @@ addStyles(/* css */`
 export interface WorkbenchListOptions {
   /** Fired when an agent row is activated (clicked / Enter). */
   onActivate?: (agent: Agent) => void;
-  /** Fired when the default (user) row is activated. */
-  onActivateUser?: () => void;
+  /** Fired when a project row is activated. */
+  onActivateProject?: (project: Project) => void;
+  /** The open projects, in rail order (rendered before the agents). */
+  getProjects?: () => Project[];
+  /** Subscribe to project open/close so the rail rebuilds; returns an unsubscribe. */
+  onProjectsChanged?: (callback: () => void) => { dispose(): void };
   /** Fired when the robot button toggles collapse; the host resizes the sidebar. */
   onToggleCollapsed?: (collapsed: boolean) => void;
   /** Restart an agent (respawn / resume) — the list's `r` key. */
@@ -75,12 +76,10 @@ export interface WorkbenchListOptions {
   onRename?: (agent: Agent) => void;
   /** Open the files an agent has edited — the changed-files badge / `o` key. */
   onOpenChanges?: (agent: Agent) => void;
-  /** Display name for the default (user) entry; defaults to the OS username. */
-  userName?: string;
 }
 
-// A list entry: the always-present user row, or one of the running agents.
-type Entry = { kind: 'user' } | { kind: 'agent'; agent: Agent };
+// A list entry: one of the open projects, or one of the running agents.
+type Entry = { kind: 'project'; project: Project } | { kind: 'agent'; agent: Agent };
 
 // A built row: its entry, the ListBoxRow, the Revealer that animates it in/out, and
 // the per-row unsubscribes (title + status + files). `removing` marks a row that is
@@ -100,16 +99,15 @@ export class WorkbenchList {
   private readonly listBox: InstanceType<typeof Gtk.ListBox>;
   private readonly scrolled: InstanceType<typeof Gtk.ScrolledWindow>;
   private readonly options: WorkbenchListOptions;
-  private readonly userName: string;
-  // The built rows, in list-box order (user first, then agents in launch order).
+  // The built rows, in list-box order (projects first, then agents in launch order).
   // Includes rows mid-removal (`removing`) until their collapse transition finishes.
   private handles: RowHandle[] = [];
   // Outstanding timer IDs for in-flight row transitions, cancelled on dispose
   // (and on a full rebuild) so a deferred callback never touches a freed widget.
   private timers = new Set<NodeJS.Timeout>();
-  // The agent whose row is selected (kept stable across rebuilds); null selects the
-  // user row by default. Reflects the last-focused agent; see AppWindow.
-  private selected: Agent | null = null;
+  // The owner whose row is selected (kept stable across rebuilds); null selects the
+  // first project row by default. Reflects the active workbench's owner; see AppWindow.
+  private selected: Owner | null = null;
   // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
   // header-bar sidebar toggle button.
   private collapsed = false;
@@ -124,7 +122,6 @@ export class WorkbenchList {
 
   constructor(options: WorkbenchListOptions = {}) {
     this.options = options;
-    this.userName = options.userName ?? Os.userInfo().username;
 
     // An Adw.ToolbarView holds the project-title header bar as a top bar over the
     // scrollable workbench list, so the bar matches the window header beside it and
@@ -152,6 +149,9 @@ export class WorkbenchList {
     // agents animate their rows in/out rather than snapping the whole list.
     this.subs.add(zym.agents.onDidAddAgent(() => this.syncAgents()));
     this.subs.add(zym.agents.onDidRemoveAgent(() => this.syncAgents()));
+    // A project open/close rebuilds the rail wholesale (rare; no per-row animation).
+    const projectsSub = this.options.onProjectsChanged?.(() => this.rebuild());
+    if (projectsSub) this.subs.add(projectsSub);
     this.rebuild();
   }
 
@@ -235,9 +235,12 @@ export class WorkbenchList {
       child = next;
     }
 
-    // The user entry is always first; agents follow in launch order. Rows are built
+    // Projects come first (rail order), agents follow in launch order. Rows are built
     // already-revealed so the initial render snaps in without a transition.
-    const entries: Entry[] = [{ kind: 'user' }, ...zym.agents.getAgents().map((agent): Entry => ({ kind: 'agent', agent }))];
+    const entries: Entry[] = [
+      ...this.projects().map((project): Entry => ({ kind: 'project', project })),
+      ...zym.agents.getAgents().map((agent): Entry => ({ kind: 'agent', agent })),
+    ];
     for (const entry of entries) {
       const handle = this.createHandle(entry, true);
       this.handles.push(handle);
@@ -282,8 +285,8 @@ export class WorkbenchList {
   private createHandle(entry: Entry, reveal: boolean): RowHandle {
     const unsubs: Array<() => void> = [];
     const content =
-      entry.kind === 'user'
-        ? this.buildUserContent()
+      entry.kind === 'project'
+        ? this.buildProjectContent(entry.project)
         : this.buildAgentContent(entry.agent, unsubs);
 
     const revealer = new Gtk.Revealer({
@@ -346,13 +349,18 @@ export class WorkbenchList {
     return box;
   }
 
-  // The default row's content: the user, rendered like an agent — a symbolic person
-  // icon (dimmed to match the exited agent icon) + name.
-  private buildUserContent(): InstanceType<typeof Gtk.Box> {
-    const icon = ImageIcons.USER(USER_ICON_SIZE);
-    icon.addCssClass('Workbenchrow--user-icon');
-    const label = new Gtk.Label({ label: this.userName, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
-    label.addCssClass('Workbenchrow--label')
+  // Live projects from the host (empty until wired). The rail is never truly empty —
+  // the primary project is always present.
+  private projects(): Project[] {
+    return this.options.getProjects?.() ?? [];
+  }
+
+  // A project row: a dimmed folder glyph + the project's title (its root basename).
+  private buildProjectContent(project: Project): InstanceType<typeof Gtk.Box> {
+    const icon = iconLabel(fileIconGlyph('', true));
+    icon.addCssClass('Workbenchrow--user-icon'); // dimmed, matching the old user icon
+    const label = new Gtk.Label({ label: project.title, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
+    label.addCssClass('Workbenchrow--label');
     return this.rowContent(icon, label);
   }
 
@@ -391,11 +399,16 @@ export class WorkbenchList {
     return this.handles.find((h) => h.row === row);
   }
 
-  // Activate an entry: reveal the agent's terminal, or run the user action.
+  // Activate an entry: switch to the project's workbench, or reveal the agent.
   private activate(entry: Entry | undefined): void {
     if (!entry) return;
-    if (entry.kind === 'user') this.options.onActivateUser?.();
+    if (entry.kind === 'project') this.options.onActivateProject?.(entry.project);
     else this.options.onActivate?.(entry.agent);
+  }
+
+  // The owner an entry represents — the source of truth for selection matching.
+  private entryOwner(entry: Entry): Owner {
+    return entry.kind === 'project' ? entry.project : entry.agent;
   }
 
   // --- Keyboard navigation (vim bare keys while .WorkbenchList is focused) --------
@@ -453,20 +466,18 @@ export class WorkbenchList {
     else this.listBox.grabFocus();
   }
 
-  /** Select the row for `agent`, or the default user row when `null`. Called when
-   *  an agent gains/loses focus. */
-  selectAgent(agent: Agent | null): void {
-    this.selected = agent;
+  /** Select the row for `owner` (the active workbench's project or agent). Called on
+   *  every workbench switch so the rail highlight follows the active owner. */
+  selectOwner(owner: Owner | null): void {
+    this.selected = owner;
     this.applySelection();
   }
 
-  // Reflect `this.selected` onto the list box (the user row when nothing is
-  // selected, so a default entry is always highlighted).
+  // Reflect `this.selected` onto the list box (the first project row when nothing is
+  // selected, so a row is always highlighted).
   private applySelection(): void {
     const live = this.liveHandles();
-    const handle = this.selected
-      ? live.find((h) => h.entry.kind === 'agent' && h.entry.agent === this.selected)
-      : live[0]; // the user row
+    const handle = live.find((h) => this.entryOwner(h.entry) === this.selected) ?? live[0];
     if (handle) this.listBox.selectRow(handle.row);
   }
 

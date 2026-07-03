@@ -478,7 +478,7 @@ export class AgentController {
   // The sidebar selection follows the active workbench's owner (which person you're
   // viewing), not focus.
   updateAgentHighlight(): void {
-    this.d.sidebar.list.selectAgent(isAgent(this.workbench.owner) ? this.workbench.owner : null);
+    this.d.sidebar.list.selectOwner(this.workbench.owner);
   }
 
   // Tell each agent whether the user is currently looking at it — only the agent whose

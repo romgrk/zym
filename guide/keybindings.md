@@ -104,6 +104,8 @@ See [Agents](agents.md); highlights:
 | `space s a` | save the session under a name |
 | `space s o` | open a saved session |
 | `space s R` | rename the current session |
+| `space p o` | open another folder as a project in this window |
+| `space p c` | close the active project |
 | `space , ,` | preferences window |
 | `space , c` | edit `config.json` as text |
 | `space , k` | edit `keymap.json` as text |

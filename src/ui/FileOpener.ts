@@ -151,17 +151,26 @@ export function openFileOpener(host: Overlay, cwd: string, onChoose: (path: stri
  * action row picks the directory currently being listed and hands its absolute
  * path to `onChoose` (e.g. a move destination).
  */
-export function openFolderPicker(host: Overlay, cwd: string, dir: string, onChoose: (folder: string) => void): void {
+export function openFolderPicker(
+  host: Overlay,
+  cwd: string,
+  dir: string,
+  onChoose: (folder: string) => void,
+  opts: { placeholder?: string; actionLabel?: (folder: string) => string } = {},
+): void {
   openPathPicker({
     host,
     cwd,
-    placeholder: 'Move to folder…',
+    placeholder: opts.placeholder ?? 'Move to folder…',
     query: listSeed(dir, cwd),
     foldersOnly: true,
     action: {
       // The directory whose contents are listed is the destination; `directoryOf`
       // is exactly what `fetch` lists, so it stays in step as you descend / filter.
-      label: (query) => `Move here: ${directoryOf(query, cwd) || '.'}`,
+      label: (query) => {
+        const folder = directoryOf(query, cwd) || '.';
+        return opts.actionLabel ? opts.actionLabel(folder) : `Move here: ${folder}`;
+      },
       run: (query) => onChoose(resolvePath(directoryOf(query, cwd), cwd)),
     },
   });

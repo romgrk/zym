@@ -26,7 +26,8 @@ import { HeaderBar } from './HeaderBar.ts';
 import { repoRoot } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { Workbench, DOCK_SIDES } from './workbench/Workbench.ts';
-import { type Owner, createProject } from './workbench/Owner.ts';
+import { type Owner, createProject, isProject } from './workbench/Owner.ts';
+import { openFolderPicker } from './FileOpener.ts';
 import { openScriptRunner } from './ScriptRunner.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
 import { openDiffCollapseGlobPicker } from './DiffCollapseGlobPicker.ts';
@@ -254,8 +255,13 @@ export class AppWindow {
           const text = e.unsavedSnapshot();
           return e.currentFile && text !== null ? [{ path: e.currentFile, text }] : [];
         }),
-      // session:open replace-semantics teardown (agentController is late-bound below).
-      closeAllAgents: () => this.agentController.closeAllAgents(),
+      // session:open replace-semantics teardown: drop the current window's agents and
+      // any extra projects so applying the target session is deterministic (agentController
+      // is late-bound below).
+      closeAllAgents: () => {
+        this.agentController.closeAllAgents();
+        this.workbenchManager.closeNonPrimaryProjects();
+      },
       // Reflect the active session name in the window title + sidebar header.
       onNameChange: (name) => this.applySessionName(name),
     });
@@ -279,7 +285,9 @@ export class AppWindow {
     // button forwards collapse/expand here to resize the split below.
     this.sidebar = new Sidebar({
       onActivate: (agent) => this.agentController.showAgent(agent),
-      onActivateUser: () => this.workbenchManager.activateOwner(this.workbenchManager.primaryProject), // the user row → primary project
+      onActivateProject: (project) => this.workbenchManager.activateOwner(project),
+      getProjects: () => this.workbenchManager.projects,
+      onProjectsChanged: (cb) => this.workbenchManager.onDidChangeProjects(cb),
       onRestart: (agent) => this.agentController.restartAgent(agent),
       onStop: (agent) => agent.kill(),
       onClose: (agent) => this.agentController.closeAgent(agent),
@@ -615,6 +623,9 @@ export class AppWindow {
       // Cycle the active workbench through [user, …agents] (the workbench-list order).
       'workbench:previous': { didDispatch: () => this.workbenchManager.cycleWorkbench(-1), description: 'Switch to the previous workbench' },
       'workbench:next': { didDispatch: () => this.workbenchManager.cycleWorkbench(1), description: 'Switch to the next workbench' },
+      // Multi-project: open another folder as a project in this window, or close the active one.
+      'project:open': { didDispatch: () => this.openProjectPicker(), description: 'Open a folder as a project in this window' },
+      'project:close': { didDispatch: () => this.closeActiveProject(), description: 'Close the active project' },
       // Fuzzy-pick a workbench to switch to (the user / each agent) — same set the
       // cycle steps through; selecting one activates it.
       'workbench:picker': {
@@ -1106,6 +1117,33 @@ export class AppWindow {
         this.toast(`Session “${label}” deleted`);
       },
     });
+  }
+
+  // Open another folder as a project in this window (a folder picker, seeded at the
+  // active workbench's root), then switch to it. Dedups an already-open root.
+  private openProjectPicker(): void {
+    const cwd = this.workbench.cwd;
+    openFolderPicker(
+      this.overlay,
+      cwd,
+      cwd,
+      (folder) => this.workbenchManager.activateOwner(this.workbenchManager.addProject(folder)),
+      { placeholder: 'Open project folder…', actionLabel: (dir) => `Open project: ${dir}` },
+    );
+  }
+
+  // Close the active project (never the last one). Agents rooted under it keep running.
+  private closeActiveProject(): void {
+    const owner = this.workbench.owner;
+    if (!isProject(owner)) {
+      this.toast('The active workbench is an agent, not a project');
+      return;
+    }
+    if (this.workbenchManager.projects.length <= 1) {
+      this.toast('Can’t close the last project');
+      return;
+    }
+    this.workbenchManager.closeProject(owner);
   }
 
   // Reflect the active session name in the window title (OS taskbar) and the sidebar

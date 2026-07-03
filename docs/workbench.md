@@ -21,9 +21,11 @@ opens as a center tab, not a dock — see docs/git/index.md.)
   `ensureWorkArea`), though agents no longer use it — the agent widget lives in the
   window-level agent sidebar (below), leaving the agent center an ordinary work area.
 - **`Workbench`** — fixed dock slots (left/right/top/bottom, nested
-  Gtk.Paned) around the center. One Workbench per "person" (the user, each
-  agent); switching person swaps which Workbench the window shows (see
-  docs/agents.md). The Files tree dock lives in the **right** slot — note the
+  Gtk.Paned) around the center. One Workbench per **owner** — a `Project` or an
+  `Agent` (`src/ui/workbench/Owner.ts`; `Project` replaced the former `'user'`
+  singleton, so a window can hold several projects). Switching owner swaps which
+  Workbench the window shows (see docs/agents.md and session-management.md
+  "Multi-root"). The Files tree dock lives in the **right** slot — note the
   misleading `leftPanel` field / `revealFileTree` names, which dock via
   `setRight`. (Source Control is a center tab, not a dock — `revealGitPanel`.)
 - **`AgentSidebar`** (`src/ui/AgentSidebar.ts`) — not a workbench slot but a
@@ -39,9 +41,12 @@ opens as a center tab, not a dock — see docs/git/index.md.)
   on the active workbench (read lazily) and the window-level `Gtk.Paned` columns;
   the panel-tree operations it needs are injected by `AppWindow`. See
   [app-window.md](app-window.md).
-- **`WorkbenchManager`** (`src/ui/workbench/WorkbenchManager.ts`) — the per-person
-  workbench **lifecycle**: the `workbenches` map + the active one, and
-  `buildWorkbench` / `activateWorkbench` / `cycleWorkbench` / `reRootWorkbench`.
+- **`WorkbenchManager`** (`src/ui/workbench/WorkbenchManager.ts`) — the per-owner
+  workbench **lifecycle**: the `workbenches` map + the active one + the ordered
+  `projects[]` (primary first), `buildWorkbench` / `activateWorkbench` /
+  `cycleWorkbench` / `reRootWorkbench`, and the multi-project
+  `addProject` / `closeProject` / `closeNonPrimaryProjects` (+ a
+  `did-change-projects` emitter the rail rebuilds on).
 - **`PaneItems`** (`src/ui/workbench/PaneItems.ts`) — the **tab/item-registry spine**
   underneath every `Panel`: the per-widget registries for each kind of center tab +
   their create/serialize/dispose/reopen lifecycle, the shared `DocumentRegistry`, and

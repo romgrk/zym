@@ -19,6 +19,7 @@ import { registerBundledFonts, fonts } from '../fonts.ts';
 import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
 import { WorkbenchList } from '../ui/WorkbenchList.ts';
+import { createProject } from '../ui/workbench/Owner.ts';
 import type { Agent } from '../agents/types.ts';
 import type { AgentStatus } from '../ui/AgentTerminal.ts';
 
@@ -91,7 +92,8 @@ app.on('activate', () => {
 
     const list = new WorkbenchList({
       onActivate: (a) => process.stderr.write(`[POC] activate ${a.title}\n`),
-      onActivateUser: () => process.stderr.write('[POC] activate user\n'),
+      onActivateProject: (p) => process.stderr.write(`[POC] activate project ${p.title}\n`),
+      getProjects: () => [createProject(process.cwd())],
     });
     list.root.setSizeRequest(SIDEBAR_WIDTH, -1);
 

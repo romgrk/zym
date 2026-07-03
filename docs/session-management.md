@@ -340,19 +340,30 @@ unnamed/default session):
 
 ## Multi-root (several projects in one window)
 
-The `workspaces[]` format already discriminates a **project** workspace
-(no `agent` field) from an **agent** workspace (`agent` present). Today
-the runtime builds one project workspace (`workspaces[0]`, the user)
-plus one per agent; `restore()`/`applyState()` hard-code
-`workspaces[0]` = user and `slice(1)` = agents. Multi-root is the
-runtime change of letting a window hold **several** project workspaces,
-switched from the WorkbenchList rail (the same one-active-root switch
-agents already use — `WorkbenchManager.reRootWorkbench` /
-`activateWorkbench`). It needs no session-format change: a named
-session's `workspaces[]` simply carries N projects + their agents, and
-`applyState` iterates (`agent ? relaunchAgent : buildProjectWorkbench`)
-instead of assuming a single user at index 0. Land the named-session
-model first (single project); layer multi-root on top.
+**Live multi-project is implemented.** A workbench owner is
+`Project | Agent` (`src/ui/workbench/Owner.ts`) — `Project` replaced the
+former `'user'` singleton. `WorkbenchManager` holds an ordered
+`projects[]` (the primary is `projects[0]`, the fallback owner) with
+`addProject(root)` / `closeProject` / `closeNonPrimaryProjects` and a
+`did-change-projects` emitter; the WorkbenchList rail renders
+`[…projects, …agents]` and switches between them (the same one-active-
+root switch agents already use — `activateWorkbench`). Commands:
+
+- `project:open` (`space p o`) — a folder picker; opens the chosen
+  folder as a project workbench and switches to it (dedups an
+  already-open root).
+- `project:close` (`space p c`) — closes the active project (never the
+  last one); agents rooted under it keep running in their own worktrees.
+
+**Persistence is not yet multi-project.** `serialize()`/`applyState()`
+still record just the primary project (`workspaces[0]`) + agents, and
+`session:open` resets extra projects (`closeNonPrimaryProjects`) before
+applying. The format already supports N projects — `workspaces[]`
+discriminates a **project** workspace (no `agent`) from an **agent** one
+(`agent` present) — so finishing this is the runtime change of
+`serialize` emitting one workspace per project and `applyState`
+iterating (`agent ? relaunchAgent : buildProjectWorkbench`) instead of
+assuming a single project at index 0.
 
 ## Edge cases
 
