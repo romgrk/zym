@@ -25,7 +25,7 @@ import { HeaderBar } from './HeaderBar.ts';
 import { repoRoot } from '../git.ts';
 import { openCommitDiff, openCommitPicker, openBranchDiff } from './diffViews.ts';
 import { Workbench, DOCK_SIDES } from './workbench/Workbench.ts';
-import { type Owner, createProject, isProject } from './workbench/Owner.ts';
+import { type Owner, type Project, createProject, isProject } from './workbench/Owner.ts';
 import { openFolderPicker } from './FileOpener.ts';
 import { openScriptRunner } from './ScriptRunner.ts';
 import { openDiffFilePicker } from './DiffFilePicker.ts';
@@ -1177,33 +1177,45 @@ export class AppWindow {
     return { project: 0 };
   }
 
-  // Rebuild the window from a saved session: restore each project's default workbench,
-  // relaunch its agents (with that project active so they associate correctly), apply the
-  // window-level docks (to the primary) + geometry, then focus the saved owner.
+  // Rebuild the window from a saved session. The project set is rebuilt from the SAVED
+  // roots (not forced into the cwd primary): `addProject` dedups by root — reusing the
+  // primary when its root matches, opening the rest fresh — so a session saved for other
+  // roots roots each project correctly (tree/git/title match its contents). Each project's
+  // agents relaunch while it's active (so they associate with it). Leftover projects not
+  // in the session (e.g. the cwd primary when opening a session rooted elsewhere) are then
+  // closed, and the window-level docks/geometry + saved focus applied.
   private restoreSession(state: SessionState, buildChild: (tab: TabState) => RestoredChild | null): void {
+    const restored: Project[] = [];
     state.projects.forEach((p, index) => {
-      // projects[0] is the primary (already built at startup — restore into it); the rest
-      // are opened fresh.
-      const project = index === 0 ? this.workbenchManager.primaryProject : this.workbenchManager.addProject(p.root);
+      const project = this.workbenchManager.addProject(p.root);
+      restored.push(project);
       const wb = this.workbenches.get(project);
       if (!wb) return;
       wb.center.restoreLayout(p.workbench.layout, buildChild);
       if (p.workbench.fileTree) wb.fileTree.restoreExpanded(p.workbench.fileTree.expanded);
       if (p.workbench.actions) wb.actions.restore(p.workbench.actions);
-      // A project must be active while its agents relaunch, so agentProject binds to it.
-      this.workbenchManager.activateOwner(project);
-      if (index === 0 && state.docks) this.applyDocks(state.docks); // window docks → the primary
+      this.workbenchManager.activateOwner(project); // active while its agents relaunch
+      if (index === 0 && state.docks) this.applyDocks(state.docks); // window docks → the session's primary
       for (const agent of p.agents) this.agentController.restoreAgent(agent);
     });
+    // Close any leftover project not in the session (safe — the session added ≥1, so the
+    // last-project guard holds).
+    for (const project of [...this.workbenchManager.projects]) {
+      if (!restored.includes(project)) this.workbenchManager.closeProject(project);
+    }
     if (state.window) this.applyWindowGeometry(state.window);
-    this.activateSavedOwner(state.active);
+    this.activateSavedOwner(state);
   }
 
-  // Focus the owner active at save time (a project's default workbench, or one of its agents).
-  private activateSavedOwner(active: SessionState['active']): void {
-    const group = this.workbenchManager.projectGroups()[active.project];
-    if (!group) return;
-    const owner = active.agent != null ? (group.agents[active.agent] ?? group.project) : group.project;
+  // Focus the owner active at save time. Resolve the active project by its saved root
+  // (not the raw index — the cwd primary may have been reused or closed, shifting order).
+  private activateSavedOwner(state: SessionState): void {
+    const savedProject = state.projects[state.active.project];
+    if (!savedProject) return;
+    const project = this.workbenchManager.projects.find((p) => this.workbenches.get(p)?.cwd === savedProject.root);
+    if (!project) return;
+    const group = this.workbenchManager.projectGroups().find((g) => g.project === project);
+    const owner = state.active.agent != null ? (group?.agents[state.active.agent] ?? project) : project;
     this.workbenchManager.activateOwner(owner);
   }
 

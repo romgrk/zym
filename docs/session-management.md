@@ -226,11 +226,15 @@ The format mirrors the live model exactly: a **project** groups its
 default (**"you"**) **workbench** with the **agents** launched under it.
 `serialize` (in AppWindow, which holds the workbench collaborators) walks
 `workbenchManager.projectGroups()`; `applyState` → `restoreSession`
-rebuilds each project (`projects[0]` restores into the primary built at
-startup; the rest via `addProject`), relaunching each project's agents
-while that project is active so they associate with it. `active` records
-the focused owner and is re-activated last. ("Workbench state" replaced
-the former "workspace" — see the terminology note in the runtime.)
+rebuilds the project set from the **saved roots** — `addProject(p.root)`
+per project (dedup by root reuses the cwd primary when it matches, opens
+the rest fresh), so a session opened from a different cwd roots each
+project correctly rather than forcing `projects[0]` into the cwd primary.
+Leftover projects not in the session (e.g. the cwd primary) are then
+closed. Each project's agents relaunch while it is active so they
+associate with it; `active` (resolved by root) is re-activated last.
+("Workbench state" replaced the former "workspace" — see the terminology
+note in the runtime.)
 
 `SessionManager` resolves the path
 (`<state>/zym/sessions/<slug(name)>.json`), reads/writes via sync `Fs`

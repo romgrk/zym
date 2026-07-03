@@ -227,6 +227,7 @@ export class WorkbenchManager {
     if (existing) return existing;
     const project = createProject(root);
     this.buildWorkbench(project, root); // registers into projects[] + workbenches (+ emits)
+    this.d.scheduleAutosave(); // the project set changed — persist it (named sessions)
     return project;
   }
 
@@ -257,6 +258,7 @@ export class WorkbenchManager {
     this.d.paneItems.disposeWorkbenchEditors(workbench);
     workbench.dispose(); // tears down its Panels/content + releases its pooled git repo
     this.emitter.emit('did-change-projects');
+    this.d.scheduleAutosave(); // the project set changed — persist it (named sessions)
   }
 
   /** Close every non-primary project (a session switch resets to the primary root). */
