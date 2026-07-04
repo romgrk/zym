@@ -331,7 +331,9 @@ named-only model — there is no launch restore.)
 - `session:delete` — picker → forget a session (its json + `.buffers`);
   guards the active one.
 
-Handlers on `#AppWindow`; bindings in `src/keymaps/default.ts`.
+Handlers live in the `registerSessionCommands` module
+(`src/ui/sessionCommands.ts`, injected only the `SessionController`); bindings
+in `src/keymaps/default.ts`.
 
 ## Feature: named sessions
 

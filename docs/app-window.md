@@ -34,6 +34,10 @@ Command modules (in/next to their feature folder):
   header's `github` service.
 - `src/ui/fileCommands.ts` — `registerFileCommands` (`file:*`): open / save / save-as /
   move / rename (with LSP reference rewrites). Injects only `activeSavableSurface`.
+- `src/ui/sessionCommands.ts` — `registerSessionCommands` (`session:*`): save / save-as /
+  open / close / rename / delete, plus their pickers and the open-elsewhere prompt.
+  Injects only the `sessionController` (the state owner); the shared "Unsaved work"
+  confirm lives in `src/ui/confirmUnsavedWork.ts` (also used by the quit path).
 
 State-owning controllers:
 

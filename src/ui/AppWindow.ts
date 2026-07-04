@@ -36,7 +36,7 @@ import { openThemePicker } from './ThemePicker.ts';
 import { saveConfig } from '../config/load.ts';
 import { WhichKey } from './WhichKey.ts';
 import { openWorkbenchPicker } from './WorkbenchPicker.ts';
-import { openSessionPicker, promptSessionName } from './SessionPicker.ts';
+import { confirmUnsavedWork } from './confirmUnsavedWork.ts';
 import { openBranchPicker } from './git/BranchPicker.ts';
 import { openGithubCIChecksPicker } from './GithubCIChecksPicker.ts';
 import { openConfigEditor } from './ConfigEditor.ts';
@@ -57,6 +57,7 @@ import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
+import { registerSessionCommands } from './sessionCommands.ts';
 import { WorkbenchView, SIDEBAR_WIDTH, AGENT_SIDEBAR_WIDTH } from './workbench/WorkbenchView.ts';
 import { PaneItems } from './workbench/PaneItems.ts';
 import { WorkbenchManager } from './workbench/WorkbenchManager.ts';
@@ -414,7 +415,7 @@ export class AppWindow {
     registerGitCommands({ github: this.headerBar.github });
     this.registerNotificationCommands();
     this.registerConfigCommands();
-    this.registerSessionCommands();
+    registerSessionCommands({ sessionController: this.sessionController });
     registerLspCommands({ documents: this.paneItems.documents });
     this.keymapWatcher = loadKeymaps();
 
@@ -526,32 +527,10 @@ export class AppWindow {
   // can be saved (editors); a running agent has nothing to flush and is killed on
   // quit. "Discard" quits regardless; "Cancel" keeps the window open.
   private promptModifiedThenQuit(modified: SessionParticipant[]) {
-    this.confirmUnsavedWork(modified, 'The following will be lost if you quit now:', () => {
+    confirmUnsavedWork(modified, 'The following will be lost if you quit now:', () => {
       this.quitting = true; // bypass the re-entrant close-request check
       this.teardownAndQuit();
     });
-  }
-
-  // Present the shared "Unsaved work" confirm (Save All / Discard / Cancel) over a
-  // list of modified participants, then run `onProceed` — after flushing each on
-  // Save All, straight through on Discard. Cancel does nothing. Used by the quit path
-  // and by session-switching (both tear down editors that may hold unsaved edits).
-  private confirmUnsavedWork(modified: SessionParticipant[], body: string, onProceed: () => void): void {
-    const items = modified.map((p) => `• ${p.getModifiedLabel?.() ?? 'Unsaved work'}`).join('\n');
-    const dialog = new Adw.AlertDialog({ heading: 'Unsaved work', body: `${body}\n${items}` });
-    dialog.addResponse('cancel', 'Cancel');
-    dialog.addResponse('discard', 'Discard');
-    dialog.addResponse('save', 'Save All');
-    dialog.setResponseAppearance('discard', Adw.ResponseAppearance.DESTRUCTIVE);
-    dialog.setResponseAppearance('save', Adw.ResponseAppearance.SUGGESTED);
-    dialog.setDefaultResponse('save');
-    dialog.setCloseResponse('cancel');
-    dialog.on('response', (response: string) => {
-      if (response === 'cancel') return;
-      if (response === 'save') for (const participant of modified) participant.saveModified?.();
-      onProceed();
-    });
-    dialog.present(this.window);
   }
 
   // --- Active-tab tracking ---------------------------------------------------
@@ -980,179 +959,6 @@ export class AppWindow {
       'config:open-editor': { didDispatch: () => openConfigEditor(this.window), description: 'Open preferences' },
       'config:open-as-text': { didDispatch: () => this.paneItems.openFile(configPath()), description: 'Open config.json' },
       'keymap:open-as-text': { didDispatch: () => this.paneItems.openFile(ensureUserKeymap()), description: 'Edit the user keymap (keymap.json)' },
-    });
-  }
-
-  // Session commands (named-only model, docs/session-management.md). A window starts
-  // in the unnamed/default session, which never persists; naming it (save / save-as)
-  // promotes it to an autosaving named session, and `open` switches between them.
-  private registerSessionCommands() {
-    zym.commands.add('.AppWindow', {
-      'session:save': {
-        didDispatch: () => this.saveSession(),
-        description: 'Save the session (names it if unnamed)',
-      },
-      'session:save-as': {
-        didDispatch: () => this.promptSaveSessionAs(),
-        description: 'Save the session under a name',
-      },
-      'session:open': {
-        didDispatch: () => this.openSessionPicker(),
-        description: 'Open a saved session',
-      },
-      'session:close': {
-        didDispatch: () => this.closeSession(),
-        description: 'Close the active session and reset the window',
-      },
-      'session:rename': {
-        didDispatch: () => this.promptRenameSession(),
-        description: 'Rename the current session',
-      },
-      'session:delete': {
-        didDispatch: () => this.deleteSessionPicker(),
-        description: 'Delete a saved session',
-      },
-    });
-  }
-
-  // `session:save` — flush a named session; on the unnamed default it acts as save-as
-  // (mirrors an editor's Save on an untitled buffer).
-  private saveSession(): void {
-    if (this.sessionController.sessionName === null) {
-      this.promptSaveSessionAs();
-      return;
-    }
-    this.sessionController.saveNow();
-    this.toast(`Session “${this.sessionController.sessionName}” saved`);
-  }
-
-  private promptSaveSessionAs(): void {
-    promptSessionName(zym.workspace.getPickerHost(), {
-      placeholder: 'Save session as…',
-      initial: this.sessionController.sessionName ?? '',
-      actionLabel: (name) => `Save session as: ${name}`,
-      onSubmit: (name) => {
-        this.sessionController.saveAs(name);
-        this.toast(`Session saved as “${name}”`);
-      },
-    });
-  }
-
-  private promptRenameSession(): void {
-    const current = this.sessionController.sessionName;
-    if (current === null) {
-      // Nothing named yet — renaming the default session is really a first save.
-      this.promptSaveSessionAs();
-      return;
-    }
-    promptSessionName(zym.workspace.getPickerHost(), {
-      placeholder: 'Rename session…',
-      initial: current,
-      actionLabel: (name) => `Rename session to: ${name}`,
-      onSubmit: (name) => {
-        if (name === current) return;
-        this.sessionController.renameTo(name);
-        this.toast(`Session renamed to “${name}”`);
-      },
-    });
-  }
-
-  private openSessionPicker(): void {
-    openSessionPicker(zym.workspace.getPickerHost(), {
-      sessions: zym.session.list(),
-      activeName: this.sessionController.sessionName,
-      placeholder: 'Open session…',
-      emptyMessage: 'No saved sessions yet — save one with space s a',
-      onSelect: (state) => this.switchToSession(state),
-    });
-  }
-
-  // Switch into a saved session. Two gates, in order: (1) if another running instance
-  // already has this session open, warn first — both windows would autosave and
-  // overwrite each other's state; (2) opening replaces this window (tearing down its
-  // editors), so unsaved editor work is guarded by the same prompt as quitting.
-  private switchToSession(state: SessionState): void {
-    const holder = state.name != null ? zym.session.lockHolder(state.name) : null;
-    if (holder) {
-      this.confirmOpenElsewhere(state, () => this.guardUnsavedThenOpen(state));
-      return;
-    }
-    this.guardUnsavedThenOpen(state);
-  }
-
-  // The unsaved-editor guard around opening `state`; drops unwritten edits only after
-  // the same Save/Discard/Cancel prompt as quitting.
-  private guardUnsavedThenOpen(state: SessionState): void {
-    const modified =
-      zym.config.get('session.promptOnExitWhenModified') === true ? zym.session.collectModified() : [];
-    if (modified.length === 0) {
-      this.sessionController.open(state);
-      return;
-    }
-    this.confirmUnsavedWork(
-      modified,
-      `Opening “${zym.session.label(state)}” replaces this window. The following will be lost:`,
-      () => this.sessionController.open(state),
-    );
-  }
-
-  // Confirm opening a session another live instance already holds. "Open Anyway" is
-  // destructive-styled because both windows will then autosave over each other; the
-  // default is Cancel.
-  private confirmOpenElsewhere(state: SessionState, onProceed: () => void): void {
-    const label = zym.session.label(state);
-    const dialog = new Adw.AlertDialog({
-      heading: 'Session already open',
-      body: `“${label}” is open in another window. Opening it here lets both windows overwrite each other’s saved state.`,
-    });
-    dialog.addResponse('cancel', 'Cancel');
-    dialog.addResponse('open', 'Open Anyway');
-    dialog.setResponseAppearance('open', Adw.ResponseAppearance.DESTRUCTIVE);
-    dialog.setDefaultResponse('cancel');
-    dialog.setCloseResponse('cancel');
-    dialog.on('response', (response: string) => {
-      if (response === 'open') onProceed();
-    });
-    dialog.present(this.window);
-  }
-
-  // `session:close` — flush the active named session, then reset the window to a fresh,
-  // unnamed slate rooted at the launch dir. Tears down editors/agents/extra projects like
-  // a session switch, so it's guarded by the same unsaved-work prompt (a named close still
-  // caches unsaved buffers, but the file on disk is untouched, so warn before dropping the
-  // live edits). A no-op with a toast on the unnamed default session — nothing named to close.
-  private closeSession(): void {
-    const name = this.sessionController.sessionName;
-    if (name === null) {
-      this.toast('No open session to close');
-      return;
-    }
-    const proceed = () => {
-      this.sessionController.closeToFresh(process.cwd());
-      this.toast(`Session “${name}” closed`);
-    };
-    const modified =
-      zym.config.get('session.promptOnExitWhenModified') === true ? zym.session.collectModified() : [];
-    if (modified.length === 0) proceed();
-    else this.confirmUnsavedWork(modified, `Closing “${name}” resets this window. The following will be lost:`, proceed);
-  }
-
-  private deleteSessionPicker(): void {
-    openSessionPicker(zym.workspace.getPickerHost(), {
-      sessions: zym.session.list(),
-      activeName: this.sessionController.sessionName,
-      placeholder: 'Delete session…',
-      emptyMessage: 'No saved sessions to delete',
-      onSelect: (state) => {
-        const label = zym.session.label(state);
-        // Forgetting the active session drops back to the unnamed/default session
-        // (the live window stays exactly as it is — only its persistence is gone).
-        if (state.name != null && state.name === this.sessionController.sessionName) {
-          this.sessionController.becomeUnnamed();
-        }
-        zym.session.delete(state);
-        this.toast(`Session “${label}” deleted`);
-      },
     });
   }
 
