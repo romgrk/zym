@@ -258,7 +258,11 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
   '.GitPanel .GitPanelList': {
     'ctrl-w l': 'git-panel:focus-diff',
   },
-  '.GitPanel .TextEditor': {
+  // `:not(.insert-mode)` so the diff editor's insert-mode `ctrl-w` (delete-word) fires at
+  // once instead of stalling on this chord's partial-match timeout; `:not(.GitCommitInput)`
+  // keeps it off the commit editor (which cancels with escape/`q`). Both mirror the `q` rule
+  // below. `ctrl-w h` still navigates diff→list from normal/visual mode.
+  '.GitPanel .TextEditor:not(.insert-mode):not(.GitCommitInput)': {
     'ctrl-w h': 'git-panel:focus-list',
   },
   // `q` closes the embedded diff (collapse back to the list). Normal-mode only — so it doesn't

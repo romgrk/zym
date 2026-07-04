@@ -78,33 +78,31 @@ interface Filters {
 // The header padding, search-field margin, and commit-row padding share the same
 // base inset (2× the spacing token) so the chrome lines up.
 addStyles(`
-  /* Left column: the commit list, set off from the diff pane by a border. */
-  .GitLogView .gitlog-list-column { border-right: 1px solid var(--border-color); }
   .GitLogView .gitlog-header {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
   .GitLogView .gitlog-branch { font-weight: bold; }
-  .GitLogView .gitlog-branch-icon { color: var(--t-ui-text-muted); }
-  .GitLogView .gitlog-details { color: var(--t-ui-text-muted); }
+  .GitLogView .gitlog-branch-icon { opacity: var(--dim-opacity); }
+  .GitLogView .gitlog-details { opacity: var(--dim-opacity); }
   .GitLogView .gitlog-search-box {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
-  .GitLogView .gitlog-empty { color: var(--t-ui-text-muted); padding: 12px; }
+  .GitLogView .gitlog-empty { opacity: var(--dim-opacity); padding: 12px; }
   .GitLogList row {
     padding: calc(2 * var(--t-spacing));
     border-bottom: 1px solid var(--border-color);
   }
-  .GitLogView .gitlog-subject { color: var(--t-ui-editor-foreground); }
+  .GitLogView .gitlog-subject { color: var(--view-fg-color); }
   /* Row gaps (the box itself has no spacing): subject → meta is half a spacing unit,
      meta → badges a full one. */
-  .GitLogView .gitlog-meta { color: var(--t-ui-text-muted); margin-top: calc(0.5 * var(--t-spacing)); }
+  .GitLogView .gitlog-meta { opacity: var(--dim-opacity); margin-top: calc(0.5 * var(--t-spacing)); }
   .GitLogView .gitlog-refs { margin-top: var(--t-spacing); }
   /* Ref badges: *other* branches/tags pointing at a commit (the current branch is
      not shown), on their own row under the meta line. A faint tint + matching border
-     per kind: local branches read as info, remote-tracking branches as warning, tags
-     as success. */
+     per kind, all from libadwaita's OS-following status colors: local branches read as
+     accent, remote-tracking branches as warning, tags as success. */
   .GitLogView .gitlog-ref {
     font-size: var(--t-font-ui-size-small);
     padding: 0 6px;
@@ -112,26 +110,27 @@ addStyles(`
     border: 1px solid transparent;
   }
   .GitLogView .gitlog-ref-branch {
-    color: var(--t-ui-status-info);
-    background-color: alpha(var(--t-ui-status-info), 0.12);
-    border-color: alpha(var(--t-ui-status-info), 0.4);
+    color: var(--accent-color);
+    background-color: alpha(var(--accent-color), 0.12);
+    border-color: alpha(var(--accent-color), 0.4);
   }
   .GitLogView .gitlog-ref-remote {
-    color: var(--t-ui-status-warning);
-    background-color: alpha(var(--t-ui-status-warning), 0.12);
-    border-color: alpha(var(--t-ui-status-warning), 0.4);
+    color: var(--warning-color);
+    background-color: alpha(var(--warning-color), 0.12);
+    border-color: alpha(var(--warning-color), 0.4);
   }
   .GitLogView .gitlog-ref-tag {
-    color: var(--t-ui-status-success);
-    background-color: alpha(var(--t-ui-status-success), 0.12);
-    border-color: alpha(var(--t-ui-status-success), 0.4);
+    color: var(--success-color);
+    background-color: alpha(var(--success-color), 0.12);
+    border-color: alpha(var(--success-color), 0.4);
   }
-  /* Selected row: the shared row selection highlight — accent tint while focused, a
-     neutral wash otherwise. */
+  /* Selected row: the shared row selection highlight — a neutral wash when the list is
+     unfocused, an accent tint only while the list itself holds focus. Scoped to the
+     list (not the whole view) so focusing the diff pane doesn't accent the row. */
   .GitLogList row:selected { background-color: var(--selection-bg); }
-  .GitLogView:focus-within .GitLogList row:selected { background-color: var(--selection-bg-focus); }
+  .GitLogList:focus-within row:selected { background-color: var(--selection-bg-focus); }
   /* Right pane: the embedded diff (or a placeholder while nothing is selected). */
-  .GitLogView .gitlog-diff-placeholder { color: var(--t-ui-text-muted); padding: 12px; }
+  .GitLogView .gitlog-diff-placeholder { opacity: var(--dim-opacity); padding: 12px; }
 `);
 
 // Badge order within a row: local branches first, then tags, then remote-tracking
@@ -226,7 +225,7 @@ export class GitLogView {
     this.empty.setVisible(false);
 
     // --- Left column: header / search / list, stacked. Its own box so the Paned can
-    // hold it whole and a border can set it off from the diff.
+    // hold it whole (the Paned's own handle separates it from the diff).
     const listColumn = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
     listColumn.addCssClass('gitlog-list-column');
     listColumn.append(header);

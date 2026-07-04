@@ -70,6 +70,20 @@ test('matchesRuleInChain: class and :not() match against CSS classes', () => {
   assert.ok(!matches('TextEditor:not(.insert-mode)', chain));
 });
 
+test('matchesRuleInChain: chained :not() requires every argument absent', () => {
+  // `.GitPanel .TextEditor:not(.insert-mode):not(.GitCommitInput)` (keymaps/default.ts):
+  // both :not() args must be absent for the ctrl-w h chord to bind, so the editor's
+  // insert-mode ctrl-w (delete-word) isn't stalled and the commit box is excluded.
+  const sel = '.GitPanel .TextEditor:not(.insert-mode):not(.GitCommitInput)';
+  const diff = (mode: string) => [ctx('GtkSourceView', ['TextEditor', mode]), ctx('GitPanel', ['GitPanel'])];
+  const commit = (mode: string) => [ctx('GtkSourceView', ['TextEditor', 'GitCommitInput', mode]), ctx('GitPanel', ['GitPanel'])];
+  assert.ok(matches(sel, diff('normal-mode')), 'diff editor in normal mode binds ctrl-w h');
+  assert.ok(matches(sel, diff('visual-mode')), 'diff editor in visual mode still binds it');
+  assert.ok(!matches(sel, diff('insert-mode')), 'insert mode is excluded (first :not)');
+  assert.ok(!matches(sel, commit('normal-mode')), 'commit editor is excluded (second :not)');
+  assert.ok(!matches(sel, commit('insert-mode')), 'commit editor in insert mode is excluded by both');
+});
+
 test('matchesRuleInChain: descendant combinator walks the chain tail', () => {
   // Focused GtkText inside a Panel inside the window.
   const chain = [ctx('GtkText'), ctx('Panel'), ctx('AppWindow')];
