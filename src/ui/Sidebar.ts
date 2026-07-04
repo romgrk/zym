@@ -2,10 +2,9 @@
  * Sidebar — the full-height workbench column at the very left of the window
  * (outside, left of the header bar): the `.WorkbenchSidebar` box wrapping the
  * workbench list (`WorkbenchList`), exposed as `root`. It is the start child of
- * the top-level split the host (AppWindow) owns; the host wires the collapse/expand
- * width via the list's `onToggleCollapsed` callback.
+ * the top-level split the host (AppWindow) owns.
  *
- * Every callback (agent actions + the collapse toggle) is forwarded straight to the
+ * Every callback (the agent/project actions) is forwarded straight to the
  * `WorkbenchList` (exposed as `list`); the sidebar only adds the column assembly.
  */
 import Gtk from 'gi:Gtk-4.0';

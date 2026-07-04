@@ -28,11 +28,10 @@ import type { DiffView } from '../DiffView.ts';
 import { fileIconGlyph } from '../fileIcons.ts';
 import { Icons } from '../icons.ts';
 
-// Expanded width (px) of the workbench sidebar — the full-height column at the very
-// left of the window, outside (left of) the header bar — and its collapsed width
-// (icons only). These are the two positions of the top-level sidebar↔content split.
+// Width (px) of the workbench sidebar — the full-height column at the very left of the
+// window, outside (left of) the header bar. The `sidebar:toggle` command hides/shows the
+// whole column; this is its shown width.
 export const SIDEBAR_WIDTH = 280;
-export const SIDEBAR_COLLAPSED_WIDTH = 48;
 // Default width of the agent "secondary sidebar" column (the agent widget). Wider
 // than the file/Source-Control dock; resizable, and a dragged width is remembered
 // for the rest of the session.
@@ -98,12 +97,6 @@ export class WorkbenchView {
   }
 
   // --- Sidebars --------------------------------------------------------------
-
-  // Apply the sidebar collapse/expand width to the top-level split: the list's robot
-  // button toggles between icons-only and icons+text and forwards the new state here.
-  setSidebarCollapsed(collapsed: boolean): void {
-    this.d.sidebarPaned.setPosition(collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH);
-  }
 
   // Toggle the workbench sidebar's visibility (sidebar:toggle, `ctrl-w g s`). Mirrors
   // toggleAgentSidebar: detach/attach the top-level split's start child — rather than

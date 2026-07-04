@@ -70,8 +70,6 @@ export interface WorkbenchListOptions {
   /** Subscribe to owner-set changes (project/agent opened or closed) so the rail
    *  rebuilds; returns an unsubscribe. */
   onProjectsChanged?: (callback: () => void) => { dispose(): void };
-  /** Fired when the robot button toggles collapse; the host resizes the sidebar. */
-  onToggleCollapsed?: (collapsed: boolean) => void;
   /** Restart an agent (respawn / resume) — the list's `r` key. */
   onRestart?: (agent: Agent) => void;
   /** Stop an agent's process (it stays listed, restartable) — the list's `x` key. */
@@ -106,18 +104,16 @@ export class WorkbenchList {
   // The owner whose row is selected (kept stable across rebuilds); null selects the
   // first default row by default. Reflects the active workbench's owner; see AppWindow.
   private selected: Owner | null = null;
-  // Collapsed = icons only (narrow); expanded = icons + text. Toggled by the
-  // header-bar sidebar toggle button.
-  private collapsed = false;
-  // The sidebar header bar (the session-name bar). Hidden entirely for the
-  // unnamed/default session — it only carries the name, so an unnamed window shows the
-  // rail flush to the top. `setSessionName` reveals it once the session is named.
+  // The sidebar header bar (the session-name bar). Shown for a named session, or (when
+  // unnamed) whenever there are unsaved edits so the modified dot still surfaces; a clean
+  // unnamed window hides it so the rail sits flush to the top.
   private headerBar: InstanceType<typeof Adw.HeaderBar> | null = null;
-  // The active session's name in the header bar; hidden while collapsed (too narrow).
+  // The active session's name in the header bar (empty for the unnamed default).
   private headerTitle: InstanceType<typeof Adw.WindowTitle> | null = null;
-  // The unsaved-changes marker shown after the session title; toggled via opacity
-  // (slot always reserved) and hidden while collapsed. `modified` is the last state.
+  // The unsaved-changes marker after the session title; toggled via opacity (slot always
+  // reserved). `named`/`modified` are the last-known states driving header visibility.
   private modifiedDot: InstanceType<typeof Gtk.Label> | null = null;
+  private named = false;
   private modified = false;
   private readonly subs = new CompositeDisposable();
 
@@ -156,11 +152,6 @@ export class WorkbenchList {
     this.rebuild();
   }
 
-  /** Whether the sidebar is collapsed (icons only). */
-  get isCollapsed(): boolean {
-    return this.collapsed;
-  }
-
   // The sidebar header bar: an Adw.HeaderBar (so its height/chrome matches the window
   // header bar beside it) showing the active session name. `.workbench-header` lets the
   // chrome theme the bar.
@@ -170,11 +161,10 @@ export class WorkbenchList {
     bar.addCssClass('workbench-header');
     bar.setShowStartTitleButtons(false);
     bar.setShowEndTitleButtons(false);
-    bar.setVisible(false); // unnamed by default — shown once the session is named
+    bar.setVisible(false); // clean unnamed window → hidden (see updateHeaderVisibility)
 
     // The active session's name — empty until a session is named (`setSessionName`).
-    // Hidden when collapsed (no room in 48px). Packed at the start (not the centered
-    // title slot) so it aligns left.
+    // Packed at the start (not the centered title slot) so it aligns left.
     bar.setTitleWidget(new Gtk.Box()); // clear the centered title slot
     this.headerTitle = new Adw.WindowTitle({ title: '' });
     this.headerTitle.setTooltipText(process.cwd());
@@ -196,31 +186,27 @@ export class WorkbenchList {
   setModified(modified: boolean): void {
     this.modified = modified;
     this.updateModifiedDot();
+    this.updateHeaderVisibility(); // an unnamed window reveals the bar to show the dot
   }
 
-  /** Reflect the active session name in the header. The header bar shows only for a
-   *  named session — the unnamed/default session hides it entirely so the rail sits
-   *  flush to the top (docs/session-management.md). */
+  /** Reflect the active session name in the header (empty for the unnamed default). */
   setSessionName(name: string | null): void {
+    this.named = name != null;
     this.headerTitle?.setTitle(name ?? '');
-    this.headerBar?.setVisible(name != null);
+    this.updateHeaderVisibility();
   }
 
-  // The dot shows only when there are unsaved edits and the sidebar is expanded
-  // (collapsed has no room — the title is hidden too). Opacity keeps the slot fixed.
+  // The unsaved-changes dot shows whenever there are unsaved edits. Opacity keeps its
+  // slot fixed so revealing it never shifts the title.
   private updateModifiedDot(): void {
-    const visible = this.modified && !this.collapsed;
-    this.modifiedDot?.setOpacity(visible ? 1 : 0);
-    this.modifiedDot?.setCanTarget(visible);
+    this.modifiedDot?.setOpacity(this.modified ? 1 : 0);
+    this.modifiedDot?.setCanTarget(this.modified);
   }
 
-  // Toggle collapsed (icons only) ↔ expanded (icons + text): re-render and resize.
-  private toggleCollapsed(): void {
-    this.collapsed = !this.collapsed;
-    this.headerTitle?.setVisible(!this.collapsed); // no room for the title at 48px
-    this.updateModifiedDot(); // hide the marker too while collapsed
-    this.rebuild();
-    this.options.onToggleCollapsed?.(this.collapsed);
+  // The header bar shows for a named session, or (unnamed) while there are unsaved edits
+  // so the modified dot still surfaces; a clean unnamed window hides it.
+  private updateHeaderVisibility(): void {
+    this.headerBar?.setVisible(this.named || this.modified);
   }
 
   // Live groups from the host (empty until wired). The rail is never truly empty — the
@@ -269,13 +255,12 @@ export class WorkbenchList {
     return { entry, row, unsubs };
   }
 
-  // The row content box. When collapsed it holds only the leading icon; expanded, the
-  // icon plus the trailing widgets.
+  // The row content box: the leading icon plus the trailing widgets.
   private rowContent(icon: InstanceType<typeof Gtk.Widget>, ...trailing: InstanceType<typeof Gtk.Widget>[]): InstanceType<typeof Gtk.Box> {
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
     icon.addCssClass('Workbenchrow--icon');
     box.append(icon);
-    if (!this.collapsed) for (const w of trailing) box.append(w);
+    for (const w of trailing) box.append(w);
     return box;
   }
 
@@ -299,12 +284,10 @@ export class WorkbenchList {
   ): InstanceType<typeof Gtk.Box> {
     // Status indicator (shared with the conversation footer): a bundled symbolic icon —
     // dot (idle/waiting), loading (working), circle outline (disconnected) — swapped in
-    // place as the status changes. Shown in both modes; kept in sync.
+    // place as the status changes.
     const status = createAgentStatusIcon(agent);
     unsubs.push(status.dispose);
     const dot = status.widget;
-
-    if (this.collapsed) return this.rowContent(dot); // icon only
 
     const label = new Gtk.Label({ xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label'); // same title font as the default row

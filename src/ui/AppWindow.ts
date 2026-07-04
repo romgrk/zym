@@ -104,8 +104,7 @@ export class AppWindow {
   private readonly contentOverlay: InstanceType<typeof Gtk.Overlay>;
   // The top-level horizontal split: the full-height sidebar column on the start side,
   // the window content (header bar + workbench, wrapped by the toast overlay) on the
-  // end. Its position is the sidebar width, toggled between expanded and collapsed by
-  // the list's robot button (see setSidebarCollapsed).
+  // end. Its position is the sidebar width; `sidebar:toggle` hides/shows the column.
   private readonly sidebarPaned: InstanceType<typeof Gtk.Paned>;
   // Window-level overlay wrapping everything (sidebar + header + content): the host
   // for floating pickers, so they cover the whole window rather than just the content.
@@ -277,7 +276,6 @@ export class AppWindow {
       onClose: (agent) => this.agentController.closeAgent(agent),
       onRename: (agent) => this.agentController.renameAgentPrompt(agent),
       onOpenChanges: (agent) => this.agentController.openAgentChanges(agent),
-      onToggleCollapsed: (collapsed) => this.workbenchView.setSidebarCollapsed(collapsed),
     });
 
     // The agent "secondary sidebar" sits between the WorkbenchList and the content,
