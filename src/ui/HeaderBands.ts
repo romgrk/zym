@@ -19,44 +19,33 @@ import { NERDFONT } from './nerdfont.ts';
 import { escapeMarkup } from './proseMarkup.ts';
 
 addStyles(/* css */`
-  .mb-header {
-    padding: var(--t-spacing) calc(2 * var(--t-spacing));
-    /* libadwaita's thumbnail surface — opaque (so the band occludes the diff scrolling under it) and
-       tracks the OS light/dark theme. Replaces the old hard-coded editor-bg + 16% white overlay. */
-    background-color: var(--thumbnail-bg-color);
-    border-radius: 5px;
+  .MultiBufferHeader {
+    --bg-color: var(--sidebar-bg-color);
+    padding: calc(1.5 * var(--t-spacing)) calc(2 * var(--t-spacing));
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    // border-radius: 5px;
   }
-  .mb-header-icon { color: var(--t-ui-text-muted); }
-  .mb-header-label { color: var(--t-ui-editor-foreground); }
-  .mb-header-add { color: var(--t-ui-status-success); }
-  .mb-header-del { color: var(--t-ui-status-error); }
-  /* An unsaved (modified) diff file: warning-coloured path led by a warning dot. */
-  .mb-header-modified { color: var(--t-ui-status-warning); }
-  /* The header whose (read-only) line the caret sits on (sticky-diff navigation) reads as SELECTED
-     via an OUTLINE only — the background never changes. A neutral hairline when the diff is
-     unfocused, promoted to the accent colour only while the diff editor holds keyboard focus
-     (:focus-within on its .zym-editor source view, the header's overlay ancestor). The class lands
-     on the .mb-header element itself (the widget IS the row). */
-  .mb-header.mb-header-focused {
-    outline: 1px solid var(--border-color);
-    outline-offset: -1px;
+  .MultiBufferHeader .icon { color: var(--t-ui-text-muted); }
+  .MultiBufferHeader .label { color: var(--t-ui-editor-foreground); }
+  .MultiBufferHeader .add { color: var(--t-ui-status-success); }
+  .MultiBufferHeader .del { color: var(--t-ui-status-error); }
+  .MultiBufferHeader.is-modified .label { color: var(--t-ui-status-warning); }
+
+  .MultiBufferHeader.is-focused {}
+  .zym-editor:focus-within .MultiBufferHeader.is-focused {
+    background-color: mix(var(--bg-color), var(--accent-color), 0.1);
   }
-  .zym-editor:focus-within .mb-header.mb-header-focused {
-    outline-color: var(--accent-color);
-  }
-  /* Fold markers (the elided-gap bands): an OPAQUE band that must occlude the diff scrolling under
-     it (never transparent, so the rows behind it can't show through). Shares the file header's
-     --thumbnail-bg-color surface so the two chrome bands read as one family. Half a line of vertical
-     breathing room (0.5em; GTK CSS has no lh unit) + the header's horizontal inset so the marker
-     lines up under the filename. */
-  .mb-gap {
-    background-color: var(--thumbnail-bg-color);
+
+  /* Fold markers  */
+  .MultiBufferGap {
+    background-color: var(--secondary-sidebar-bg-color);
     padding: 0.5em calc(2 * var(--t-spacing));
   }
-  /* The marker TEXT reads as the editor foreground dimmed via Adwaita's --dim-opacity (the muted
-     idiom — dim the real foreground, not a grey). It lives on a child label so the dim never touches
-     the band's opaque background. */
-  .mb-gap-text { color: var(--t-ui-editor-foreground); opacity: var(--dim-opacity); }
+  .MultiBufferGap .text {
+    color: var(--view-fg-color);
+    opacity: var(--dim-opacity);
+  }
 `);
 
 /** Per-header look. The defaults reproduce `SearchResultsView`'s header (file-type icon, dimmed
@@ -94,25 +83,27 @@ export function buildHeaderWidget(
   options: HeaderWidgetOptions = {},
 ): InstanceType<typeof Gtk.Widget> {
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-  row.addCssClass('mb-header');
+  row.addCssClass('MultiBufferHeader');
+  // A modified (unsaved) file: the `.is-modified` state on the root turns the path labels warning-
+  // coloured (see the stylesheet). Toggled here, read by every `.label` below.
+  if (options.modified) row.addCssClass('is-modified');
   // Collapse chevron (diff surface): chevron-down when the file is expanded, chevron-right when
-  // collapsed (the same fold idiom as the syntax gutter; see gutterRenderers.ts). It carries the
-  // SAME colour class as the path label below, so it tracks the filename's colour (incl. the
-  // warning hue on a modified file).
+  // collapsed (the same fold idiom as the syntax gutter; see gutterRenderers.ts). It's a `.label`
+  // like the path, so it tracks the filename's colour (incl. the warning hue via `.is-modified`).
   if (options.collapsed !== undefined) {
     const chevron = iconLabel(options.collapsed ? NERDFONT.NAV.CHEVRON_RIGHT : NERDFONT.NAV.CHEVRON_DOWN);
-    chevron.addCssClass(options.modified ? 'mb-header-modified' : 'mb-header-label');
+    chevron.addCssClass('label');
     row.append(chevron);
   }
   // A modified file is flagged by a warning dot; otherwise the file-type glyph leads the name
   // (the diff header opts out of the glyph entirely).
   if (options.modified) {
     const dot = iconLabel(Icons.modified);
-    dot.addCssClass('mb-header-modified');
+    dot.addCssClass('label');
     row.append(dot);
   } else if (options.icon !== false) {
     const icon = iconLabel(fileIconGlyph(Path.basename(path), false));
-    icon.addCssClass('mb-header-icon');
+    icon.addCssClass('icon');
     row.append(icon);
   }
 
@@ -127,19 +118,19 @@ export function buildHeaderWidget(
     const dirMarkup = dir && dir !== '.' ? `<span alpha="55%">${escapeMarkup(dir)}/</span>` : '';
     name.setMarkup(`${dirMarkup}<b>${escapeMarkup(base)}</b>${deleted}`);
   }
-  name.addCssClass(options.modified ? 'mb-header-modified' : 'mb-header-label');
+  name.addCssClass('label');
   row.append(name);
 
   // Change stats (diff surface): `+N` added (green), `−M` removed (red).
   if (options.added || options.removed) {
     if (options.added) {
       const add = new Gtk.Label({ label: `+${options.added}` });
-      add.addCssClass('mb-header-add');
+      add.addCssClass('add');
       row.append(add);
     }
     if (options.removed) {
       const del = new Gtk.Label({ label: `−${options.removed}` });
-      del.addCssClass('mb-header-del');
+      del.addCssClass('del');
       row.append(del);
     }
   }
@@ -163,9 +154,9 @@ export function buildGapWidget(
   onActivate?: () => void,
 ): InstanceType<typeof Gtk.Widget> {
   const band = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
-  band.addCssClass('mb-gap'); // opaque grey fill + padding (the fold-marker band)
+  band.addCssClass('MultiBufferGap'); // opaque grey fill + padding (the fold-marker band)
   const text = new Gtk.Label({ label, xalign: 0, hexpand: true });
-  text.addCssClass('mb-gap-text'); // the dimmed marker text (dim lives here, not on the band)
+  text.addCssClass('text'); // the dimmed marker text (dim lives here, not on the band)
   band.append(text);
   if (onActivate) {
     const click = new Gtk.GestureClick();
