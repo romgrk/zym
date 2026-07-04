@@ -144,8 +144,9 @@ tabs prompt) — so save it with a name if you want it back. Sessions live under
 One window can hold several projects. `space p o` opens another folder as a
 project (its own file tree, Source Control, and tabs); it appears in the
 left rail beside the first, and you switch between them there (or with
-`super-,` / `super-.`). `space p c` closes the active project. Agents you
-launch in a project stay running even if you close it.
+`super-,` / `super-.`). `space p c` closes the active project — and every
+workbench under it, including the agents you launched in it (never the last
+project).
 
 ## Where things live
 

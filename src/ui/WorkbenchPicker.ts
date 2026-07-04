@@ -13,21 +13,18 @@
  * `claude` agents read alike) need no disambiguation. State is snapshotted at open
  * (like the agent picker) — a short-lived switcher doesn't track live changes.
  */
-import * as Os from 'node:os';
 import * as Path from 'node:path';
 import Gtk from 'gi:Gtk-4.0';
 import { openPicker, HIGHLIGHT_COLOR, type PickerItem } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
 import { iconSpan } from './icons.ts';
+import { fileIconGlyph } from './fileIcons.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
-import { NERDFONT } from './nerdfont.ts';
 import { worktreeInfo } from '../git.ts';
 import { type Owner, isProject } from './workbench/Owner.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
-
-const USER_GLYPH = NERDFONT.SOCIAL.USER; // the user's own workbench (matches the sidebar)
 
 export interface WorkbenchInfo {
   /** Who owns the workbench: a project, or an Agent. */
@@ -43,18 +40,14 @@ export interface WorkbenchPickerOptions {
   workbenches: WorkbenchInfo[];
   /** Activate the chosen workbench (AppWindow.activateOwner). */
   onActivate: (owner: Owner) => void;
-  /** Label for a project workbench. Defaults to the OS username (as the sidebar). */
-  userName?: string;
 }
 
 export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptions): void {
-  const userName = options.userName ?? Os.userInfo().username;
-
-  // One item per workbench, keyed by index (titles can collide). The owner rides
-  // on `data`; the matched `text` is the person's label (username / agent title).
+  // One item per workbench, keyed by index (titles can collide). The owner rides on
+  // `data`; the matched `text` is its title — a project's name, or an agent's title.
   const items: PickerItem[] = options.workbenches.map((wb, i) => ({
     value: `workbench:${i}`,
-    text: isProject(wb.owner) ? userName : wb.owner.title,
+    text: wb.owner.title,
     data: wb,
   }));
 
@@ -65,9 +58,8 @@ export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptio
     items,
     renderRow: (item, positions) => {
       const wb = item.data as WorkbenchInfo;
-      // The leading glyph mirrors the sidebar: a person icon for the user, the
-      // shared status indicator for an agent.
-      const lead = isProject(wb.owner) ? iconSpan(USER_GLYPH) : agentStatusMarkup(wb.owner.status);
+      // The leading glyph: a folder for a project, the shared status indicator for an agent.
+      const lead = isProject(wb.owner) ? iconSpan(fileIconGlyph('', true)) : agentStatusMarkup(wb.owner.status);
       return renderRowSingleLine({
         main: `${lead} ${proseMarkup(item.text, positions)}`,
         detail: workbenchDetail(wb),

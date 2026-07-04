@@ -225,11 +225,12 @@ ghost text, snippet insertion, widget polish.
 
 ## Session management
 
-A project root's working state (open files w/ cursor+scroll, unsaved buffers,
-terminals, agents, layout, window geometry) is serialized to the XDG state dir,
-debounce-autosaved, and restored on request, with an exit prompt for unsaved work.
-The core is implemented; **named sessions** (switchable per-root workspaces) and
-multi-root are the open plans. See [session-management.md](session-management.md).
+A window's working state (its projects — each with open files w/ cursor+scroll,
+unsaved buffers, terminals, agents, layout — plus docks and window geometry) is
+serialized to the XDG state dir, debounce-autosaved, and restored on request, with
+an exit prompt for unsaved work. **Named sessions** (the persistence model) and
+**multi-root** (several projects per window) are both implemented. See
+[session-management.md](session-management.md).
 
 ## Agents
 

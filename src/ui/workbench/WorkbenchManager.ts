@@ -28,7 +28,7 @@ import { KeymapPanel } from '../KeymapPanel.ts';
 import { fileIconGlyph } from '../fileIcons.ts';
 import { acquireGitRepo, releaseGitRepo, invalidateRepoRoot } from '../../git.ts';
 import { type Owner, type Project, isProject, createProject } from './Owner.ts';
-import { Emitter, type Disposable } from '../../util/eventKit.ts';
+import { Emitter, CompositeDisposable, type Disposable } from '../../util/eventKit.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 type Wb = Workbench<Owner>;
@@ -66,9 +66,13 @@ export class WorkbenchManager {
   // rail grouping. A fresh agent also roots in this project (see activeProjectRoot).
   private readonly agentProject = new Map<Agent, Project>();
   private readonly emitter = new Emitter();
+  private readonly subs = new CompositeDisposable();
 
   constructor(deps: WorkbenchManagerDeps) {
     this.d = deps;
+    // Drop an agent's association when it's closed anywhere (not just via closeProject),
+    // so the map doesn't retain disposed agents.
+    this.subs.add(zym.agents.onDidRemoveAgent((agent) => this.agentProject.delete(agent)));
   }
 
   /** Notified when the owner set changes (project opened/closed, agent workbench built
@@ -298,11 +302,14 @@ export class WorkbenchManager {
   // worktree, not its parent. Paths under no open root fall to the user workbench. Used
   // to scope per-workbench diagnostics + the header LSP status.
   ownerWorkbenchCwd(path: string): string {
-    let best = process.cwd(); // user workbench root / fallback for orphan paths
+    // The most specific workbench root containing `path` (longest prefix). Seed with
+    // "no match" so a *shorter* root that still contains the path can win — seeding with
+    // process.cwd() would wrongly keep it whenever a second project's root is shorter.
+    let best: string | null = null;
     for (const wb of this.workbenches.values()) {
-      if (isUnderRoot(path, wb.cwd) && wb.cwd.length > best.length) best = wb.cwd;
+      if (isUnderRoot(path, wb.cwd) && (best === null || wb.cwd.length > best.length)) best = wb.cwd;
     }
-    return best;
+    return best ?? process.cwd(); // no open workbench contains it → primary/orphan fallback
   }
 
   // Re-root an agent's workbench after it moves into a worktree: swap the pooled GitRepo
@@ -332,6 +339,7 @@ export class WorkbenchManager {
   /** Dispose every workbench (window teardown) — each owns its dock/center Panels +
    *  content and a refcounted pooled git repo, freed as a unit. */
   dispose(): void {
+    this.subs.dispose();
     for (const wb of this.workbenches.values()) wb.dispose();
   }
 }
