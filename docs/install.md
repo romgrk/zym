@@ -84,6 +84,12 @@ it locally.
   `--allow-scripts=native-keymap,node-gtk`; project-scoped installs need a
   `.npmrc`, see `packaging/aur/PKGBUILD`). User-facing instructions live in
   `guide/getting-started.md` / `guide/troubleshooting.md`.
+- **native-keymap's native build.** `native-keymap` (`^3.3.9`, resolves shifted
+  symbols in `src/keymap/Key.ts`) ships no prebuilt binary for recent Node ABIs,
+  so it always builds from source via node-gyp. Its `binding.gyp` needs the X11
+  and xkbfile headers — `pkg-config x11 xkbfile` — i.e. `libx11-dev` /
+  `libxkbfile-dev` on Debian/Ubuntu, or `libx11` / `libxkbfile` on Arch (which
+  CI installs, see `.github/workflows/ci.yml`).
 - **System libraries** at runtime: GTK 4, libadwaita, GtkSourceView 5, Vte, and the
   GObject-introspection typelibs node-gtk loads namespaces from.
 
