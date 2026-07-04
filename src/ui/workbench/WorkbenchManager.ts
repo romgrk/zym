@@ -67,6 +67,9 @@ export class WorkbenchManager {
   private readonly agentProject = new Map<Agent, Project>();
   private readonly emitter = new Emitter();
   private readonly subs = new CompositeDisposable();
+  // While true, `did-change-projects` emits are coalesced (a bulk restore rebuilds the
+  // rail once at the end, not once per owner built/closed) — see batchProjectChanges.
+  private emitPaused = false;
 
   constructor(deps: WorkbenchManagerDeps) {
     this.d = deps;
@@ -79,6 +82,24 @@ export class WorkbenchManager {
    *  or removed) so the rail can rebuild. */
   onDidChangeProjects(callback: () => void): Disposable {
     return this.emitter.on('did-change-projects', callback);
+  }
+
+  private emitProjectsChanged(): void {
+    if (!this.emitPaused) this.emitter.emit('did-change-projects');
+  }
+
+  /** Run `fn` coalescing its `did-change-projects` emits into a single one at the end, so
+   *  a bulk restore (many addProject/closeProject/agent builds) rebuilds the rail once
+   *  rather than once per owner. */
+  batchProjectChanges<T>(fn: () => T): T {
+    const previous = this.emitPaused;
+    this.emitPaused = true;
+    try {
+      return fn();
+    } finally {
+      this.emitPaused = previous;
+      this.emitProjectsChanged();
+    }
   }
 
   /** The primary (first-opened) project — the fallback owner to activate when an
@@ -214,7 +235,7 @@ export class WorkbenchManager {
     // Fired after the workbench + any agent association exist, so a rail rebuild groups
     // it correctly (the agent's own `did-add-agent` fires from its constructor, before
     // this workbench was built — too early to group).
-    this.emitter.emit('did-change-projects');
+    this.emitProjectsChanged();
     return workbench;
   }
 
@@ -261,13 +282,24 @@ export class WorkbenchManager {
     this.d.paneItems.disposeWorkbenchActionTerminals(workbench);
     this.d.paneItems.disposeWorkbenchEditors(workbench);
     workbench.dispose(); // tears down its Panels/content + releases its pooled git repo
-    this.emitter.emit('did-change-projects');
+    this.emitProjectsChanged();
     this.d.scheduleAutosave(); // the project set changed — persist it (named sessions)
   }
 
   /** Close every non-primary project (a session switch resets to the primary root). */
   closeNonPrimaryProjects(): void {
     for (const project of this.projects.slice(1)) this.closeProject(project);
+  }
+
+  /** Reorder `projects[]` to `order` (session restore rebuilds the set out of order — its
+   *  addProject dedups the cwd primary into whichever saved slot matches its root). This
+   *  keeps `projects[0]`/the rail/the next serialize aligned with the saved order; any
+   *  unlisted project keeps its relative position at the end. */
+  reorderProjects(order: Project[]): void {
+    const listed = [...new Set(order)].filter((p) => this.projects.includes(p));
+    const rest = this.projects.filter((p) => !listed.includes(p));
+    this.projects.splice(0, this.projects.length, ...listed, ...rest);
+    this.emitProjectsChanged(); // rebuild the rail in the new order
   }
 
   // Step the active workbench by `step` (−1 / +1) through the rail order (each project

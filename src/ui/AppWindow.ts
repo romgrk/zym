@@ -1184,23 +1184,29 @@ export class AppWindow {
   // closed, and the window-level docks/geometry + saved focus applied.
   private restoreSession(state: SessionState, buildChild: (tab: TabState) => RestoredChild | null): void {
     const restored: Project[] = [];
-    state.projects.forEach((p, index) => {
-      const project = this.workbenchManager.addProject(p.root);
-      restored.push(project);
-      const wb = this.workbenches.get(project);
-      if (!wb) return;
-      wb.center.restoreLayout(p.workbench.layout, buildChild);
-      if (p.workbench.fileTree) wb.fileTree.restoreExpanded(p.workbench.fileTree.expanded);
-      if (p.workbench.actions) wb.actions.restore(p.workbench.actions);
-      this.workbenchManager.activateOwner(project); // active while its agents relaunch
-      if (index === 0 && state.docks) this.applyDocks(state.docks); // window docks → the session's primary
-      for (const agent of p.agents) this.agentController.restoreAgent(agent);
+    // Coalesce the many addProject/closeProject/agent builds into a single rail rebuild.
+    this.workbenchManager.batchProjectChanges(() => {
+      state.projects.forEach((p, index) => {
+        const project = this.workbenchManager.addProject(p.root);
+        restored.push(project);
+        const wb = this.workbenches.get(project);
+        if (!wb) return;
+        wb.center.restoreLayout(p.workbench.layout, buildChild);
+        if (p.workbench.fileTree) wb.fileTree.restoreExpanded(p.workbench.fileTree.expanded);
+        if (p.workbench.actions) wb.actions.restore(p.workbench.actions);
+        this.workbenchManager.activateOwner(project); // active while its agents relaunch
+        if (index === 0 && state.docks) this.applyDocks(state.docks); // window docks → the session's primary
+        for (const agent of p.agents) this.agentController.restoreAgent(agent);
+      });
+      // Close any leftover project not in the session (safe — the session added ≥1, so the
+      // last-project guard holds).
+      for (const project of [...this.workbenchManager.projects]) {
+        if (!restored.includes(project)) this.workbenchManager.closeProject(project);
+      }
+      // Restore the saved project order (addProject dedup + the cwd primary can scramble
+      // it), so projects[0]/primary/the next serialize match the session.
+      this.workbenchManager.reorderProjects(restored);
     });
-    // Close any leftover project not in the session (safe — the session added ≥1, so the
-    // last-project guard holds).
-    for (const project of [...this.workbenchManager.projects]) {
-      if (!restored.includes(project)) this.workbenchManager.closeProject(project);
-    }
     if (state.window) this.applyWindowGeometry(state.window);
     this.activateSavedOwner(state);
   }
