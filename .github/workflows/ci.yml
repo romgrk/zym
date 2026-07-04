@@ -1,11 +1,15 @@
-# Minimal CI: typecheck + lint. `pnpm install` runs the `prepare` step, whose
-# `generate-types` loads the GI namespaces at runtime — hence the gir1.2-*
-# packages below. node-gtk itself installs a prebuilt binary when one matches
-# the runner's Node ABI; the -dev packages cover the source-build fallback.
-# native-keymap has no prebuild for the runner's Node ABI, so it always builds
-# from source — libxkbfile-dev provides the xkbfile.pc it needs at configure.
-# The GTK test suite is not run here (it needs a display server); run it
-# locally with `pnpm test`.
+# CI: typecheck + lint. `pnpm install` runs the `prepare` step, whose
+# `generate-types` reads the *installed* GI typelibs to emit node-gtk's .d.ts —
+# so the typecheck only passes on a GNOME stack at least as new as the one the
+# code targets (the developer's Arch machine): GTK 4.22, libadwaita 1.9,
+# GtkSourceView 5.20, Pango 1.58, VTE 0.84. Ubuntu's GNOME is too old and lacks
+# APIs the source uses (Adw.Spinner/WrapBox/InlineViewSwitcher, GtkSource
+# annotations, Pango.FontMap.addFontFile, Vte termprops, FADE_SLIDE revealer
+# transitions), so we run inside a rolling `archlinux` container instead.
+# node-gtk and native-keymap build against these libs; native-keymap has no
+# prebuild for the runner's Node ABI, so it builds from source and needs
+# libxkbfile/libx11. The GTK test suite is not run here (it needs a display
+# server); run it locally with `pnpm test`.
 name: CI
 
 on:
@@ -16,15 +20,18 @@ on:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    container: archlinux:latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install GTK introspection libraries
+      # Everything (incl. git, needed by actions/checkout) comes from pacman.
+      - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-gtksource-5 gir1.2-vte-3.91 \
-            libgirepository1.0-dev libcairo2-dev libxkbfile-dev
+          pacman -Syu --noconfirm --needed \
+            git base-devel python pkgconf \
+            gtk4 libadwaita gtksourceview5 vte4 \
+            gobject-introspection glib2 cairo pango \
+            libxkbfile libx11
+
+      - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
         with:
@@ -33,7 +40,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          cache: pnpm
 
       - run: pnpm install
 
