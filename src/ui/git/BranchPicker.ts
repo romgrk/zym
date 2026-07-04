@@ -46,7 +46,7 @@ export function openBranchPicker(host: Overlay, cwd: string, git: GitRepo): void
       },
       onSelect: (branch) => {
         if (branch === current) return; // already here — nothing to do
-        void git.switchBranch(branch).then(report(`Switched to ${branch}`));
+        void git.switchBranch(branch).then(report);
       },
       // Always offer to create the typed name off HEAD — shown after any matches
       // (whenever the query is non-empty), so it's available even when branches match.
@@ -54,7 +54,7 @@ export function openBranchPicker(host: Overlay, cwd: string, git: GitRepo): void
         label: (query) => `Create branch: ${query.trim()}`,
         run: (query) => {
           const name = query.trim();
-          if (name) void git.createBranch(name).then(report(`Created branch ${name}`));
+          if (name) void git.createBranch(name).then(report);
         },
       },
     });
@@ -64,14 +64,14 @@ export function openBranchPicker(host: Overlay, cwd: string, git: GitRepo): void
 /** Pick another branch (not the current one) to delete. */
 export function openDeleteBranchPicker(host: Overlay, cwd: string, git: GitRepo): void {
   pickOtherBranch(host, cwd, git, 'Delete branch…', Icons.trash, (branch) =>
-    void git.deleteBranch(branch).then(report(`Deleted branch ${branch}`)),
+    void git.deleteBranch(branch).then(report),
   );
 }
 
 /** Pick another branch to merge into the current one. */
 export function openMergeBranchPicker(host: Overlay, cwd: string, git: GitRepo): void {
   pickOtherBranch(host, cwd, git, 'Merge branch into current…', Icons.gitMerge, (branch) =>
-    void git.mergeBranch(branch).then(report(`Merged ${branch}`)),
+    void git.mergeBranch(branch).then(report),
   );
 }
 
@@ -100,7 +100,7 @@ export function openRenameBranchPicker(host: Overlay, cwd: string, git: GitRepo)
       label: (query) => `Rename to: ${query.trim()}`,
       run: (query) => {
         const name = query.trim();
-        if (name && name !== current) void git.renameBranch(name).then(report(`Renamed to ${name}`));
+        if (name && name !== current) void git.renameBranch(name).then(report);
       },
     },
   });
@@ -137,12 +137,9 @@ function pickOtherBranch(
   });
 }
 
-// Report a coordinated git operation's result: success message, or an error with
-// git's stderr. (Busy/refresh is handled by the GitRepo method itself.) Pass it to
-// the mutation promise's `.then`.
-function report(success: string): (result: GitOpResult) => void {
-  return (result) => {
-    if (result.isOk()) zym.notifications.addSuccess(success);
-    else zym.notifications.addError('Git operation failed', { detail: result.unwrapErr().message.trim() });
-  };
+// Report a coordinated git operation's failure with git's stderr; success is
+// silent (the branch indicator + panel already reflect the change). Busy/refresh
+// is handled by the GitRepo method itself. Pass it to the mutation promise's `.then`.
+function report(result: GitOpResult): void {
+  if (result.isErr()) zym.notifications.addError('Git operation failed', { detail: result.unwrapErr().message.trim() });
 }

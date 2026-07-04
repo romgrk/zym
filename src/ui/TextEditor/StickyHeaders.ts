@@ -23,7 +23,7 @@ import type { EditorModel } from './EditorModel.ts';
 import type { TextDecorations } from './TextDecorations.ts';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 
-const FOCUSED_CLASS = 'mb-header-focused';
+const FOCUSED_CLASS = 'is-focused';
 
 /** One excerpt's sticky header. `id` is stable per excerpt (e.g. its path); `key` is the content
  *  identity (rebuild the widget only when it changes); `viewRow` is the EMPTY navigable header block

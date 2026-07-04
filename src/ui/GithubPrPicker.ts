@@ -99,8 +99,8 @@ export function switchToGithubPrPicker(host: Overlay, cwd: string, git: GitRepo)
       // `git.checkoutPullRequest` runs `gh pr checkout` with busy + refresh
       // coordination (it can take seconds — switches branch, fetches forks).
       void git.checkoutPullRequest(pr.number).then((result) => {
-        if (result.isOk()) zym.notifications.addSuccess(`Switched to PR #${pr.number}`);
-        else zym.notifications.addError('Could not switch to pull request', { detail: result.unwrapErr().message.trim() });
+        // Success is silent — only failures notify.
+        if (result.isErr()) zym.notifications.addError('Could not switch to pull request', { detail: result.unwrapErr().message.trim() });
       });
     },
   });

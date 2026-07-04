@@ -209,6 +209,36 @@ test('a coordinated mutation sets busy synchronously, clears + notifies + applie
   }
 });
 
+test('a failed commit surfaces git\'s reason from stdout (not a bare placeholder)', async () => {
+  // `git commit` with nothing staged exits non-zero but writes "nothing to commit"
+  // to *stdout*, leaving stderr empty. The failure detail must carry that reason,
+  // not the generic placeholder — that's what the panel shows the user.
+  const d = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-git-commit-'));
+  try {
+    const g = (...args: string[]) => execFileSync('git', args, { cwd: d, encoding: 'utf8' });
+    g('init', '-b', 'main');
+    g('config', 'user.email', 't@e.x');
+    g('config', 'user.name', 'T');
+    g('config', 'commit.gpgsign', 'false');
+    Fs.writeFileSync(Path.join(d, 'a.txt'), 'x\n');
+    g('add', '-A');
+    g('commit', '-m', 'init'); // clean index: nothing left to commit
+
+    const r = openGitRepo(d);
+    // Write the message where production does (inside .git) so the working tree
+    // stays clean — an in-tree msg file would itself show up as untracked.
+    const msgFile = Path.join(d, '.git', 'COMMIT_EDITMSG');
+    Fs.writeFileSync(msgFile, 'empty commit attempt');
+    const result = await r.commit(msgFile);
+    assert.ok(result.isErr(), 'commit with nothing staged fails');
+    assert.match(result.unwrapErr().message, /nothing to commit/, 'the real git reason is surfaced');
+    assert.doesNotMatch(result.unwrapErr().message, /^git operation failed$/, 'not the bare placeholder');
+    r.dispose();
+  } finally {
+    Fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test('a tracked-file edit refreshes via the content watch (no manual refresh)', async () => {
   const d = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-git-watch-'));
   try {

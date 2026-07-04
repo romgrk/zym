@@ -730,9 +730,12 @@ class CliGitRepo implements GitRepo {
     // the moment the caller invokes the mutation.
     const end = this.begin();
     return new Promise<GitOpResult>((resolve) => {
-      op(this.root!, (ok, _stdout, stderr) => {
+      op(this.root!, (ok, stdout, stderr) => {
         end();
-        resolve(ok ? Result.Ok<void>(undefined) : Result.Err(new Error(stderr || 'git operation failed')));
+        // git reports most mutation failures on stderr, but some write the reason to
+        // stdout instead — notably `git commit`'s "nothing to commit …" — so fall
+        // back to stdout before the placeholder, else the notification is unactionable.
+        resolve(ok ? Result.Ok<void>(undefined) : Result.Err(new Error(stderr.trim() || stdout.trim() || 'git operation failed')));
       });
     });
   }

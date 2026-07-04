@@ -139,9 +139,8 @@ async function runGit(op: () => Promise<GitOpResult>, label: string, onSuccess?:
   } else zym.notifications.addError(`${label} failed`);
 }
 
-// Stash the working-tree changes (visible success, since it's a manual action).
+// Stash the working-tree changes. Success is silent — only failures notify.
 async function stashChanges() {
   const result = await workbench().git.stash();
-  if (result.isOk()) zym.notifications.addSuccess('Stashed changes');
-  else zym.notifications.addError('Stash failed', { detail: result.unwrapErr().message.trim() });
+  if (result.isErr()) zym.notifications.addError('Stash failed', { detail: result.unwrapErr().message.trim() });
 }

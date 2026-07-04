@@ -324,8 +324,11 @@ file's row (`selectRowForPath`, selection only — focus stays in the diff; the
 row stays visibly highlighted via the `#GitPanel row:selected` style). `ctrl-w l`
 moves focus list→diff, `ctrl-w h` moves diff→list, and `q` (normal mode) closes
 the diff back to just the list (`git-panel:focus-diff` / `git-panel:focus-list` /
-`git-panel:close-diff`, scoped `#GitPanel #GitPanelList` / `#GitPanel #TextEditor` /
-`#GitPanel #TextEditor.normal-mode`, mirroring the git-log viewer). With no
+`git-panel:close-diff`, scoped `#GitPanel #GitPanelList` /
+`#GitPanel #TextEditor:not(.insert-mode):not(.GitCommitInput)` /
+`#GitPanel #TextEditor.normal-mode`, mirroring the git-log viewer). `ctrl-w h` is
+excluded in insert mode so the editor's own insert `ctrl-w` (delete-word) fires
+immediately rather than stalling on the chord's partial-match timeout. With no
 `buildDiffView` wired, `l`/`enter`/`o` fall back to opening the file
 (`onOpenFile`). The diff is disposed with the panel.
 
@@ -497,7 +500,8 @@ ahead-behind / HEAD sha) over a live `file:`/`author:`/word **search**
   `remote`, `tag`, or a detached `head` — dropping the symbolic `origin/HEAD` and
   non-branch/tag namespaces. The **current branch (and a detached HEAD) are not
   shown** — only *other* refs decorate (`head: true` is filtered out at the view).
-  Chips are color-coded by kind — local branches **info**, remote branches
+  Chips are color-coded by kind, using libadwaita's OS-following status colors so
+  they track the light/dark scheme — local branches **accent**, remote branches
   **warning**, tags **success**. The list never scrolls sideways
   (`scrolled` is `NEVER`/`AUTOMATIC`), so a crowded badge row ellipsizes its chips
   rather than widening. Only refs on the listed (HEAD-reachable) commits decorate —
@@ -554,8 +558,15 @@ interval) can be added as we iterate.
 
 ## Shared concerns
 
-- **Errors & feedback**: every mutation reports through
-  `zym.notifications` (success info / failure error). `AppWindow` also
+- **Errors & feedback**: mutations are **silent on success** — the panel,
+  gutter, and branch indicator already reflect the change, so a success toast
+  is just noise. Only **failures** notify (`zym.notifications.addError`); a
+  neutral info toast still explains a no-op (e.g. "No stashes", "Not in a git
+  repository"). The failure detail is git's own output — `mutate` takes
+  **stderr, then stdout** as a fallback,
+  because git writes some failure reasons to stdout rather than stderr
+  (notably `git commit`'s "nothing to commit …", the common empty-index case);
+  surfacing only stderr there left an unactionable placeholder. `AppWindow` also
   offers `git:pull` when the branch falls behind upstream.
 - **Commands first, bindings central**: each component registers its
   handlers; key bindings live in `src/keymaps/default.ts` (vim bare keys

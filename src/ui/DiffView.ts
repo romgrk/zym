@@ -233,7 +233,12 @@ export class DiffView {
     // Resolve each side's source ONCE (live Document for the new side when editable, else a
     // disk snapshot; the old/base side is always a read-only blob), then diff + project.
     for (const file of this.files) this.ensureSources(file);
-    const dmb = this.buildDiff();
+    // At open, fold large files (change ≥ editor.diffCollapseLines) so a big diff opens as a scannable
+    // overview. The build folds them inline in a single pass; `seedAutoCollapse` then mirrors them into
+    // collapsedFiles so later re-diffs keep them folded, while `z o` / `z r` still expand them.
+    const autoCollapse = DiffView.autoCollapseThreshold();
+    const dmb = this.buildDiff(autoCollapse);
+    this.seedAutoCollapse(dmb, autoCollapse);
     this.dmb = dmb;
 
     const sourceBuffers = new Map([...this.sources].map(([key, e]) => [key, e.buffer] as const));
@@ -295,9 +300,16 @@ export class DiffView {
       zym.config.get('editor.diffLineNumbers') === true,
     );
     // Live-toggle the number columns without reopening the diff (observe fires immediately, a
-    // no-op re-set of the value already passed above).
+    // no-op re-set of the value already passed above). Also refresh the gap bands so the
+    // `@@ … @@` ⇄ `⋯` swap tracks the toggle — skipping the immediate fire, since installOverlays
+    // runs right below at construction.
+    let firstLineNumberObserve = true;
     this.disposables.add(
-      zym.config.observe('editor.diffLineNumbers', (v) => this.lineNumbers?.setShowLineNumbers(v === true)),
+      zym.config.observe('editor.diffLineNumbers', (v) => {
+        this.lineNumbers?.setShowLineNumbers(v === true);
+        if (firstLineNumberObserve) { firstLineNumberObserve = false; return; }
+        this.installOverlays(this.dmb);
+      }),
     );
 
     this.installOverlays(dmb);
@@ -364,12 +376,14 @@ export class DiffView {
 
   /** Build the windowed diff from each file's base blob + its CURRENT new-side text (the live
    *  Document's text when editable, else the snapshot passed in). */
-  private buildDiff(): DiffMultiBuffer {
+  private buildDiff(autoCollapseAtLines?: number): DiffMultiBuffer {
     const files = this.files.map((f) => ({ ...f, newText: this.currentNewText(f), indexText: this.indexText.get(f.path) }));
     // Filename headers are widgets (not navigable buffer text), anchored above each file's rows.
     // `reveal` forces user-expanded (otherwise-elided) new-side rows visible (expand-context).
+    // `autoCollapseAtLines` is passed only on the FIRST build (open); re-diffs omit it so they honor
+    // the user's collapse set rather than re-folding a large file the user expanded.
     const reveal = this.revealAll ? () => true : (r: number) => this.revealedNewRows.has(r);
-    return buildDiffMultiBuffer(files, this.cwd, { headers: 'widget', reveal, collapsed: (p) => this.collapsedFiles.has(p) });
+    return buildDiffMultiBuffer(files, this.cwd, { headers: 'widget', reveal, collapsed: (p) => this.collapsedFiles.has(p), autoCollapseAtLines });
   }
 
   // --- expand context (reveal elided unchanged lines) ------------------------
@@ -416,14 +430,18 @@ export class DiffView {
 
   // --- per-file collapse -----------------------------------------------------
 
-  /** Collapse / expand the file under the cursor — collapsed, it folds to just its (navigable)
-   *  header row; the caret recovers onto that header (see reDiff). */
+  /** Collapse / expand `path` — collapsed, it folds to just its (navigable) header row; the caret
+   *  recovers onto that header (see reDiff). Drives the header double-click and the cursor toggle. */
+  toggleFileCollapse(path: string): void {
+    if (this.collapsedFiles.has(path)) this.collapsedFiles.delete(path);
+    else this.collapsedFiles.add(path);
+    this.reDiff();
+  }
+
+  /** Collapse / expand the file under the cursor (`z a`). */
   toggleFileCollapseAtCursor(): void {
     const hit = this.fileAtViewRow(this.cursorRow());
-    if (!hit) return;
-    if (this.collapsedFiles.has(hit.path)) this.collapsedFiles.delete(hit.path);
-    else this.collapsedFiles.add(hit.path);
-    this.reDiff();
+    if (hit) this.toggleFileCollapse(hit.path);
   }
 
   /** Collapse the file under the cursor to its header (`z c`, vim's close-fold). No-op if already
@@ -455,6 +473,23 @@ export class DiffView {
     if (this.collapsedFiles.size === 0) return;
     this.collapsedFiles.clear();
     this.reDiff();
+  }
+
+  /** The `editor.diffCollapseLines` auto-fold threshold (change ≥ N lines folds a file on open), or
+   *  undefined when disabled (0 / unset). Read once at open and passed to the first `buildDiff`. */
+  private static autoCollapseThreshold(): number | undefined {
+    const n = zym.config.get('editor.diffCollapseLines');
+    return typeof n === 'number' && n > 0 ? n : undefined;
+  }
+
+  /** Mirror the files the build auto-folded (change ≥ `threshold`) into `collapsedFiles`, so later
+   *  re-diffs — which don't re-apply the threshold — keep them folded, while `z o` / `z r` still
+   *  expand them. No-op when auto-folding is disabled (`threshold` undefined). */
+  private seedAutoCollapse(dmb: DiffMultiBuffer, threshold: number | undefined): void {
+    if (threshold === undefined) return;
+    for (const h of dmb.headerAnchors) {
+      if (h.added + h.removed >= threshold) this.collapsedFiles.add(h.path);
+    }
   }
 
   /** The files whose (cwd-relative) path matches `pattern` — a comma-separated glob filter, each
@@ -780,8 +815,16 @@ export class DiffView {
   private isFileModified(path: string): boolean {
     return this.sources.get(newKey(path))?.document?.isModified() ?? false;
   }
-  private static gapKey(g: DiffMultiBuffer['gapAnchors'][number]): string {
-    return `${g.placement}\n${g.label}\n${g.revealRows.join(',')}`;
+  private static gapKey(g: DiffMultiBuffer['gapAnchors'][number], label: string): string {
+    return `${g.placement}\n${label}\n${g.revealRows.join(',')}`;
+  }
+  /** The gap band's text. When the line-number gutter is on (`editor.diffLineNumbers`), the
+   *  `@@ -old +new @@` range just restates the gutter, so drop the range and keep only the trailing
+   *  section (the enclosing function-context git appends) — a bare `⋯` when the hunk has no section,
+   *  or for a trailing gap that never carried a range. */
+  private static gapLabel(rawLabel: string, showLineNumbers: boolean): string {
+    if (!showLineNumbers || !rawLabel.startsWith('@@')) return rawLabel;
+    return rawLabel.replace(/^@@ .*? @@/, '').trim() || '⋯';
   }
   private installOverlays(dmb: DiffMultiBuffer): void {
     this.gapAnchors = dmb.gapAnchors; // kept for the keyboard expand (`expandContextAtCursor`)
@@ -803,7 +846,9 @@ export class DiffView {
             scope,
             h.label,
             h.path,
-            () => this.onActivate?.({ path: h.path, row: 0 }),
+            // Single click does nothing (a header click no longer opens the file); a double-click
+            // toggles the file's fold — the pointer equivalent of `z a`.
+            (nPress) => { if (nPress === 2) this.toggleFileCollapse(h.path); },
             // Diff look: no file-type icon, bold the whole path, flag unsaved edits (warning + dot),
             // plus the collapse chevron + `+N −M` stats, and a `(deleted)` tag for a removed file.
             { icon: false, boldPath: true, modified, collapsed, added: h.added, removed: h.removed, deleted: h.deleted },
@@ -816,18 +861,22 @@ export class DiffView {
     // `⋯` gaps (incl. the leading file-head gap, now its own band) + accumulated review-comment
     // cards stay ordinary (scrolling) block decorations.
     const specs: BlockDecorationSpec[] = [];
+    // With the line-number gutter on (`editor.diffLineNumbers`) the `@@ -old +new @@` range restates
+    // the gutter, so drop it and keep just the trailing section context (see `gapLabel`).
+    const showDiffLineNumbers = zym.config.get('editor.diffLineNumbers') === true;
     dmb.gapAnchors.forEach((g, i) => {
       const scope = new CompositeDisposable();
+      const label = DiffView.gapLabel(g.label, showDiffLineNumbers);
       specs.push({
         id: `gap:${i}`,
-        key: DiffView.gapKey(g),
+        key: DiffView.gapKey(g, label), // keyed on the DISPLAYED label so a live line-number toggle rebuilds it
         anchor: { viewRow: g.viewRow },
         placement: g.placement,
         // The `⋯ N unchanged lines` band spans the FULL content width and rides the text, so it stays
         // full-width at any horizontal scroll (like the file header above it, but scrolling not pinned).
         fullWidth: 'content',
         // Clicking the gap reveals a chunk of its elided lines (`fromTop` = which end first).
-        build: () => buildGapWidget(scope, g.label, () => this.revealChunk(g.revealRows, g.fromTop)),
+        build: () => buildGapWidget(scope, label, () => this.revealChunk(g.revealRows, g.fromTop)),
         dispose: () => scope.dispose(),
       });
     });
