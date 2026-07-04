@@ -51,6 +51,15 @@ opens as a center tab, not a dock — see docs/git/index.md.)
   active project at launch) and exposes it via `projectOf` / `activeProject` /
   `projectGroups` — the rail's grouped `{ project, agents }[]`. See
   docs/session-management.md "Multi-root".
+  - **"The current root" is always the *active workbench's* cwd**, reached via
+    `zym.workspace.getActiveWorkbench()!.cwd` (or, inside the manager,
+    `activeProjectRoot()` / `cwdOf(owner)` / `ownerWorkbenchCwd(path)`). **`process.cwd()`
+    is reserved for seeding the fresh default project/session of an unnamed window** — the
+    primary at `AppWindow` construction, and the empty slate `session:close` resets to
+    (`emptySessionState`). Anywhere else it silently pins to the launch dir and breaks the
+    moment a non-primary project is active, so read the active workbench cwd instead; a
+    bare `?? process.cwd()` is only a last-resort default for the (unreachable in-app)
+    no-workbench case.
 - **`PaneItems`** (`src/ui/workbench/PaneItems.ts`) — the **tab/item-registry spine**
   underneath every `Panel`: the per-widget registries for each kind of center tab +
   their create/serialize/dispose/reopen lifecycle, the shared `DocumentRegistry`, and

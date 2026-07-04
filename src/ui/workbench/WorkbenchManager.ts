@@ -346,7 +346,9 @@ export class WorkbenchManager {
     for (const wb of this.workbenches.values()) {
       if (isUnderRoot(path, wb.cwd) && (best === null || wb.cwd.length > best.length)) best = wb.cwd;
     }
-    return best ?? process.cwd(); // no open workbench contains it → primary/orphan fallback
+    // No open workbench contains it → fall back to the primary project's root (the "orphan"
+    // owner), not process.cwd(); they coincide today only because the primary is seeded there.
+    return best ?? this.cwdOf(this.primaryProject) ?? process.cwd();
   }
 
   // Re-root an agent's workbench after it moves into a worktree: swap the pooled GitRepo

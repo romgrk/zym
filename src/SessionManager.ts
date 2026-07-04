@@ -107,6 +107,22 @@ export interface SessionState {
   window?: { width: number; height: number; maximized: boolean };
 }
 
+/**
+ * A fresh, unnamed session: one empty project rooted at `root`, no agents, no open
+ * tabs, default docks/geometry. `session:close` applies this to reset the window to a
+ * clean slate; being unnamed (no `name`), applying it drops the window back to the
+ * ephemeral default session. `root` is the launch dir (`process.cwd()`) — the one
+ * legitimate use of cwd is seeding a fresh default project/session.
+ */
+export function emptySessionState(root: string): SessionState {
+  return {
+    version: SESSION_VERSION,
+    savedAt: '',
+    projects: [{ root, workbench: { layout: { type: 'leaf', tabs: [], activeIndex: 0, active: true } }, agents: [] }],
+    active: { project: 0 },
+  };
+}
+
 // --- Serialization seams -----------------------------------------------------
 
 /** A widget that can persist itself into session state (`null` = "skip me"). */

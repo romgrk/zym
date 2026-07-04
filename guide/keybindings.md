@@ -103,6 +103,7 @@ See [Agents](agents.md); highlights:
 | `space s s` | save the session (names it the first time) |
 | `space s a` | save the session under a name |
 | `space s o` | open a saved session |
+| `space s c` | close the session, reset the window |
 | `space s R` | rename the current session |
 | `space p o` | open another folder as a project in this window |
 | `space p c` | close the active project |

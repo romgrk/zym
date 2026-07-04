@@ -6,6 +6,7 @@ import * as Path from 'node:path';
 import {
   SessionManager,
   SESSION_VERSION,
+  emptySessionState,
   type SessionState,
   type TabState,
   type AgentTabState,
@@ -206,6 +207,23 @@ test('collectModified returns only participants reporting modified, and respects
   dirty = true;
   reg.dispose(); // editor's tab closed
   assert.deepEqual(manager.collectModified(), []);
+});
+
+test('emptySessionState is a fresh unnamed single-project slate (session:close)', () => {
+  const root = '/home/me/project';
+  const state = emptySessionState(root);
+
+  assert.equal(state.name, undefined); // unnamed → applying it drops to the default session
+  assert.equal(state.version, SESSION_VERSION);
+  assert.equal(state.projects.length, 1);
+  assert.equal(state.projects[0].root, root);
+  assert.deepEqual(state.projects[0].agents, []);
+  assert.deepEqual(state.projects[0].workbench.layout, { type: 'leaf', tabs: [], activeIndex: 0, active: true });
+  assert.deepEqual(state.active, { project: 0 });
+
+  // A save must refuse it (unnamed never persists) — the close path applies it live, not to disk.
+  const { manager } = makeManager();
+  assert.throws(() => manager.save(state));
 });
 
 test('deserializer registry builds by kind and unregisters', () => {

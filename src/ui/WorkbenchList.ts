@@ -16,7 +16,6 @@
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
  */
-import * as Path from 'node:path';
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
@@ -27,9 +26,6 @@ import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
 import type { Agent } from '../agents/types.ts';
 import { type Owner, type Project } from './workbench/Owner.ts';
-
-// Project name shown in the sidebar header fallback: the last path component of the cwd.
-export const PROJECT_NAME = Path.basename(process.cwd());
 
 addStyles(/* css */`
   /* The unsaved-changes marker (a small dot) next to the session title — warning-colored. */
@@ -167,7 +163,6 @@ export class WorkbenchList {
     // Packed at the start (not the centered title slot) so it aligns left.
     bar.setTitleWidget(new Gtk.Box()); // clear the centered title slot
     this.headerTitle = new Adw.WindowTitle({ title: '' });
-    this.headerTitle.setTooltipText(process.cwd());
     bar.packStart(this.headerTitle);
 
     // Unsaved-changes marker — a warning-colored dot right after the session title,

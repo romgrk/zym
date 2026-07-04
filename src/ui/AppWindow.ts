@@ -11,6 +11,7 @@
  * registering actions/accelerators) and an `onQuit` callback so it never has to
  * know how the application shuts itself down.
  */
+import * as Path from 'node:path';
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
 type Application = InstanceType<typeof Adw.Application>;
@@ -18,7 +19,6 @@ type ApplicationWindow = InstanceType<typeof Adw.ApplicationWindow>;
 type ToastOverlay = InstanceType<typeof Adw.ToastOverlay>;
 import { ensureProjectSettingsFile } from '../projectSettings.ts';
 import { openActionRunner } from './workbench/ActionPicker.ts';
-import { PROJECT_NAME } from './WorkbenchList.ts';
 import { Sidebar } from './Sidebar.ts';
 import { AgentSidebar } from './AgentSidebar.ts';
 import { HeaderBar } from './HeaderBar.ts';
@@ -326,7 +326,7 @@ export class AppWindow {
 
     this.window = new Adw.ApplicationWindow({ application: app });
     this.window.addCssClass('AppWindow');
-    this.window.setTitle(PROJECT_NAME); // OS taskbar label — the project, not the bare "node"
+    this.window.setTitle(this.projectTitle()); // OS taskbar label — the project, not the bare "node"
     this.window.setDefaultSize(DEFAULT_WIDTH, DEFAULT_HEIGHT);
     this.window.setContent(this.overlay);
 
@@ -999,6 +999,10 @@ export class AppWindow {
         didDispatch: () => this.openSessionPicker(),
         description: 'Open a saved session',
       },
+      'session:close': {
+        didDispatch: () => this.closeSession(),
+        description: 'Close the active session and reset the window',
+      },
       'session:rename': {
         didDispatch: () => this.promptRenameSession(),
         description: 'Rename the current session',
@@ -1077,6 +1081,27 @@ export class AppWindow {
       `Opening “${zym.session.label(state)}” replaces this window. The following will be lost:`,
       () => this.sessionController.open(state),
     );
+  }
+
+  // `session:close` — flush the active named session, then reset the window to a fresh,
+  // unnamed slate rooted at the launch dir. Tears down editors/agents/extra projects like
+  // a session switch, so it's guarded by the same unsaved-work prompt (a named close still
+  // caches unsaved buffers, but the file on disk is untouched, so warn before dropping the
+  // live edits). A no-op with a toast on the unnamed default session — nothing named to close.
+  private closeSession(): void {
+    const name = this.sessionController.sessionName;
+    if (name === null) {
+      this.toast('No open session to close');
+      return;
+    }
+    const proceed = () => {
+      this.sessionController.closeToFresh(process.cwd());
+      this.toast(`Session “${name}” closed`);
+    };
+    const modified =
+      zym.config.get('session.promptOnExitWhenModified') === true ? zym.session.collectModified() : [];
+    if (modified.length === 0) proceed();
+    else this.confirmUnsavedWork(modified, `Closing “${name}” resets this window. The following will be lost:`, proceed);
   }
 
   private deleteSessionPicker(): void {
@@ -1234,8 +1259,15 @@ export class AppWindow {
   // Reflect the active session name in the window title (OS taskbar) and the sidebar
   // header. Null → the unnamed/default session shows the bare project name.
   private applySessionName(name: string | null): void {
-    this.window.setTitle(name ?? PROJECT_NAME);
+    this.window.setTitle(name ?? this.projectTitle());
     this.sidebar.list.setSessionName(name);
+  }
+
+  // The active project's basename — the OS-title fallback for the unnamed/default session.
+  // Read live off the active workbench (not a process.cwd() snapshot) so it tracks the
+  // project actually shown rather than the launch dir.
+  private projectTitle(): string {
+    return Path.basename(this.workbench.cwd);
   }
 
   // --- Window chrome helpers -------------------------------------------------

@@ -130,6 +130,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space s s': 'session:save', // save the session (names it if unnamed)
   'space s a': 'session:save-as', // save the session under a name
   'space s o': 'session:open', // open a saved session
+  'space s c': 'session:close', // close the active session, reset the window
   'space s R': 'session:rename', // rename the current session
   'space p o': 'project:open', // open another folder as a project in this window
   'space p c': 'project:close', // close the active project

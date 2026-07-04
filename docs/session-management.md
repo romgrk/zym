@@ -288,6 +288,13 @@ named-only model — there is no launch restore.)
   under it (also forks a named session under a new name).
 - `session:open` (`space s o`) — picker over `zym.session.list()`
   (label + `relativeTime(savedAt)`); switches into the chosen session.
+- `session:close` (`space s c`) — flush the active named session, then
+  reset the window to a fresh unnamed slate (one empty project rooted at
+  the launch dir) — the inverse of `session:open`. Replace-semantics
+  teardown (agents + extra projects go), guarded by the same unsaved-work
+  prompt as switching. **No-op with a toast on the unnamed default
+  session** — there is nothing named to close. Implemented as
+  `SessionController.closeToFresh(root)` → `open(emptySessionState(root))`.
 - `session:rename` — rename the active named session (moves the json +
   its `.buffers`); no-op + toast on the unnamed session.
 - `session:delete` — picker → forget a session (its json + `.buffers`);

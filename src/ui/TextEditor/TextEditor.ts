@@ -234,7 +234,7 @@ export interface TextEditorOptions {
   git?: GitRepo;
   /** Resolves the owning workbench's root directory — the base the LocationBar shortens the
    *  file path against. A getter (not a value) so a worktree re-root, which reassigns the
-   *  workbench's cwd, is followed automatically. Defaults to `process.cwd()`. */
+   *  workbench's cwd, is followed automatically. Defaults to the active workbench's cwd. */
   cwd?: () => string;
   /** The shared `Document` this view attaches to (from `zym.documents`). When given,
    *  this view is one of N onto it and releases its ref on teardown via
@@ -563,7 +563,9 @@ export class TextEditor implements DocumentHost {
     this.growMaxHeight = options.maxHeight;
     this.growMaxLines = options.maxLines;
     this.onComment = options.onComment;
-    this.workbenchCwd = options.cwd ?? (() => process.cwd());
+    // Auxiliary editors (peek, etc.) omit `cwd`; shorten their paths against the active
+    // workbench's root rather than the launch dir, so a non-primary project reads correctly.
+    this.workbenchCwd = options.cwd ?? (() => zym.workspace.getActiveWorkbench()?.cwd ?? process.cwd());
 
     // The backing this editor is a view onto: a multi-source `MultiBufferDocument` (the
     // search-results / continuous-diff surfaces), a shared registry `Document` (a file open in N

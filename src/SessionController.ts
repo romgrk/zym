@@ -14,7 +14,7 @@
  */
 import * as Fs from 'node:fs';
 import { zym } from './zym.ts';
-import { SESSION_VERSION, type SessionState, type TabState, type ProjectState } from './SessionManager.ts';
+import { SESSION_VERSION, emptySessionState, type SessionState, type TabState, type ProjectState } from './SessionManager.ts';
 import type { RestoredChild } from './ui/PanelGroup.ts';
 import type { DockSide } from './ui/workbench/Workbench.ts';
 
@@ -183,6 +183,17 @@ export class SessionController {
     this.opts.closeAllAgents?.(); // replace semantics — the old session's agents go
     this.applyState(state);
     this.setName(state.name ?? null);
+  }
+
+  /**
+   * Close the active session and reset the window to a fresh, unnamed slate rooted at
+   * `root` (the launch dir). Same replace-semantics as `open()` — flush the outgoing
+   * named session, tear down its agents + extra projects — but applies an empty
+   * single-project layout instead of a saved one, so the window drops back to the
+   * ephemeral default session. See docs/session-management.md "Commands".
+   */
+  closeToFresh(root: string): void {
+    this.open(emptySessionState(root));
   }
 
   /**

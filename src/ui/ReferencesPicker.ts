@@ -33,9 +33,11 @@ interface ReferenceItem extends PickerItem {
 export function openReferencesPicker(
   host: Overlay,
   references: ReferenceLocation[],
+  // The root each reference's path is shortened against (the active workbench's cwd,
+  // not process.cwd() — a reference in a non-primary project shortens against its own root).
+  cwd: string,
   onJump: (path: string, cursor: [number, number]) => void,
 ): void {
-  const cwd = process.cwd();
   const items: ReferenceItem[] = references.map((r) => {
     const rel = Path.relative(cwd, r.path);
     return {

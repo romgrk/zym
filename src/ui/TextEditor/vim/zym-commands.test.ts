@@ -73,7 +73,7 @@ test('resolveFilePath: absolute path that exists', () => {
   const dir = tmpDir('gf');
   const file = Path.join(dir, 'abs.txt');
   Fs.writeFileSync(file, 'x');
-  assert.equal(resolveFilePath(file, null), file);
+  assert.equal(resolveFilePath(file, null, dir), file);
 });
 
 test('resolveFilePath: relative to the current file directory', () => {
@@ -83,13 +83,16 @@ test('resolveFilePath: relative to the current file directory', () => {
   const target = Path.join(sub, 'sibling.ts');
   Fs.writeFileSync(target, 'x');
   const currentFile = Path.join(sub, 'main.ts');
-  assert.equal(resolveFilePath('./sibling.ts', currentFile), target);
+  assert.equal(resolveFilePath('./sibling.ts', currentFile, dir), target);
 });
 
-test('resolveFilePath: relative to the project root (cwd)', () => {
-  const rel = Path.join('src', 'ui', 'openUrl.ts'); // a file that exists in the repo
-  const resolved = resolveFilePath(rel, null);
-  assert.equal(resolved, Path.resolve(process.cwd(), rel));
+test('resolveFilePath: relative to the project root', () => {
+  const root = tmpDir('gf');
+  const target = Path.join(root, 'src', 'thing.ts');
+  Fs.mkdirSync(Path.dirname(target), { recursive: true });
+  Fs.writeFileSync(target, 'x');
+  const rel = Path.join('src', 'thing.ts');
+  assert.equal(resolveFilePath(rel, null, root), target);
 });
 
 test('resolveFilePath: ~ expands to the home directory', () => {
@@ -100,16 +103,16 @@ test('resolveFilePath: ~ expands to the home directory', () => {
   });
   if (entries.length === 0) return; // no file in $HOME — skip
   const token = '~/' + entries[0];
-  assert.equal(resolveFilePath(token, null), Path.join(home, entries[0]));
+  assert.equal(resolveFilePath(token, null, home), Path.join(home, entries[0]));
 });
 
 test('resolveFilePath: missing file returns null', () => {
-  assert.equal(resolveFilePath('./does-not-exist-xyz.ts', null), null);
+  assert.equal(resolveFilePath('./does-not-exist-xyz.ts', null, tmpDir('gf')), null);
 });
 
 test('resolveFilePath: a directory is not a valid target', () => {
   const dir = tmpDir('gf');
-  assert.equal(resolveFilePath(dir, null), null);
+  assert.equal(resolveFilePath(dir, null, dir), null);
 });
 
 // googleSearchUrl — query encoding

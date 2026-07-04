@@ -49,9 +49,10 @@ export function filenameTokenAt(line: string, column: number): string {
 /**
  * Resolve a file-name token to an existing file path, or `null` if none exists.
  * Tries, in order: absolute / `~`-relative as-is; relative to `currentFile`'s
- * directory; relative to the process working directory (the project root).
+ * directory; relative to `projectRoot` (the active workbench's root — not
+ * process.cwd(), so a `gf` in a non-primary project resolves against its own root).
  */
-export function resolveFilePath(token: string, currentFile: string | null): string | null {
+export function resolveFilePath(token: string, currentFile: string | null, projectRoot: string): string | null {
   const expanded =
     token === '~' || token.startsWith('~/') ? Path.join(Os.homedir(), token.slice(1)) : token;
 
@@ -60,7 +61,7 @@ export function resolveFilePath(token: string, currentFile: string | null): stri
     candidates.push(expanded);
   } else {
     if (currentFile) candidates.push(Path.resolve(Path.dirname(currentFile), expanded));
-    candidates.push(Path.resolve(process.cwd(), expanded));
+    candidates.push(Path.resolve(projectRoot, expanded));
   }
 
   for (const candidate of candidates) {
@@ -95,7 +96,10 @@ class GoToFile extends Base {
       return;
     }
     const currentFile = zym.workspace.getActiveTextEditor()?.currentFile ?? null;
-    const resolved = resolveFilePath(token, currentFile);
+    // The active workbench's root anchors a relative token; fall back to the launch dir only
+    // when there is no workbench yet (headless/pre-init) — never as the routine project root.
+    const projectRoot = zym.workspace.getActiveWorkbench()?.cwd ?? process.cwd();
+    const resolved = resolveFilePath(token, currentFile, projectRoot);
     if (!resolved) {
       zym.notifications.addError('File not found', { detail: token });
       return;

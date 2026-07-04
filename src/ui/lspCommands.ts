@@ -122,7 +122,8 @@ async function findReferences() {
     zym.notifications.addInfo('No references found');
     return;
   }
-  openReferencesPicker(host(), refs, (path, cursor) => zym.workspace.openFile(path, { cursor }));
+  const cwd = zym.workspace.getActiveWorkbench()!.cwd;
+  openReferencesPicker(host(), refs, cwd, (path, cursor) => zym.workspace.openFile(path, { cursor }));
 }
 
 // Search project-wide symbols (via the active file's language server) in a

@@ -41,8 +41,13 @@ export interface AgentPickerOptions {
    *  resumable conversations are listed alongside the open agents. */
   onResume?: (session: AgentSession) => void;
   /** Project roots to list resumable conversations from — the repo's worktrees, so
-   *  a worktree-launched conversation appears too. Defaults to `[process.cwd()]`. */
+   *  a worktree-launched conversation appears too. Absent → nothing is listed (the
+   *  caller that resumes always supplies them). */
   sessionRoots?: string[];
+  /** The active project's root (where its agents spawn), used to decide whether a past
+   *  conversation "ran elsewhere" (a worktree/other dir → prefixed with its basename).
+   *  Absent → falls back to the first session root. */
+  mainRoot?: string;
   /** Entry placeholder (e.g. "Send to agent…"). Defaults to "Open agent or conversation…". */
   placeholder?: string;
   /** A live agent's worktree (for the right-aligned branch badge), computed from its
@@ -71,7 +76,7 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
 
   // Then the resumable past conversations (newest first), if the caller handles them.
   if (options.onResume) {
-    for (const session of listResumableSessions(options.sessionRoots ?? [process.cwd()])) {
+    for (const session of listResumableSessions(options.sessionRoots ?? [])) {
       if (liveSessions.has(session.id)) continue;
       items.push({ value: `session:${session.id}`, text: session.label, data: { kind: 'session', session } satisfies Entry });
     }
@@ -114,7 +119,8 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
       // aligned "time ago", prefixed with the worktree name when the conversation
       // ran outside the main project cwd (so it resumes there — branch/worktree).
       const session = entry.session;
-      const ranElsewhere = session.cwd && session.cwd !== process.cwd();
+      const mainRoot = options.mainRoot ?? options.sessionRoots?.[0];
+      const ranElsewhere = session.cwd && mainRoot != null && session.cwd !== mainRoot;
       const where = ranElsewhere ? `${escapeMarkup(Path.basename(session.cwd!))} · ` : '';
       return renderRowSingleLine({
         main: proseMarkup(item.text, positions, !session.titled),

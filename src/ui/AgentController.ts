@@ -101,6 +101,7 @@ export class AgentController {
         didDispatch: () => openAgentPicker(this.host(), {
           onActivate: (agent) => this.showAgent(agent),
           sessionRoots: this.agentSessionRoots(),
+          mainRoot: this.mainRoot(),
           agentWorktree: (agent) => this.agentWorktree(agent),
           // Resume restoring the conversation's branch/worktree/cwd (see resumeOptions).
           onResume: (session) => this.openAgent(this.resumeOptions(session)),
@@ -443,7 +444,9 @@ export class AgentController {
       items: sessions.map((s) => ({ value: s.id, text: s.label })),
       renderRow: (item, positions) => {
         const session = byId.get(item.value);
-        const ranElsewhere = session?.cwd && session.cwd !== process.cwd();
+        // "ran elsewhere" is relative to the active project's root (where its agents spawn),
+        // not process.cwd() — else every session in a non-primary active project reads as elsewhere.
+        const ranElsewhere = session?.cwd && session.cwd !== this.mainRoot();
         const where = ranElsewhere ? `${escapeMarkup(Path.basename(session!.cwd!))} · ` : '';
         return renderRowSingleLine({
           main: proseMarkup(item.text, positions, !session?.titled),
