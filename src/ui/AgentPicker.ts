@@ -51,7 +51,7 @@ export interface AgentPickerOptions {
 }
 
 type Entry =
-  | { kind: 'agent'; agent: Agent }
+  | { kind: 'agent'; agent: Agent; worktree: WorktreeInfo | null }
   | { kind: 'session'; session: AgentSession }
   | { kind: 'new' };
 
@@ -63,7 +63,9 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
   // its `Entry` on `data`, so the row and selection read it straight off the item.
   const liveSessions = new Set<string>();
   zym.agents.getAgents().forEach((agent, i) => {
-    items.push({ value: `agent:${i}`, text: agent.title, data: { kind: 'agent', agent } satisfies Entry });
+    // Resolve the worktree badge once here (a git/FS call) rather than per row per keystroke.
+    const worktree = options.agentWorktree?.(agent) ?? null;
+    items.push({ value: `agent:${i}`, text: agent.title, data: { kind: 'agent', agent, worktree } satisfies Entry });
     if (agent.sessionId) liveSessions.add(agent.sessionId);
   });
 
@@ -92,7 +94,7 @@ export function openAgentPicker(host: Overlay, options: AgentPickerOptions): voi
         // The shared status indicator before the title; the title can carry
         // `backtick` spans (claude reports them), rendered as prose. A linked-
         // worktree badge, when present, is shown right-aligned as the detail.
-        const worktree = agentWorktreeMarkup(options.agentWorktree?.(entry.agent) ?? null);
+        const worktree = agentWorktreeMarkup(entry.worktree);
         const lead = agentStatusMarkup(entry.agent.status);
         return renderRowSingleLine({
           main: `${lead} ${proseMarkup(item.text, positions)}`,

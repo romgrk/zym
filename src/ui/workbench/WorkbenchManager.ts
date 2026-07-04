@@ -137,10 +137,15 @@ export class WorkbenchManager {
     return owners;
   }
 
+  /** An owner's workbench cwd (its root), or undefined when it has no workbench yet. */
+  cwdOf(owner: Owner): string | undefined {
+    return this.workbenches.get(owner)?.cwd;
+  }
+
   /** The active project's root — where a freshly-launched agent roots (its process spawn
    *  dir, editor, and transcript home), rather than the global primary. */
   activeProjectRoot(): string {
-    return this.workbenches.get(this.activeProject())?.cwd ?? process.cwd();
+    return this.cwdOf(this.activeProject()) ?? process.cwd();
   }
 
   /** The active workbench (the one the window currently shows). */

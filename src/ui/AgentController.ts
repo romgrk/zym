@@ -358,13 +358,13 @@ export class AgentController {
    *  where the agent's editor is rooted), falling back to the main dir if it has no
    *  workbench. Replaces the former `agent.effectiveCwd`. */
   private agentRoot(agent: Agent): string {
-    return this.d.workbenchManager.workbenches.get(agent)?.cwd ?? this.mainRoot();
+    return this.d.workbenchManager.cwdOf(agent) ?? this.mainRoot();
   }
 
   /** A live agent's worktree (the branch badge in the pickers), from its workbench cwd
    *  — replaces the former `agent.worktree`. Null when it has no workbench yet. */
   private agentWorktree(agent: Agent): WorktreeInfo | null {
-    const cwd = this.d.workbenchManager.workbenches.get(agent)?.cwd;
+    const cwd = this.d.workbenchManager.cwdOf(agent);
     return cwd ? worktreeInfo(cwd) : null;
   }
 

@@ -39,7 +39,7 @@ await plugins.activateAll(disabledPluginIds());
 installGitBlame();
 await preloadGrammars();
 
-new Application(initialFile, true).run();
+new Application(initialFile).run();
 
 // Scroll driver. A background window's frame clock is throttled to ~0 ticks, so
 // addTickCallback can't drive this; use a timer (fires regardless of mapping) and

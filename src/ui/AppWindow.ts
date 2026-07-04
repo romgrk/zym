@@ -150,10 +150,7 @@ export class AppWindow {
   // Drives session save/restore/autosave; wired once the center + file tree exist.
   private sessionController!: SessionController;
 
-  // `_explicitFile` is retained for the Application call signature but no longer used:
-  // the named-only session model never restores on launch, so a bare vs. explicit file
-  // arg is treated the same (open the file if given). See docs/session-management.md.
-  constructor(app: Application, onQuit: () => void, initialFile: string | undefined, _explicitFile = false) {
+  constructor(app: Application, onQuit: () => void, initialFile: string | undefined) {
     this.app = app;
     this.onQuit = onQuit;
 

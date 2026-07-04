@@ -45,10 +45,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // With no file argument, open no file (an empty window, unless a session is
-// restored). An explicit file arg also suppresses session restore-on-launch
-// (see SessionController).
 const arg = process.argv[2];
-const explicitFile = Boolean(arg);
 const initialFile = arg ? Path.resolve(arg) : undefined;
 
 // Activate the bundled plugins before anything reads the language registry: a
@@ -68,4 +65,4 @@ installGitBlame();
 // sync wasm init doesn't resolve once the loop is running.
 await preloadGrammars();
 
-new Application(initialFile, explicitFile).run();
+new Application(initialFile).run();

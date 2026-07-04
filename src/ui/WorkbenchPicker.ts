@@ -21,7 +21,7 @@ import { iconSpan } from './icons.ts';
 import { fileIconGlyph } from './fileIcons.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
 import { agentStatusMarkup, agentWorktreeMarkup } from './agentStatusIcon.ts';
-import { worktreeInfo } from '../git.ts';
+import { worktreeInfo, type WorktreeInfo } from '../git.ts';
 import { type Owner, isProject } from './workbench/Owner.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -51,6 +51,12 @@ export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptio
     data: wb,
   }));
 
+  // Precompute each agent's worktree once (worktreeInfo is a git/FS call) rather than
+  // per row on every keystroke.
+  const worktrees = new Map<WorkbenchInfo, WorktreeInfo | null>(
+    options.workbenches.map((wb) => [wb, isProject(wb.owner) ? null : worktreeInfo(wb.cwd)]),
+  );
+
   openPicker({
     host,
     placeholder: 'Switch to workbench…',
@@ -62,7 +68,7 @@ export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptio
       const lead = isProject(wb.owner) ? iconSpan(fileIconGlyph('', true)) : agentStatusMarkup(wb.owner.status);
       return renderRowSingleLine({
         main: `${lead} ${proseMarkup(item.text, positions)}`,
-        detail: workbenchDetail(wb),
+        detail: workbenchDetail(wb, worktrees.get(wb) ?? null),
         detailMuted: false, // each part sets its own emphasis (the "current" tag stays vivid)
       });
     },
@@ -75,15 +81,14 @@ export function openWorkbenchPicker(host: Overlay, options: WorkbenchPickerOptio
 // it has one, else the cwd's basename. Only "current" is highlighted (the location
 // is muted), so the caller turns `detailMuted` off and each part carries its own
 // markup.
-function workbenchDetail(wb: WorkbenchInfo): string {
+function workbenchDetail(wb: WorkbenchInfo, worktree: WorktreeInfo | null): string {
   const parts: string[] = [];
   if (wb.active) {
     parts.push(`<span foreground="${HIGHLIGHT_COLOR}" face="Sans" line_height="${PROSE_LINE_HEIGHT}">current</span>`);
   }
-  // Compute the agent's worktree badge from its workbench cwd (the source of truth).
-  const worktree = isProject(wb.owner) ? null : agentWorktreeMarkup(worktreeInfo(wb.cwd));
+  const badge = agentWorktreeMarkup(worktree); // null for projects / not-in-a-repo
   parts.push(
-    worktree ??
+    badge ??
       `<span alpha="55%" face="Sans" line_height="${PROSE_LINE_HEIGHT}">${escapeMarkup(Path.basename(wb.cwd))}</span>`,
   );
   return parts.join('   ');
