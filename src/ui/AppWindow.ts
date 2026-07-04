@@ -501,6 +501,7 @@ export class AppWindow {
   // the clean-exit path and, after confirmation, the unsaved-work path.
   private teardownAndQuit() {
     this.sessionController.flush(); // final autosave before the workbench goes away
+    this.sessionController.releaseLock(); // drop our cross-instance session lock promptly
     this.headerBar.dispose();
     this.configWatcher.dispose();
     this.keymapWatcher.dispose();
@@ -1066,10 +1067,22 @@ export class AppWindow {
     });
   }
 
-  // Switch into a saved session. Opening replaces this window (tearing down its
-  // editors), so unsaved editor work is guarded by the same prompt as quitting —
-  // otherwise a switch would silently drop unwritten edits.
+  // Switch into a saved session. Two gates, in order: (1) if another running instance
+  // already has this session open, warn first — both windows would autosave and
+  // overwrite each other's state; (2) opening replaces this window (tearing down its
+  // editors), so unsaved editor work is guarded by the same prompt as quitting.
   private switchToSession(state: SessionState): void {
+    const holder = state.name != null ? zym.session.lockHolder(state.name) : null;
+    if (holder) {
+      this.confirmOpenElsewhere(state, () => this.guardUnsavedThenOpen(state));
+      return;
+    }
+    this.guardUnsavedThenOpen(state);
+  }
+
+  // The unsaved-editor guard around opening `state`; drops unwritten edits only after
+  // the same Save/Discard/Cancel prompt as quitting.
+  private guardUnsavedThenOpen(state: SessionState): void {
     const modified =
       zym.config.get('session.promptOnExitWhenModified') === true ? zym.session.collectModified() : [];
     if (modified.length === 0) {
@@ -1081,6 +1094,26 @@ export class AppWindow {
       `Opening “${zym.session.label(state)}” replaces this window. The following will be lost:`,
       () => this.sessionController.open(state),
     );
+  }
+
+  // Confirm opening a session another live instance already holds. "Open Anyway" is
+  // destructive-styled because both windows will then autosave over each other; the
+  // default is Cancel.
+  private confirmOpenElsewhere(state: SessionState, onProceed: () => void): void {
+    const label = zym.session.label(state);
+    const dialog = new Adw.AlertDialog({
+      heading: 'Session already open',
+      body: `“${label}” is open in another window. Opening it here lets both windows overwrite each other’s saved state.`,
+    });
+    dialog.addResponse('cancel', 'Cancel');
+    dialog.addResponse('open', 'Open Anyway');
+    dialog.setResponseAppearance('open', Adw.ResponseAppearance.DESTRUCTIVE);
+    dialog.setDefaultResponse('cancel');
+    dialog.setCloseResponse('cancel');
+    dialog.on('response', (response: string) => {
+      if (response === 'open') onProceed();
+    });
+    dialog.present(this.window);
   }
 
   // `session:close` — flush the active named session, then reset the window to a fresh,

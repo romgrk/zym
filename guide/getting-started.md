@@ -133,11 +133,15 @@ cursor and scroll), unsaved buffers, terminals, agents, layout, and window
 geometry. A fresh window starts *unnamed*: it works normally but isn't saved
 anywhere. `space s s` names and saves it (it acts as "save as" the first time);
 once named, it autosaves as you work. `space s o` reopens a saved session,
-`space s a` forks the current one under a new name, and `space s R` renames it.
+`space s a` forks the current one under a new name, `space s R` renames it, and
+`space s c` closes it — saving it, then resetting the window to a clean, unnamed
+slate.
 
 Closing a window silently discards an *unnamed* session (only unsaved editor
 tabs prompt) — so save it with a name if you want it back. Sessions live under
-`~/.local/state/zym/` and are global, so `space s o` reaches any of them.
+`~/.local/state/zym/` and are global, so `space s o` reaches any of them. If you
+try to open a session that's already open in another window, zym warns first —
+otherwise both windows would autosave over each other.
 
 ## Projects
 

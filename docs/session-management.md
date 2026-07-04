@@ -267,6 +267,35 @@ the `session:open` picker.
   the prompt is purely about unwritten edits; running agents are *not*
   modified — they never appear and are killed on quit without a prompt.
 
+## Cross-instance lock
+
+A named session autosaves to its json. If two windows (separate
+processes — one window per instance) hold the **same** name, both
+autosave and clobber each other. To prevent silent loss, entering a
+named session takes a **best-effort lock file** beside the json,
+`<slug(name)>.lock`, recording `{ pid, host, since }`
+(`SessionManager.acquireLock` / `releaseLock` / `lockHolder`).
+
+- **Acquire/release ride on `SessionController.setName`** — the single
+  chokepoint for the active name (save-as / open / rename / close). It
+  releases the outgoing name's lock (iff we hold it) and claims the
+  incoming one. `teardownAndQuit` calls `releaseLock()` so a clean exit
+  clears the lock promptly; a crash leaves a **stale** lock instead.
+- **`lockHolder(name)`** returns the *other* live instance holding the
+  name, or `null` when it is free — unlocked, our own, or **stale**
+  (the recorded PID is dead on this host, checked via `process.kill(pid, 0)`:
+  `ESRCH` = dead, `EPERM` = alive-but-not-ours). A lock from **another
+  host** can't be liveness-checked, so it's treated as held (a spurious
+  prompt beats a silent clobber).
+- **`session:open` consults it first** (`AppWindow.switchToSession` →
+  `confirmOpenElsewhere`): if held, a "Session already open" dialog
+  (Cancel default / **Open Anyway** destructive) gates the existing
+  unsaved-work guard. `session.delete` also removes the `.lock`.
+- It is a **UX guard, not a mutex**: two *simultaneous* opens can still
+  race (TOCTOU); the common case (a session long-open elsewhere) is what
+  it catches. save-as / rename into a name held elsewhere aren't
+  prompted yet (they'd just take the lock) — a possible follow-up.
+
 ## Config schema (`session.*`)
 
 ```ts
@@ -287,7 +316,9 @@ named-only model — there is no launch restore.)
 - `session:save-as` (`space s a`) — always prompt for a name and save
   under it (also forks a named session under a new name).
 - `session:open` (`space s o`) — picker over `zym.session.list()`
-  (label + `relativeTime(savedAt)`); switches into the chosen session.
+  (label + `relativeTime(savedAt)`); switches into the chosen session. If
+  another running instance already has that session open it **prompts first**
+  ("Session already open" → Cancel / Open Anyway) — see "Cross-instance lock".
 - `session:close` (`space s c`) — flush the active named session, then
   reset the window to a fresh unnamed slate (one empty project rooted at
   the launch dir) — the inverse of `session:open`. Replace-semantics

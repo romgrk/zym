@@ -123,6 +123,15 @@ export function emptySessionState(root: string): SessionState {
   };
 }
 
+/** The owner recorded in a session's cross-instance lock file (see `SessionManager`
+ *  "Cross-instance lock"). `host` guards against PID collisions across machines
+ *  sharing the state dir; `since` is when the lock was taken (for display/debug). */
+export interface SessionLock {
+  pid: number;
+  host: string;
+  since: string;
+}
+
 // --- Serialization seams -----------------------------------------------------
 
 /** A widget that can persist itself into session state (`null` = "skip me"). */
@@ -278,6 +287,79 @@ export class SessionManager {
     }
   }
 
+  // --- Cross-instance lock ---------------------------------------------------
+  //
+  // A named session open in one window autosaves to its json; if a second window
+  // opens the same name, both autosave and clobber each other. A best-effort lock
+  // file beside the json (`<slug(name)>.lock`) records the owning process so
+  // `session:open` can warn before entering a session another live instance holds.
+  // Liveness is a PID check on the same host — a crashed owner leaves a stale lock,
+  // treated as free. This is a UX guard, not a hard mutex (a TOCTOU race between two
+  // simultaneous opens is possible); see docs/session-management.md.
+
+  private lockPathForName(name: string): string {
+    const slug = this.slug(name);
+    return Path.join(this.stateDir, `${slug ?? this.hashRoot(name)}.lock`);
+  }
+
+  private readLock(name: string): SessionLock | null {
+    try {
+      const raw = JSON.parse(Fs.readFileSync(this.lockPathForName(name), 'utf8'));
+      if (typeof raw?.pid === 'number' && typeof raw?.host === 'string') {
+        return { pid: raw.pid, host: raw.host, since: typeof raw.since === 'string' ? raw.since : '' };
+      }
+    } catch {
+      /* missing or corrupt → unlocked */
+    }
+    return null;
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0); // signal 0 = existence check, kills nothing
+      return true;
+    } catch (error) {
+      // ESRCH → no such process (stale lock); EPERM → alive but owned by another user.
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  }
+
+  /** Claim `name` for this process (best-effort; overwrites a stale/foreign lock).
+   *  Called by the SessionController when a window adopts a named session. */
+  acquireLock(name: string): void {
+    try {
+      Fs.mkdirSync(this.stateDir, { recursive: true });
+      const lock: SessionLock = { pid: process.pid, host: Os.hostname(), since: new Date().toISOString() };
+      Fs.writeFileSync(this.lockPathForName(name), JSON.stringify(lock));
+    } catch {
+      /* best effort — a missing lock only weakens the open-elsewhere warning */
+    }
+  }
+
+  /** Release `name`'s lock iff this process holds it (never removes another owner's). */
+  releaseLock(name: string): void {
+    const lock = this.readLock(name);
+    if (lock && lock.pid === process.pid && lock.host === Os.hostname()) {
+      try {
+        Fs.rmSync(this.lockPathForName(name), { force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+
+  /** The *other* live instance holding `name`, or null when it is free — unlocked, a
+   *  stale (dead-PID) lock, or held by this process. A lock from another host can't be
+   *  liveness-checked, so it is treated as held (a spurious prompt beats a silent clobber).
+   *  Consulted before opening a session another running window may already have open. */
+  lockHolder(name: string): SessionLock | null {
+    const lock = this.readLock(name);
+    if (!lock) return null;
+    if (lock.pid === process.pid && lock.host === Os.hostname()) return null; // our own lock
+    if (lock.host !== Os.hostname()) return lock; // foreign host — assume live
+    return this.isProcessAlive(lock.pid) ? lock : null;
+  }
+
   /** Absolute path of the (legacy) per-root autosave file. Reads/deletes only —
    *  the named-only model never *writes* here (see `save`). */
   pathForRoot(root: string): string {
@@ -387,6 +469,14 @@ export class SessionManager {
       Fs.rmSync(this.bufferDir(state), { recursive: true, force: true });
     } catch {
       // no cached buffers — nothing to do
+    }
+    // Forget any lock too — the session is gone, so its `.lock` (ours or a stale one) is orphaned.
+    if (state.name) {
+      try {
+        Fs.rmSync(this.lockPathForName(state.name), { force: true });
+      } catch {
+        // no lock file — nothing to do
+      }
     }
   }
 

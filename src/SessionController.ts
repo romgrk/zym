@@ -87,8 +87,20 @@ export class SessionController {
   }
 
   private setName(name: string | null): void {
+    // Maintain the cross-instance lock across the name change: release the outgoing
+    // session (if we held it) and claim the incoming one, so a second window opening
+    // the same name is warned before both autosave over each other (docs/session-management.md).
+    const previous = this.currentName;
+    if (previous !== null && previous !== name) zym.session.releaseLock(previous);
     this.currentName = name;
+    if (name !== null) zym.session.acquireLock(name);
     this.opts.onNameChange?.(name);
+  }
+
+  /** Release the active session's cross-instance lock — called on window quit so the
+   *  lock file is cleared promptly (a crash instead leaves a stale, dead-PID lock). */
+  releaseLock(): void {
+    if (this.currentName !== null) zym.session.releaseLock(this.currentName);
   }
 
   // --- Serialize -------------------------------------------------------------

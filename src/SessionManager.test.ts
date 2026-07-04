@@ -226,6 +226,51 @@ test('emptySessionState is a fresh unnamed single-project slate (session:close)'
   assert.throws(() => manager.save(state));
 });
 
+test('lock: our own acquired lock is not reported as "open elsewhere", and releases cleanly', () => {
+  const { manager, dir } = makeManager();
+  const lockPath = Path.join(dir, 'zym', 'sessions', 'work.lock');
+
+  manager.acquireLock('Work');
+  assert.ok(Fs.existsSync(lockPath));
+  assert.equal(manager.lockHolder('Work'), null); // same process → not "elsewhere"
+
+  manager.releaseLock('Work');
+  assert.ok(!Fs.existsSync(lockPath));
+  assert.equal(manager.lockHolder('Work'), null);
+});
+
+test('lockHolder: reports another live instance, ignores a stale (dead) pid', () => {
+  const { manager, dir } = makeManager();
+  const lockPath = Path.join(dir, 'zym', 'sessions', 'work.lock');
+  Fs.mkdirSync(Path.dirname(lockPath), { recursive: true });
+  const host = Os.hostname();
+
+  // A live foreign pid (pid 1 is always alive and not us) → held elsewhere.
+  Fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, host, since: '' }));
+  assert.ok(manager.lockHolder('Work'));
+
+  // A dead pid (far above pid_max) → stale → free.
+  Fs.writeFileSync(lockPath, JSON.stringify({ pid: 2147483646, host, since: '' }));
+  assert.equal(manager.lockHolder('Work'), null);
+
+  // A lock from another host can't be liveness-checked → treated as held.
+  Fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, host: `${host}-other`, since: '' }));
+  assert.ok(manager.lockHolder('Work'));
+});
+
+test('releaseLock leaves another process’s lock intact; delete removes it', () => {
+  const { manager, dir } = makeManager();
+  const lockPath = Path.join(dir, 'zym', 'sessions', 'work.lock');
+  Fs.mkdirSync(Path.dirname(lockPath), { recursive: true });
+  Fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, host: Os.hostname(), since: '' }));
+
+  manager.releaseLock('Work'); // not ours → must not delete
+  assert.ok(Fs.existsSync(lockPath));
+
+  manager.delete(sessionFor('/home/me/project', 'Work')); // forgetting the session clears its lock
+  assert.ok(!Fs.existsSync(lockPath));
+});
+
 test('deserializer registry builds by kind and unregisters', () => {
   const { manager } = makeManager();
   const fileTab: TabState = { kind: 'file', path: '/a.ts' };
