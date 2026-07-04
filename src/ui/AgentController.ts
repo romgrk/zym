@@ -153,17 +153,15 @@ export class AgentController {
     // resume no longer forces the terminal agent — it respects the configured kind
     // unless a caller pins one (e.g. restoreAgent passes the saved agent's kind).
     const kind = options.kind ?? resolveAgentKind(zym.config.get('agent.implementation'));
-    // Invariant: the agent *process* always spawns in the editor's main dir, never a
-    // worktree — its OS cwd then can't sit inside a worktree that gets removed (which
-    // crashes the agent), and every transcript lands under one project dir so
-    // `--resume` always resolves. The worktree is an editor concern only: `root` roots the
-    // agent's *workbench* (Files/Git/gutters), which owns the editor cwd — the agent stores
-    // none. The process spawns in — and transcripts land under — the active project's root
-    // (the launcher's `root` may be a worktree *under* it; the process never spawns in a
-    // worktree). `activeProjectRoot` resolves the active workbench to its project, so
-    // launching from a second project spawns there, not the global primary. During restore
-    // the primary is active → primary. See docs/agents.md.
-    const mainRoot = this.d.workbenchManager.activeProjectRoot();
+    // Invariant: the agent *process* always spawns in the active project's main dir
+    // (`mainRoot()`), never a worktree — its OS cwd then can't sit inside a worktree that
+    // gets removed (which crashes the agent), and every transcript lands under one project
+    // dir so `--resume` always resolves (resume + discovery use the same mainRoot). The
+    // worktree is an editor concern only: `root` roots the agent's *workbench*
+    // (Files/Git/gutters), which owns the editor cwd — the agent stores none. Launching from
+    // a second project spawns there, not the global primary; on restore the restored project
+    // is active. See docs/agents.md.
+    const mainRoot = this.mainRoot();
     let root = options.root ?? mainRoot;
     if (root !== mainRoot && !Fs.existsSync(root)) root = mainRoot; // a vanished worktree → main dir
     const agent = AGENT_CONFIGS[kind].create({
@@ -339,16 +337,21 @@ export class AgentController {
   // recovering transcripts from worktrees that have since been removed. process.cwd()
   // is kept in case it isn't itself a worktree root (e.g. a subdir / non-repo run).
   private agentSessionRoots(): string[] {
-    const roots = listWorktrees(process.cwd()).map((wt) => wt.path);
-    if (roots.length === 0) roots.push(process.cwd());
-    if (!roots.includes(process.cwd())) roots.push(process.cwd());
+    // Scan the active project's root + its worktrees — that's where agents launched in it
+    // record their transcripts (mainRoot), so resumable conversations are discoverable there.
+    const main = this.mainRoot();
+    const roots = listWorktrees(main).map((wt) => wt.path);
+    if (!roots.includes(main)) roots.push(main);
     return roots;
   }
 
-  /** The directory every agent process spawns in: the editor's own root (`process.cwd()`),
-   *  fixed for the process's life and never a throw-away worktree. See docs/agents.md. */
+  /** The directory an agent's process spawns in and its transcripts land under: the ACTIVE
+   *  PROJECT's root (process.cwd() for the primary), fixed at launch, never a throw-away
+   *  worktree. Resume + discovery use the same root so `--resume` resolves even for an agent
+   *  launched in a non-primary project (its transcript isn't under process.cwd()). See
+   *  docs/agents.md. */
   private mainRoot(): string {
-    return process.cwd();
+    return this.d.workbenchManager.activeProjectRoot();
   }
 
   /** A live agent's editor root — its workbench cwd (the single source of truth for

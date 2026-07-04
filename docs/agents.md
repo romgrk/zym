@@ -463,8 +463,9 @@ announcing.
 
 ### The cwd invariant
 
-**An agent's *process* always spawns in the editor's main dir
-(`AppWindow.mainRoot()` = `process.cwd()`), never a worktree.** A worktree is an
+**An agent's *process* always spawns in its project's main dir
+(`AgentController.mainRoot()` = the active project's root — `process.cwd()` for the
+primary, a `project:open`ed root otherwise), never a worktree.** A worktree is an
 *editor* concern, decoupled from the process cwd along three axes:
 
 - **process cwd** — fixed at the main dir for the agent's whole life. The OS cwd
@@ -472,7 +473,10 @@ announcing.
   can't pull the dir out from under a live agent (which crashes it with a failing
   `getcwd()`). It's also why every transcript lands under one project dir
   (`~/.claude/projects/<encoded-main-dir>`), so `claude --resume <id>` always
-  resolves — no relocation dance, no "resume into a vanished cwd".
+  resolves. **Resume + discovery use the same `mainRoot()`** (`resumeOptions`
+  relocates the transcript there; `agentSessionRoots` scans there), so an agent
+  launched in a non-primary project resumes correctly — its transcript is under that
+  project's dir, not `process.cwd()`.
 - **editor root** (`workbench.cwd`) — the worktree the user sees: Files/Git/gutters.
   **The single source of truth for where the agent's editor is rooted** — the agent
   stores no cwd of its own. Seeded from `openAgent({ root })` (→ `buildWorkbench(agent,
