@@ -540,6 +540,11 @@ export class AgentController {
   private branchCurrentAgent(): void {
     const agent = this.currentAgent();
     if (!agent) return;
+    const kind = agentKindOf(agent);
+    if (kind === 'acp') {
+      zym.notifications.addWarning('Branching is not supported for acp agents yet');
+      return;
+    }
     const sessionId = agent.sessionId;
     if (!sessionId) {
       zym.notifications.addWarning('No conversation to branch yet');
@@ -547,7 +552,7 @@ export class AgentController {
     }
     // Branch into the same kind as the source agent, its editor rooted at the same worktree.
     this.openAgent({
-      kind: agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui',
+      kind,
       root: this.agentRoot(agent),
       resume: { sessionId, fork: true },
       title: `${agent.title} (branch)`,
@@ -605,12 +610,14 @@ export class AgentController {
 
   // Restart an agent: retire the old one and relaunch in place, resuming its claude
   // conversation (forking a still-live session so the original transcript isn't clobbered).
+  // An acp agent has no resume path yet (session/load — docs/agents/acp.md), so its
+  // restart is a fresh conversation in the same pane.
   restartAgent(agent: Agent): void {
-    const kind: AgentKind = agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui';
+    const kind = agentKindOf(agent);
     const title = agent.renamed ? agent.title : undefined;
-    // Both kinds resume by session id now; fork a copy if the agent is still live so the
+    // The claude kinds resume by session id; fork a copy if the agent is still live so the
     // original keeps running. The editor re-roots to its (possibly moved) worktree.
-    const resume = agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
+    const resume = kind !== 'acp' && agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
     const root = this.agentRoot(agent);
     this.closeAgent(agent);
     this.openAgent({ kind, resume, title, root });
@@ -692,4 +699,10 @@ export class AgentController {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** The kind an agent was launched as: a conversation host carries its own kind
+ *  (`claude-sdk` / `acp`); the terminal host is always `claude-tui`. */
+function agentKindOf(agent: Agent): AgentKind {
+  return agent instanceof AgentConversation ? agent.agentKind : 'claude-tui';
 }

@@ -17,9 +17,11 @@ import { AgentConversation } from '../ui/AgentConversation.ts';
 import { createClaudeTuiDriver } from './claude-tui/session.ts';
 import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
 import { claudeSdkLaunchOptions } from './claude-sdk/config.ts';
+import { acpLaunchOptions, acpCommand } from './acp/config.ts';
+import { AcpSession } from './acp/AcpSession.ts';
 import type { Agent, AgentResume } from './types.ts';
 
-export type AgentKind = 'claude-tui' | 'claude-sdk';
+export type AgentKind = 'claude-tui' | 'claude-sdk' | 'acp';
 
 /** A selectable choice in the launcher (a model, a permission mode, a kind, …). */
 export interface LaunchOption {
@@ -102,6 +104,24 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
     options: claudeSdkLaunchOptions,
     create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile }),
   },
+  // An Agent Client Protocol agent (Gemini CLI natively; Claude Code / Codex via
+  // their ACP adapters) in the same native conversation view. No resume yet
+  // (session/load — see docs/agents/acp.md); the argv comes from `agent.acp.command`.
+  'acp': {
+    kind: 'acp',
+    options: acpLaunchOptions,
+    create: (l) =>
+      new AgentConversation({
+        cwd: l.cwd,
+        command: l.command,
+        prompt: l.prompt,
+        userPrompt: l.userPrompt,
+        onOpenFile: l.onOpenFile,
+        kind: 'acp',
+        defaultTitle: 'acp agent',
+        createSession: (o) => new AcpSession({ cwd: o.cwd, command: o.command && o.command.length > 0 ? o.command : acpCommand() }),
+      }),
+  },
 };
 
 /** The agent kinds as launcher options (value = kind, label = its display name). */
@@ -113,13 +133,12 @@ export function listAgentKinds(): LaunchOption[] {
 }
 
 /** Pick a kind from the `agent.implementation` config value (default claude-tui,
- *  the Vte terminal agent; set `agent.implementation` to `claude-sdk` for the
- *  headless, natively-rendered conversation).
+ *  the Vte terminal agent; `claude-sdk` for the headless, natively-rendered
+ *  conversation; `acp` for an Agent Client Protocol agent).
  *
- *  The `ZYM_AGENT` env var overrides config when set (to `claude-tui` or
- *  `claude-sdk`), so the host can be switched per-launch without editing config —
- *  e.g. `ZYM_AGENT=claude-sdk zym`. */
+ *  The `ZYM_AGENT` env var overrides config when set (to any kind), so the host
+ *  can be switched per-launch without editing config — e.g. `ZYM_AGENT=acp zym`. */
 export function resolveAgentKind(implementation: unknown): AgentKind {
   const value = process.env.ZYM_AGENT || implementation;
-  return value === 'claude-sdk' ? 'claude-sdk' : 'claude-tui';
+  return value === 'claude-sdk' || value === 'acp' ? value : 'claude-tui';
 }

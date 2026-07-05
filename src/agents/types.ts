@@ -28,6 +28,12 @@ export type AgentMode =
   | 'dontAsk'
   | 'bypassPermissions';
 
+/** The `AgentMode` values, as a runtime guard for mode strings reported by an
+ *  agent (claude's `permissionMode`, an ACP session mode id). */
+export const AGENT_MODES: ReadonlySet<AgentMode> = new Set<AgentMode>([
+  'default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions',
+]);
+
 /** Resume a past conversation rather than starting fresh. */
 export interface AgentResume {
   /** Resume a specific session id. */
@@ -79,7 +85,7 @@ export type AgentDriverFactory = (baseCommand: string[], resume?: AgentResume) =
 
 // --- Agent (the workbench/sidebar-facing surface) ----------------------------
 
-import Gtk from 'gi:Gtk-4.0';
+import type Gtk from 'gi:Gtk-4.0'; // type-positions only — keeps this module runtime-pure (importable off-app, e.g. tests)
 import type { TabState } from '../SessionManager.ts';
 import type { Action } from '../actions.ts';
 import type { WorkbenchActions } from '../ui/workbench/WorkbenchActions.ts';

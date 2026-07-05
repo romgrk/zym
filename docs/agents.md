@@ -1,8 +1,8 @@
 # Agents
 
-Run coding agents (Claude today, other tools later) inside zym. **Two
-rendering implementations** share one workbench / list / lifecycle /
-worktree spine — they differ only in how a turn is displayed:
+Run coding agents inside zym. **Three kinds** share one workbench / list /
+lifecycle / worktree spine — they differ only in how the agent is driven and
+displayed:
 
 - **`claude-tui`** *(shipped default)* — the agent's own terminal UI hosted
   in a `Vte.Terminal` tab. Mature; live status via Claude Code hooks.
@@ -11,6 +11,14 @@ worktree spine — they differ only in how a turn is displayed:
   drives a persistent `claude -p` stream-json process headlessly and renders
   the conversation in **native GTK widgets** (no terminal, no Ink/Vte repaint
   cost). Deep dive: **[agents/claude-sdk.md](agents/claude-sdk.md)**.
+- **`acp`** *(opt-in)* — any **Agent Client Protocol** agent (Gemini CLI
+  natively; Claude Code / Codex via adapters; argv from `agent.acp.command`)
+  in the same native conversation view, over JSON-RPC/stdio. Deep dive:
+  **[agents/acp.md](agents/acp.md)**.
+
+The two native-view kinds share `AgentConversation`, which is typed against
+the tool-agnostic `ConversationSession` seam (`src/agents/session.ts`) —
+`SdkSession` and `AcpSession` are its two implementations.
 
 UX rework backlog for the native conversation view (discoverability + in-the-
 moment controls: send/stop, inline retry, copy, jump-to-latest, richer
@@ -18,8 +26,8 @@ permission prompt): **[agents/conversation-ux.md](agents/conversation-ux.md)**.
 
 `src/agents/configs.ts` is the kind registry — `resolveAgentKind()` picks the
 kind from the config flag (default `claude-tui`); a single
-`AppWindow.openAgent()` launch path serves both, each agent getting its own
-workbench.
+`AppWindow.openAgent()` launch path serves every kind, each agent getting its
+own workbench.
 
 The open work is **depth, cross-kind**: agent profiles/customization (incl.
 tools other than claude), richer management UX, git-worktree integration, and

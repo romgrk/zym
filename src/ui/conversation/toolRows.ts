@@ -28,7 +28,7 @@ import { Transcript } from './Transcript.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { diffLines } from '../../util/lineDiff.ts';
 import type { CompositeDisposable } from '../../util/eventKit.ts';
-import type { TaskProgress } from '../../agents/claude-sdk/SdkSession.ts';
+import type { TaskProgress } from '../../agents/session.ts';
 
 // Tools whose first input path counts as a "changed file" (mirrors the claude-tui
 // PostToolUse Edit|Write|MultiEdit|NotebookEdit hook). Shared with AgentConversation.
@@ -157,7 +157,8 @@ export interface DiffLine { sign: ' ' | '+' | '-'; text: string }
 
 // Diff `oldText` → `newText` (line-level Myers via lineDiff), as signed lines in file
 // order. Empty old → all additions (a fresh Write); empty new → all deletions.
-function diffBlock(oldText: string, newText: string): DiffLine[] {
+/** Exported for the ACP permission body, which carries oldText/newText directly. */
+export function diffBlock(oldText: string, newText: string): DiffLine[] {
   const a = oldText.length ? oldText.split('\n') : [];
   const b = newText.length ? newText.split('\n') : [];
   const out: DiffLine[] = [];

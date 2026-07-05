@@ -57,6 +57,7 @@
     "generate-types": "node-gtk generate-types Gtk-4.0 Gio-2.0 Adw-1 GtkSource-5 Vte-3.91"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.1.0",
     "chokidar": "^5.0.0",
     "color-bits": "^1.1.1",
     "diff": "^9.0.0",

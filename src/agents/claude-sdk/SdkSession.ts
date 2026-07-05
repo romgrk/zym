@@ -25,12 +25,22 @@ import { CompositeDisposable, Disposable, Emitter } from '../../util/eventKit.ts
 import { ClaudeStreamTransport, type Transport, type TransportOptions } from './transport.ts';
 import { userTurn, isSystemInit, isThinkingTokens, isResult, type StreamEvent, type ContentBlock, type Usage as TokenUsage } from './protocol.ts';
 import type { ReplayEntry } from './transcript.ts';
-import type { AgentMode, AgentResume, AgentStatus } from '../types.ts';
+import type {
+  AgentQuestion,
+  ConversationSession,
+  ContextUsage,
+  MonitorInfo,
+  PermissionDecision,
+  PermissionRequest,
+  QuestionRequest,
+  SubagentInfo,
+  SubagentMessage,
+  TaskProgress,
+} from '../session.ts';
+import { AGENT_MODES, type AgentMode, type AgentResume, type AgentStatus } from '../types.ts';
 import { resumeFlags } from '../resume.ts';
 import { parseActions, type Action } from '../../actions.ts';
 import { AGENT_SYSTEM_PROMPT } from '../prompts.ts';
-
-const AGENT_MODES = new Set<AgentMode>(['default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions']);
 
 // node-gtk quirk (see claude-tui/session.ts): Gio.File instance methods live on
 // the interface prototype, not the concrete wrapper.
@@ -49,96 +59,9 @@ const BRIDGE_SCRIPT = Path.join(
   Path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'assets', 'mcp', 'zymBridge.mjs',
 );
 
-/** A permission request surfaced from claude (status goes `waiting` until answered). */
-export interface PermissionRequest {
-  /** Correlates the request with `respondPermission`. */
-  id: string;
-  /** The tool claude wants to run (e.g. `Bash`, `Write`). */
-  toolName: string;
-  /** The proposed tool input, shown to the user. */
-  input: unknown;
-}
-
-/** The user's answer to a permission request. */
-export interface PermissionDecision {
-  allow: boolean;
-  /** Why it was denied (surfaced to claude); only used when `allow` is false. */
-  message?: string;
-}
-
-/** One question from an `AskUserQuestion` tool call. */
-export interface AgentQuestion {
-  /** The question prompt shown to the user. */
-  question: string;
-  /** A short label/category for the question (defaults to the question text). */
-  header: string;
-  /** Whether multiple options may be chosen. */
-  multiSelect: boolean;
-  /** The offered choices. */
-  options: Array<{ label: string; description?: string }>;
-}
-
-/** An `AskUserQuestion` request surfaced from claude (status `waiting` until
- *  answered via `answerQuestion`). It rides the same permission channel as a
- *  normal approval, but is interactive — the user picks options, not allow/deny. */
-export interface QuestionRequest {
-  id: string;
-  questions: AgentQuestion[];
-}
-
-/** One entry in a subagent's captured transcript. */
-export type SubagentMessage =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool'; toolId: string; name: string; input: unknown; result?: { isError: boolean; text: string } };
-
-/** A spawned subagent's conversation, kept out of the main thread and shown on a
- *  dedicated page. Keyed by the spawning `Agent` tool's tool_use_id. */
-export interface SubagentInfo {
-  id: string;
-  agentType: string;
-  description: string;
-  /** The instruction the main agent gave the subagent (shown atop its page). */
-  prompt: string;
-  status: 'running' | 'completed';
-  messages: SubagentMessage[];
-}
-
-/** A shell monitor (the `Monitor` tool), keyed by its tool_use_id. `taskId` (from
- *  task_started) is what `stopTask` cancels; `outputFile` arrives on completion. */
-export interface MonitorInfo {
-  id: string;
-  taskId: string | null;
-  description: string;
-  status: string;
-  outputFile: string | null;
-}
-
-/** Live progress for a subagent (Task) or background task, keyed by `id` (the
- *  originating tool_use_id). */
-export interface TaskProgress {
-  id: string;
-  description: string;
-  subagentType?: string;
-  lastTool?: string;
-  tokens: number;
-  toolUses: number;
-  durationMs: number;
-  status: string;
-  done: boolean;
-}
-
-/**
- * Per-message context occupancy: `tokens` is the running window total (input +
- * both cache tiers), broken out into its parts. `output` is the turn's generated
- * tokens (not part of the window total) — surfaced for the detail popover.
- */
-export interface ContextUsage {
-  tokens: number;
-  input: number;
-  cacheRead: number;
-  cacheCreation: number;
-  output: number;
-}
+// The shared domain vocabulary (PermissionRequest, TaskProgress, ContextUsage, …)
+// lives in ../session.ts — the tool-agnostic `ConversationSession` surface this
+// class is the reference implementation of.
 
 export interface SdkSessionOptions {
   /** Base argv (default `['claude']`); the stream-json/permission flags are added. */
@@ -151,7 +74,7 @@ export interface SdkSessionOptions {
   createTransport?: (spec: TransportOptions) => Transport;
 }
 
-export class SdkSession {
+export class SdkSession implements ConversationSession {
   private readonly options: SdkSessionOptions;
   private readonly emitter = new Emitter();
   private transport: Transport | null = null;

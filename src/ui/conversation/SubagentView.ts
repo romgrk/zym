@@ -16,7 +16,7 @@ import { HeaderCountButton } from './HeaderCountButton.ts';
 import { Transcript } from './Transcript.ts';
 import { appendToolRow } from './toolRows.ts';
 import type { AgentStatus } from '../../agents/types.ts';
-import type { SdkSession } from '../../agents/claude-sdk/SdkSession.ts';
+import type { ConversationSession } from '../../agents/session.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
 
@@ -37,7 +37,7 @@ export class SubagentView {
   readonly headerButton = new HeaderCountButton(NERDFONT.TOOL.ROBOT, 'Running subagents');
   private readonly running = new Map<string, { agentType: string; description: string; status: 'running' | 'completed' }>();
 
-  private readonly session: Pick<SdkSession, 'getSubagent' | 'onSubagentUpdate'>;
+  private readonly session: Pick<ConversationSession, 'getSubagent' | 'onSubagentUpdate'>;
   private readonly nav: PageNav;
   private readonly cwd: string;
   private readonly onOpenFile?: (path: string) => void;
@@ -47,7 +47,7 @@ export class SubagentView {
   // render so they don't accumulate as subagents start/finish (node-gtk roots each).
   private readonly renderSubs = new CompositeDisposable();
 
-  constructor(session: Pick<SdkSession, 'getSubagent' | 'onSubagentUpdate'>, nav: PageNav, cwd: string, onOpenFile?: (path: string) => void) {
+  constructor(session: Pick<ConversationSession, 'getSubagent' | 'onSubagentUpdate'>, nav: PageNav, cwd: string, onOpenFile?: (path: string) => void) {
     this.session = session;
     this.nav = nav;
     this.cwd = cwd;

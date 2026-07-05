@@ -22,7 +22,7 @@ import { escapeMarkup, setMarkupSafe, clearChildren, wrappingLabel } from '../pr
 import { iconSpan } from '../icons.ts';
 import { NERDFONT } from '../nerdfont.ts';
 import { ToolRow, toolHeaderLabel } from './ToolRow.ts';
-import type { AgentQuestion, QuestionRequest } from '../../agents/claude-sdk/SdkSession.ts';
+import type { AgentQuestion, QuestionRequest } from '../../agents/session.ts';
 
 type Answer = { header: string; labels: string[]; notes?: string };
 

@@ -16,7 +16,7 @@ import { NERDFONT } from '../nerdfont.ts';
 import { truncateLines } from './format.ts';
 import { HeaderCountButton } from './HeaderCountButton.ts';
 import { ToolRow, toolHeaderLabel } from './ToolRow.ts';
-import type { SdkSession } from '../../agents/claude-sdk/SdkSession.ts';
+import type { ConversationSession } from '../../agents/session.ts';
 import type { PageNav } from './SubagentView.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -33,7 +33,7 @@ export class MonitorView {
    *  popover list of running monitors); pack `headerButton.button` into the header. */
   readonly headerButton = new HeaderCountButton(NERDFONT.EDITOR.TERMINAL, 'Running monitors');
   private readonly ids = new Set<string>();
-  private readonly session: Pick<SdkSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>;
+  private readonly session: Pick<ConversationSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>;
   private readonly nav: PageNav;
   // View-lifetime bag (spawn ToolRows + open pages); disposed by AgentConversation.dispose().
   private readonly subs = new CompositeDisposable();
@@ -41,7 +41,7 @@ export class MonitorView {
   // so they don't accumulate as monitors start/finish. node-gtk roots each closure (rule 2).
   private readonly renderSubs = new CompositeDisposable();
 
-  constructor(session: Pick<SdkSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>, nav: PageNav) {
+  constructor(session: Pick<ConversationSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>, nav: PageNav) {
     this.session = session;
     this.nav = nav;
   }

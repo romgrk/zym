@@ -168,8 +168,17 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
     type: 'string',
     default: 'claude-sdk',
     description:
-      "Which Claude agent host `agent:new` launches: 'claude-tui' (the terminal " +
-      "TUI) or 'claude-sdk' (headless `claude -p`, natively rendered; default).",
+      "Which agent host `agent:new` launches: 'claude-tui' (the terminal TUI), " +
+      "'claude-sdk' (headless `claude -p`, natively rendered; default), or 'acp' " +
+      '(an Agent Client Protocol agent — see agent.acp.command).',
+  },
+  'agent.acp.command': {
+    type: 'array',
+    default: ['gemini', '--acp'],
+    description:
+      "Argv of the ACP agent the 'acp' kind spawns (JSON-RPC over stdio). E.g. " +
+      '["gemini", "--acp"], or ["npx", "@agentclientprotocol/claude-agent-acp"] ' +
+      'for Claude Code via its ACP adapter.',
   },
   'agent.autoOpenChangedFiles': {
     type: 'boolean',

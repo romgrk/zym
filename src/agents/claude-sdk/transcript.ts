@@ -20,7 +20,7 @@
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
 import { transcriptDir } from '../../agentSessions.ts';
-import type { SubagentInfo, SubagentMessage, ContextUsage } from './SdkSession.ts';
+import type { SubagentInfo, SubagentMessage, ContextUsage } from '../session.ts';
 
 /** A single replayable step, mirroring one of `SdkSession`'s domain emissions. A
  *  tool_use that spawned a subagent (the `Agent` tool) carries its reconstructed

@@ -29,16 +29,18 @@ import { formatCount, formatElapsed, parseLocalCommand } from './conversation/fo
 import { StickyListPanel } from './conversation/StickyListPanel.ts';
 import { Transcript } from './conversation/Transcript.ts';
 import { Message, type MessageKind } from './conversation/Message.ts';
-import { permissionPrompt, permissionDiffView, type PermissionChoice } from './conversation/cards.ts';
+import { permissionPrompt, permissionDiffView, choiceActions, type PermissionChoice } from './conversation/cards.ts';
 import { QuestionCard } from './conversation/QuestionCard.ts';
 import { ToolRow } from './conversation/ToolRow.ts';
-import { appendToolRow, permissionPromptParts, editDiffLines, EDIT_TOOLS } from './conversation/toolRows.ts';
+import { appendToolRow, permissionPromptParts, editDiffLines, diffBlock, EDIT_TOOLS } from './conversation/toolRows.ts';
 import { SubagentView, SUBAGENT_GROUP } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
-import { SdkSession, type PermissionRequest, type QuestionRequest, type TaskProgress } from '../agents/claude-sdk/SdkSession.ts';
+import { SdkSession } from '../agents/claude-sdk/SdkSession.ts';
+import type { ConversationSession, PermissionRequest, PlanEntry, QuestionRequest, TaskProgress } from '../agents/session.ts';
+import type { AgentKind } from '../agents/configs.ts';
 import type { Transport, TransportOptions } from '../agents/claude-sdk/transport.ts';
 import { readTranscript, readContextSeed } from '../agents/claude-sdk/transcript.ts';
 import { writeCustomTitle, readSessionName } from '../agentSessions.ts';
@@ -234,6 +236,15 @@ export interface AgentConversationOptions {
   /** Override the one-shot agent used for auto-naming (test seam; default
    *  `createOneShotAgent()` → `claude -p --model sonnet`). */
   oneShot?: OneShotAgent;
+  /** Build the session driving this conversation (the `acp` kind passes its own);
+   *  default: a claude-sdk `SdkSession`. Claude-only affordances (transcript
+   *  restore, `/rename` persistence, launch auto-naming) stay off for other kinds. */
+  createSession?: (opts: { cwd: string; command?: string[]; resume?: AgentResume }) => ConversationSession;
+  /** The agent kind this conversation hosts (default `claude-sdk`); gates
+   *  serialization and the claude-only affordances above. */
+  kind?: AgentKind;
+  /** The title shown while nothing has named the session (default `claude (sdk)`). */
+  defaultTitle?: string;
 }
 
 // The kind's default title, shown when nothing has named the session.
@@ -241,7 +252,12 @@ const DEFAULT_TITLE = 'claude (sdk)';
 
 export class AgentConversation implements Agent {
   readonly root: InstanceType<typeof Adw.NavigationView>; // root page = the conversation; subagent transcripts push pages
-  private readonly session: SdkSession;
+  private readonly session: ConversationSession;
+  // The concrete claude-sdk session when this conversation hosts one (the default
+  // kind); null for other kinds. Claude-only paths (transcript replay) go through it.
+  private readonly sdk: SdkSession | null;
+  private readonly kind: AgentKind;
+  private readonly defaultTitle: string;
   private readonly cwd: string;
   // The scrollable column of entries (entries box + spacing + stick-to-bottom).
   private readonly transcript = new Transcript({ maxWidth: 820 });
@@ -371,7 +387,12 @@ export class AgentConversation implements Agent {
     this.baseCommand = options.command;
     this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
-    this.session = new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume, createTransport: options.createTransport });
+    this.kind = options.kind ?? 'claude-sdk';
+    this.defaultTitle = options.defaultTitle ?? DEFAULT_TITLE;
+    this.session = options.createSession
+      ? options.createSession({ cwd: options.cwd, command: options.command, resume: options.resume })
+      : new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume, createTransport: options.createTransport });
+    this.sdk = this.session instanceof SdkSession ? this.session : null;
     this.oneShot = options.oneShot ?? createOneShotAgent();
 
     // The footer's left slot: a live "Thinking… (N tokens)" indicator (spinner +
@@ -551,7 +572,10 @@ export class AgentConversation implements Agent {
 
   // Rebuild the conversation rows from a past session's on-disk transcript, by
   // replaying its domain events through the same row handlers a live turn uses.
+  // Claude-sdk only (the transcript format and `replay` are claude's); other kinds
+  // never pass a resume, so this is unreachable for them.
   private restoreTranscript(cwd: string, sessionId: string): void {
+    if (!this.sdk) return;
     // Seed the title from the transcript (`/rename` custom title, else Claude's auto
     // title). Headless has no live OSC channel, so without this a resumed agent
     // would lose its name. A pinned `agent:rename` name, if any, still wins.
@@ -561,7 +585,7 @@ export class AgentConversation implements Agent {
     if (entries.length === 0) return;
     this.replaying = true;
     try {
-      this.session.replay(entries);
+      this.sdk.replay(entries);
     } finally {
       this.replaying = false;
       this.endTurn(); // close the last open bubble so the next live turn starts clean
@@ -597,7 +621,9 @@ export class AgentConversation implements Agent {
         // Auto-name a fresh agent from the user's prompt — namingContext() strips zym's
         // editor instructions (config-gated, non-blocking, runs alongside the first
         // turn). No-op if there's no user prompt or it's somehow already named.
-        if (zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
+        // Claude-sdk only: the one-shot namer spawns `claude -p`, which a user running
+        // another agent kind may not have (a bare `/rename` still names on demand).
+        if (this.kind === 'claude-sdk' && zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
           void this.autoRename(this.namingContext());
         }
       }
@@ -620,7 +646,10 @@ export class AgentConversation implements Agent {
   // A transient auto-naming title (placeholder / failed fallback) wins while set;
   // then a pinned name (`agent:rename`), then Claude's session name (`/rename` /
   // resumed transcript title), then the default. Mirrors AgentTerminal.title.
-  get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? DEFAULT_TITLE; }
+  get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? this.defaultTitle; }
+  /** The kind this conversation hosts (`claude-sdk` or `acp`) — read by the
+   *  controller's restart/branch paths, which only claude kinds can resume/fork. */
+  get agentKind(): AgentKind { return this.kind; }
   get status(): AgentStatus { return this._status; }
   get permissionMode(): AgentMode { return this._permissionMode; }
   get changedFiles(): string[] { return this._changedFiles.slice(); }
@@ -685,6 +714,10 @@ export class AgentConversation implements Agent {
    *  The editor root (worktree) is captured by the enclosing `AgentState.root` (= the
    *  workbench cwd), not here — this `cwd` is just the process spawn dir. */
   serialize(): TabState | null {
+    // Only the claude-sdk kind persists/resumes across editor restarts for now; an
+    // acp agent's session lives in the agent process (resume via `session/load` is
+    // a later feature — see docs/agents/acp.md).
+    if (this.kind !== 'claude-sdk') return null;
     return {
       kind: 'agent',
       agentKind: 'claude-sdk',
@@ -867,6 +900,9 @@ export class AgentConversation implements Agent {
   private setSessionName(name: string): void {
     this._sessionName = name;
     this.emitTitle();
+    // Persist like the TUI — into claude's transcript, so claude-sdk only; another
+    // kind's rename is display-only (its own session store is the agent's).
+    if (!this.sdk) return;
     const id = this.sessionId ?? this.resumeSessionId;
     if (id) writeCustomTitle(this.cwd, id, name);
   }
@@ -968,7 +1004,6 @@ export class AgentConversation implements Agent {
       this.session.onInterrupted(() => this.addInterruptedRow()),
       this.session.onUnhandled(({ event }) => this.addUnknownRow(event)),
       this.session.onPermission((req) => this.addPermissionCard(req)),
-      this.session.onQuestion((req) => this.addQuestionCard(req)),
       this.session.onExit(({ code }) => {
         this.endTurn();
         const note = code != null && code !== 0 ? `── process exited (code ${code}) ──` : '── process exited ──';
@@ -976,6 +1011,16 @@ export class AgentConversation implements Agent {
         this.promptContainer.setSensitive(false);
       }),
     );
+    // Per-protocol capabilities — subscribed only when the session offers them.
+    const optional = [
+      this.session.onQuestion?.((req) => this.addQuestionCard(req)),
+      this.session.onPlan?.(({ entries }) => this.applyPlan(entries)),
+      this.session.onFileEdited?.(({ path }) => this.recordChangedPath(path)),
+      // A session-reported title (ACP session_info_update) behaves like a `/rename`
+      // for display, but is never persisted; pinned/transient names still win.
+      this.session.onSessionName?.(({ name }) => { this._sessionName = name; this.emitTitle(); }),
+    ];
+    for (const sub of optional) if (sub) this.subs.add(sub);
   }
 
   private setStatus(status: AgentStatus): void {
@@ -1047,12 +1092,27 @@ export class AgentConversation implements Agent {
   private recordChangedFile(toolName: string, input: unknown): void {
     if (!EDIT_TOOLS.has(toolName)) return;
     const path = (input as { file_path?: unknown })?.file_path;
-    if (typeof path !== 'string' || this._changedFiles.includes(path)) return;
+    if (typeof path === 'string') this.recordChangedPath(path);
+  }
+
+  // Record an edited file (from a claude edit tool's input, or a session-reported
+  // path — ACP tool-call locations).
+  private recordChangedPath(path: string): void {
+    if (this._changedFiles.includes(path)) return;
     this._changedFiles.push(path);
     // Replaying a past transcript seeds the changed-files list silently — its edits
     // already happened, so don't notify (which would re-open / re-diff them all).
     if (this.replaying) return;
     for (const handler of this.fileHandlers) handler();
+  }
+
+  // The agent's reported execution plan (ACP `plan`, a full replace per update)
+  // renders into the same sticky panel the claude Task tools drive. Plan entries
+  // have no ids — the whole task map is rebuilt from each report.
+  private applyPlan(entries: PlanEntry[]): void {
+    this.tasks.clear();
+    entries.forEach((entry, index) => this.tasks.set(`plan-${index}`, { subject: entry.content, status: entry.status }));
+    this.renderTasksPanel();
   }
 
   private emitTitle(): void { for (const h of this.titleHandlers) h(); }
@@ -1200,7 +1260,27 @@ export class AgentConversation implements Agent {
   // command + actions). The tool's own row already sits in the transcript (from the
   // tool-use event) and fills in with the result once the decision lands, so the
   // prompt carries only the approval — no correlation to a row needed.
+  //
+  // Two shapes: a request that carries its own `options` (ACP — the agent names the
+  // buttons; the decision returns the chosen option id) and the claude shape (no
+  // options — the widget offers its accept/deny/mode-switch set).
   private addPermissionCard(req: PermissionRequest): void {
+    if (req.options && req.options.length > 0) {
+      // ACP: title is the tool-call's human-readable title; an edit's proposed
+      // change previews as a diff; a command-shaped input shows its command line.
+      const input = (req.input && typeof req.input === 'object' ? req.input : {}) as Record<string, unknown>;
+      const body = req.diff ? permissionDiffView(diffBlock(req.diff.oldText ?? '', req.diff.newText)) : undefined;
+      const description = !body && typeof input.command === 'string' ? input.command : null;
+      const actions = req.options.map((o) => ({ label: o.label, value: o.id }));
+      const prompt = permissionPrompt(this.interactionSubs, { title: req.toolName, description, body }, actions, (optionId) => {
+        const option = req.options!.find((o) => o.id === optionId);
+        this.session.respondPermission(req.id, { allow: option ? option.kind.startsWith('allow') : false, optionId });
+        this.interactionSubs.clear();
+        this.clearInteraction();
+      });
+      this.showInteraction(prompt, 'permission');
+      return;
+    }
     const parts = permissionPromptParts(req.toolName, req.input, this.cwd);
     // Edit tools show the change as a diff body (the title is the file path); "Allow
     // edits" only makes sense for them (acceptEdits auto-accepts file edits, not
@@ -1210,7 +1290,7 @@ export class AgentConversation implements Agent {
     const choices: PermissionChoice[] = isEdit
       ? ['accept', 'deny', 'acceptEdits', 'auto']
       : ['accept', 'deny', 'auto'];
-    const prompt = permissionPrompt(this.interactionSubs, { ...parts, body }, choices, (choice) => this.resolvePermission(req, choice));
+    const prompt = permissionPrompt(this.interactionSubs, { ...parts, body }, choiceActions(choices), (choice) => this.resolvePermission(req, choice as PermissionChoice));
     this.showInteraction(prompt, 'permission');
   }
 
@@ -1231,7 +1311,7 @@ export class AgentConversation implements Agent {
   // owned by `subs`, not the per-interaction bag.
   private addQuestionCard(req: QuestionRequest): void {
     const card = new QuestionCard(req, (answers) => {
-      this.session.answerQuestion(req.id, answers);
+      this.session.answerQuestion?.(req.id, answers);
       this.interactionSlot.remove(card.root); // hand the card to the transcript before it
       this.transcript.appendEntry(card.root); // rewrites itself into the answered summary
       this.clearInteraction(); // back to the prompt
