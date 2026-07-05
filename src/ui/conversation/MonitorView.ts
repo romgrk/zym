@@ -1,9 +1,10 @@
 /*
- * MonitorView — the UI for shell monitors (the `Monitor` tool). Like subagents:
- * an inline button in the main thread, a row in the agent header bar's terminal
- * count-button popover while running (with a Cancel button), and a pushed page to
- * inspect its output. Cancel goes through the session's stopTask. (Dormant until
- * the acp kind grows client-side terminals — see docs/agents/acp.md.)
+ * MonitorView — the UI for live background processes: ACP terminals (the
+ * `terminal/*` capability — every running agent command shows here), plus the
+ * legacy `Monitor` tool shape. A row in the agent header bar's terminal
+ * count-button popover while running (with a Cancel button), and a pushed page
+ * to inspect its (live) output; the legacy path also gets an inline row via
+ * `spawn`. Cancel goes through the session's stopTask (an ACP terminal kill).
  */
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
@@ -59,8 +60,11 @@ export class MonitorView {
     return toolRow.root;
   }
 
-  /** A monitor's status changed (running → killed/stopped/completed). */
-  update(_id: string): void {
+  /** A monitor appeared or changed (running → killed/stopped/completed).
+   *  Upserts: an ACP terminal has no inline `spawn` row — its first update is
+   *  what enrolls it in the running panel. */
+  update(id: string): void {
+    this.ids.add(id);
     this.render();
   }
 
@@ -110,8 +114,8 @@ export class MonitorView {
       const head = wrappingLabel({ xalign: 0, selectable: true });
       setMarkupSafe(head, `<b>${escapeMarkup(m.description)}</b>  <span alpha="55%">${escapeMarkup(m.status)}</span>`, `${m.description} (${m.status})`);
       box.append(head);
-      let output = '';
-      if (m.outputFile) { try { output = Fs.readFileSync(m.outputFile, 'utf8'); } catch { /* not readable yet */ } }
+      let output = m.output ?? '';
+      if (!output && m.outputFile) { try { output = Fs.readFileSync(m.outputFile, 'utf8'); } catch { /* not readable yet */ } }
       const body = wrappingLabel({ xalign: 0, selectable: true, label: output.trim() ? truncateLines(output.trim(), 200, 8000) : 'No output captured yet.' });
       body.addCssClass('conversation-result');
       box.append(body);

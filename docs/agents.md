@@ -654,9 +654,12 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
    `agents/profiles.ts`; the launcher's kind dropdown is a profile picker, and
    a legacy `agent.acp.command` / `ZYM_ACP_COMMAND` surfaces as the leading
    profile. The ACP registry manifest can seed suggestions later.
-4. [ ] **Terminal capability (acp)** — full client-side `terminal/*` backed by
-   zym terminals: revives the monitors UX (live output rows, kill buttons) and
-   upgrades long-running Bash from buffered-at-completion to streaming output.
+4. [x] **Terminal capability (acp)** — done 2026-07-05: full client-side
+   `terminal/*` (`acp/terminals.ts`, zym-owned processes); live terminals
+   revive the monitors UX (running panel with kill buttons, live-output
+   inspect page). Gemini's shell tool rides it; the claude adapter still
+   buffers over `_meta.terminal_output` (as of 0.55.0). Live output into the
+   tool *rows* themselves remains open (see agents/acp.md limitations).
 5. [ ] **Review story** — the "Agent Changes" diff panel (see *Feature:
    reviewing an agent's work* above). ACP made attribution cheaper: tool-call
    diffs carry `oldText`/`newText` per edit, so per-agent change tracking for

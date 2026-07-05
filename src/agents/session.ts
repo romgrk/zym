@@ -86,14 +86,17 @@ export interface SubagentInfo {
   messages: SubagentMessage[];
 }
 
-/** A shell monitor (the `Monitor` tool), keyed by its tool_use_id. `taskId` (from
- *  task_started) is what `stopTask` cancels; `outputFile` arrives on completion. */
+/** A live background process surfaced in the monitors panel: an ACP terminal
+ *  (keyed by its terminalId; `taskId` is what `stopTask` kills), or the legacy
+ *  `Monitor` tool shape. Output is in-memory (`output`) for ACP terminals,
+ *  file-based (`outputFile`) for the legacy path. */
 export interface MonitorInfo {
   id: string;
   taskId: string | null;
   description: string;
   status: string;
   outputFile: string | null;
+  output?: string | null;
 }
 
 /** Live progress for a subagent (Task) or background task, keyed by `id` (the

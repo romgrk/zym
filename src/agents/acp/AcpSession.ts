@@ -28,6 +28,9 @@
  *   fs/read_text_file / write_text_file ← served from the injected AcpFsHost (the
  *                                      Document registry: reads see unsaved buffers,
  *                                      writes land in open documents)
+ *   terminal/*                       ← zym-owned command execution (AcpTerminalRegistry);
+ *                                      live terminals wear the monitor surface (panel
+ *                                      with kill buttons, live-output inspect page)
  *
  * Adapter extensions (the official claude-agent-acp; all optional, all under
  * ACP's reserved `_meta` extension channel — anything absent degrades to the
@@ -55,15 +58,23 @@ import {
   type ContentChunk,
   type CreateElicitationRequest,
   type CreateElicitationResponse,
+  type CreateTerminalRequest,
+  type CreateTerminalResponse,
   type ElicitationContentValue,
+  type KillTerminalRequest,
+  type KillTerminalResponse,
   type McpServerStdio,
   type PlanEntry as AcpPlanEntry,
   type ReadTextFileRequest,
   type ReadTextFileResponse,
+  type ReleaseTerminalRequest,
+  type ReleaseTerminalResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
   type StopReason,
+  type TerminalOutputRequest,
+  type TerminalOutputResponse,
   type ToolCallContent,
   type ToolCallLocation,
   type ToolCallUpdate,
@@ -71,9 +82,12 @@ import {
   type SessionMode,
   type SessionModeState,
   type UsageUpdate,
+  type WaitForTerminalExitRequest,
+  type WaitForTerminalExitResponse,
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
+import { AcpTerminalRegistry, type AcpTerminal } from './terminals.ts';
 import { Disposable, Emitter } from '../../util/eventKit.ts';
 import { AGENT_MODES, type AgentMode, type AgentResume, type AgentStatus } from '../types.ts';
 import type {
@@ -160,6 +174,9 @@ interface ToolCallEntry {
   paths: Set<string>;
   terminalOutput?: string;
   exitCode?: number | null;
+  /** A zym terminal embedded in the call's content (`{type:'terminal'}`) — the
+   *  row's result falls back to its captured output. */
+  terminalId?: string;
 }
 
 // Elicitation form-field conventions of the claude adapter (question_<n> +
@@ -202,6 +219,9 @@ export class AcpSession implements ConversationSession {
   // Captured subagent transcripts (Task tool calls), keyed by the spawning
   // tool call's id — populated from `_meta.claudeCode.parentToolUseId` updates.
   private readonly subagents = new Map<string, SubagentInfo>();
+  // zym-owned command execution the agent drives over `terminal/*`; surfaced
+  // in the UI through the monitor mapping (getMonitor / onMonitorUpdate).
+  private readonly terminals = new AcpTerminalRegistry();
   // True while session/load replays history (rows render statically).
   private replaying = false;
   private bridgeWatch: Disposable | null = null;
@@ -249,7 +269,12 @@ export class AcpSession implements ConversationSession {
       .onRequest('session/request_permission', (ctx) => this.onPermissionRequest(ctx.params))
       .onRequest('elicitation/create', (ctx) => this.onElicitation(ctx.params))
       .onRequest('fs/read_text_file', (ctx) => this.onReadTextFile(ctx.params))
-      .onRequest('fs/write_text_file', (ctx) => this.onWriteTextFile(ctx.params));
+      .onRequest('fs/write_text_file', (ctx) => this.onWriteTextFile(ctx.params))
+      .onRequest('terminal/create', (ctx) => this.onTerminalCreate(ctx.params))
+      .onRequest('terminal/output', (ctx) => this.onTerminalOutput(ctx.params))
+      .onRequest('terminal/wait_for_exit', (ctx) => this.onTerminalWaitForExit(ctx.params))
+      .onRequest('terminal/kill', (ctx) => this.onTerminalKill(ctx.params))
+      .onRequest('terminal/release', (ctx) => this.onTerminalRelease(ctx.params));
     this.connection = app.connect(stream);
     void this.handshake(this.connection).catch((err: unknown) => {
       if (this.exited) return;
@@ -273,11 +298,12 @@ export class AcpSession implements ConversationSession {
       clientInfo: { name: 'zym', version: '0' },
       clientCapabilities: {
         // fs is live when an editor backend is injected (reads see unsaved
-        // buffers — see AcpFsHost); the terminal capability is still planned
-        // (docs/agents/acp.md), but the `_meta.terminal_output` channel +
-        // form elicitation are live.
+        // buffers — see AcpFsHost). terminal/* is served by AcpTerminalRegistry
+        // (zym-owned processes; needs no editor backend). The `_meta`
+        // terminal_output channel stays advertised for the agents that stream
+        // over it instead (codex-acp, the claude adapter).
         fs: { readTextFile: !!this.options.fs, writeTextFile: !!this.options.fs },
-        terminal: false,
+        terminal: true,
         elicitation: { form: {} },
         _meta: { terminal_output: true },
       },
@@ -466,8 +492,21 @@ export class AcpSession implements ConversationSession {
   }
 
   getSubagent(id: string): SubagentInfo | undefined { return this.subagents.get(id); }
-  getMonitor(_id: string): MonitorInfo | undefined { return undefined; }
-  stopTask(_taskId: string): void { /* no background tasks over ACP */ }
+
+  /** ACP terminals wear the monitor surface: the running panel lists them with
+   *  a kill button (stopTask), the inspect page shows their live output. */
+  getMonitor(id: string): MonitorInfo | undefined {
+    const terminal = this.terminals.get(id);
+    if (!terminal) return undefined;
+    const current = terminal.currentOutput();
+    const exit = current.exitStatus;
+    const status = terminal.status === 'exited'
+      ? `exited (${exit?.exitCode ?? exit?.signal ?? '?'})`
+      : terminal.status;
+    return { id, taskId: id, description: terminal.label, status, outputFile: null, output: current.output };
+  }
+
+  stopTask(taskId: string): void { this.terminals.get(taskId)?.kill(); }
 
   /** Stop the agent process but keep the session object (status → `disconnected`). */
   stop(): void {
@@ -479,6 +518,7 @@ export class AcpSession implements ConversationSession {
   dispose(): void {
     this.exited = true;
     this.cancelPendingInteractions();
+    this.terminals.dispose();
     this.bridgeWatch?.dispose();
     this.bridgeWatch = null;
     this.options.bridge?.dispose();
@@ -602,6 +642,7 @@ export class AcpSession implements ConversationSession {
     this.toolCalls.set(call.toolCallId, entry);
     this.absorbToolMeta(entry, call);
     this.trackEdits(entry, entry.kind, call.locations ?? null, call.content ?? null);
+    this.absorbTerminalRef(entry, call.content ?? null);
     // Emit the row now if the input is already usable or the call is past the
     // streaming stage; otherwise wait for the refine update carrying the input.
     if (hasUsableInput(call.rawInput) || (call.status && call.status !== 'pending')) this.emitToolUse(call.toolCallId, entry);
@@ -626,6 +667,7 @@ export class AcpSession implements ConversationSession {
     if (typeof claudeName === 'string' && claudeName) known.name = claudeName;
     this.absorbToolMeta(known, update);
     this.trackEdits(known, known.kind, update.locations ?? null, update.content ?? null);
+    this.absorbTerminalRef(known, update.content ?? null);
     if (this.refreshSubagentInfo(update.toolCallId, known) && known.emitted) {
       this.emitter.emit('subagent-update', { id: update.toolCallId }); // refined description/prompt → refresh the page
     }
@@ -707,8 +749,17 @@ export class AcpSession implements ConversationSession {
       this.emitter.emit('subagent-done', { id });
       return; // the widget renders the page, not a result row (no toolRows entry)
     }
-    // Prefer the terminal channel's real output; fall back to content / rawOutput.
+    // Prefer the terminal channel's real output (the `_meta` stream, else an
+    // embedded zym terminal's capture); fall back to content / rawOutput.
     let text = known?.terminalOutput ?? '';
+    if (!text && known?.terminalId) {
+      const terminal = this.terminals.get(known.terminalId);
+      if (terminal) {
+        const current = terminal.currentOutput();
+        text = current.output;
+        if (known.exitCode == null && current.exitStatus?.exitCode != null) known.exitCode = current.exitStatus.exitCode;
+      }
+    }
     if (!text) text = toolContentText(content) || rawOutputText(rawOutput);
     if (known?.exitCode != null && known.exitCode !== 0) text = `${text}${text ? '\n' : ''}(exit ${known.exitCode})`;
     this.emitter.emit('tool-result', { id, isError: status === 'failed', text });
@@ -844,6 +895,54 @@ export class AcpSession implements ConversationSession {
     return {};
   }
 
+  // --- terminal capability -----------------------------------------------------
+  // The agent runs commands *inside zym* (AcpTerminalRegistry — plain child
+  // processes with an in-memory output buffer). Each live terminal is surfaced
+  // through the monitor surface: a row in the running-terminals panel with a
+  // kill button, and an inspect page with (near-)live output. Gemini CLI's
+  // shell tool rides this; the claude adapter still streams buffered output
+  // over `_meta.terminal_output` instead (verified 0.55.0).
+
+  private onTerminalCreate(params: CreateTerminalRequest): CreateTerminalResponse {
+    const terminal = this.terminals.create(params, this.options.cwd);
+    // Output/exit changes refresh the monitors panel + any open inspect page
+    // (coalesced in the registry); the sub dies with the terminal.
+    terminal.onUpdate(() => this.emitter.emit('monitor-update', { id: terminal.id }));
+    this.emitter.emit('monitor-update', { id: terminal.id });
+    return { terminalId: terminal.id };
+  }
+
+  private terminalFor(id: string): AcpTerminal {
+    const terminal = this.terminals.get(id);
+    if (!terminal) throw RequestError.resourceNotFound(id);
+    return terminal;
+  }
+
+  private onTerminalOutput(params: TerminalOutputRequest): TerminalOutputResponse {
+    const current = this.terminalFor(params.terminalId).currentOutput();
+    return {
+      output: current.output,
+      truncated: current.truncated,
+      ...(current.exitStatus ? { exitStatus: current.exitStatus } : {}),
+    };
+  }
+
+  private async onTerminalWaitForExit(params: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse> {
+    const exit = await this.terminalFor(params.terminalId).waitForExit();
+    return { exitCode: exit.exitCode, signal: exit.signal };
+  }
+
+  private onTerminalKill(params: KillTerminalRequest): KillTerminalResponse {
+    this.terminalFor(params.terminalId).kill();
+    return {};
+  }
+
+  private onTerminalRelease(params: ReleaseTerminalRequest): ReleaseTerminalResponse {
+    this.terminals.release(params.terminalId);
+    this.emitter.emit('monitor-update', { id: params.terminalId }); // drops out of the panel
+    return {};
+  }
+
   private cancelPendingInteractions(): void {
     this.pendingPermission?.resolve({ outcome: { outcome: 'cancelled' } });
     this.pendingPermission = null;
@@ -876,6 +975,7 @@ export class AcpSession implements ConversationSession {
     if (this.exited) return;
     this.exited = true;
     this.cancelPendingInteractions();
+    this.terminals.dispose(); // nothing left to consume them — kill any strays
     this.endReplay();
     this.bridgeWatch?.dispose();
     this.bridgeWatch = null;
@@ -913,6 +1013,14 @@ export class AcpSession implements ConversationSession {
     for (const location of locations ?? []) entry.paths.add(location.path);
     for (const item of content ?? []) if (item.type === 'diff') entry.paths.add(item.path);
   }
+
+  // A tool call can embed a zym terminal (content `{type:'terminal'}`) — remember
+  // it so the row's result falls back to the captured output (finishToolCall).
+  private absorbTerminalRef(entry: ToolCallEntry, content: ToolCallContent[] | null): void {
+    for (const item of content ?? []) {
+      if (item.type === 'terminal') entry.terminalId = item.terminalId;
+    }
+  }
 }
 
 // --- pure helpers -----------------------------------------------------------------
@@ -940,7 +1048,7 @@ function toolContentText(content: ToolCallContent[] | null): string {
     .map((item) => {
       if (item.type === 'content') return contentText(item.content);
       if (item.type === 'diff') return `[diff] ${item.path}`;
-      return ''; // terminal content arrives via the _meta channel instead
+      return ''; // an embedded terminal's output is pulled in finishToolCall
     })
     .filter(Boolean)
     .join('\n');

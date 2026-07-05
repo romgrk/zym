@@ -61,6 +61,7 @@ unabsorbed, disposing a session crashes zym).
 | `session_info_update.title` | `session-name` (display-only, never persisted) |
 | `session/cancel` (notify) | ← `interrupt()` (a pending permission resolves `cancelled`, per spec) |
 | `fs/read_text_file` / `fs/write_text_file` | ← served from the injected `AcpFsHost` (the window's Document registry; below) |
+| `terminal/create` / `output` / `wait_for_exit` / `kill` / `release` | ← zym-owned command execution (`acp/terminals.ts`; live terminals wear the monitor surface — below) |
 | `user_message_chunk`, `config_option_update` | known; ignored (history replay / config options not wired) |
 | anything else | an `unhandled` raw-JSON row — never silently dropped |
 
@@ -105,8 +106,19 @@ per session (ACP session modes / config options).
   finished streaming (verified: `{}` then a refine update); the row is emitted
   once the input is usable, execution starts, a permission request lands, or
   the result arrives — whichever comes first.
-- **Terminal channel** — `clientCapabilities._meta.terminal_output` is
-  advertised; command output + exit code arrive via `_meta.terminal_*`
+- **Terminal capability** — full client-side `terminal/*`
+  (`acp/terminals.ts`): the agent runs commands *inside zym* as detached child
+  processes with in-memory output (head-truncated at UTF-8 boundaries per
+  `outputByteLimit`), killed as a process group. Every live terminal shows in
+  the agent header's running-terminals panel (kill button) with a
+  (near-)live-output inspect page — the revived monitors UX, via the session's
+  `getMonitor`/`onMonitorUpdate`/`stopTask` mapping. A terminal embedded in a
+  tool call's content (`{type:'terminal'}`) backs that row's result on
+  completion. Gemini CLI's shell tool rides this; the claude adapter doesn't
+  call `terminal/*` yet (verified 0.55.0) and keeps using the buffered `_meta`
+  channel below.
+- **Terminal channel (`_meta`)** — `clientCapabilities._meta.terminal_output`
+  is advertised; command output + exit code arrive via `_meta.terminal_*`
   (codex-acp-compatible) and feed the row result.
 - **Questions** — `elicitation/create` (form mode) parses into the interactive
   card (enum options, descriptions via `_meta`, per-question "Other" custom
@@ -139,10 +151,8 @@ per session (ACP session modes / config options).
 
 ## Limitations / planned
 
-- [ ] **terminal capability** — full client-side `terminal/*` (zym-owned
-      terminals with live rows); today output arrives buffered at completion
-      via the `_meta` channel. The monitor views stay dormant until then.
-- [ ] Streamed tool output into live rows (the row fills once, at result time).
+- [ ] Streamed tool output into live *rows* (the row fills once, at result
+      time; live output is on the monitor inspect page meanwhile).
 - [ ] Session config options (`config_option_update`), `session/list`
       discovery, and the ACP registry (agent profiles) — later.
 - [ ] `authenticate` flow (in-app login) — today the hint says to log in via
@@ -151,7 +161,9 @@ per session (ACP session modes / config options).
 ## Validation
 
 Unit tests cover the fs capability's editor side (`acp/documentFs.test.ts`:
-buffer-over-disk reads, in-place writes, the `line`/`limit` window). The
+buffer-over-disk reads, in-place writes, the `line`/`limit` window) and the
+terminal registry (`acp/terminals.test.ts`: output capture, byte-limit
+truncation, kill/release, spawn failures). The
 session itself was validated end-to-end against the real
 Claude Code ACP adapter: streamed turns; subagent capture with drill-down
 data; the whitelisted-command terminal round-trip; AskUserQuestion →
