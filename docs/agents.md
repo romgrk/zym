@@ -637,6 +637,36 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
 
 ## Remaining / planned
 
+### Next (prioritized, 2026-07-05)
+
+1. [ ] **fs capability (acp)** — advertise `fs/readTextFile`/`writeTextFile` and
+   serve them from the Document registry, so agents read **unsaved buffer
+   contents** instead of stale disk state; routing writes through Documents
+   opens the door to live edit review later. (See [agents/acp.md](agents/acp.md).)
+2. [ ] **Manual QA pass on the less-happy acp paths** — wired but only
+   spike-tested: the session-persistence round trip (quit zym with a live acp
+   agent → restart → it reappears and `session/load`s its history), the
+   worktree launch flows now that the bridge rides `mcpServers` (does the agent
+   actually call `set_worktree`?), and interrupt while a permission card is up.
+3. [ ] **Agent profiles** — `agent.profiles` (name + argv): the launcher's kind
+   dropdown becomes a profile picker, so gemini / the claude adapter /
+   codex-acp sit side by side instead of one global `agent.acp.command`; the
+   ACP registry manifest can seed suggestions later. (Subsumes the older
+   Profiles items below.)
+4. [ ] **Terminal capability (acp)** — full client-side `terminal/*` backed by
+   zym terminals: revives the monitors UX (live output rows, kill buttons) and
+   upgrades long-running Bash from buffered-at-completion to streaming output.
+5. [ ] **Review story** — the "Agent Changes" diff panel (see *Feature:
+   reviewing an agent's work* above). ACP made attribution cheaper: tool-call
+   diffs carry `oldText`/`newText` per edit, so per-agent change tracking for
+   acp agents needs no hook-based baselines.
+
+Smaller, whenever convenient: session **config options** in the footer (model
+switching for agents that expose them), and the in-app **`authenticate`** flow
+(replacing the "log in via the agent's CLI" hint).
+
+### Backlog
+
 - [ ] Profiles: `AgentProfile` config schema + resolver; back-compat with
       `agent.command`; `kind`-gated status integration
 - [ ] Claude arg builder (model / tools / permission-mode / system-prompt)
