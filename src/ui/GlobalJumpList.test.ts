@@ -29,12 +29,17 @@ class FakeEditor implements JumpEditor {
 function setup() {
   const editors: FakeEditor[] = [];
   const observers: Array<(e: JumpEditor) => DisposableLike | void> = [];
+  const activeSubs: Array<(e: JumpEditor | null) => void> = [];
   let active: FakeEditor | null = null;
   const opened: Array<{ path: string; cursor?: [number, number] }> = [];
   const deps: GlobalJumpListDeps = {
     observeTextEditors(cb) {
       observers.push(cb);
       for (const e of editors) cb(e);
+      return new Disposable(() => {});
+    },
+    onDidChangeActiveTextEditor(cb) {
+      activeSubs.push(cb);
       return new Disposable(() => {});
     },
     getActiveTextEditor: () => active,
@@ -58,7 +63,7 @@ function setup() {
   };
   const setActive = (e: FakeEditor | null) => {
     active = e;
-    list.activeEditorChanged();
+    for (const cb of [...activeSubs]) cb(e);
   };
   return { list, addEditor, setActive, opened, lastOpened };
 }

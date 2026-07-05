@@ -60,9 +60,9 @@ State-owning controllers:
 - `src/ui/GlobalJumpList.ts` — **the cross-editor jump trail** (`workspace:jump-backward`
   / `-forward`, ctrl-o / ctrl-i): a time-ordered ring of (path, point) entries fed by every
   editor's vim jump recordings (via `TextEditor.onDidRecordJump`) plus the departure
-  position on each active-tab change (fanned out from `onActiveTabChanged`). Reads
-  editors / file-open off `zym.workspace`; the per-editor lists stay in the vim layer
-  (see [text-editor/vim-mode.md](text-editor/vim-mode.md)).
+  position on each active-editor change. Self-contained on the `zym.workspace` seam
+  (`observeTextEditors` / `onDidChangeActiveTextEditor` / `openFile`); the per-editor
+  lists stay in the vim layer (see [text-editor/vim-mode.md](text-editor/vim-mode.md)).
 - `src/ui/AgentController.ts` — **the agent feature**: launch / resume / close / restart /
   branch / rename, send-to-agent + diff-review routing, auto-open changed files, the
   per-agent subscriptions, viewed/attention tracking, agent session serialize+restore, and
@@ -79,6 +79,9 @@ pickers mount into) and `setWorkspaceEditApplier` (the impl owns the editor regi
 it stays in `PaneItems`). Modules then call `zym.workspace.getActiveTextEditor()` /
 `getActiveWorkbench()` / `openFile()` / `getPickerHost()` / `applyWorkspaceEdit()` and the
 other `zym` managers (`zym.notifications`, `zym.window`, `zym.agents`, …) directly.
+AppWindow also funnels its tab/split change signal into
+`zym.workspace.notifyActiveItemChanged()`, which dedups by editor identity into the
+Atom-style `onDidChangeActiveTextEditor` event modules can subscribe to.
 
 ## What stays in AppWindow
 

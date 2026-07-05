@@ -1,4 +1,5 @@
-// PositionHistory — the backing store for the per-editor jump list (alt-o / alt-i) and the
+// PositionHistory — the backing store for the per-editor jump list (the
+// vim-mode-plus:jump-backward/-forward commands, unbound by default) and the
 // change list (g; / g,). Both are an ordered ring of buffer positions, oldest →
 // newest, held as markers so they track edits, plus an `index` cursor used while
 // navigating. `index === entries.length` means "at the present" (not navigating).
@@ -75,7 +76,7 @@ export default class PositionHistory {
     this.emitter.emit('did-add', point)
   }
 
-  // alt-o / g; — step `count` entries toward older positions. On the first step
+  // jump-backward / g; — step `count` entries toward older positions. On the first step
   // from the present, stash `currentPoint` as the newest entry so the matching
   // forward command can return to it. Returns the target position, or null when
   // there's nothing older.
@@ -92,7 +93,7 @@ export default class PositionHistory {
     return this.positionAt(this.index)
   }
 
-  // alt-i / g, — step `count` entries toward newer positions. Returns the target
+  // jump-forward / g, — step `count` entries toward newer positions. Returns the target
   // position, or null when already at the newest.
   goForward (_currentPoint: PointLike, count = 1): Point | null {
     if (this.index >= this.entries.length - 1) return null

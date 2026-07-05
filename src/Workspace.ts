@@ -10,7 +10,7 @@
  * everywhere files are opened, not a per-call concern.
  */
 
-import { Disposable, type DisposableLike } from './util/eventKit.ts';
+import { Disposable, Emitter, type DisposableLike } from './util/eventKit.ts';
 import type Gtk from 'gi:Gtk-4.0';
 import type { TextEditor } from './ui/TextEditor/index.ts';
 import type { TabState } from './SessionManager.ts';
@@ -70,6 +70,9 @@ export class Workspace {
   private workspaceEditApplier: WorkspaceEditApplier | null = null;
   private readonly editors = new Set<TextEditor>();
   private readonly observers = new Set<EditorObserver>();
+  private readonly emitter = new Emitter();
+  // Last editor reported through `onDidChangeActiveTextEditor` (dedup state).
+  private lastActiveTextEditor: TextEditor | null = null;
   // Recently-closed tabs, most-recent last — the reopen stack for `reopenLastTab`.
   // In-memory and per-window; cross-restart restoration is the session's job.
   private readonly closedTabs: TabState[] = [];
@@ -117,6 +120,23 @@ export class Workspace {
    *  wired the provider). The app-wide counterpart to AppWindow's private `activeEditor`. */
   getActiveTextEditor(): TextEditor | null {
     return this.activeEditorProvider?.() ?? null;
+  }
+
+  /** Atom's `workspace.onDidChangeActiveTextEditor`: `callback` fires with the
+   *  newly-active editor whenever a different text editor takes focus — and with
+   *  `null` when focus lands on a non-editor tab. */
+  onDidChangeActiveTextEditor(callback: (editor: TextEditor | null) => void): Disposable {
+    return this.emitter.on('did-change-active-text-editor', callback as (value?: unknown) => void);
+  }
+
+  /** The AppWindow funnels every active split/tab change here (it owns the focus
+   *  tree, like it owns `setActiveEditorProvider`); the workspace dedups by editor
+   *  identity so `onDidChangeActiveTextEditor` reports real transitions only. */
+  notifyActiveItemChanged(): void {
+    const active = this.getActiveTextEditor();
+    if (active === this.lastActiveTextEditor) return;
+    this.lastActiveTextEditor = active;
+    this.emitter.emit('did-change-active-text-editor', active);
   }
 
   /** Wire the active-workbench provider (the AppWindow injects this, like `setOpener`). */
@@ -234,6 +254,8 @@ export class Workspace {
 
   private removeTextEditor(editor: TextEditor): void {
     if (!this.editors.delete(editor)) return;
+    // Don't hold a closed editor; the follow-up focus change re-notifies subscribers.
+    if (this.lastActiveTextEditor === editor) this.lastActiveTextEditor = null;
     for (const observer of this.observers) {
       observer.perEditor.get(editor)?.dispose();
       observer.perEditor.delete(editor);

@@ -1,7 +1,7 @@
 /*
  * GlobalJumpList — the workspace-wide jump trail behind `workspace:jump-backward`
  * / `workspace:jump-forward` (ctrl-o / ctrl-i in vim normal mode; each editor's
- * own list stays on alt-o / alt-i — see vim/position-history.ts).
+ * own list — vim/position-history.ts — keeps its commands but no default keys).
  *
  * One time-ordered ring across every editor: it interleaves each editor's vim
  * jump recordings (flagged jump motions + `jumpListMinLines`-sized moves) with
@@ -29,6 +29,7 @@ export interface JumpEditor {
 /** The workspace surface the list runs against — `zym.workspace` in the app. */
 export interface GlobalJumpListDeps {
   observeTextEditors(callback: (editor: JumpEditor) => DisposableLike | void): DisposableLike;
+  onDidChangeActiveTextEditor(callback: (editor: JumpEditor | null) => void): DisposableLike;
   getActiveTextEditor(): JumpEditor | null;
   openFile(path: string, options?: OpenFileOptions): void;
 }
@@ -58,6 +59,7 @@ export class GlobalJumpList {
           if (this.lastActive === editor) this.lastActive = null;
         });
       }),
+      this.d.onDidChangeActiveTextEditor((editor) => this.activeEditorChanged(editor)),
       zym.commands.add('.AppWindow', {
         'workspace:jump-backward': { didDispatch: () => this.goBackward(), description: 'Jump back (across editors)' },
         'workspace:jump-forward': { didDispatch: () => this.goForward(), description: 'Jump forward (across editors)' },
@@ -72,11 +74,10 @@ export class GlobalJumpList {
     this.lastActive = null;
   }
 
-  /** Notify that the active split/tab changed (the AppWindow fans its
-   *  `onActiveTabChanged` out to here): record the position left in the
-   *  previous editor, so a plain tab switch is a re-traceable jump. */
-  activeEditorChanged(): void {
-    const active = this.d.getActiveTextEditor();
+  // A different editor took focus: record the position left in the previous
+  // one, so a plain tab switch is a re-traceable jump. The identity check stays
+  // even though the workspace dedups — `open()` re-syncs `lastActive` itself.
+  private activeEditorChanged(active: JumpEditor | null): void {
     if (active === this.lastActive) return;
     const previous = this.lastActive;
     this.lastActive = active;

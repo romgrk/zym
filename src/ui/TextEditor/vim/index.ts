@@ -449,12 +449,11 @@ const MACRO_BINDINGS: Record<string, string> = {
   '@': 'ReplayMacro',
 };
 
-// Per-editor jump list (alt-o/alt-i) and change list (g;/g,) — normal-mode
-// navigation. ctrl-o/ctrl-i walk the workspace-wide jump list instead (across
-// editors, vim's cross-buffer behavior) — see GLOBAL_JUMP_COMMANDS.
+// Change list (g;/g,) — normal-mode navigation. ctrl-o/ctrl-i walk the
+// workspace-wide jump list (across editors, vim's cross-buffer behavior) — see
+// GLOBAL_JUMP_COMMANDS. The per-editor jump list ships unbound: bind
+// vim-mode-plus:jump-backward / :jump-forward in keymap.json to use it.
 const JUMP_BINDINGS: Record<string, string> = {
-  'alt-o': 'JumpBackward',
-  'alt-i': 'JumpForward',
   'g ;': 'GoToOlderChange',
   'g ,': 'GoToNewerChange',
 };
@@ -582,6 +581,10 @@ const NORMAL_OPERATIONS: Record<string, string> = {
   'visual:O': 'BlockwiseOtherEnd',
   'visual:I': 'InsertAtStartOfTarget',
   'visual:A': 'InsertAtEndOfTarget',
+  // The per-editor jump list, registered but unbound by default (ctrl-o/ctrl-i
+  // walk the workspace-wide list — see GLOBAL_JUMP_COMMANDS).
+  'jump:backward': 'JumpBackward',
+  'jump:forward': 'JumpForward',
   // Insert-mode commands, likewise under unique keys (ctrl-r/ctrl-a otherwise
   // collide with Redo / Increase).
   'insert:ctrl-w': 'DeleteToPreviousWordBoundary',
@@ -620,8 +623,8 @@ function registerKeymapsOnce(): void {
       // z-prefix: folds (→ editor `fold:*` commands) + zz/zt/zb cursor-line redraw.
       ...FOLD_KEYMAP,
       ...toKeymap(Z_SCROLL_BINDINGS),
-      // alt-o/alt-i per-editor jump list, g;/g, change list; ctrl-o/ctrl-i the
-      // workspace-wide jump list (across editors).
+      // g;/g, change list; ctrl-o/ctrl-i the workspace-wide jump list (across
+      // editors). The per-editor jump list has no default keys.
       ...toKeymap(JUMP_BINDINGS),
       ...GLOBAL_JUMP_COMMANDS,
       // q record / @ replay macros.
