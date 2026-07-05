@@ -104,16 +104,29 @@ export class WorkbenchView {
   // width (collapsed or expanded) on show. Steers focus to the center when it hides out
   // from under focus, into the list when freshly revealed.
   toggleSidebar(): void {
+    this.setSidebarHidden(!this.sidebarHidden);
+  }
+
+  /** Whether the workbench sidebar is currently hidden (the sidebar:toggle state). */
+  isSidebarHidden(): boolean {
+    return this.sidebarHidden;
+  }
+
+  // `steerFocus: false` (the workbench jump's transient reveal) skips the
+  // focus-into-the-list on show, so a flash of the sidebar never moves focus. The hide
+  // path always steers when focus was inside — focus can't stay in a detached column.
+  setSidebarHidden(hidden: boolean, { steerFocus = true } = {}): void {
+    if (this.sidebarHidden === hidden) return;
     const focusWasInside = this.isFocusWithin(this.d.sidebar.root);
-    this.sidebarHidden = !this.sidebarHidden;
-    if (this.sidebarHidden) {
+    this.sidebarHidden = hidden;
+    if (hidden) {
       this.sidebarShownWidth = this.d.sidebarPaned.getPosition();
       this.d.sidebarPaned.setStartChild(null);
       if (focusWasInside) this.focusActivePane(); // it hid out from under focus
     } else {
       this.d.sidebarPaned.setStartChild(this.d.sidebar.root);
       this.d.sidebarPaned.setPosition(this.sidebarShownWidth);
-      this.d.sidebar.list.focus(); // freshly revealed — focus into it
+      if (steerFocus) this.d.sidebar.list.focus(); // freshly revealed — focus into it
     }
   }
 

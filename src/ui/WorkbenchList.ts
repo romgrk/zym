@@ -13,6 +13,10 @@
  * `onActivate`. The rail rebuilds wholesale when the owner set changes (project or agent
  * workbench opened/closed) — grouping/order can shift, so there's no per-row animation.
  *
+ * `startJump()` (workbench:jump) is the leap-style quick switch: every row shows a
+ * one-letter label and the next keystroke — grabbed ahead of command dispatch —
+ * activates the labeled row, exactly like clicking it. See docs/workbench.md.
+ *
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
  */
@@ -22,6 +26,7 @@ import Adw from 'gi:Adw-1';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import type { Key } from '../keymap/Key.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
 import type { Agent } from '../agents/types.ts';
@@ -48,7 +53,19 @@ addStyles(/* css */`
   .WorkbenchRow--project {
     opacity: var(--dim-opacity);
   }
+  /* Leap-style jump label (workbench:jump): a bold monospace letter shown at the row's
+     start while a jump is pending — error-colored to match the editor leap marks. */
+  .Workbenchrow--jump {
+    font-family: var(--t-font-monospace-family);
+    font-weight: bold;
+    color: var(--t-ui-status-error);
+    margin-right: calc(1.5 * var(--t-spacing));
+  }
 `);
+
+// Jump labels in assignment order (home row first), one per row in rail order. Rows
+// past the alphabet stay unlabeled — unreachable by jump, still one `j/k` away.
+const JUMP_LABELS = 'asdfghjklqwertyuiopzxcvbnm';
 
 /** A project and the agents launched under it — the rail's grouped unit. */
 export interface ProjectGroup {
@@ -81,11 +98,13 @@ export interface WorkbenchListOptions {
 // A list entry: a project's default ("you") workbench, or one of its agents.
 type Entry = { kind: 'project'; project: Project } | { kind: 'agent'; agent: Agent };
 
-// A built row: its entry, the ListBoxRow, and the per-row unsubscribes (agent
-// title/status). Rebuilt wholesale, so there's no removal/animation bookkeeping.
+// A built row: its entry, the ListBoxRow, the jump-label chip (hidden unless a jump
+// is pending), and the per-row unsubscribes (agent title/status). Rebuilt wholesale,
+// so there's no removal/animation bookkeeping.
 interface RowHandle {
   entry: Entry;
   row: InstanceType<typeof Gtk.ListBoxRow>;
+  jump: InstanceType<typeof Gtk.Label>;
   unsubs: Array<() => void>;
 }
 
@@ -111,6 +130,9 @@ export class WorkbenchList {
   private modifiedDot: InstanceType<typeof Gtk.Label> | null = null;
   private named = false;
   private modified = false;
+  // The pending jump's key grab (workbench:jump) — non-null while labels are shown.
+  private jumpGrab: { dispose(): void } | null = null;
+  private jumpDone: ((jumped: boolean) => void) | null = null;
   private readonly subs = new CompositeDisposable();
 
   constructor(options: WorkbenchListOptions = {}) {
@@ -212,6 +234,7 @@ export class WorkbenchList {
 
   // Full (re)build of every row: per project, its default (header) row then its agents.
   private rebuild(): void {
+    this.endJump(false); // rows are being replaced — a pending jump's labels die with them
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
 
@@ -243,11 +266,18 @@ export class WorkbenchList {
         ? this.buildProjectContent(entry.project)
         : this.buildAgentContent(entry.agent, unsubs);
 
+    // The jump-label chip leads the row; invisible children drop out of layout, so
+    // it costs no width until a jump shows it.
+    const jump = new Gtk.Label();
+    jump.addCssClass('Workbenchrow--jump');
+    jump.setVisible(false);
+    content.prepend(jump);
+
     const row = new Gtk.ListBoxRow();
     row.addCssClass('WorkbenchRow');
     if (entry.kind === 'project') row.addCssClass('WorkbenchRow--project'); // dimmed header
     row.setChild(content);
-    return { entry, row, unsubs };
+    return { entry, row, jump, unsubs };
   }
 
   // The row content box: the leading icon plus the trailing widgets.
@@ -362,6 +392,62 @@ export class WorkbenchList {
     else this.listBox.grabFocus();
   }
 
+  // --- Leap-style jump (workbench:jump) --------------------------------------
+
+  /** Show a one-letter label on every row and grab the next keystroke ahead of
+   *  command dispatch (`KeymapManager.addListener` — the vim `readChar` pattern, so
+   *  the key never reaches the focused widget). The label's key activates its row
+   *  exactly like clicking it; escape — or any key that isn't a shown label —
+   *  cancels. `onDone(jumped)` fires once, on either outcome. */
+  startJump(onDone?: (jumped: boolean) => void): void {
+    this.endJump(false); // a jump already in flight is cancelled — never tangle grabs
+    const byLabel = new Map<string, RowHandle>();
+    for (let i = 0; i < this.handles.length && i < JUMP_LABELS.length; i++) {
+      const handle = this.handles[i];
+      byLabel.set(JUMP_LABELS[i], handle);
+      handle.jump.setLabel(JUMP_LABELS[i]);
+      handle.jump.setVisible(true);
+    }
+    if (byLabel.size === 0) {
+      onDone?.(false);
+      return;
+    }
+    this.jumpDone = onDone ?? null;
+    this.jumpGrab = zym.keymaps.addListener((key: Key) => {
+      if (key.isModifier()) return false; // a bare modifier resolves nothing — keep waiting
+      // A plain printable key may be a label; a chord / control key always cancels.
+      // `string` comes from real GDK events; a synthetic `fromDescription` key (tests,
+      // macro replay) only carries `name`, so fall back to a single-char name.
+      const raw =
+        key.string && key.string.charCodeAt(0) >= 0x20 ? key.string
+        : key.name && key.name.length === 1 ? key.name
+        : null;
+      const char = !key.ctrl && !key.alt && !key.super && raw ? raw.toLowerCase() : null;
+      const handle = char !== null ? byLabel.get(char) : undefined;
+      this.endJump(handle !== undefined);
+      if (handle) this.activate(handle.entry);
+      return true; // claim the key either way — a pending jump swallows its keystroke
+    });
+  }
+
+  /** Cancel a pending jump, if any — labels hidden, key grab released, its
+   *  `onDone(false)` settled. Call before re-triggering so the previous jump's
+   *  cleanup (e.g. the host's sidebar restore) runs first. */
+  cancelJump(): void {
+    this.endJump(false);
+  }
+
+  // Tear down a pending jump — hide the labels, release the key grab, settle its
+  // `onDone`. Idempotent; safe to call when no jump is pending.
+  private endJump(jumped: boolean): void {
+    this.jumpGrab?.dispose();
+    this.jumpGrab = null;
+    for (const handle of this.handles) handle.jump.setVisible(false);
+    const done = this.jumpDone;
+    this.jumpDone = null;
+    done?.(jumped);
+  }
+
   /** Select the row for `owner` (the active workbench's project or agent). Called on
    *  every workbench switch so the rail highlight follows the active owner. */
   selectOwner(owner: Owner | null): void {
@@ -377,6 +463,7 @@ export class WorkbenchList {
   }
 
   dispose(): void {
+    this.endJump(false);
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
     this.subs.dispose();

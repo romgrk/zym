@@ -223,6 +223,23 @@ an editor's search bar), falling back to the tab's default focus target. Focus
 on the tab's own root drops the entry (so restore re-derives from the tab
 itself).
 
+## Workbench quick switch
+
+Three ways to change the active workbench: the fuzzy picker (`workbench:picker`,
+`space a w`), the cycle (`workbench:next`/`previous`, `super-.`/`super-,`), and the
+leap-style **jump** (`workbench:jump` — deliberately unbound while the interaction
+is iterated on; palette-run for now). The jump is `WorkbenchList.startJump()`: every
+rail row shows a one-letter label (home-row order, the `Workbenchrow--jump` chip
+built hidden into each row) and the deciding keystroke is grabbed ahead of command
+dispatch via `KeymapManager.addListener` — the vim `readChar` pattern (see
+docs/commands-keymaps.md "Transient key grabs") — so a label key activates its row
+like a click, *any* other key (or escape) cancels, and nothing leaks to the focused
+widget: no focus move, no EventController, no temporary keymap layer.
+`AppWindow.startWorkbenchJump` reveals a hidden sidebar for the duration and
+restores it after, without steering focus (`WorkbenchView.setSidebarHidden(hidden,
+{ steerFocus })`). A rail rebuild mid-jump (owner set changed) cancels the pending
+jump. Tested in `WorkbenchJump.test.ts`.
+
 ## Actions
 
 Each `Workbench` owns a set of **runnable actions** (label + shell command — dev

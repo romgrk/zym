@@ -32,6 +32,12 @@ The command used to launch an agent comes from the `agent.command` config key
 The worktree variants give each agent an isolated checkout, so agents can work
 in parallel without stepping on your tree or each other's.
 
+There is also a leap-style quick switch, **Jump to a workbench**
+(`workbench:jump`): every sidebar row shows a one-letter label and pressing a
+label's key switches to that workbench (any other key cancels; a hidden sidebar
+flashes in for the duration). It has no default keybinding yet — run it from the
+command palette, or bind `workbench:jump` in `keymap.json`.
+
 ## Agent status
 
 Running agents appear in the workbench sidebar with a live status:

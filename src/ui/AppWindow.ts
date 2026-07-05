@@ -597,6 +597,10 @@ export class AppWindow {
         }),
         description: 'Switch to a workbench (a project or an agent)',
       },
+      // Leap-style quick switch: label every sidebar row with a letter, the next
+      // keystroke jumps. Unbound by default while the interaction is iterated on —
+      // run it from the command palette.
+      'workbench:jump': { didDispatch: () => this.startWorkbenchJump(), description: 'Jump to a workbench (labeled sidebar rows)' },
       // Show/hide each dock side without discarding the panels it holds.
       'dock:toggle-left': { didDispatch: () => this.workbenchView.toggleDockSide('left'), description: 'Toggle the left dock' },
       'dock:toggle-right': { didDispatch: () => this.workbenchView.toggleDockSide('right'), description: 'Toggle the right dock (Files / Source Control)' },
@@ -608,6 +612,19 @@ export class AppWindow {
       'lsp:toggle-diagnostics-panel': { didDispatch: () => this.workbenchView.toggleDiagnosticsPanel(), description: 'Toggle the Diagnostics panel' },
       'keymap:show': { didDispatch: () => this.workbenchView.toggleKeymapPanel(), description: 'Show all keybindings and their source' },
       'plugin:open-manager': { didDispatch: () => this.workbenchView.openPluginManager(), description: 'Open the Plugin Manager' },
+    });
+  }
+
+  // Leap-style workbench switch (workbench:jump): the WorkbenchList shows the labels
+  // and grabs the deciding keystroke; this only handles the column's visibility — a
+  // hidden sidebar is revealed for the duration and re-hidden after (jumped or not),
+  // without moving focus (the key grab makes focus irrelevant to the interaction).
+  private startWorkbenchJump(): void {
+    this.sidebar.list.cancelJump(); // settle a pending jump's restore before sampling
+    const wasHidden = this.workbenchView.isSidebarHidden();
+    if (wasHidden) this.workbenchView.setSidebarHidden(false, { steerFocus: false });
+    this.sidebar.list.startJump(() => {
+      if (wasHidden) this.workbenchView.setSidebarHidden(true, { steerFocus: false });
     });
   }
 
