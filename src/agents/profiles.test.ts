@@ -8,7 +8,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { zym } from '../zym.ts';
-import { listAgentProfiles, defaultProfileFor, profileNameFor } from './profiles.ts';
+import { listAgentProfiles, defaultProfileFor, profileNameFor, profileCommand } from './profiles.ts';
 import { acpCommand } from './acp/config.ts';
 
 afterEach(() => {
@@ -77,6 +77,53 @@ test('defaultProfileFor picks the first profile of the kind', () => {
   const profiles = listAgentProfiles();
   assert.equal(defaultProfileFor('claude-tui', profiles).id, 'claude-tui');
   assert.equal(defaultProfileFor('acp', profiles).id, 'acp:gemini');
+});
+
+test('recognized agents import their launch options', () => {
+  const [, gemini, claudeAcp] = listAgentProfiles();
+  // gemini: approval mode is a launch flag; models are left to configuration.
+  assert.equal(gemini.id, 'acp:gemini');
+  assert.equal(gemini.models, undefined);
+  assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'auto_edit', 'yolo']);
+  assert.deepEqual(gemini.permissionModes?.[2].args, ['--approval-mode', 'yolo']);
+  // claude adapter: models over _meta, modes over session/set_mode — no argv args.
+  assert.equal(claudeAcp.id, 'acp:claude-acp');
+  assert.equal(claudeAcp.models?.[0].value, 'default');
+  assert.ok(claudeAcp.models!.length > 1);
+  assert.ok(claudeAcp.models!.every((o) => o.args.length === 0));
+  assert.deepEqual(claudeAcp.permissionModes?.map((o) => o.value), ['default', 'acceptEdits', 'plan', 'bypassPermissions']);
+});
+
+test('configured option lists are parsed, default-led, and suppress importing', () => {
+  zym.config.set('agent.profiles', [{
+    name: 'gemini',
+    command: ['gemini', '--acp'],
+    models: ['gemini-2.5-flash', { value: 'gemini-2.5-pro', label: 'pro', args: ['-m', 'gemini-2.5-pro'] }],
+    permissionModes: [{ value: 'yolo', args: ['--approval-mode', 'yolo'] }],
+  }]);
+  const [, gemini] = listAgentProfiles();
+  assert.deepEqual(gemini.models?.map((o) => o.value), ['default', 'gemini-2.5-flash', 'gemini-2.5-pro']);
+  assert.deepEqual(gemini.models?.[1].args, []); // string shorthand → no args
+  assert.equal(gemini.models?.[2].label, 'pro');
+  // The configured permission list replaced the imported one (default still prepended).
+  assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'yolo']);
+});
+
+test('profileCommand appends the chosen options’ args; default appends nothing', () => {
+  zym.config.set('agent.profiles', [{
+    name: 'gemini',
+    command: ['gemini', '--acp'],
+    models: [{ value: 'gemini-2.5-pro', args: ['-m', 'gemini-2.5-pro'] }],
+  }]);
+  const [, gemini] = listAgentProfiles();
+  assert.deepEqual(
+    profileCommand(gemini, { model: 'gemini-2.5-pro', permissionMode: 'yolo', effort: 'default' }),
+    ['gemini', '--acp', '-m', 'gemini-2.5-pro', '--approval-mode', 'yolo'],
+  );
+  assert.deepEqual(
+    profileCommand(gemini, { model: 'default', permissionMode: 'default', effort: 'default' }),
+    ['gemini', '--acp'],
+  );
 });
 
 test('acpCommand() is the leading acp profile argv', () => {

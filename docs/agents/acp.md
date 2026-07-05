@@ -85,6 +85,17 @@ unabsorbed, disposing a session crashes zym).
 - `agent.profiles` — named ACP agents, each `{ "name", "command" }`; the
   launcher's agent dropdown lists them alongside `claude-tui` (resolution in
   `agents/profiles.ts`). Defaults offer gemini and the claude adapter.
+- **Per-profile launch options** — a profile entry may carry `models` /
+  `permissionModes` / `efforts` lists (`{ "value", "label"?, "args"? }` or a
+  bare string); the launcher shows them for that profile and appends the
+  chosen options' `args` to the argv. **Recognized agents import their
+  options**: the claude adapter gets zym's claude model list (applied via
+  `_meta.claudeCode.options.model` on session/new — no argv flags exist) and
+  its session modes (applied via `session/set_mode` after setup, replacing the
+  blanket ask-first forcing); gemini gets `--approval-mode` choices. A
+  configured list on the entry wins over importing. Protocol-applied
+  selections (model/mode) don't survive a restart — argv-encoded ones do
+  (argv is what serializes).
 - `agent.implementation: "acp"` — make `agent:new` default to the leading ACP
   profile (or `ZYM_AGENT=acp zym` per-launch).
 - `agent.acp.command` — legacy single argv, superseded by profiles; when set

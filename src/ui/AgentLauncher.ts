@@ -25,8 +25,8 @@ import { openFloatingCard } from './FloatingCard.ts';
 import { Combobox } from './Combobox.ts';
 import { createInput } from './TextEditor/TextEditor.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
-import { AGENT_CONFIGS, type AgentKind } from '../agents/configs.ts';
-import { listAgentProfiles, defaultProfileFor, type AgentProfile } from '../agents/profiles.ts';
+import { AGENT_CONFIGS, type AgentKind, type AgentLaunchOptions } from '../agents/configs.ts';
+import { listAgentProfiles, defaultProfileFor, profileCommand, type AgentProfile } from '../agents/profiles.ts';
 import { repoRoot, listBranches } from '../git.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
@@ -68,6 +68,11 @@ export interface AgentLaunchRequest {
   cwd: string;
   /** The chosen agent kind. */
   kind: AgentKind;
+  /** The launcher's model / permission-mode selections, for options an acp
+   *  profile applies over the protocol rather than argv (`'default'` = the
+   *  agent's own — nothing to apply). claude-tui encodes both in `command`. */
+  model?: string;
+  permissionMode?: string;
   /** Create a fresh worktree, or work on a chosen branch (the agent sets it up). */
   worktree: WorktreeChoice;
   /** Start the agent without switching to it (it runs in the background). */
@@ -233,13 +238,28 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const panel = card.panel;
   panel.setSizeRequest(CARD_WIDTH, -1);
 
-  // Options, seeded from the last-used values (else the profile's kind defaults). The
-  // picked profile's kind drives which models / permission modes are offered; changing
-  // the profile re-populates them (to that kind's defaults).
+  // Options, seeded from the last-used values (else the profile's defaults). The
+  // picked profile drives which models / permission modes are offered — its own
+  // imported/configured lists when it has them (see agents/profiles.ts), else its
+  // kind's; changing the profile re-populates them (to that profile's defaults).
   const profiles = listAgentProfiles();
   const profileById = (id: string): AgentProfile | undefined => profiles.find((p) => p.id === id);
   const profile0 = profileById(savedProfile) ?? defaultProfileFor(defaultKind, profiles);
-  const kindOptions = AGENT_CONFIGS[profile0.kind].options;
+  // A profile's own option list always leads with the `default` sentinel, so
+  // that is its default value; kind lists keep the kind's own default.
+  const optionsFor = (p: AgentProfile): AgentLaunchOptions => {
+    const base = AGENT_CONFIGS[p.kind].options;
+    return {
+      ...base,
+      models: p.models ?? base.models,
+      defaultModel: p.models ? 'default' : base.defaultModel,
+      permissionModes: p.permissionModes ?? base.permissionModes,
+      defaultPermissionMode: p.permissionModes ? 'default' : base.defaultPermissionMode,
+      efforts: p.efforts ?? base.efforts,
+      defaultEffort: p.efforts ? 'default' : base.defaultEffort,
+    };
+  };
+  const kindOptions = optionsFor(profile0);
 
   const modelDropdown = disposables.use(new Combobox({ title: 'model', options: kindOptions.models, value: savedModel || kindOptions.defaultModel }));
   const permissionDropdown = disposables.use(new Combobox({ title: 'permission', options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
@@ -249,7 +269,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     options: profiles.map((p) => ({ value: p.id, label: p.label })),
     value: profile0.id,
     onChange: (value) => {
-      const opts = AGENT_CONFIGS[(profileById(value) ?? profile0).kind].options;
+      const opts = optionsFor(profileById(value) ?? profile0);
       modelDropdown.setOptions(opts.models, opts.defaultModel);
       permissionDropdown.setOptions(opts.permissionModes, opts.defaultPermissionMode);
       effortDropdown.setOptions(opts.efforts, opts.defaultEffort);
@@ -340,13 +360,14 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const submit = (background: boolean) => {
     const profile = profileById(profileDropdown.getValue()) ?? profile0;
     const kind = profile.kind;
-    // An ACP profile *is* an argv; the terminal kind assembles its own from the
-    // model/permission/effort selections.
-    const command = profile.command ?? AGENT_CONFIGS[kind].options.buildCommand({
+    const selections = {
       model: modelDropdown.getValue(),
       permissionMode: permissionDropdown.getValue(),
       effort: effortDropdown.getValue(),
-    });
+    };
+    // An ACP profile is its argv plus the chosen options' args; the terminal
+    // kind assembles its own from the model/permission/effort selections.
+    const command = profile.command ? profileCommand(profile, selections) : AGENT_CONFIGS[kind].options.buildCommand(selections);
     const prompt = input.getText().trim();
     // No dropdown (the new-worktree flow) → always a fresh worktree.
     const sel = worktreeDropdown?.getValue();
@@ -356,7 +377,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
           : { branch: sel };
     card.close(false); // onClose stashes the text…
     savedDraft = ''; // …but it was submitted, so don't restore it next time
-    onLaunch({ prompt, command, cwd, kind, worktree, background });
+    onLaunch({ prompt, command, cwd, kind, worktree, background, model: selections.model, permissionMode: selections.permissionMode });
   };
 
   // Cycle keyboard focus through the card's controls in their real tab order, wrapping at the

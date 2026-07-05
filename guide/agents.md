@@ -29,6 +29,13 @@ ACP agents are configured as named **profiles** in `agent.profiles` (each
 Gemini and the Claude adapter are offered out of the box. (A legacy
 `agent.acp.command`, if set, still appears as the first profile.)
 
+The launcher's model / permission / effort dropdowns follow the chosen
+profile. Recognized agents come pre-filled — the Claude adapter offers zym's
+claude model list and its permission modes, gemini its approval modes — and
+any profile entry can define its own lists: `"models": [{ "value":
+"gemini-2.5-pro", "args": ["-m", "gemini-2.5-pro"] }]` appends those args to
+the launch command when picked (`default` always means the agent's own).
+
 An `acp` agent must be signed in with its own CLI first (run it once in a
 terminal). Resuming, branching, permission prompts, diffs, plans, questions,
 and edited-file tracking all work.
@@ -49,6 +56,7 @@ and edited-file tracking all work.
 | `space a r`   | rename the current agent |
 | `space a R`   | resume a past conversation (picker) |
 | `space a b`   | branch the current agent into a forked agent |
+| `space a d`   | review the current agent's changes (the Agent Changes diff) |
 
 The worktree variants give each agent an isolated checkout, so agents can work
 in parallel without stepping on your tree or each other's.
@@ -74,7 +82,8 @@ terminal. You don't need to configure anything.
 
 With the sidebar focused (`space a l`), keys act on the selected agent:
 `l` reveals its terminal, `r` restarts, `R` renames, `b` branches, `x` stops
-the process, `d d` closes it, and `o` opens the files it has edited.
+the process, `d d` closes it, and `o` reviews its changes (the Agent Changes
+diff).
 
 Inside an agent's terminal, `ctrl-d ctrl-d` closes the agent (a single `ctrl-d`
 still reaches the CLI as a normal EOF).
@@ -100,8 +109,9 @@ adds review comments.
 
 ## Reviewing an agent's changes
 
-The pencil badge in the agent's header (or `o` on a selected agent — the
-`agent:open-changes` command) opens the **Agent Changes** tab: one continuous
+The pencil badge in the agent's header (or `space a d` anywhere, `o` on a
+selected agent — the `agent:open-changes` command) opens the **Agent Changes**
+tab: one continuous
 diff of every file the agent edited this session, from the file's content *at
 the agent's first touch* to its content now — your own uncommitted work from
 before the agent ran stays out of it (`acp` agents; `claude-tui` diffs against

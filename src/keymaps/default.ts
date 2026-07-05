@@ -50,6 +50,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space a r': 'agent:rename', // rename the current agent
   'space a R': 'agent:resume-conversation', // resume a past conversation (picker)
   'space a b': 'agent:branch', // branch the current agent into a new forked agent
+  'space a d': 'agent:open-changes', // review the current agent's changes (the diff panel)
   // Send editor context to an agent: the second key picks selection (s) or file
   // (f); the third picks the current agent (repeat), one from the picker (a), or
   // a new agent with an editable prompt (n).

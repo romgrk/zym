@@ -88,9 +88,9 @@ export class AgentController {
       cwd: this.workbench.cwd,
       defaultKind: resolveAgentKind(zym.config.get('agent.implementation')),
       mode,
-      onLaunch: ({ prompt, command, cwd, kind, worktree, background }) => {
+      onLaunch: ({ prompt, command, cwd, kind, worktree, background, model, permissionMode }) => {
         const { agentPrompt, userPrompt } = launchPrompt(prompt, worktree);
-        this.openAgent({ prompt: agentPrompt, userPrompt, command, root: cwd, kind, background });
+        this.openAgent({ prompt: agentPrompt, userPrompt, command, root: cwd, kind, background, model, permissionMode });
       },
     });
   }
@@ -155,7 +155,7 @@ export class AgentController {
    * center stays free as the work/review area. Activate the workbench before focusing it.
    */
   openAgent(
-    options: { kind?: AgentKind; prompt?: string; userPrompt?: string; resume?: AgentResume; title?: string; root?: string; command?: string[]; background?: boolean } = {},
+    options: { kind?: AgentKind; prompt?: string; userPrompt?: string; resume?: AgentResume; title?: string; root?: string; command?: string[]; background?: boolean; model?: string; permissionMode?: string } = {},
   ): Agent {
     // Both kinds can resume, so a
     // resume no longer forces the terminal agent — it respects the configured kind
@@ -174,6 +174,7 @@ export class AgentController {
     if (root !== mainRoot && !Fs.existsSync(root)) root = mainRoot; // a vanished worktree → main dir
     const agent = AGENT_CONFIGS[kind].create({
       cwd: mainRoot, command: options.command, prompt: options.prompt, userPrompt: options.userPrompt, resume: options.resume, title: options.title,
+      model: options.model, permissionMode: options.permissionMode,
       onOpenFile: (path) => this.d.paneItems.openFile(path),
       fs: createDocumentFs(this.d.paneItems.documents),
     });
@@ -307,9 +308,9 @@ export class AgentController {
       defaultKind: resolveAgentKind(zym.config.get('agent.implementation')),
       initialWorktree: 'current', // a review runs against the working tree by default
       initialPrompt: message, // the review is the prompt → delivered as the agent's first turn
-      onLaunch: ({ prompt, command, cwd, kind, worktree, background }) => {
+      onLaunch: ({ prompt, command, cwd, kind, worktree, background, model, permissionMode }) => {
         const { agentPrompt, userPrompt } = launchPrompt(prompt, worktree);
-        this.openAgent({ prompt: agentPrompt, userPrompt, command, root: cwd, kind, background });
+        this.openAgent({ prompt: agentPrompt, userPrompt, command, root: cwd, kind, background, model, permissionMode });
       },
     });
   }

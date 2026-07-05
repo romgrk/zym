@@ -147,6 +147,13 @@ export interface AcpSessionOptions {
   /** Editor-backed file access; when present the `fs` capability is advertised
    *  and `fs/read_text_file` / `fs/write_text_file` are served from it. */
   fs?: AcpFsHost;
+  /** Launcher selections applied over the protocol (`'default'`/absent = the
+   *  agent's own default): `model` rides `_meta.claudeCode.options.model` on
+   *  session/new — the claude adapter honors it, and foreign `_meta` MUST be
+   *  ignored by other agents (spec) — and `permissionMode` names the session
+   *  mode to force after setup instead of the ask-first `default`. */
+  model?: string;
+  permissionMode?: string;
 }
 
 /** A pending agent→client request, resolved by the user's decision. */
@@ -343,23 +350,33 @@ export class AcpSession implements ConversationSession {
       }
     } else {
       // Fresh session — or a context-only resume through the claude adapter's
-      // `_meta` extension when the agent can't replay history.
+      // `_meta` extension when the agent can't replay history. The launcher's
+      // model selection rides the same options object (foreign `_meta` is
+      // ignored by agents that don't know it, per spec).
+      const claudeOptions: Record<string, unknown> = {};
+      if (resume?.sessionId) claudeOptions.resume = resume.sessionId;
+      if (this.options.model && this.options.model !== 'default') claudeOptions.model = this.options.model;
       const session = await conn.agent.request('session/new', {
         cwd,
         mcpServers,
-        ...(resume?.sessionId ? { _meta: { claudeCode: { options: { resume: resume.sessionId } } } } : {}),
+        ...(Object.keys(claudeOptions).length ? { _meta: { claudeCode: { options: claudeOptions } } } : {}),
       });
       this._sessionId = session.sessionId;
       this.applyModes(session.modes ?? null);
     }
 
-    // Start in the ask-first mode when the agent has one: the Claude Code
-    // adapter defaults its session to `acceptEdits` (verified — it writes files
-    // without ever requesting permission), which silently bypasses zym's
-    // permission cards. The analog of `claude --permission-mode default`.
-    if (this.currentModeId && this.currentModeId !== 'default' && this.availableModes.some((m) => m.id === 'default')) {
-      void conn.agent.request('session/set_mode', { sessionId: this._sessionId!, modeId: 'default' }).catch(() => { /* agent default stays */ });
-      this.applyModeId('default');
+    // Start in the launcher-chosen session mode — else ask-first: the Claude
+    // Code adapter defaults its session to `acceptEdits` (verified — it writes
+    // files without ever requesting permission), which silently bypasses zym's
+    // permission cards. The analog of `claude --permission-mode <mode>`. A
+    // chosen mode the agent doesn't advertise falls back to forcing `default`.
+    const chosenMode = this.options.permissionMode;
+    const targetMode = chosenMode && chosenMode !== 'default' && this.availableModes.some((m) => m.id === chosenMode)
+      ? chosenMode
+      : 'default';
+    if (this.currentModeId && this.currentModeId !== targetMode && this.availableModes.some((m) => m.id === targetMode)) {
+      void conn.agent.request('session/set_mode', { sessionId: this._sessionId!, modeId: targetMode }).catch(() => { /* agent default stays */ });
+      this.applyModeId(targetMode);
     }
     if (this.options.bridge) {
       this.bridgeWatch = this.options.bridge.watch({
