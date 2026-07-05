@@ -329,3 +329,34 @@ test('yw still yanks a word when the duplicate-line bindings are present', () =>
   m.type('yw');
   assert.equal(clipboard.read(), 'hello ');
 });
+
+// --- `g c` / `g c c` toggle-line-comments (g c-prefix deferral) --------------
+
+function withCommentSpec(m: ReturnType<typeof focusedEditor>) {
+  m.editor.setCommentSpecSource(() => ({ line: '//' }));
+  return m;
+}
+
+test('g c c toggles the current line comment via the keymap', () => {
+  const m = withCommentSpec(focusedEditor('one\ntwo\n'));
+  m.type('gcc');
+  assert.equal(m.line(0), '// one');
+  assert.equal(m.line(1), 'two');
+  m.type('gcc');
+  assert.equal(m.line(0), 'one');
+});
+
+test('g c j toggles the current and next line (g c falls back to the operator)', () => {
+  const m = withCommentSpec(focusedEditor('one\ntwo\nthree\n'));
+  m.type('gcj');
+  assert.equal(m.editor.getText(), '// one\n// two\nthree\n');
+});
+
+// Single-row only: extending with `j` here would go through the display-line
+// motion, which overshoots by a row on this unrealized view (same for `Vj>`).
+// The multi-row visual case runs on buffer-line MoveDown in extra-ops.test.ts.
+test('visual g c toggles the selected row', () => {
+  const m = withCommentSpec(focusedEditor('one\ntwo\n'));
+  m.type('Vgc');
+  assert.equal(m.editor.getText(), '// one\ntwo\n');
+});

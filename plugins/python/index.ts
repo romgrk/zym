@@ -106,7 +106,11 @@ export const pythonPlugin: Plugin = {
     const { languages } = ctx;
 
     // `python` is already a valid LSP languageId, so no lspId override.
-    languages.registerLanguage({ id: 'python', fileTypes: ['py', 'pyi', 'pyw'] });
+    languages.registerLanguage({
+      id: 'python',
+      fileTypes: ['py', 'pyi', 'pyw'],
+      comments: { line: '#' },
+    });
     languages.registerGrammar('python', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-python.wasm',
       highlightsPath: ctx.resolve('queries/python/highlights.scm'),

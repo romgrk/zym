@@ -5,6 +5,14 @@
  * can supply any subset (detection only, grammar only, an extra server, …).
  */
 
+/** Comment delimiters, for toggling line comments (`editor:toggle-line-comments`). */
+export interface CommentSpec {
+  /** Line-comment leader (`//`, `#`, …). */
+  line?: string;
+  /** Block-comment pair; the per-line wrap used when the language has no `line` leader (CSS, HTML). */
+  block?: { start: string; end: string };
+}
+
 /** Detection: how a file maps to a language id. */
 export interface LanguageDef {
   /** Language id (e.g. `typescript`); grammars/servers attach by this id. */
@@ -15,6 +23,8 @@ export interface LanguageDef {
   filenames?: string[];
   /** Glob patterns matched against the basename (e.g. `*.config.js`). */
   globs?: string[];
+  /** Comment delimiters (omit for languages without comments, e.g. JSON). */
+  comments?: CommentSpec;
   /**
    * The LSP document `languageId` (per the protocol) when it differs from `id` —
    * `id` is our grammar key, which may not be a valid LSP id.

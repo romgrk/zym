@@ -397,3 +397,79 @@ test('H / M / L land on the top / middle / bottom viewport rows in order', () =>
   const bottom = row();
   assert.ok(top <= mid && mid <= bottom, `expected top<=mid<=bottom, got ${top},${mid},${bottom}`);
 });
+
+// --- Toggle line comments (g c / g c c) -------------------------------------
+
+test('g c c toggles the current line comment and back', () => {
+  const { editor, run, at, line } = setup('  let a = 1\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 4);
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(line(), '  // let a = 1');
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(line(), '  let a = 1');
+});
+
+test('g c {motion} toggles the motion rows linewise', () => {
+  const { editor, run, at, line } = setup('a\nb\nc\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 0);
+  run('ToggleLineComments');
+  run('MoveDown'); // g c j → the current and next row
+  assert.equal(line(0), '// a');
+  assert.equal(line(1), '// b');
+  assert.equal(line(2), 'c');
+});
+
+test('visual g c toggles the selected rows and returns to normal mode', () => {
+  const { editor, vimState, run, at, line } = setup('a\nb\nc\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 0);
+  run('ActivateLinewiseVisualMode');
+  run('MoveDown'); // select rows 0-1
+  run('ToggleLineComments');
+  assert.equal(line(0), '// a');
+  assert.equal(line(1), '// b');
+  assert.equal(line(2), 'c');
+  assert.ok(vimState.isMode('normal'));
+});
+
+test('g c without a comment spec leaves the buffer untouched', () => {
+  const { run, at, line } = setup('a\n');
+  at(0, 0);
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(line(), 'a');
+});
+
+test('bottom-anchored visual g c keeps the cursor on the row it was on', () => {
+  const { editor, run, at } = setup('one\ntwo\nthree\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 0);
+  run('ActivateLinewiseVisualMode');
+  run('MoveDown'); // caret displays on row 1, the BOTTOM of the selection (insert mark on row 2)
+  run('ToggleLineComments');
+  assert.equal(editor.getText(), '// one\n// two\nthree\n');
+  // stayAtSamePosition: no jump to the top of the range, and no falling below it.
+  assert.equal(editor.getCursorBufferPosition().row, 1, 'cursor stays on its row');
+});
+
+test('g c c keeps the cursor in place', () => {
+  const { editor, run, at } = setup('let a = 1\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 4); // on 'a'
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(editor.getText(), '// let a = 1\n');
+  // The marker rides the inserted leader: same character, shifted column.
+  assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 7]);
+  run('ToggleLineCommentsCurrentLine');
+  assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 4]);
+});
+
+test('linewise visual keeps the display caret on the selected row (current-line band source)', () => {
+  const { editor, run, at } = setup('one\ntwo\nthree\n');
+  at(0, 0);
+  run('ActivateLinewiseVisualMode');
+  run('MoveDown'); // selection rows 0-1; the raw insert mark sits at (2,0)
+  assert.equal(editor.getCursorBufferPosition().row, 2, 'raw insert mark is one row below');
+  assert.equal(editor.cursorDisplayIter().getLine(), 1, 'display caret stays on the last selected row');
+});

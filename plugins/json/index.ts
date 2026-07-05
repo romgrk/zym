@@ -63,7 +63,11 @@ export const jsonPlugin: Plugin = {
 
     // JSONC (JSON with comments) — `jsonc` is a valid LSP languageId. Backed by
     // the same json grammar (it parses comments as `(comment)` nodes).
-    languages.registerLanguage({ id: 'jsonc', fileTypes: ['jsonc'] });
+    languages.registerLanguage({
+      id: 'jsonc',
+      fileTypes: ['jsonc'],
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
+    });
     languages.registerGrammar('jsonc', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-json.wasm',
       highlightsPath: ctx.resolve('queries/json/highlights.scm'),

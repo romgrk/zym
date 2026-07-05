@@ -76,6 +76,7 @@ export const markdownPlugin: Plugin = {
       id: 'markdown',
       fileTypes: MARKDOWN_FILE_TYPES,
       // `markdown` is already a valid LSP languageId, so no `lspId` override.
+      comments: { block: { start: '<!--', end: '-->' } },
     });
     ctx.registerConfig(CONFIG);
 

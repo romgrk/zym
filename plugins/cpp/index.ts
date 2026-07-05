@@ -48,7 +48,11 @@ export const cppPlugin: Plugin = {
     const { languages } = ctx;
 
     // C — `c` is a valid LSP languageId. `.h` headers map to C by convention.
-    languages.registerLanguage({ id: 'c', fileTypes: ['c', 'h'] });
+    languages.registerLanguage({
+      id: 'c',
+      fileTypes: ['c', 'h'],
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
+    });
     languages.registerGrammar('c', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-c.wasm',
       highlightsPath: ctx.resolve('queries/c/highlights.scm'),
@@ -62,6 +66,7 @@ export const cppPlugin: Plugin = {
     languages.registerLanguage({
       id: 'cpp',
       fileTypes: ['cpp', 'cc', 'cxx', 'c++', 'hpp', 'hh', 'hxx', 'h++', 'ipp', 'tpp', 'cppm', 'ino'],
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
     });
     languages.registerGrammar('cpp', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-cpp.wasm',

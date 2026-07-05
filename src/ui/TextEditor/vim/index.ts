@@ -407,6 +407,20 @@ const INDENT_JOIN_BINDINGS: Record<string, string> = {
   J: 'Join',
 };
 
+// Toggle line comments (vim-commentary / nvim `gc`): `g c` is an operator
+// (`g c {motion}`, doubled `g c g c`, visual `g c` on the selection); `g c c` is
+// the current-line stroke (preset target, normal-mode only — the keymap's
+// longest-match deferral arbitrates it against the bare `g c` operator, exactly
+// like `y`/`y s`). Delimiters come from the file's language (`comments` in the
+// LanguageRegistry); the non-vim `ctrl-/` route is TextEditor's
+// `editor:toggle-line-comments`.
+const COMMENT_BINDINGS: Record<string, string> = {
+  'g c': 'ToggleLineComments',
+};
+const COMMENT_LINE_BINDINGS: Record<string, string> = {
+  'g c c': 'ToggleLineCommentsCurrentLine',
+};
+
 // Normal-mode-only editing commands. `ctrl-j` splits the line at the cursor —
 // the inverse of `J` (Join). Normal-only so it doesn't collide with the visual
 // `CurrentSelection` target the Operator base would otherwise impose.
@@ -524,6 +538,7 @@ const NON_INSERT_BINDINGS: Record<string, string> = {
   ...NUMBER_BINDINGS,
   ...SCROLL_BINDINGS,
   ...INDENT_JOIN_BINDINGS,
+  ...COMMENT_BINDINGS,
   ...MISC_BINDINGS,
   ...OCCURRENCE_BINDINGS,
 };
@@ -550,6 +565,7 @@ const NORMAL_OPERATIONS: Record<string, string> = {
   ...MACRO_BINDINGS,
   ...GOTO_FILE_BINDINGS,
   ...WEB_SEARCH_BINDINGS,
+  ...COMMENT_LINE_BINDINGS,
   // Visual-only commands registered under unique keys so they don't shadow the
   // normal-mode `o`/`O` (open-line) entries above — this map is only enumerated
   // for command registration, so the keys are arbitrary.
@@ -609,6 +625,9 @@ function registerKeymapsOnce(): void {
       // gf opens the file under the cursor; gw Google-searches the word under it.
       ...toKeymap(GOTO_FILE_BINDINGS),
       ...toKeymap(WEB_SEARCH_BINDINGS),
+      // g c c toggles the current line's comment (the operator itself is `g c`,
+      // bound with the other operators below).
+      ...toKeymap(COMMENT_LINE_BINDINGS),
     },
     // Motions and operators apply in normal, operator-pending, and visual modes.
     '.TextEditor:not(.insert-mode)': {

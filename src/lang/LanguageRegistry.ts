@@ -13,7 +13,7 @@ import * as Path from 'node:path';
 import { Disposable } from '../util/eventKit.ts';
 import type {
   LanguageDef, GrammarDef, ServerDef, ActiveServer, ServerOverride, ServerOverrides,
-  InjectionRule,
+  InjectionRule, CommentSpec,
 } from './types.ts';
 
 export interface ActiveServerOptions {
@@ -110,6 +110,11 @@ export class LanguageRegistry {
     if (!lang) return null;
     const ext = Path.extname(Path.basename(filePath)).slice(1).toLowerCase();
     return lang.lspIds?.[ext] ?? lang.lspId ?? lang.id;
+  }
+
+  /** The comment delimiters for a language, or null when it declares none (JSON). */
+  commentsFor(langId: string): CommentSpec | null {
+    return this.languages.get(langId)?.comments ?? null;
   }
 
   grammarFor(langId: string): GrammarDef | null {
