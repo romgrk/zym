@@ -200,6 +200,12 @@ toggles regex, `ctrl-p` / `ctrl-n` recall the search history, `esc` cancels.
 | `ctrl-o` / `ctrl-i` | JumpBackward / JumpForward | jump list |
 | `g ;` / `g ,` | GoToOlderChange / GoToNewerChange | change list |
 
+Besides the classic vim jump motions (`G`, `{`/`}`, search, …), any motion that
+moves the cursor by 6+ lines (e.g. `10j`) records a jump-list entry, so
+`ctrl-o` can take you back after a large move. The threshold is the
+`vim-mode-plus.jumpListMinLines` config key (default `6`; `0` restores
+classic-vim recording).
+
 ## Occurrence & multi-cursor
 
 | Key | Command | Action |

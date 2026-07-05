@@ -57,11 +57,19 @@ class Motion extends Base {
   }
 
   moveWithSaveJump (cursor: Cursor): void {
-    const originalPosition = this.jump && cursor.isLastCursor() ? cursor.getBufferPosition() : undefined
+    const trackJump = cursor.isLastCursor() && (this.jump || !this.operator)
+    const originalPosition = trackJump ? cursor.getBufferPosition() : undefined
 
     this.moveCursor(cursor)
 
     if (originalPosition && !cursor.getBufferPosition().isEqual(originalPosition)) {
+      // A motion counts as a jump when flagged (`this.jump`), or when it moves
+      // the cursor at least `jumpListMinLines` lines (0 disables the latter).
+      const minLines = this.getConfig('jumpListMinLines')
+      const isJump = this.jump ||
+        (minLines > 0 && Math.abs(cursor.getBufferPosition().row - originalPosition.row) >= minLines)
+      if (!isJump) return
+
       this.vimState.mark.set('`', originalPosition)
       this.vimState.mark.set("'", originalPosition)
       // Record the jump for ctrl-o/ctrl-i. Only for true motions — operator
