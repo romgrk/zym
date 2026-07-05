@@ -12,7 +12,7 @@
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
 import { addStyles } from '../../styles.ts';
-import type { ContextUsage } from '../../agents/claude-sdk/SdkSession.ts';
+import type { ContextUsage } from '../../agents/session.ts';
 
 export interface ContextDetail extends ContextUsage {
   model: string | null;

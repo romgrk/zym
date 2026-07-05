@@ -1,6 +1,6 @@
 # AgentConversation — UX review & rework advice
 
-A UX critique of the native `claude-sdk` conversation view
+A UX critique of the native (`acp`) conversation view
 (`src/ui/AgentConversation.ts` + `src/ui/conversation/*`) with prioritized,
 concrete recommendations for the UI rework. Each item names what exists today,
 the gap, the fix, and the code that owns it. Nothing here is a code change yet —
@@ -38,7 +38,7 @@ retry, copy, jump-to-latest). The rework's biggest wins are cheap.
    Mouse users and newcomers currently have no path to send.
 
 3. **Inline Retry/Resume on error and exit.** A mid-turn API failure (common on
-   long sessions per claude-sdk.md) drops an `addErrorRow` / exit
+   long sessions per acp.md) drops an `addErrorRow` / exit
    `conversation-system` row and disables the prompt — but the user must leave
    for the workbench list (`r`) to restart. Put a **Restart** / **Resume** button
    right on the error/exit row (it already knows the agent is `exited`; resume is
@@ -63,7 +63,7 @@ retry, copy, jump-to-latest). The rework's biggest wins are cheap.
 
 6. **Richer permission prompt: escalate + steer.** *(escalate done)* The prompt now
    REPLACES the input while the agent waits (`cards.ts:permissionPrompt`, shown in
-   AgentConversation's warning-ringed interaction slot — see claude-sdk.md) with
+   AgentConversation's warning-ringed interaction slot — see acp.md) with
    raised actions **Accept / Deny / Switch to auto**, plus **Allow edits** for edit
    tools only — the mode-switch actions flip the permission mode in place
    (`setPermissionMode('acceptEdits' | 'auto')`) *and* allow. Still open: (a) **Deny

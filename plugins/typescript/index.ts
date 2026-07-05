@@ -97,7 +97,11 @@ export const typescriptPlugin: Plugin = {
     const { languages } = ctx;
 
     // TypeScript (the typescript grammar; the tsx grammar would misread `<T>` casts).
-    languages.registerLanguage({ id: 'typescript', fileTypes: ['ts', 'mts', 'cts'] });
+    languages.registerLanguage({
+      id: 'typescript',
+      fileTypes: ['ts', 'mts', 'cts'],
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
+    });
     languages.registerGrammar('typescript', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-typescript.wasm',
       highlightsPath: ctx.resolve('queries/typescript/highlights.scm'),
@@ -120,6 +124,7 @@ export const typescriptPlugin: Plugin = {
         mjs: 'javascript',
         cjs: 'javascript',
       },
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
     });
     languages.registerGrammar('tsx', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-tsx.wasm',

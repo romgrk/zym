@@ -81,6 +81,11 @@ space-separated, so `g g` is the two-press `gg` and `ctrl-v` is one chord.
 | `g /` / `g #` ... | editor:search-word-*[-loose] | normal | `g /`=`*`; `g *`/`g #` are substring (loose) |
 | `ctrl-l` | clear-search-highlight | normal | vim `:noh` — drop highlights, disarm occurrence |
 
+Inside the bar: `enter` / `shift-enter` step to the next/previous match; in the
+replace field, `enter` replaces the current match and `ctrl-enter` replaces all
+(a notification reports the count). `alt-s` cycles the case mode, `alt-r`
+toggles regex, `ctrl-p` / `ctrl-n` recall the search history, `esc` cancels.
+
 ## Operators (await a target in normal; act on selection in visual)
 
 | Key | Operation | Action |
@@ -88,6 +93,7 @@ space-separated, so `g g` is the two-press `gg` and `ctrl-v` is one chord.
 | `d` `y` `c` | Delete / Yank / Change | |
 | `>` `<` `=` | Indent / Outdent / AutoIndent | `>>`/`<<`/`==` via same-key repeat |
 | `g U` `g u` `g ~` | UpperCase / LowerCase / ToggleCase | case operators |
+| `g c` | ToggleLineComments | toggle line comments (vim-commentary): `g c {motion}`, `g c g c` same-key repeat, visual `g c`; delimiters from the file's language |
 | `s` | ReplaceWithRegister | `s{motion}` replace with register; `ss` line |
 | `y s` / `d s` / `c s` | Surround / DeleteSurround / ChangeSurround | vim-surround; the target/replacement char is read as input. Pairs `( ) [ ] { } < >`, aliases `b`=`()` `r`=`[]` `k`=`{}` `a`=`<>` (`pairsByAlias`), quotes `" ' \``, tags `t`, plus `f` = function **call** (text-based: `dsf` `fn(x)`→`x`, `csf`/`ysiwf` wrap a call) |
 
@@ -104,7 +110,9 @@ space-separated, so `g g` is the two-press `gg` and `ctrl-v` is one chord.
 | `Y` | YankLine | yank line |
 | `J` | Join | join lines |
 | `ctrl-j` | SplitLine | split line at cursor (inverse of `J`, normal only) |
+| `g c c` | ToggleLineCommentsCurrentLine | toggle the current line's comment (vim-commentary `gcc`) |
 | `y d` / `y u` | editor:duplicate-line-below/above | duplicate line down/up (editor, normal) |
+| `ctrl-/` | editor:toggle-line-comments | toggle line comments (any mode, incl. insert) |
 
 ## Text objects (operator-pending + visual)
 

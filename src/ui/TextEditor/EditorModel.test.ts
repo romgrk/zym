@@ -390,3 +390,75 @@ test('duplicateLine* are a single undo step', () => {
   m.undo();
   assert.equal(m.getText(), 'one\ntwo\n');
 });
+
+// --- toggleLineCommentsForBufferRows ----------------------------------------
+
+/** A model whose comment spec is fixed to `spec` (as TextEditor would inject). */
+function commentModel(text: string, spec: { line?: string; block?: { start: string; end: string } } | null) {
+  const m = model(text);
+  m.setCommentSpecSource(() => spec);
+  return m;
+}
+const SLASHES = { line: '//' };
+const CSS = { block: { start: '/*', end: '*/' } };
+
+test('toggleLineComments comments an uncommented line at its indent', () => {
+  const m = commentModel('  let a = 1\n', SLASHES);
+  m.toggleLineCommentsForBufferRows(0, 0);
+  assert.equal(m.getText(), '  // let a = 1\n');
+});
+
+test('toggleLineComments uncomments a commented line (with or without the space)', () => {
+  const m = commentModel('  // let a = 1\n  //let b = 2\n', SLASHES);
+  m.toggleLineCommentsForBufferRows(0, 1);
+  assert.equal(m.getText(), '  let a = 1\n  let b = 2\n');
+});
+
+test('toggleLineComments comments all rows when any is uncommented, at the minimum indent', () => {
+  const m = commentModel('if (x) {\n  // done\n  go()\n}\n', SLASHES);
+  m.toggleLineCommentsForBufferRows(1, 2);
+  // Mixed → comment uniformly (the commented row gains a second leader, so the
+  // toggle round-trips), aligned at the shallower indent of the two rows.
+  assert.equal(m.getText(), 'if (x) {\n  // // done\n  // go()\n}\n');
+  m.toggleLineCommentsForBufferRows(1, 2);
+  assert.equal(m.getText(), 'if (x) {\n  // done\n  go()\n}\n');
+});
+
+test('toggleLineComments skips blank rows, and no-ops on an all-blank range', () => {
+  const m = commentModel('a\n\nb\n', SLASHES);
+  m.toggleLineCommentsForBufferRows(0, 2);
+  assert.equal(m.getText(), '// a\n\n// b\n');
+  m.toggleLineCommentsForBufferRows(0, 2);
+  assert.equal(m.getText(), 'a\n\nb\n');
+  const blank = commentModel('\n\n', SLASHES);
+  blank.toggleLineCommentsForBufferRows(0, 1);
+  assert.equal(blank.getText(), '\n\n');
+});
+
+test('toggleLineComments is one undo step across rows', () => {
+  const m = commentModel('a\nb\n', SLASHES);
+  m.toggleLineCommentsForBufferRows(0, 1);
+  assert.equal(m.getText(), '// a\n// b\n');
+  m.undo();
+  assert.equal(m.getText(), 'a\nb\n');
+});
+
+test('toggleLineComments no-ops without a comment spec', () => {
+  const m = commentModel('a\n', null);
+  m.toggleLineCommentsForBufferRows(0, 0);
+  assert.equal(m.getText(), 'a\n');
+});
+
+test('toggleLineComments wraps rows in the block pair when the language has no line leader', () => {
+  const m = commentModel('  color: red;\n  top: 0;\n', CSS);
+  m.toggleLineCommentsForBufferRows(0, 1);
+  assert.equal(m.getText(), '  /* color: red; */\n  /* top: 0; */\n');
+  m.toggleLineCommentsForBufferRows(0, 1);
+  assert.equal(m.getText(), '  color: red;\n  top: 0;\n');
+});
+
+test('toggleLineComments block-unwraps only when every row is wrapped', () => {
+  const m = commentModel('/* a */\nb\n', CSS);
+  m.toggleLineCommentsForBufferRows(0, 1);
+  assert.equal(m.getText(), '/* /* a */ */\n/* b */\n');
+});

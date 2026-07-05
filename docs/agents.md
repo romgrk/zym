@@ -1,16 +1,26 @@
 # Agents
 
-Run coding agents (Claude today, other tools later) inside zym. **Two
-rendering implementations** share one workbench / list / lifecycle /
-worktree spine — they differ only in how a turn is displayed:
+Run coding agents inside zym. **Two kinds** share one workbench / list /
+lifecycle / worktree spine — they differ only in how the agent is driven and
+displayed:
 
 - **`claude-tui`** *(shipped default)* — the agent's own terminal UI hosted
   in a `Vte.Terminal` tab. Mature; live status via Claude Code hooks.
   `src/ui/AgentTerminal.ts` + `src/agents/claude-tui/session.ts`.
-- **`claude-sdk`** *(opt-in via `agent.implementation: "claude-sdk"`)* —
-  drives a persistent `claude -p` stream-json process headlessly and renders
-  the conversation in **native GTK widgets** (no terminal, no Ink/Vte repaint
-  cost). Deep dive: **[agents/claude-sdk.md](agents/claude-sdk.md)**.
+- **`acp`** *(opt-in via `agent.implementation: "acp"`)* — any **Agent Client
+  Protocol** agent (Gemini CLI natively; Claude Code / Codex via adapters;
+  argv from `agent.acp.command`) rendered in **native GTK widgets** (no
+  terminal, no Ink/Vte repaint cost), over JSON-RPC/stdio. Deep dive:
+  **[agents/acp.md](agents/acp.md)**.
+
+(The former `claude-sdk` kind — headless `claude -p` stream-json — was
+replaced by `acp` + the official claude-agent-acp adapter, which covers the
+same features over the open protocol; legacy configs/sessions map to
+claude-tui, whose `--resume` still opens their claude session ids.)
+
+The native view (`AgentConversation`) is typed against the tool-agnostic
+`ConversationSession` seam (`src/agents/session.ts`); `AcpSession` implements
+it.
 
 UX rework backlog for the native conversation view (discoverability + in-the-
 moment controls: send/stop, inline retry, copy, jump-to-latest, richer
@@ -18,13 +28,13 @@ permission prompt): **[agents/conversation-ux.md](agents/conversation-ux.md)**.
 
 `src/agents/configs.ts` is the kind registry — `resolveAgentKind()` picks the
 kind from the config flag (default `claude-tui`); a single
-`AppWindow.openAgent()` launch path serves both, each agent getting its own
-workbench.
+`AppWindow.openAgent()` launch path serves every kind, each agent getting its
+own workbench.
 
 The open work is **depth, cross-kind**: agent profiles/customization (incl.
 tools other than claude), richer management UX, git-worktree integration, and
 reviewing an agent's diff — detailed below. Per-feature pages split out as
-they grow (`agents/claude-sdk.md` already has).
+they grow (`agents/acp.md` already has).
 
 ## Current state
 
@@ -103,34 +113,27 @@ What already exists and is reused, not rebuilt:
     terminal watches with a `Gio.FileMonitor`. Reporter:
     `assets/hooks/agent-status.sh`. `UserPromptSubmit`/`PreToolUse`→working,
     `Notification`→waiting/idle, `Stop`/`SessionStart`→idle.
-- **`src/agents/claude-sdk/` + `src/ui/AgentConversation.ts`** *(the
-  `claude-sdk` kind)* — drives a persistent `claude -p` stream-json process and
-  renders the turn natively. Full doc:
-  **[agents/claude-sdk.md](agents/claude-sdk.md)**. Shape:
-  - `transport.ts` (spawn + NDJSON line framing) → `SdkSession.ts` (turn queue,
-    event→domain mapping, status/changedFiles/sessionId/cost, control protocol)
-    → `AgentConversation.ts` (the native transcript host). `SdkSession` exposes
-    the **same observable surface** `AgentTerminal` does, so the
-    manager/sidebar/picker stay tool-agnostic.
-  - Features: turn loop; thinking + token meter; tool rows with nerdfont icons
-    (Bash header shows the command's `description` when given — command then moves
-    into the expanded detail — else the plain-monospace command, one-line crop);
-    permission gating via the bundled stdio
-    MCP `assets/mcp/zymPermission.mjs` (`--permission-prompt-tool`, atomic
-    file IPC) → native allow/deny card; **interrupt** (control_request, on
-    `ctrl-c`) and **close** (`ctrl-d ctrl-d`, anywhere);
-    **subagents** (captured per-`Agent`-tool transcript; a run of
-    consecutive spawns collapses into one grouped inline entry — like Read does —
-    each a clickable item, plus a **robot count button in the agent header bar**
-    whose popover lists the running ones + a pushed `Adw.NavigationView` page
-    that renders the subagent's tools through the *same* shared row builder as the
-    main transcript, kept out of the main thread); **shell monitors** (a **terminal
-    count button in the agent header bar** with the same running-list popover +
-    inspect page + cancel via
-    `stop_task`); **AskUserQuestion** as an `Adw.ViewSwitcher` card (j/k/h/l +
-    notes; answered over the only working channel, the permission deny-message);
-    **message queueing** while busy (right-aligned "Pending" bubble); unknown
-    events surfaced as raw-JSON rows.
+- **`src/agents/acp/` + `src/ui/AgentConversation.ts`** *(the `acp` kind)* —
+  spawns an Agent Client Protocol agent over JSON-RPC/stdio and renders the
+  turn natively. Full doc: **[agents/acp.md](agents/acp.md)**. Shape:
+  - `AcpSession.ts` (spawn + `@agentclientprotocol/sdk` wire plumbing +
+    protocol→domain mapping) → `AgentConversation.ts` (the native transcript
+    host), with the zym bridge injected from `bridge.ts`. `AcpSession` exposes
+    the **same observable surface** `AgentTerminal` does (the
+    `ConversationSession` seam), so the manager/sidebar/picker stay
+    tool-agnostic.
+  - Features: turn loop; tool rows with nerdfont icons (claude-quality rows —
+    Bash command headers, collapsed file groups — via the adapter's
+    `_meta.claudeCode.toolName`); native permission cards from
+    `session/request_permission` (the agent's own options + diff previews);
+    **interrupt** (`session/cancel`, on `ctrl-c`) and **close** (`ctrl-d
+    ctrl-d`, anywhere); **subagents** (captured per-Task transcript via
+    `_meta.claudeCode.parentToolUseId` — grouped inline entry, robot count
+    button, pushed `Adw.NavigationView` page through the same shared row
+    builder); **questions** (ACP form elicitation → the interactive card;
+    claude's AskUserQuestion rides it); **plans** (ACP `plan` → the sticky
+    Tasks panel); **message queueing** while busy (right-aligned "Pending"
+    bubble); unknown updates surfaced as raw-JSON rows.
   - UI is split under `src/ui/conversation/`: `format.ts` (pure helpers,
     tested), `Transcript.ts` (the scrollable entries column + consecutive-run
     grouping, shared by the main view and each subagent page), `toolRows.ts` (the
@@ -139,9 +142,9 @@ What already exists and is reused, not rebuilt:
     header-bar robot/terminal count buttons + popover, used by SubagentView /
     MonitorView), `cards.ts` (permission), `QuestionCard.ts`, `SubagentView.ts`,
     `MonitorView.ts`.
-  - **Deferred:** conversation resume + session serialize for sdk
-    (`serialize()` returns null → not persisted across editor restart);
-    token-level live streaming.
+  - **Resume/serialize:** an acp agent serializes its argv + session id and
+    resumes over `session/load` (history replays over the wire); branch /
+    restart-of-live fork via `session/fork`.
 - **`src/AgentManager.ts` — `zym.agents`** — the registry: `add`/`remove`/
   `getAgents` (launch order) + `onDidAddAgent`/`onDidRemoveAgent`.
   The agent list / sidebar is `WorkbenchList` (not a separate `AgentList`).
@@ -290,9 +293,9 @@ open-changes), mirroring FileTree; hover action buttons on rows.
 
 **Rename** — `AgentTerminal.rename()` pins a display name over the CLI's
 reported title (`renamed` reports whether pinned); `agent:rename` prompts via
-the picker (the `R` key in the list). The `claude-sdk` kind also handles a
-typed **`/rename`** client-side (headless claude lacks it) — see
-[agents/claude-sdk.md](agents/claude-sdk.md).
+the picker (the `R` key in the list). The `acp` kind also handles a typed
+**`/rename`** client-side (display-only; most ACP agents re-title sessions
+themselves via `session_info_update`).
 
 **Auto-name** — an optional one-shot LLM names a session from its task. A
 **one-shot agent** (`src/agents/oneshot.ts`: `OneShotAgent` interface +
@@ -305,7 +308,7 @@ one-shot reads the `session_id` from the result envelope and deletes that
 transcript on completion (`oneshot.ts:discardSessionTranscript`, via
 `agentSessions.ts:transcriptDir`) — otherwise these throwaway naming queries
 would pollute the resume picker below.
-Triggers (`claude-sdk`): on launch when `agent.autoName` is set, and on an empty
+Triggers (`acp`): on launch when `agent.autoName` is set, and on an empty
 `/rename` on demand. Both name from the **user's own prompt**, never zym's
 scaffolding: `launchPrompt` returns `{ agentPrompt, userPrompt }` — `agentPrompt`
 (editor instructions + user prompt) is the first turn, `userPrompt` is what the
@@ -634,6 +637,36 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
 
 ## Remaining / planned
 
+### Next (prioritized, 2026-07-05)
+
+1. [ ] **fs capability (acp)** — advertise `fs/readTextFile`/`writeTextFile` and
+   serve them from the Document registry, so agents read **unsaved buffer
+   contents** instead of stale disk state; routing writes through Documents
+   opens the door to live edit review later. (See [agents/acp.md](agents/acp.md).)
+2. [ ] **Manual QA pass on the less-happy acp paths** — wired but only
+   spike-tested: the session-persistence round trip (quit zym with a live acp
+   agent → restart → it reappears and `session/load`s its history), the
+   worktree launch flows now that the bridge rides `mcpServers` (does the agent
+   actually call `set_worktree`?), and interrupt while a permission card is up.
+3. [ ] **Agent profiles** — `agent.profiles` (name + argv): the launcher's kind
+   dropdown becomes a profile picker, so gemini / the claude adapter /
+   codex-acp sit side by side instead of one global `agent.acp.command`; the
+   ACP registry manifest can seed suggestions later. (Subsumes the older
+   Profiles items below.)
+4. [ ] **Terminal capability (acp)** — full client-side `terminal/*` backed by
+   zym terminals: revives the monitors UX (live output rows, kill buttons) and
+   upgrades long-running Bash from buffered-at-completion to streaming output.
+5. [ ] **Review story** — the "Agent Changes" diff panel (see *Feature:
+   reviewing an agent's work* above). ACP made attribution cheaper: tool-call
+   diffs carry `oldText`/`newText` per edit, so per-agent change tracking for
+   acp agents needs no hook-based baselines.
+
+Smaller, whenever convenient: session **config options** in the footer (model
+switching for agents that expose them), and the in-app **`authenticate`** flow
+(replacing the "log in via the agent's CLI" hint).
+
+### Backlog
+
 - [ ] Profiles: `AgentProfile` config schema + resolver; back-compat with
       `agent.command`; `kind`-gated status integration
 - [ ] Claude arg builder (model / tools / permission-mode / system-prompt)
@@ -651,8 +684,7 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
       `changedFiles`)
 - [ ] Worktree lifecycle (deferred) — keep/merge/discard when last agent
       leaves; per-worktree vs per-agent (baseline) review granularity
-- [x] Resume/serialize for the `claude-sdk` kind — done (see *agents/claude-sdk.md*)
-- [ ] Monitor inner-state restore (`claude-sdk`) — a resumed `Monitor` tool renders as a static row; its live panel/output isn't rebuilt
+- [x] Resume/serialize for the `acp` kind — done (see *agents/acp.md*)
 - [ ] **Retire the file-based IPC.** Every agent→editor channel today round-trips
       through atomic-rename files watched by `Gio.FileMonitor` — status hooks
       (`$ZYM_STATUS_FILE.*`), the permission server

@@ -1,11 +1,12 @@
 /*
- * AgentConversation — the native UI host for a headless `claude-sdk` agent: a
- * purpose-made conversation view (NOT a terminal, NOT a reused editor buffer). It
- * owns an `SdkSession` (which drives `claude -p` stream-json) and renders the
- * conversation incrementally as message bubbles — user turns right-aligned,
- * assistant turns left-aligned, plus dim thinking blocks, tool-use rows, and a
- * permission card. Message text is rendered through the app's markdown→Pango
- * converter (markdownMarkup).
+ * AgentConversation — the native UI host for the `acp` agent kind: a
+ * purpose-made conversation view (NOT a terminal, NOT a reused editor buffer).
+ * It owns a `ConversationSession` (an `AcpSession` driving an Agent Client
+ * Protocol agent — see docs/agents/acp.md) and renders the conversation
+ * incrementally as message bubbles — user turns right-aligned, assistant turns
+ * left-aligned, plus dim thinking blocks, tool-use rows, and a permission card.
+ * Message text is rendered through the app's markdown→Pango converter
+ * (markdownMarkup).
  *
  * The input is a buffer-only `TextEditor` (full vim editing); `enter` submits the
  * prompt and `alt-enter` inserts a newline, via commands bound on the prompt
@@ -29,19 +30,17 @@ import { formatCount, formatElapsed, parseLocalCommand } from './conversation/fo
 import { StickyListPanel } from './conversation/StickyListPanel.ts';
 import { Transcript } from './conversation/Transcript.ts';
 import { Message, type MessageKind } from './conversation/Message.ts';
-import { permissionPrompt, permissionDiffView, type PermissionChoice } from './conversation/cards.ts';
+import { permissionPrompt, permissionDiffView, choiceActions, type PermissionChoice } from './conversation/cards.ts';
 import { QuestionCard } from './conversation/QuestionCard.ts';
 import { ToolRow } from './conversation/ToolRow.ts';
-import { appendToolRow, permissionPromptParts, editDiffLines, EDIT_TOOLS } from './conversation/toolRows.ts';
+import { appendToolRow, permissionPromptParts, editDiffLines, diffBlock, EDIT_TOOLS } from './conversation/toolRows.ts';
 import { SubagentView, SUBAGENT_GROUP } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
-import { SdkSession, type PermissionRequest, type QuestionRequest, type TaskProgress } from '../agents/claude-sdk/SdkSession.ts';
-import type { Transport, TransportOptions } from '../agents/claude-sdk/transport.ts';
-import { readTranscript, readContextSeed } from '../agents/claude-sdk/transcript.ts';
-import { writeCustomTitle, readSessionName } from '../agentSessions.ts';
+import type { ConversationSession, PermissionRequest, PlanEntry, QuestionRequest, TaskProgress } from '../agents/session.ts';
+import type { AgentKind } from '../agents/configs.ts';
 import { createOneShotAgent, type OneShotAgent } from '../agents/oneshot.ts';
 import { generateAgentName } from '../agents/autoName.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
@@ -216,8 +215,8 @@ export interface AgentConversationOptions {
   cwd: string;
   /** Base argv (default `['claude']`). */
   command?: string[];
-  /** Resume a past conversation (`--resume`/`--continue`) instead of starting fresh.
-   *  On a `sessionId` resume the prior transcript is rebuilt into the view. */
+  /** Resume a past conversation (`session/load` / `session/fork`) instead of
+   *  starting fresh; the history replays into the view where the agent supports it. */
   resume?: AgentResume;
   /** An initial prompt to send once the session starts — what the agent is told
    *  (may include zym's editor instructions, e.g. worktree setup). */
@@ -227,21 +226,19 @@ export interface AgentConversationOptions {
   userPrompt?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
   onOpenFile?: (path: string) => void;
-  /** Override how the underlying session's transport is created — a test/POC seam
-   *  to drive the conversation off scripted stream events instead of spawning
-   *  `claude` (forwarded verbatim to SdkSession; see src/poc/conversation-transcript.ts). */
-  createTransport?: (spec: TransportOptions) => Transport;
   /** Override the one-shot agent used for auto-naming (test seam; default
    *  `createOneShotAgent()` → `claude -p --model sonnet`). */
   oneShot?: OneShotAgent;
+  /** Build the session driving this conversation (an `AcpSession`; a fake in tests). */
+  createSession: (opts: { cwd: string; command?: string[]; resume?: AgentResume }) => ConversationSession;
 }
 
 // The kind's default title, shown when nothing has named the session.
-const DEFAULT_TITLE = 'claude (sdk)';
+const DEFAULT_TITLE = 'acp agent';
 
 export class AgentConversation implements Agent {
   readonly root: InstanceType<typeof Adw.NavigationView>; // root page = the conversation; subagent transcripts push pages
-  private readonly session: SdkSession;
+  private readonly session: ConversationSession;
   private readonly cwd: string;
   // The scrollable column of entries (entries box + spacing + stick-to-bottom).
   private readonly transcript = new Transcript({ maxWidth: 820 });
@@ -263,7 +260,7 @@ export class AgentConversation implements Agent {
   private readonly promptContainer: InstanceType<typeof Gtk.Box>;
   // The input area is a Gtk.Stack: the prompt editor, or an "interaction" widget (a
   // permission prompt / question card) that REPLACES it while the agent waits for the
-  // user, restored to the prompt once answered. See docs/agents/claude-sdk.md.
+  // user, restored to the prompt once answered. See docs/agents/acp.md.
   private readonly promptStack = new Gtk.Stack();
   private readonly interactionSlot = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   // The rounded input card; gets a status-coloured border (warning / info) while a
@@ -274,20 +271,24 @@ export class AgentConversation implements Agent {
   private readonly modelContext = new ModelContext();
   private readonly modeDropdown: InstanceType<typeof Gtk.DropDown>;
   private applyingMode = false; // guards the dropdown's notify::selected feedback loop
+  // The dropdown's entries: the session's advertised modes (getModeState — ACP)
+  // when present, else the fixed claude cycle. `currentModeId` is the selected
+  // id (an advertised mode id, or the AgentMode); `modeCssApplied` tracks the
+  // per-mode colour class so an unknown id can't leave a stale one behind.
+  private modeIds: string[] = [...PERMISSION_CYCLE];
+  private currentModeId: string = 'default';
+  private modeCssApplied: string | null = null;
   private readonly statusIcon: { widget: InstanceType<typeof Gtk.Widget>; dispose: () => void };
   private readonly subs = new CompositeDisposable();
   // Holds the active permission prompt's button handlers (a question card owns its own
   // teardown); cleared when the prompt is restored so they don't pile up per request.
   private readonly interactionSubs = this.subs.nest();
   private readonly launchPrompt?: string;
-  // Base argv this agent was launched with (default ['claude']); kept for serialize.
+  // Base argv this agent was launched with; kept for serialize/restart.
   private readonly baseCommand?: string[];
   // The session id this agent resumes, if any — kept so serialize() preserves it
   // even before the (deferred) live process has reported its own init session id.
   private readonly resumeSessionId?: string;
-  // A resumed agent defers spawning `claude -p --resume` until the user's first
-  // turn (its transcript is rebuilt from disk meanwhile); flipped false on connect.
-  private deferredStart = false;
   // The permanent "session resumed" divider row (boundary between restored history
   // and the live continuation); its text drops the reconnect nudge once connected.
   private resumeNoteRow: InstanceType<typeof Gtk.Widget> | null = null;
@@ -371,7 +372,7 @@ export class AgentConversation implements Agent {
     this.baseCommand = options.command;
     this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
-    this.session = new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume, createTransport: options.createTransport });
+    this.session = options.createSession({ cwd: options.cwd, command: options.command, resume: options.resume });
     this.oneShot = options.oneShot ?? createOneShotAgent();
 
     // The footer's left slot: a live "Thinking… (N tokens)" indicator (spinner +
@@ -444,8 +445,8 @@ export class AgentConversation implements Agent {
     this.modeDropdown.addCssClass('conversation-mode');
     this.subs.connect(this.modeDropdown, 'notify::selected', () => {
       if (this.applyingMode) return;
-      const mode = PERMISSION_CYCLE[this.modeDropdown.getSelected()];
-      if (mode) this.session.setPermissionMode(mode);
+      const id = this.modeIds[this.modeDropdown.getSelected()];
+      if (id) this.applyModeSelection(id);
     });
     // Footer layout: a LEFT slot (the status icon, or the thinking indicator that
     // replaces it while working) · a spacer · then the permission-mode dropdown and
@@ -514,105 +515,69 @@ export class AgentConversation implements Agent {
     this.installCommands(); // after this.root exists (commands register on it)
     zym.agents.add(this); // join the registry → sidebar lists it
     this.wireSession();
-    // Resuming a specific session: rebuild its visible transcript now (before the
-    // workbench subscribes to onDidChangeFiles, so historical edits seed its
-    // changed-files set rather than flood-opening). `--resume` restores claude's
-    // context but doesn't replay history as events, so we draw it from disk.
-    if (options.resume?.sessionId) this.restoreTranscript(options.cwd, options.resume.sessionId);
-    // A resume with no launch prompt reconnects lazily: the transcript is rebuilt
-    // above, but `claude -p --resume` isn't spawned until the user's first turn (so
-    // restoring N agents doesn't fire N claude processes up front). A resume that
-    // carries a prompt — e.g. the worktree re-announce — still starts eagerly.
-    this.deferredStart = !!options.resume && !options.prompt;
-    if (options.resume?.sessionId) {
-      // A permanent divider marking the boundary between the restored history and
-      // the live continuation: "session disconnected …" until the first turn, then
-      // "session resumed" (a dim hollow dot reflects the not-yet-live state too).
-      const divider = this.addRow('conversation-resume');
-      divider.setXalign(0.5);
-      divider.setHalign(Gtk.Align.CENTER);
-      this.resumeNoteRow = divider;
-      this.refreshResumeNote();
-      if (this.deferredStart) this.setStatus('disconnected');
-      // The Transcript follows the bottom by default, so the restored transcript lands
-      // at the latest message as its height settles over the first few layout passes.
-    }
+    // A resume replays its history over the wire at start() (session/load → the
+    // onReplay wiring), which also places the resume divider after the restored
+    // rows. The Transcript follows the bottom by default, so the restored
+    // transcript lands at the latest message as its height settles.
   }
 
-  // Set the resume divider's text: while disconnected it nudges the user to send a
-  // message; once connected it collapses to a plain "session resumed" marker.
+  // Set the resume divider's text (the boundary between restored history and the
+  // live continuation, placed by the onReplay wiring).
   private refreshResumeNote(): void {
-    if (!this.resumeNoteRow) return;
-    const text = this.deferredStart
-      ? '── session disconnected · send a message to resume ──'
-      : '── session resumed ──';
-    (this.resumeNoteRow as InstanceType<typeof Gtk.Label>).setText(text);
+    (this.resumeNoteRow as InstanceType<typeof Gtk.Label> | null)?.setText('── session resumed ──');
   }
 
-  // Rebuild the conversation rows from a past session's on-disk transcript, by
-  // replaying its domain events through the same row handlers a live turn uses.
-  private restoreTranscript(cwd: string, sessionId: string): void {
-    // Seed the title from the transcript (`/rename` custom title, else Claude's auto
-    // title). Headless has no live OSC channel, so without this a resumed agent
-    // would lose its name. A pinned `agent:rename` name, if any, still wins.
-    const name = readSessionName(cwd, sessionId);
-    if (name) { this._sessionName = name; this.emitTitle(); }
-    const entries = readTranscript(cwd, sessionId);
-    if (entries.length === 0) return;
-    this.replaying = true;
-    try {
-      this.session.replay(entries);
-    } finally {
-      this.replaying = false;
-      this.endTurn(); // close the last open bubble so the next live turn starts clean
+  // Route a chosen mode id: a session with advertised modes (ACP) takes ids
+  // directly; the claude cycle goes through setPermissionMode.
+  private applyModeSelection(id: string): void {
+    if (this.session.setModeById && this.session.getModeState?.()) this.session.setModeById(id);
+    else this.session.setPermissionMode(id as AgentMode);
+  }
+
+  // Rebuild the dropdown's entries when the session's advertised mode set
+  // changes (ACP agents report theirs at session setup / on the fly).
+  private refreshModeOptions(): void {
+    const state = this.session.getModeState?.() ?? null;
+    const ids = state ? state.modes.map((m) => m.id) : [...PERMISSION_CYCLE];
+    const names = state ? state.modes.map((m) => m.name) : [...PERMISSION_CYCLE];
+    this.currentModeId = state ? state.currentId : this._permissionMode;
+    if (ids.join('\n') !== this.modeIds.join('\n')) {
+      this.modeIds = ids;
+      this.applyingMode = true; // setModel resets the selection — don't loop back
+      this.modeDropdown.setModel(Gtk.StringList.new(names));
+      this.applyingMode = false;
     }
-    // Seed the footer's model + context gauge from the transcript's latest usage, so
-    // a resumed agent shows its real context occupancy before the first live turn
-    // (cost + exact window arrive with the first live `result`).
-    const seed = readContextSeed(cwd, sessionId);
-    if (seed.model) this.modelContext.setModel(seed.model);
-    if (seed.usage) this.modelContext.setUsage(seed.usage);
   }
 
   // Sync the permission-mode dropdown (selection + color). The status itself is the
   // icon to the left (self-updating); model/context live in ModelContext.
   private updateFooter(): void {
-    const index = PERMISSION_CYCLE.indexOf(this._permissionMode);
+    const index = this.modeIds.indexOf(this.currentModeId);
     if (index >= 0 && this.modeDropdown.getSelected() !== index) {
       this.applyingMode = true; // setSelected fires notify::selected — don't loop back
       this.modeDropdown.setSelected(index);
       this.applyingMode = false;
     }
-    for (const m of PERMISSION_CYCLE) this.modeDropdown.removeCssClass(`is-${m}`);
-    this.modeDropdown.addCssClass(`is-${this._permissionMode}`);
+    if (this.modeCssApplied) this.modeDropdown.removeCssClass(`is-${this.modeCssApplied}`);
+    this.modeCssApplied = this.currentModeId;
+    this.modeDropdown.addCssClass(`is-${this.currentModeId}`);
   }
 
-  /** Spawn claude and send the launch prompt (if any). A lazily-resumed agent
-   *  skips the spawn here — `ensureConnected` runs it on the first turn instead. */
+  /** Spawn the agent and send the launch prompt (if any). */
   start(): void {
-    if (!this.deferredStart) {
-      this.session.start();
-      if (this.launchPrompt) {
-        this.session.prompt(this.launchPrompt);
-        // Auto-name a fresh agent from the user's prompt — namingContext() strips zym's
-        // editor instructions (config-gated, non-blocking, runs alongside the first
-        // turn). No-op if there's no user prompt or it's somehow already named.
-        if (zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
-          void this.autoRename(this.namingContext());
-        }
+    this.session.start();
+    if (this.launchPrompt) {
+      this.session.prompt(this.launchPrompt);
+      // Auto-name a fresh agent from the user's prompt — namingContext() strips zym's
+      // editor instructions (config-gated, non-blocking, runs alongside the first
+      // turn; most ACP agents also title their sessions via session_info_update,
+      // which lands the same way). No-op if there's no user prompt or it's
+      // somehow already named.
+      if (zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
+        void this.autoRename(this.namingContext());
       }
     }
     this.input.focusInsert(); // ready to type immediately, not vim normal mode
-  }
-
-  // Spawn the (deferred) claude process on demand — the first time a resumed agent
-  // is actually given a turn. No-op once connected or for an eagerly-started agent.
-  private ensureConnected(): void {
-    if (!this.deferredStart) return;
-    this.deferredStart = false;
-    this.refreshResumeNote(); // keep the divider, drop the "send a message" nudge
-    this.setStatus('idle'); // leave disconnected; the turn that follows flips it to working
-    this.session.start();
   }
 
   // --- Agent surface ----------------------------------------------------------
@@ -621,6 +586,8 @@ export class AgentConversation implements Agent {
   // then a pinned name (`agent:rename`), then Claude's session name (`/rename` /
   // resumed transcript title), then the default. Mirrors AgentTerminal.title.
   get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? DEFAULT_TITLE; }
+  /** The kind this conversation hosts — read by the controller's restart/branch paths. */
+  get agentKind(): AgentKind { return 'acp'; }
   get status(): AgentStatus { return this._status; }
   get permissionMode(): AgentMode { return this._permissionMode; }
   get changedFiles(): string[] { return this._changedFiles.slice(); }
@@ -680,20 +647,20 @@ export class AgentConversation implements Agent {
 
   clearUnannouncedWorktree(): void { /* no worktree validator for sdk */ }
 
-  /** Session state: base argv + prompt + session id, tagged `claude-sdk` so a restore
+  /** Session state: base argv + prompt + session id, tagged `acp` so a restore
    *  relaunches this native host (not the terminal agent) and resumes the conversation.
    *  The editor root (worktree) is captured by the enclosing `AgentState.root` (= the
    *  workbench cwd), not here — this `cwd` is just the process spawn dir. */
   serialize(): TabState | null {
+    // The exact agent argv is part of the identity: a saved gemini session must
+    // not restore into whatever `agent.acp.command` says later. The resume id
+    // stands in for a session that hasn't reported its own yet.
     return {
       kind: 'agent',
-      agentKind: 'claude-sdk',
-      command: this.baseCommand ?? ['claude'],
+      agentKind: 'acp',
+      command: this.baseCommand ?? [],
       cwd: this.cwd,
       prompt: this.launchPrompt,
-      // Fall back to the resume id: a lazily-resumed agent that the user hasn't
-      // sent a turn to yet has no live (init-reported) session id, but must still
-      // serialize the id it resumes so a later restart can resume it again.
       sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
     };
   }
@@ -759,9 +726,9 @@ export class AgentConversation implements Agent {
 
 
   private cyclePermissionMode(): void {
-    const index = PERMISSION_CYCLE.indexOf(this._permissionMode);
-    const next = PERMISSION_CYCLE[(index + 1) % PERMISSION_CYCLE.length];
-    this.session.setPermissionMode(next);
+    const index = this.modeIds.indexOf(this.currentModeId);
+    const next = this.modeIds[(index + 1) % this.modeIds.length];
+    if (next) this.applyModeSelection(next);
   }
 
   private submit(): void {
@@ -769,7 +736,6 @@ export class AgentConversation implements Agent {
     if (!text) return;
     this.input.setText('');
     if (this.handleLocalCommand(text)) return; // client-side slash command (e.g. /rename), not a turn
-    this.ensureConnected(); // a lazily-resumed agent spawns claude on its first turn
     if (this._status === 'idle') { this.session.prompt(text); return; }
     // The agent is busy — queue (accumulate) the message; it's sent on next idle.
     this.setPendingText(this.pendingText ? `${this.pendingText}\n\n${text}` : text);
@@ -861,14 +827,12 @@ export class AgentConversation implements Agent {
     );
   }
 
-  /** Set Claude's session name (`/rename`): update the live title and persist it to
-   *  the transcript, exactly as the TUI does, so it survives resume and labels the
-   *  resume picker. A pinned `agent:rename` name still wins (see `title`). */
+  /** Set the session's display name (`/rename`). Display-only: the agent owns its
+   *  session store (many re-title via session_info_update anyway). A pinned
+   *  `agent:rename` name still wins (see `title`). */
   private setSessionName(name: string): void {
     this._sessionName = name;
     this.emitTitle();
-    const id = this.sessionId ?? this.resumeSessionId;
-    if (id) writeCustomTitle(this.cwd, id, name);
   }
 
   // --- session → state + rows -------------------------------------------------
@@ -882,6 +846,7 @@ export class AgentConversation implements Agent {
       this.session.onCwd(({ cwd }) => this.announceWorktree(cwd)),
       this.session.onMode(() => {
         this._permissionMode = this.session.permissionMode;
+        this.refreshModeOptions(); // the advertised set / current id may have changed
         this.updateFooter();
         for (const handler of this.permissionModeHandlers) handler();
       }),
@@ -958,7 +923,12 @@ export class AgentConversation implements Agent {
         if (this.handleTaskResult(id, text)) return; // TaskCreate result → record the new task id
         this.updateToolResult(id, isError, text);
       }),
-      this.session.onInit(({ model, slashCommands }) => { this.modelContext.setModel(model); this._slashCommands = slashCommands; }),
+      this.session.onInit(({ model, slashCommands }) => {
+        this.modelContext.setModel(model);
+        this._slashCommands = slashCommands;
+        this.refreshModeOptions(); // modes arrive with session setup, before/with init
+        this.updateFooter();
+      }),
       this.session.onContext((usage) => this.modelContext.setUsage(usage)),
       this.session.onResult(({ costUsd, contextWindow }) => {
         if (costUsd != null) this.modelContext.setCost(costUsd);
@@ -968,7 +938,6 @@ export class AgentConversation implements Agent {
       this.session.onInterrupted(() => this.addInterruptedRow()),
       this.session.onUnhandled(({ event }) => this.addUnknownRow(event)),
       this.session.onPermission((req) => this.addPermissionCard(req)),
-      this.session.onQuestion((req) => this.addQuestionCard(req)),
       this.session.onExit(({ code }) => {
         this.endTurn();
         const note = code != null && code !== 0 ? `── process exited (code ${code}) ──` : '── process exited ──';
@@ -976,6 +945,31 @@ export class AgentConversation implements Agent {
         this.promptContainer.setSensitive(false);
       }),
     );
+    // Per-protocol capabilities — subscribed only when the session offers them.
+    const optional = [
+      this.session.onQuestion?.((req) => this.addQuestionCard(req)),
+      this.session.onPlan?.(({ entries }) => this.applyPlan(entries)),
+      this.session.onFileEdited?.(({ path }) => this.recordChangedPath(path)),
+      // A session-reported title (ACP session_info_update) behaves like a `/rename`
+      // for display, but is never persisted; pinned/transient names still win.
+      this.session.onSessionName?.(({ name }) => { this._sessionName = name; this.emitTitle(); }),
+      // An async history replay (ACP session/load): rows render statically and
+      // edits seed silently while active; the resume divider lands *after* the
+      // restored history, right where the live continuation begins.
+      this.session.onReplay?.(({ active }) => {
+        this.replaying = active;
+        if (active) return;
+        this.endTurn(); // close the last replayed bubble so the live turn starts clean
+        if (!this.resumeNoteRow && this.resumeSessionId) {
+          const divider = this.addRow('conversation-resume');
+          divider.setXalign(0.5);
+          divider.setHalign(Gtk.Align.CENTER);
+          this.resumeNoteRow = divider;
+          this.refreshResumeNote();
+        }
+      }),
+    ];
+    for (const sub of optional) if (sub) this.subs.add(sub);
   }
 
   private setStatus(status: AgentStatus): void {
@@ -1047,12 +1041,27 @@ export class AgentConversation implements Agent {
   private recordChangedFile(toolName: string, input: unknown): void {
     if (!EDIT_TOOLS.has(toolName)) return;
     const path = (input as { file_path?: unknown })?.file_path;
-    if (typeof path !== 'string' || this._changedFiles.includes(path)) return;
+    if (typeof path === 'string') this.recordChangedPath(path);
+  }
+
+  // Record an edited file (from a claude edit tool's input, or a session-reported
+  // path — ACP tool-call locations).
+  private recordChangedPath(path: string): void {
+    if (this._changedFiles.includes(path)) return;
     this._changedFiles.push(path);
     // Replaying a past transcript seeds the changed-files list silently — its edits
     // already happened, so don't notify (which would re-open / re-diff them all).
     if (this.replaying) return;
     for (const handler of this.fileHandlers) handler();
+  }
+
+  // The agent's reported execution plan (ACP `plan`, a full replace per update)
+  // renders into the same sticky panel the claude Task tools drive. Plan entries
+  // have no ids — the whole task map is rebuilt from each report.
+  private applyPlan(entries: PlanEntry[]): void {
+    this.tasks.clear();
+    entries.forEach((entry, index) => this.tasks.set(`plan-${index}`, { subject: entry.content, status: entry.status }));
+    this.renderTasksPanel();
   }
 
   private emitTitle(): void { for (const h of this.titleHandlers) h(); }
@@ -1200,7 +1209,27 @@ export class AgentConversation implements Agent {
   // command + actions). The tool's own row already sits in the transcript (from the
   // tool-use event) and fills in with the result once the decision lands, so the
   // prompt carries only the approval — no correlation to a row needed.
+  //
+  // Two shapes: a request that carries its own `options` (ACP — the agent names the
+  // buttons; the decision returns the chosen option id) and the claude shape (no
+  // options — the widget offers its accept/deny/mode-switch set).
   private addPermissionCard(req: PermissionRequest): void {
+    if (req.options && req.options.length > 0) {
+      // ACP: title is the tool-call's human-readable title; an edit's proposed
+      // change previews as a diff; a command-shaped input shows its command line.
+      const input = (req.input && typeof req.input === 'object' ? req.input : {}) as Record<string, unknown>;
+      const body = req.diff ? permissionDiffView(diffBlock(req.diff.oldText ?? '', req.diff.newText)) : undefined;
+      const description = !body && typeof input.command === 'string' ? input.command : null;
+      const actions = req.options.map((o) => ({ label: o.label, value: o.id }));
+      const prompt = permissionPrompt(this.interactionSubs, { title: req.toolName, description, body }, actions, (optionId) => {
+        const option = req.options!.find((o) => o.id === optionId);
+        this.session.respondPermission(req.id, { allow: option ? option.kind.startsWith('allow') : false, optionId });
+        this.interactionSubs.clear();
+        this.clearInteraction();
+      });
+      this.showInteraction(prompt, 'permission');
+      return;
+    }
     const parts = permissionPromptParts(req.toolName, req.input, this.cwd);
     // Edit tools show the change as a diff body (the title is the file path); "Allow
     // edits" only makes sense for them (acceptEdits auto-accepts file edits, not
@@ -1210,7 +1239,7 @@ export class AgentConversation implements Agent {
     const choices: PermissionChoice[] = isEdit
       ? ['accept', 'deny', 'acceptEdits', 'auto']
       : ['accept', 'deny', 'auto'];
-    const prompt = permissionPrompt(this.interactionSubs, { ...parts, body }, choices, (choice) => this.resolvePermission(req, choice));
+    const prompt = permissionPrompt(this.interactionSubs, { ...parts, body }, choiceActions(choices), (choice) => this.resolvePermission(req, choice as PermissionChoice));
     this.showInteraction(prompt, 'permission');
   }
 
@@ -1231,7 +1260,7 @@ export class AgentConversation implements Agent {
   // owned by `subs`, not the per-interaction bag.
   private addQuestionCard(req: QuestionRequest): void {
     const card = new QuestionCard(req, (answers) => {
-      this.session.answerQuestion(req.id, answers);
+      this.session.answerQuestion?.(req.id, answers);
       this.interactionSlot.remove(card.root); // hand the card to the transcript before it
       this.transcript.appendEntry(card.root); // rewrites itself into the answered summary
       this.clearInteraction(); // back to the prompt

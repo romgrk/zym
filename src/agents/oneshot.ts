@@ -1,6 +1,6 @@
 /*
  * One-shot agent — run a single `claude -p` prompt to completion and return the
- * assistant's final text. Distinct from the persistent streaming SdkSession
+ * assistant's final text. Distinct from a persistent streaming agent session
  * (transport.ts): no turn loop, no rendering, no session continuity — just
  * prompt-in / text-out. Used for short auxiliary generations, e.g. auto-naming a
  * session (autoName.ts).

@@ -2,7 +2,8 @@
  * MonitorView — the UI for shell monitors (the `Monitor` tool). Like subagents:
  * an inline button in the main thread, a row in the agent header bar's terminal
  * count-button popover while running (with a Cancel button), and a pushed page to
- * inspect its output. Cancel uses the control protocol's stop_task (SdkSession.stopTask).
+ * inspect its output. Cancel goes through the session's stopTask. (Dormant until
+ * the acp kind grows client-side terminals — see docs/agents/acp.md.)
  */
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
@@ -16,7 +17,7 @@ import { NERDFONT } from '../nerdfont.ts';
 import { truncateLines } from './format.ts';
 import { HeaderCountButton } from './HeaderCountButton.ts';
 import { ToolRow, toolHeaderLabel } from './ToolRow.ts';
-import type { SdkSession } from '../../agents/claude-sdk/SdkSession.ts';
+import type { ConversationSession } from '../../agents/session.ts';
 import type { PageNav } from './SubagentView.ts';
 
 type Widget = InstanceType<typeof Gtk.Widget>;
@@ -33,7 +34,7 @@ export class MonitorView {
    *  popover list of running monitors); pack `headerButton.button` into the header. */
   readonly headerButton = new HeaderCountButton(NERDFONT.EDITOR.TERMINAL, 'Running monitors');
   private readonly ids = new Set<string>();
-  private readonly session: Pick<SdkSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>;
+  private readonly session: Pick<ConversationSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>;
   private readonly nav: PageNav;
   // View-lifetime bag (spawn ToolRows + open pages); disposed by AgentConversation.dispose().
   private readonly subs = new CompositeDisposable();
@@ -41,7 +42,7 @@ export class MonitorView {
   // so they don't accumulate as monitors start/finish. node-gtk roots each closure (rule 2).
   private readonly renderSubs = new CompositeDisposable();
 
-  constructor(session: Pick<SdkSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>, nav: PageNav) {
+  constructor(session: Pick<ConversationSession, 'getMonitor' | 'onMonitorUpdate' | 'stopTask'>, nav: PageNav) {
     this.session = session;
     this.nav = nav;
   }

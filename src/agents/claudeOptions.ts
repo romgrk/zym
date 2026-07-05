@@ -1,9 +1,7 @@
 /*
- * Shared launch options for the Claude-backed agent kinds. Both `claude-tui` and
- * `claude-sdk` spawn the same `claude` CLI, so they pick from the same models /
- * permission modes and build their base argv the same way. Each kind's own
- * `config.ts` composes these into its `AgentLaunchOptions` (and could swap in its
- * own lists later, if the kinds ever diverge).
+ * Launch options for the claude-tui kind (models / permission modes / effort →
+ * the `claude` argv), composed into its `AgentLaunchOptions` by
+ * claude-tui/config.ts.
  */
 import type { LaunchOption } from './configs.ts';
 

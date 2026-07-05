@@ -256,6 +256,13 @@ export class Selection {
     return [range.start.row, endRow];
   }
 
+  /** Toggle line comments on every spanned row (vim `g c`). Blank rows are left
+   *  alone; the delimiters come from the editor's comment-spec source. */
+  toggleLineComments(): void {
+    const [startRow, endRow] = this.linewiseRowRange();
+    this.editor.toggleLineCommentsForBufferRows(startRow, endRow);
+  }
+
   /** Indent every spanned row by one level (`>`). Blank rows are left alone. */
   indentSelectedRows(): void {
     const [startRow, endRow] = this.linewiseRowRange();
