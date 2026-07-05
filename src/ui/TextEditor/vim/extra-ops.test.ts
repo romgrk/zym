@@ -397,3 +397,46 @@ test('H / M / L land on the top / middle / bottom viewport rows in order', () =>
   const bottom = row();
   assert.ok(top <= mid && mid <= bottom, `expected top<=mid<=bottom, got ${top},${mid},${bottom}`);
 });
+
+// --- Toggle line comments (g c / g c c) -------------------------------------
+
+test('g c c toggles the current line comment and back', () => {
+  const { editor, run, at, line } = setup('  let a = 1\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 4);
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(line(), '  // let a = 1');
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(line(), '  let a = 1');
+});
+
+test('g c {motion} toggles the motion rows linewise', () => {
+  const { editor, run, at, line } = setup('a\nb\nc\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 0);
+  run('ToggleLineComments');
+  run('MoveDown'); // g c j → the current and next row
+  assert.equal(line(0), '// a');
+  assert.equal(line(1), '// b');
+  assert.equal(line(2), 'c');
+});
+
+test('visual g c toggles the selected rows and returns to normal mode', () => {
+  const { editor, vimState, run, at, line } = setup('a\nb\nc\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 0);
+  run('ActivateLinewiseVisualMode');
+  run('MoveDown'); // select rows 0-1
+  run('ToggleLineComments');
+  assert.equal(line(0), '// a');
+  assert.equal(line(1), '// b');
+  assert.equal(line(2), 'c');
+  assert.ok(vimState.isMode('normal'));
+});
+
+test('g c without a comment spec leaves the buffer untouched', () => {
+  const { run, at, line } = setup('a\n');
+  at(0, 0);
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(line(), 'a');
+});

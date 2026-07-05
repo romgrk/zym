@@ -25,6 +25,8 @@ import { MarkerLayer } from './MarkerLayer.ts';
 import { Emitter, Disposable, CompositeDisposable } from '../../util/eventKit.ts';
 import { theme } from '../../theme/theme.ts';
 import { zym } from '../../zym.ts';
+import { escapeRegExp } from './vim/underscorePlus.ts';
+import type { CommentSpec } from '../../lang/types.ts';
 import Gtk from 'gi:Gtk-4.0';
 import type GtkSource from 'gi:GtkSource-5';
 type SourceBuffer = InstanceType<typeof GtkSource.Buffer>;
@@ -1073,6 +1075,91 @@ export class EditorModel {
     const lineStart = new Point(cursor.row, 0);
     this.transact(() => this.setTextInBufferRange(new Range(lineStart, lineStart), lineText + '\n'));
     this.setCursorBufferPosition(new Point(cursor.row, cursor.column));
+  }
+
+  // --- Line comments ---------------------------------------------------------
+
+  /** Comment-delimiter lookup (the file's language `comments` spec), injected by
+   *  TextEditor. Null (or a null return) leaves toggling a no-op. */
+  private commentSpecSource: ((row: number) => CommentSpec | null) | null = null;
+  setCommentSpecSource(fn: ((row: number) => CommentSpec | null) | null): void {
+    this.commentSpecSource = fn;
+  }
+
+  /**
+   * Toggle line comments on rows `startRow..endRow` (inclusive): uncomment when
+   * every non-blank row is already commented, else comment them all uniformly.
+   * The line leader goes at the rows' minimum indent column; a language without
+   * a line leader (CSS, HTML) wraps each row in its block pair instead. Blank
+   * rows are left alone; without a comment spec (no file / plain JSON) this is
+   * a no-op.
+   */
+  toggleLineCommentsForBufferRows(startRow: number, endRow: number): void {
+    const spec = this.commentSpecSource?.(startRow);
+    if (!spec) return;
+    const rows: number[] = [];
+    for (let row = startRow; row <= Math.min(endRow, this.getLastBufferRow()); row++) {
+      if (/\S/.test(this.lineTextForBufferRow(row))) rows.push(row);
+    }
+    if (rows.length === 0) return;
+    if (spec.line) this.toggleLineCommentLeader(rows, spec.line);
+    else if (spec.block) this.toggleBlockCommentWrap(rows, spec.block);
+  }
+
+  /** The minimum leading-whitespace length of `rows` — the column comment
+   *  delimiters are inserted at, so a block of lines gains an aligned rail. */
+  private minIndentColumn(rows: number[]): number {
+    return Math.min(...rows.map((row) => this.leadingWhitespaceForBufferRow(row).length));
+  }
+
+  private toggleLineCommentLeader(rows: number[], leader: string): void {
+    // Leading whitespace + delimiters are ASCII, so the match lengths below are
+    // valid codepoint columns.
+    const commented = new RegExp(`^([\\t ]*)${escapeRegExp(leader)} ?`);
+    const lineOf = new Map(rows.map((row) => [row, this.lineTextForBufferRow(row)]));
+    const allCommented = rows.every((row) => commented.test(lineOf.get(row)!));
+    this.transact(() => {
+      if (allCommented) {
+        for (const row of rows) {
+          const match = lineOf.get(row)!.match(commented)!;
+          this.setTextInBufferRange(new Range(new Point(row, match[1].length), new Point(row, match[0].length)), '');
+        }
+      } else {
+        const indent = this.minIndentColumn(rows);
+        for (const row of rows) {
+          const at = new Point(row, indent);
+          this.setTextInBufferRange(new Range(at, at), leader + ' ');
+        }
+      }
+    });
+  }
+
+  private toggleBlockCommentWrap(rows: number[], block: { start: string; end: string }): void {
+    const open = new RegExp(`^([\\t ]*)${escapeRegExp(block.start)} ?`);
+    const close = new RegExp(` ?${escapeRegExp(block.end)}[\\t ]*$`);
+    const lineOf = new Map(rows.map((row) => [row, this.lineTextForBufferRow(row)]));
+    const allWrapped = rows.every((row) => open.test(lineOf.get(row)!) && close.test(lineOf.get(row)!));
+    this.transact(() => {
+      if (allWrapped) {
+        for (const row of rows) {
+          const line = lineOf.get(row)!;
+          const openMatch = line.match(open)!;
+          const closeLength = line.match(close)![0].length;
+          const lineEnd = this.lineLength(row);
+          // Trailing pair first, so the leading edit doesn't shift its columns.
+          this.setTextInBufferRange(new Range(new Point(row, lineEnd - closeLength), new Point(row, lineEnd)), '');
+          this.setTextInBufferRange(new Range(new Point(row, openMatch[1].length), new Point(row, openMatch[0].length)), '');
+        }
+      } else {
+        const indent = this.minIndentColumn(rows);
+        for (const row of rows) {
+          const lineEnd = new Point(row, this.lineLength(row));
+          this.setTextInBufferRange(new Range(lineEnd, lineEnd), ' ' + block.end);
+          const at = new Point(row, indent);
+          this.setTextInBufferRange(new Range(at, at), block.start + ' ');
+        }
+      }
+    });
   }
 
   /**

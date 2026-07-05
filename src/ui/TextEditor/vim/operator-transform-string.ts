@@ -303,6 +303,27 @@ class AutoIndent extends TransformString {
   }
 }
 
+// ToggleLineComments (vim-commentary / nvim `g c`)
+// -------------------------
+// `g c {motion}` toggles the motion's rows, `g c g c` the current line (via the
+// same-operator repeat), visual `g c` the selection. Delimiters come from the
+// file's language through EditorModel's comment-spec source.
+class ToggleLineComments extends TransformString {
+  flashTarget = false
+  stayByMarker = true
+  wise = 'linewise' as const
+
+  mutateSelection (selection: Selection): void {
+    selection.toggleLineComments()
+  }
+}
+
+// zym addition (not upstream): `g c c`, the vim-commentary current-line stroke —
+// the operator with a preset current-line target (the Join/YankLine pattern).
+class ToggleLineCommentsCurrentLine extends ToggleLineComments {
+  target = 'MoveToRelativeLine'
+}
+
 // Join
 // -------------------------
 class JoinTarget extends TransformString {
@@ -368,6 +389,8 @@ const __operations = {
   Indent,
   Outdent,
   AutoIndent,
+  ToggleLineComments,
+  ToggleLineCommentsCurrentLine,
   JoinTarget,
   Join,
   SurroundBase,

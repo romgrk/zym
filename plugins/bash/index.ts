@@ -66,6 +66,7 @@ export const bashPlugin: Plugin = {
       fileTypes: ['sh', 'bash', 'ksh', 'zsh', 'ash', 'dash'],
       filenames: BASH_FILENAMES,
       lspId: 'shellscript',
+      comments: { line: '#' },
     });
     languages.registerGrammar('bash', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-bash.wasm',

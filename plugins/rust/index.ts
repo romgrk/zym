@@ -43,7 +43,11 @@ export const rustPlugin: Plugin = {
     const { languages } = ctx;
 
     // `rust` is already a valid LSP languageId, so no lspId override.
-    languages.registerLanguage({ id: 'rust', fileTypes: ['rs'] });
+    languages.registerLanguage({
+      id: 'rust',
+      fileTypes: ['rs'],
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
+    });
     languages.registerGrammar('rust', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-rust.wasm',
       highlightsPath: ctx.resolve('queries/rust/highlights.scm'),

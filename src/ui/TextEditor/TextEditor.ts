@@ -30,6 +30,7 @@ import { MarkupCard } from './MarkupCard.ts';
 import { fonts } from '../../fonts.ts';
 import { highlightToMarkup } from '../../syntax/highlightToMarkup.ts';
 import { langIdForPath } from '../../syntax/grammar.ts';
+import { languages } from '../../lang/index.ts';
 import { TextDecorations } from './TextDecorations.ts';
 import { BlockDecorations } from './BlockDecorations.ts';
 import { BlockDecorationSet } from './BlockDecorationSet.ts';
@@ -204,6 +205,8 @@ function registerSearchKeymapsOnce(): void {
 // Yank operator; the KeymapManager's longest-match deferral resolves it (it waits
 // to see if `d`/`u` follows, falling back to bare Yank otherwise — exactly like
 // the `y s` surround binding).
+// `ctrl-/` toggles line comments (the VS Code stroke) in every mode, including
+// insert; the vim strokes (`g c` operator, `g c c`) live in the vim keymap.
 let editingKeymapsRegistered = false;
 function registerEditingKeymapsOnce(): void {
   if (editingKeymapsRegistered) return;
@@ -212,6 +215,9 @@ function registerEditingKeymapsOnce(): void {
     '.TextEditor.normal-mode': {
       'y d': 'editor:duplicate-line-below',
       'y u': 'editor:duplicate-line-above',
+    },
+    '.TextEditor': {
+      'ctrl-/': 'editor:toggle-line-comments',
     },
   });
 }
@@ -619,6 +625,12 @@ export class TextEditor implements DocumentHost {
     this.editorModel.setMultiSource(this.multiSource);
     // Real (tree-sitter) indent source for `=`/paste-reindent/new lines.
     this.editorModel.setIndentSource((row) => this.syntax.indentLevelForRow(row));
+    // Comment delimiters for `g c` / `editor:toggle-line-comments`, from the
+    // file's language. No file (inputs, multibuffers) → no spec → toggling no-ops.
+    this.editorModel.setCommentSpecSource(() => {
+      const lang = this._currentFile ? langIdForPath(this._currentFile) : null;
+      return lang ? languages.commentsFor(lang) : null;
+    });
     // Default indentation from config; `loadFile` detects and overrides per file.
     this.editorModel.setIndentation({
       useSpaces: zym.config.get('editor.insertSpaces') !== false,
@@ -2091,7 +2103,26 @@ export class TextEditor implements DocumentHost {
     zym.commands.add(this.view, {
       'editor:duplicate-line-below': { didDispatch: () => this.editorModel.duplicateLineBelow(), description: 'Duplicate the current line below' },
       'editor:duplicate-line-above': { didDispatch: () => this.editorModel.duplicateLineAbove(), description: 'Duplicate the current line above' },
+      'editor:toggle-line-comments': { didDispatch: () => this.toggleLineComments(), description: 'Toggle line comments on the current line / selection' },
     });
+  }
+
+  /** `editor:toggle-line-comments` (`ctrl-/`): toggle line comments on every
+   *  selection's rows (one undo group), in any mode — the mode-agnostic
+   *  counterpart of the vim `g c` operator. A visual selection is consumed
+   *  (back to normal mode), matching the operator's behavior. */
+  private toggleLineComments(): void {
+    const model = this.editorModel;
+    const hadSelection = !model.getSelectedBufferRange().isEmpty();
+    model.transact(() => {
+      for (const range of model.getSelectedBufferRanges()) {
+        let endRow = range.end.row;
+        // A linewise-style tail at column 0 doesn't include its row.
+        if (endRow > range.start.row && range.end.column === 0) endRow -= 1;
+        model.toggleLineCommentsForBufferRows(range.start.row, endRow);
+      }
+    });
+    if (hadSelection && this.vimState.mode === 'visual') this.vimState.resetNormalMode();
   }
 
   // --- Folding commands (vim za/zo/zc/zr/zm, via the keymap's z-prefix) -------

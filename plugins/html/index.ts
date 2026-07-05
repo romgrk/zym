@@ -56,7 +56,11 @@ export const htmlPlugin: Plugin = {
     const { languages } = ctx;
 
     // `html` is already a valid LSP languageId, so no `lspId` override.
-    languages.registerLanguage({ id: 'html', fileTypes: ['html', 'htm', 'xhtml', 'shtml'] });
+    languages.registerLanguage({
+      id: 'html',
+      fileTypes: ['html', 'htm', 'xhtml', 'shtml'],
+      comments: { block: { start: '<!--', end: '-->' } },
+    });
     languages.registerGrammar('html', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-html.wasm',
       highlightsPath: ctx.resolve('queries/html/highlights.scm'),

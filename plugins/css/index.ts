@@ -74,7 +74,11 @@ export const cssPlugin: Plugin = {
     const { languages } = ctx;
 
     // CSS — `css` is already a valid LSP languageId, so no lspId override.
-    languages.registerLanguage({ id: 'css', fileTypes: ['css'] });
+    languages.registerLanguage({
+      id: 'css',
+      fileTypes: ['css'],
+      comments: { block: { start: '/*', end: '*/' } },
+    });
     languages.registerGrammar('css', {
       wasm: 'tree-sitter-wasms/out/tree-sitter-css.wasm',
       highlightsPath: ctx.resolve('queries/css/highlights.scm'),
@@ -86,7 +90,11 @@ export const cssPlugin: Plugin = {
     // SCSS — `scss` is a valid LSP languageId. Grammar is vendored (built by
     // build-grammars.sh); register it only when the wasm is present so a missing
     // build leaves SCSS LSP-only instead of throwing and rolling back the plugin.
-    languages.registerLanguage({ id: 'scss', fileTypes: ['scss'] });
+    languages.registerLanguage({
+      id: 'scss',
+      fileTypes: ['scss'],
+      comments: { line: '//', block: { start: '/*', end: '*/' } },
+    });
     languages.registerServer('scss', VSCODE_CSS);
     const scssWasm = ctx.resolve('grammars/tree-sitter-scss.wasm');
     const scssHl = ctx.resolve('queries/scss/highlights.scm');
@@ -103,7 +111,7 @@ export const cssPlugin: Plugin = {
     // Sass (indented syntax) — detection + LSP only; no ABI-14 grammar exists for
     // the indented dialect (the SCSS grammar would mis-parse it). `sass` is a valid
     // LSP languageId; SomeSass is the server that understands it.
-    languages.registerLanguage({ id: 'sass', fileTypes: ['sass'] });
+    languages.registerLanguage({ id: 'sass', fileTypes: ['sass'], comments: { line: '//' } });
     languages.registerServer('sass', SOMESASS);
   },
 };
