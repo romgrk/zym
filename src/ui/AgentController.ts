@@ -22,7 +22,6 @@ import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/confi
 import { createDocumentFs } from '../agents/acp/documentFs.ts';
 import { listResumableSessions, recordSessionWorktree, relativeTime, relocateTranscriptToMainRoot, type AgentSession } from '../agentSessions.ts';
 import { type AgentState, fileTabsOf } from '../SessionManager.ts';
-import type { TextEditor } from './TextEditor/index.ts';
 import type { Workbench } from './workbench/Workbench.ts';
 import { type Owner, isAgent } from './workbench/Owner.ts';
 import type { PaneItems } from './workbench/PaneItems.ts';
@@ -32,9 +31,13 @@ import type { Sidebar } from './Sidebar.ts';
 import { openAgentPicker } from './AgentPicker.ts';
 import { openAgentLauncher, launchPrompt, type LauncherMode } from './AgentLauncher.ts';
 import { openPicker } from './Picker.ts';
+import { Icons } from './icons.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
 import { proseMarkup, escapeMarkup, PROSE_LINE_HEIGHT } from './proseMarkup.ts';
-import { listWorktrees, worktreeInfo, type WorktreeInfo } from '../git.ts';
+import { listWorktrees, worktreeInfo, repoRoot, readFileAtRef, type WorktreeInfo } from '../git.ts';
+import { DiffView } from './DiffView.ts';
+import { type DiffFile } from './multibuffer/diffMultiBuffer.ts';
+import { type PanelChild } from './Panel.ts';
 import { CompositeDisposable, Disposable } from '../util/eventKit.ts';
 
 type Wb = Workbench<Owner>;
@@ -53,6 +56,9 @@ export class AgentController {
   private readonly agentSubs = new Map<Agent, CompositeDisposable>();
   // The most recently focused agent — the default target for send-to-agent.
   private lastAgent: Agent | null = null;
+  // Each agent's open "Agent Changes" diff tab — reopening closes it first
+  // (refresh-in-place); a WeakMap so retired agents drop out on their own.
+  private readonly changesTabs = new WeakMap<Agent, PanelChild>();
   // The agent the user is currently looking at (its workbench is active), so its status
   // counts as seen — clears the sidebar attention blink (see updateViewedAgent).
   private viewedAgent: Agent | null = null;
@@ -125,7 +131,7 @@ export class AgentController {
       // Close for good: terminate the child if it's still running, then remove its
       // workbench and retire it from the list (unlike tab:close, which only backgrounds).
       'agent:close': { didDispatch: () => this.closeCurrentAgent(), description: 'Close the agent (terminate it and remove it from the list)', when: () => this.currentAgent() !== null },
-      'agent:open-changes': { didDispatch: () => this.openChangesOfCurrentAgent(), description: "Open the agent's edited files", when: () => this.currentAgent() !== null },
+      'agent:open-changes': { didDispatch: () => this.openChangesOfCurrentAgent(), description: "Review the agent's changes (diff panel)", when: () => this.currentAgent() !== null },
       'agent:focus-next': { didDispatch: () => this.focusAdjacentAgent(1), description: 'Focus the next agent' },
       'agent:focus-prev': { didDispatch: () => this.focusAdjacentAgent(-1), description: 'Focus the previous agent' },
       // Push the active editor's context into an agent's prompt — the current agent
@@ -582,8 +588,11 @@ export class AgentController {
     if (agent) this.openAgentChanges(agent);
   }
 
-  // Review the files an agent has edited this session: switch to its workbench and open
-  // every edited file as a tab in the work area split beside the agent panel.
+  // Review what an agent changed this session: an "Agent Changes" tab in its work
+  // area — one continuous, EDITABLE multi-file diff (first-touch baseline →
+  // current buffer/disk), with review comments delivered straight back to that
+  // agent. Reopening (the pencil button again) refreshes in place. Jumping to a
+  // real file tab is Enter/double-click on any diff row.
   openAgentChanges(agent: Agent): void {
     const files = agent.changedFiles;
     if (files.length === 0) {
@@ -591,18 +600,67 @@ export class AgentController {
       return;
     }
     this.showAgent(agent); // the active workbench is now the agent's
-    const panel = this.workbench.center.openPanel; // the work area (split right of the agent)
-    // Open without focusing each in turn, then reveal the first one that landed in the work
-    // area. A file already open elsewhere is revealed in place — skip it when choosing focus.
-    let firstInPane: TextEditor | null = null;
-    for (const path of files) {
-      const editor = this.d.paneItems.openFileIn(path, panel, { focus: false });
-      if (!firstInPane && panel.getChildren().includes(editor.root)) firstInPane = editor;
+    void this.openAgentChangesDiff(agent, files);
+  }
+
+  private async openAgentChangesDiff(agent: Agent, paths: string[]): Promise<void> {
+    const root = this.agentRoot(agent);
+    const diffFiles = (await Promise.all(paths.map((path) => this.agentDiffFile(agent, root, path))))
+      .filter((file): file is DiffFile => file !== null);
+    if (diffFiles.length === 0) {
+      zym.notifications.addInfo(`${agent.title}'s edited files match their baselines — nothing to review`);
+      return;
     }
-    if (firstInPane) {
-      this.d.paneItems.editorChildFor(firstInPane.root)?.select();
-      firstInPane.focus();
+    const view = new DiffView({
+      files: diffFiles,
+      cwd: root,
+      editable: true, // fix up the agent's work in place — saves write through, the diff re-flows
+      documents: this.d.paneItems.documents,
+      onActivate: ({ path, row }) => zym.workspace.openFile(path, { cursor: [row, 0] }),
+      // Comments go straight to THIS agent, not the current-agent/picker routing.
+      onSend: (message) => this.deliverToAgent(agent, message, { submit: true }),
+      reviewContext: `Review of ${agent.title}'s changes (this session)`,
+    });
+    // Unsent review comments are consulted on window close, like the git diffs.
+    const participant = zym.session.registerParticipant(view);
+    this.changesTabs.get(agent)?.close(); // refresh-in-place: drop the stale panel first
+    const child = this.d.paneItems.openCenterTab(view.root, {
+      title: `${Icons.pencil}  Changes — ${agent.title}`,
+      requireTabBar: true,
+      onClose: () => { participant.dispose(); view.dispose(); },
+    });
+    this.changesTabs.set(agent, child);
+    view.focus();
+  }
+
+  // One review DiffFile: OLD = the agent's first-touch baseline (acp; see
+  // AcpSession.captureBaseline), else the git HEAD blob (claude-tui, resumed
+  // sessions), else empty (not a repo / created). NEW = the live buffer when
+  // open, else disk. Null when the sides match — nothing to review there.
+  private async agentDiffFile(agent: Agent, root: string, path: string): Promise<DiffFile | null> {
+    const baseline = agent.baselineFor?.(path);
+    let oldText: string;
+    if (baseline !== undefined) {
+      oldText = baseline ?? ''; // null = the agent created the file
+    } else {
+      const repo = repoRoot(root);
+      oldText = repo
+        ? await new Promise<string>((resolve) =>
+            readFileAtRef(repo, 'HEAD', Path.relative(repo, path), (text) => resolve(text ?? '')))
+        : '';
     }
+    const current = this.readCurrent(path);
+    const newText = current ?? '';
+    if (oldText === newText) return null;
+    return { path, oldText, newText, deleted: current === null && oldText !== '' };
+  }
+
+  /** A file's current text through the editor's lens: the live buffer when open
+   *  (unsaved edits included), else disk; null when it doesn't exist. */
+  private readCurrent(path: string): string | null {
+    const doc = this.d.paneItems.documents.find(path);
+    if (doc?.isLoaded) return doc.getText();
+    try { return Fs.readFileSync(path, 'utf8'); } catch { return null; }
   }
 
   // Auto-open a file the agent just edited in *its own* workbench's work area, without

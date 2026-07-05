@@ -385,7 +385,7 @@ export class WorkbenchList {
       'agent:rename': { didDispatch: () => this.withSelectedAgent((a) => this.options.onRename?.(a)), description: 'Rename the selected agent' },
       'agent:stop': { didDispatch: () => this.withSelectedAgent((a) => this.options.onStop?.(a)), description: 'Stop the selected agent' },
       'agent:close': { didDispatch: () => this.withSelectedAgent((a) => this.options.onClose?.(a)), description: 'Close the selected agent' },
-      'agent:open-changes': { didDispatch: () => this.withSelectedAgent((a) => this.options.onOpenChanges?.(a)), description: "Open the selected agent's changes" },
+      'agent:open-changes': { didDispatch: () => this.withSelectedAgent((a) => this.options.onOpenChanges?.(a)), description: "Review the selected agent's changes" },
     });
   }
 

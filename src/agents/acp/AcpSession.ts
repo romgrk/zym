@@ -45,6 +45,7 @@
  *                                      when loadSession isn't advertised
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import * as Fs from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import type { ReadableStream, WritableStream } from 'node:stream/web';
 import {
@@ -222,6 +223,12 @@ export class AcpSession implements ConversationSession {
   // zym-owned command execution the agent drives over `terminal/*`; surfaced
   // in the UI through the monitor mapping (getMonitor / onMonitorUpdate).
   private readonly terminals = new AcpTerminalRegistry();
+  // First-touch baselines: a file's content the first time this agent edits it,
+  // captured when the edit-kind tool_call streams in — which is before the tool
+  // executes (verified: the adapter emits tool_call, then permission, then runs)
+  // — so the Agent Changes diff has a well-defined OLD side without hooks or
+  // snapshot files. `null` = the file didn't exist (a created file).
+  private readonly baselines = new Map<string, string | null>();
   // True while session/load replays history (rows render statically).
   private replaying = false;
   private bridgeWatch: Disposable | null = null;
@@ -1007,12 +1014,35 @@ export class AcpSession implements ConversationSession {
   }
 
   // An edit-kind tool call names the files it touches (locations, diff paths) —
-  // accumulated on the call, reported when it completes (finishToolCall).
+  // accumulated on the call, reported when it completes (finishToolCall), and
+  // baseline-captured on first touch.
   private trackEdits(entry: ToolCallEntry, kind: ToolKind, locations: ToolCallLocation[] | null, content: ToolCallContent[] | null): void {
     if (kind !== 'edit' && kind !== 'delete' && kind !== 'move') return;
-    for (const location of locations ?? []) entry.paths.add(location.path);
-    for (const item of content ?? []) if (item.type === 'diff') entry.paths.add(item.path);
+    for (const location of locations ?? []) this.trackEditPath(entry, location.path);
+    for (const item of content ?? []) if (item.type === 'diff') this.trackEditPath(entry, item.path);
   }
+
+  private trackEditPath(entry: ToolCallEntry, path: string): void {
+    entry.paths.add(path);
+    this.captureBaseline(path);
+  }
+
+  // Snapshot `path` before its first edit executes. Reads go through the fs
+  // host when injected (buffer-aware — a user's unsaved edits from before the
+  // agent ran must not be attributed to it). Skipped during history replay:
+  // the file already contains the replayed edits, so a capture would lie —
+  // resumed sessions fall back to the git HEAD blob in the review diff.
+  private captureBaseline(path: string): void {
+    if (this.replaying || this.baselines.has(path)) return;
+    this.baselines.set(path, null); // reserve; stays null (= created) if unreadable
+    try {
+      const read = this.options.fs ? this.options.fs.readTextFile(path) : Fs.readFileSync(path, 'utf8');
+      if (typeof read === 'string') this.baselines.set(path, read);
+      else read.then((text) => this.baselines.set(path, text), () => { /* created */ });
+    } catch { /* doesn't exist yet → created */ }
+  }
+
+  getBaseline(path: string): string | null | undefined { return this.baselines.get(path); }
 
   // A tool call can embed a zym terminal (content `{type:'terminal'}`) — remember
   // it so the row's result falls back to the captured output (finishToolCall).

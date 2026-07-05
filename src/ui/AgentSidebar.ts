@@ -38,12 +38,12 @@ addStyles(/* css */`
   .AgentSidebar .agent-sidebar-header { border-bottom: 1px solid var(--border-color); }
 
   /* The edited-files button at the header's trailing edge (pencil + count) opens the
-     active agent's changed files; its look is the shared .agent-header-button class
+     active agent's Agent Changes diff; its look is the shared .agent-header-button class
      (see headerButton.ts), consistent with the subagent/monitor count buttons. */
 `);
 
 export interface AgentSidebarOptions {
-  /** Open the active agent's edited files (the header's edited-files button). */
+  /** Review the active agent's changes (the header's edited-files button). */
   onOpenChanges?: (agent: Agent) => void;
 }
 
@@ -168,7 +168,7 @@ export class AgentSidebar {
     this.files.setVisible(true);
     this.filesSetCount(changed.length);
     const names = changed.map((path) => path.split('/').pop() ?? path);
-    this.files.setTooltipText(`Edited ${changed.length} file${changed.length === 1 ? '' : 's'} — click to open:\n${names.join('\n')}`);
+    this.files.setTooltipText(`Edited ${changed.length} file${changed.length === 1 ? '' : 's'} — click to review:\n${names.join('\n')}`);
   }
 
   /** Release the header signal connections + the active agent's file-change sub. */

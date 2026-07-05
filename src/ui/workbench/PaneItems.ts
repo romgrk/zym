@@ -457,12 +457,14 @@ export class PaneItems {
   }
 
   /** Host `widget` as a center tab: select, focus, and register its `onClose` teardown
-   *  (disposeChild runs it on close). Backs `zym.workspace.openTab` for any component. */
-  openCenterTab(widget: Widget, options: OpenTabOptions): void {
+   *  (disposeChild runs it on close). Backs `zym.workspace.openTab` for any component.
+   *  Returns the tab handle for callers that close/refresh it programmatically. */
+  openCenterTab(widget: Widget, options: OpenTabOptions): PanelChild {
     const child = this.workbench.center.add(widget, { title: options.title, requireTabBar: options.requireTabBar });
     if (options.onClose) this.tabCloseHandlers.set(widget, options.onClose);
     child.select();
     widget.grabFocus();
+    return child;
   }
 
   /** The tab title for an editor, prefixed with the modified dot when unsaved. */

@@ -113,6 +113,11 @@ export interface Agent {
   readonly status: AgentStatus;
   readonly permissionMode: AgentMode;
   readonly changedFiles: string[];
+  /** The file's content at this agent's *first* touch this session (`null` = it
+   *  didn't exist — a created file), or undefined when unknown (never edited, a
+   *  resumed session, or a kind without baseline capture — the Agent Changes
+   *  diff falls back to the git HEAD blob then). */
+  baselineFor?(path: string): string | null | undefined;
   readonly sessionId: string | null;
   readonly renamed: boolean;
   readonly exited: boolean;

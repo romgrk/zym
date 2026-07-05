@@ -148,6 +148,13 @@ per session (ACP session modes / config options).
   (`getModeState`); ask-first is forced at session setup.
 - **Auth** — an `auth_required` handshake failure renders a login hint naming
   the agent's auth methods.
+- **First-touch baselines** — the OLD side of the Agent Changes review diff
+  (`getBaseline`): an edit-kind `tool_call` snapshots the file *at first
+  sighting* (which precedes execution), read through the fs host so unsaved
+  user edits aren't attributed to the agent. Skipped during history replay
+  (resumed sessions fall back to the git HEAD blob). Note the adapter's diff
+  payloads are hunk *snippets* (`old_string`/structuredPatch), not full files —
+  which is why the baseline is a snapshot, not the diff's `oldText`.
 
 ## Limitations / planned
 
@@ -161,9 +168,11 @@ per session (ACP session modes / config options).
 ## Validation
 
 Unit tests cover the fs capability's editor side (`acp/documentFs.test.ts`:
-buffer-over-disk reads, in-place writes, the `line`/`limit` window) and the
+buffer-over-disk reads, in-place writes, the `line`/`limit` window), the
 terminal registry (`acp/terminals.test.ts`: output capture, byte-limit
-truncation, kill/release, spawn failures). The
+truncation, kill/release, spawn failures), and baseline capture
+(`acp/baselines.test.ts`: first-touch wins, created files, fs-host routing,
+replay guard). The
 session itself was validated end-to-end against the real
 Claude Code ACP adapter: streamed turns; subagent capture with drill-down
 data; the whitelisted-command terminal round-trip; AskUserQuestion →

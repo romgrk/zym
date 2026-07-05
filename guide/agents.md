@@ -97,3 +97,14 @@ Send what you're looking at without leaving the editor — the second key picks
 selection) opens an inline comment box on that line/selection; the comment is
 sent to an agent with the location attached. In diff views the same gesture
 adds review comments.
+
+## Reviewing an agent's changes
+
+The pencil badge in the agent's header (or `o` on a selected agent — the
+`agent:open-changes` command) opens the **Agent Changes** tab: one continuous
+diff of every file the agent edited this session, from the file's content *at
+the agent's first touch* to its content now — your own uncommitted work from
+before the agent ran stays out of it (`acp` agents; `claude-tui` diffs against
+git HEAD instead). The new side is editable in place; `enter` on a row adds a
+review comment that is sent straight back to that agent; double-click jumps to
+the file. Click the pencil again to refresh with the agent's latest edits.

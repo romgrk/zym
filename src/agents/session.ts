@@ -178,6 +178,12 @@ export interface ConversationSession {
   stopTask(taskId: string): void;
 
   // --- optional capabilities --------------------------------------------------
+
+  /** First-touch baseline: the file's content the first time this session
+   *  edited it (`null` = didn't exist), or undefined for files it never
+   *  touched / when the protocol can't capture one. Feeds the Agent Changes
+   *  review diff (old side). */
+  getBaseline?(path: string): string | null | undefined;
   /** Answer a question request (paired with `onQuestion`). */
   answerQuestion?(id: string, answers: Array<{ header: string; labels: string[]; notes?: string }>): void;
 

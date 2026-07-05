@@ -348,7 +348,7 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     b: 'agent:branch', // branch the selected agent into a new forked agent
     x: 'agent:stop', // stop the selected agent's process (it stays listed, restartable)
     'd d': 'agent:close', // close the selected agent (terminate if running, then remove it)
-    o: 'agent:open-changes', // open the files the selected agent has edited
+    o: 'agent:open-changes', // review the selected agent's changes (the diff panel)
   },
 
   // Location lists (LSP diagnostics, project-wide search, …): shared navigation

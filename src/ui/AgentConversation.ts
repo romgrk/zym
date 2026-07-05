@@ -591,6 +591,8 @@ export class AgentConversation implements Agent {
   get status(): AgentStatus { return this._status; }
   get permissionMode(): AgentMode { return this._permissionMode; }
   get changedFiles(): string[] { return this._changedFiles.slice(); }
+  /** First-touch baseline for the Agent Changes review diff (see agents/session.ts). */
+  baselineFor(path: string): string | null | undefined { return this.session.getBaseline?.(path); }
   get sessionId(): string | null { return this.session.sessionId; }
   get renamed(): boolean { return this._displayName !== null; }
   get exited(): boolean { return this._status === 'disconnected'; }

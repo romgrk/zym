@@ -400,43 +400,50 @@ worktrees are in play. (Observed usage: parallel agents mostly edit
 **disjoint** areas, so attribution-without-full-isolation is good enough for
 the common case.)
 
-### Per-agent baselines (the attribution mechanism)
+### Per-agent baselines (the attribution mechanism) — done 2026-07-05 (acp)
 
-Capture each agent's "before" so its diff is well-defined:
+Capture each agent's "before" so its diff is well-defined. Shipped hook-free
+for the `acp` kind (`AcpSession.captureBaseline`, in-memory):
 
-- A `PreToolUse` hook on `Edit/Write/MultiEdit/NotebookEdit` copies the target
-  file's *current* content into `<statusFile>.baseline/<encoded-path>` the
-  **first** time this agent touches it — "the file as it was right before agent
-  A started." Pairs with the existing `PostToolUse` → `.files` log (the touched
-  set / "after").
-- Agent A's change to a file = `diff(baseline, current)`. Tool-agnostic and
-  under our control. (Claude keeps its own snapshots under
-  `~/.claude/file-history/`, but it's internal/undocumented — at most a fallback
-  for resumed sessions with no baseline.)
-- Works in **any** tree, which is why it's primary: a worktree can hold several
-  agents, so the worktree's own `git diff` ≠ a single agent's work.
+- The **first** time an edit-kind `tool_call` streams in for a path, its
+  current content is snapshotted — the notification arrives *before* the tool
+  executes (verified against the claude adapter: emit → permission → run), so
+  the read is pre-edit. Reads go through the injected fs host (buffer-aware:
+  the user's unsaved edits from before the agent ran aren't attributed to it);
+  a missing file baselines as "created".
+- Agent A's change to a file = `diff(baseline, current)`. Works in **any**
+  tree, which is why it's primary: a worktree can hold several agents, so the
+  worktree's own `git diff` ≠ a single agent's work.
+- **Fallbacks**: history replay (a resumed session) skips capture — the file
+  already holds the replayed edits — and `claude-tui` has no ACP stream; both
+  fall back to the **git HEAD blob** in the review diff (≈ working tree vs
+  HEAD, filtered to the agent's touched files).
+- (The pre-ACP design — `PreToolUse` hook → `.baseline/` snapshot files — is
+  superseded; nothing is written to disk.)
 
-### Review UI
+### Review UI — done 2026-07-05
 
-- An **"Agent Changes" panel** — a `LocationList`-style list (like Diagnostics)
-  of the agent's changed files with ± counts; selecting one opens its diff. The
-  "✎ N" badge / `o` key graduates from "open the files" to "review the
-  changes."
-- A **diff view** per file (`baseline → current`): next/prev change, optionally
-  per-hunk accept / revert.
-- **Built on the editor Diff renderer** (`text-editor/diff.md`) — the
-  multibuffer `DiffView` is the rendering substrate (with comment-to-agent /
-  review mode). Sequence: diff display → agent review.
+- The **"Agent Changes" tab** (`AgentController.openAgentChangesDiff`): the
+  pencil badge in the agent header / `agent:open-changes` (`o` on a selected
+  agent) opens ONE continuous multi-file diff (`baseline → current`) in the
+  agent's work area — the same windowed multibuffer `DiffView` as the git
+  diffs. Reopening refreshes in place (the stale tab closes first).
+- **Editable**: the new side is live `Document`s — fix the agent's work up in
+  place, saves write through, the diff re-flows. Enter/double-click on a row
+  jumps to the real file.
+- **Comment-to-agent**: review comments (single or batched) are delivered
+  straight to *that* agent as a submitted turn (not the current-agent/picker
+  routing), prefixed `Review of <title>'s changes (this session)`.
 - TODO: expand the diff comment-to-agent action into threaded comments the agent can reply to inline.
 
 ### Ongoing vs past
 
-- **Ongoing**: a `Gio.FileMonitor` (reuse the `.files` watch) keeps the diff
-  live as the agent edits.
-- **Past**: baselines persist after the process exits (cleaned with `.files` /
-  `.session` when the agent is retired), so a finished agent stays reviewable.
-  Resumed sessions with no baseline fall back to claude's file-history or `git
-  diff`.
+- **Ongoing**: the new side re-diffs live as *open* documents change; the file
+  list + baselines are captured at open time — click the pencil again to
+  refresh with the agent's latest edits.
+- **Past**: baselines are in-memory per session object, so an *exited* (not
+  yet closed) agent stays precisely reviewable; a *resumed* conversation falls
+  back to the git HEAD blob (above).
 
 ### Parallel agents in one tree
 
@@ -660,10 +667,12 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
    inspect page). Gemini's shell tool rides it; the claude adapter still
    buffers over `_meta.terminal_output` (as of 0.55.0). Live output into the
    tool *rows* themselves remains open (see agents/acp.md limitations).
-5. [ ] **Review story** — the "Agent Changes" diff panel (see *Feature:
-   reviewing an agent's work* above). ACP made attribution cheaper: tool-call
-   diffs carry `oldText`/`newText` per edit, so per-agent change tracking for
-   acp agents needs no hook-based baselines.
+5. [x] **Review story** — done 2026-07-05: the "Agent Changes" tab (see
+   *Feature: reviewing an agent's work* above) — first-touch baselines off the
+   ACP tool_call stream (hook-free; note: the adapter's diff payloads are
+   *snippets*, so baselines snapshot the file at first sighting instead),
+   editable continuous DiffView in the agent's work area, comments delivered
+   to that agent. claude-tui / resumed sessions diff against git HEAD.
 
 Smaller, whenever convenient: session **config options** in the footer (model
 switching for agents that expose them), and the in-app **`authenticate`** flow
@@ -681,9 +690,9 @@ switching for agents that expose them), and the in-app **`authenticate`** flow
       badge and OS notifications while the window is unfocused are still todo
 - [x] Editor Diff renderer (`text-editor/diff.md`) — substrate for review
       (the multibuffer `DiffView`)
-- [ ] Review work: per-agent baselines (PreToolUse snapshot → `.baseline/`);
-      "Agent Changes" diff panel (baseline → current); live (FileMonitor) +
-      post-exit
+- [x] Review work: per-agent baselines + the "Agent Changes" diff panel — done
+      2026-07-05 (stream-captured baselines, no hook/snapshot files; see
+      *Feature: reviewing an agent's work*)
 - [ ] Overlap warning when two live agents edit the same file (compare
       `changedFiles`)
 - [ ] Worktree lifecycle (deferred) — keep/merge/discard when last agent
