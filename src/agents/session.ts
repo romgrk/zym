@@ -205,6 +205,14 @@ export interface ConversationSession {
   onSubagentDone(cb: (m: { id: string }) => void): Disposable;
   onMonitorUpdate(cb: (m: { id: string }) => void): Disposable;
 
+  /** The session's mode state when the agent advertises modes (ACP session
+   *  modes: ask/architect/code, claude's default/acceptEdits/…), else null. The
+   *  widget feeds its mode dropdown from this, falling back to the fixed
+   *  claude cycle. `onMode` fires on any change (id or available set). */
+  getModeState?(): { currentId: string; modes: Array<{ id: string; name: string }> } | null;
+  /** Switch to an advertised mode by id (pairs with getModeState). */
+  setModeById?(id: string): void;
+
   // --- optional events ----------------------------------------------------------
   onQuestion?(cb: (r: QuestionRequest) => void): Disposable;
   /** The agent reported its execution plan (full replace per update). */
@@ -213,4 +221,8 @@ export interface ConversationSession {
   onFileEdited?(cb: (m: { path: string }) => void): Disposable;
   /** The agent reported a session title (shown, never persisted by the widget). */
   onSessionName?(cb: (m: { name: string | null }) => void): Disposable;
+  /** A resumed conversation's history is being replayed into the transcript
+   *  (`active` true → rows render statically, edits seed silently; false →
+   *  live again). ACP `session/load`; claude-sdk replays synchronously instead. */
+  onReplay?(cb: (m: { active: boolean }) => void): Disposable;
 }

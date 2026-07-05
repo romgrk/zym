@@ -290,6 +290,13 @@ export class AgentConversation implements Agent {
   private readonly modelContext = new ModelContext();
   private readonly modeDropdown: InstanceType<typeof Gtk.DropDown>;
   private applyingMode = false; // guards the dropdown's notify::selected feedback loop
+  // The dropdown's entries: the session's advertised modes (getModeState — ACP)
+  // when present, else the fixed claude cycle. `currentModeId` is the selected
+  // id (an advertised mode id, or the AgentMode); `modeCssApplied` tracks the
+  // per-mode colour class so an unknown id can't leave a stale one behind.
+  private modeIds: string[] = [...PERMISSION_CYCLE];
+  private currentModeId: string = 'default';
+  private modeCssApplied: string | null = null;
   private readonly statusIcon: { widget: InstanceType<typeof Gtk.Widget>; dispose: () => void };
   private readonly subs = new CompositeDisposable();
   // Holds the active permission prompt's button handlers (a question card owns its own
@@ -465,8 +472,8 @@ export class AgentConversation implements Agent {
     this.modeDropdown.addCssClass('conversation-mode');
     this.subs.connect(this.modeDropdown, 'notify::selected', () => {
       if (this.applyingMode) return;
-      const mode = PERMISSION_CYCLE[this.modeDropdown.getSelected()];
-      if (mode) this.session.setPermissionMode(mode);
+      const id = this.modeIds[this.modeDropdown.getSelected()];
+      if (id) this.applyModeSelection(id);
     });
     // Footer layout: a LEFT slot (the status icon, or the thinking indicator that
     // replaces it while working) · a spacer · then the permission-mode dropdown and
@@ -535,17 +542,21 @@ export class AgentConversation implements Agent {
     this.installCommands(); // after this.root exists (commands register on it)
     zym.agents.add(this); // join the registry → sidebar lists it
     this.wireSession();
-    // Resuming a specific session: rebuild its visible transcript now (before the
-    // workbench subscribes to onDidChangeFiles, so historical edits seed its
-    // changed-files set rather than flood-opening). `--resume` restores claude's
-    // context but doesn't replay history as events, so we draw it from disk.
-    if (options.resume?.sessionId) this.restoreTranscript(options.cwd, options.resume.sessionId);
-    // A resume with no launch prompt reconnects lazily: the transcript is rebuilt
-    // above, but `claude -p --resume` isn't spawned until the user's first turn (so
-    // restoring N agents doesn't fire N claude processes up front). A resume that
-    // carries a prompt — e.g. the worktree re-announce — still starts eagerly.
-    this.deferredStart = !!options.resume && !options.prompt;
-    if (options.resume?.sessionId) {
+    // Resuming a specific session, claude-sdk: rebuild its visible transcript now
+    // (before the workbench subscribes to onDidChangeFiles, so historical edits
+    // seed its changed-files set rather than flood-opening). `--resume` restores
+    // claude's context but doesn't replay history as events, so we draw it from
+    // disk. An acp resume instead replays over the wire at start() (session/load
+    // → the onReplay wiring), which also places the divider after the history.
+    if (options.resume?.sessionId && this.sdk) this.restoreTranscript(options.cwd, options.resume.sessionId);
+    // A claude-sdk resume with no launch prompt reconnects lazily: the transcript
+    // is rebuilt above, but `claude -p --resume` isn't spawned until the user's
+    // first turn (so restoring N agents doesn't fire N claude processes up
+    // front). A resume that carries a prompt — e.g. the worktree re-announce —
+    // still starts eagerly. An acp resume always starts eagerly: its history
+    // lives agent-side, so showing it requires the process.
+    this.deferredStart = !!options.resume && !options.prompt && this.sdk !== null;
+    if (options.resume?.sessionId && this.sdk) {
       // A permanent divider marking the boundary between the restored history and
       // the live continuation: "session disconnected …" until the first turn, then
       // "session resumed" (a dim hollow dot reflects the not-yet-live state too).
@@ -598,17 +609,40 @@ export class AgentConversation implements Agent {
     if (seed.usage) this.modelContext.setUsage(seed.usage);
   }
 
+  // Route a chosen mode id: a session with advertised modes (ACP) takes ids
+  // directly; the claude cycle goes through setPermissionMode.
+  private applyModeSelection(id: string): void {
+    if (this.session.setModeById && this.session.getModeState?.()) this.session.setModeById(id);
+    else this.session.setPermissionMode(id as AgentMode);
+  }
+
+  // Rebuild the dropdown's entries when the session's advertised mode set
+  // changes (ACP agents report theirs at session setup / on the fly).
+  private refreshModeOptions(): void {
+    const state = this.session.getModeState?.() ?? null;
+    const ids = state ? state.modes.map((m) => m.id) : [...PERMISSION_CYCLE];
+    const names = state ? state.modes.map((m) => m.name) : [...PERMISSION_CYCLE];
+    this.currentModeId = state ? state.currentId : this._permissionMode;
+    if (ids.join('\n') !== this.modeIds.join('\n')) {
+      this.modeIds = ids;
+      this.applyingMode = true; // setModel resets the selection — don't loop back
+      this.modeDropdown.setModel(Gtk.StringList.new(names));
+      this.applyingMode = false;
+    }
+  }
+
   // Sync the permission-mode dropdown (selection + color). The status itself is the
   // icon to the left (self-updating); model/context live in ModelContext.
   private updateFooter(): void {
-    const index = PERMISSION_CYCLE.indexOf(this._permissionMode);
+    const index = this.modeIds.indexOf(this.currentModeId);
     if (index >= 0 && this.modeDropdown.getSelected() !== index) {
       this.applyingMode = true; // setSelected fires notify::selected — don't loop back
       this.modeDropdown.setSelected(index);
       this.applyingMode = false;
     }
-    for (const m of PERMISSION_CYCLE) this.modeDropdown.removeCssClass(`is-${m}`);
-    this.modeDropdown.addCssClass(`is-${this._permissionMode}`);
+    if (this.modeCssApplied) this.modeDropdown.removeCssClass(`is-${this.modeCssApplied}`);
+    this.modeCssApplied = this.currentModeId;
+    this.modeDropdown.addCssClass(`is-${this.currentModeId}`);
   }
 
   /** Spawn claude and send the launch prompt (if any). A lazily-resumed agent
@@ -714,10 +748,18 @@ export class AgentConversation implements Agent {
    *  The editor root (worktree) is captured by the enclosing `AgentState.root` (= the
    *  workbench cwd), not here — this `cwd` is just the process spawn dir. */
   serialize(): TabState | null {
-    // Only the claude-sdk kind persists/resumes across editor restarts for now; an
-    // acp agent's session lives in the agent process (resume via `session/load` is
-    // a later feature — see docs/agents/acp.md).
-    if (this.kind !== 'claude-sdk') return null;
+    if (this.kind === 'acp') {
+      // The exact agent argv is part of the identity: a saved gemini session must
+      // not restore into whatever `agent.acp.command` says later.
+      return {
+        kind: 'agent',
+        agentKind: 'acp',
+        command: this.baseCommand ?? [],
+        cwd: this.cwd,
+        prompt: this.launchPrompt,
+        sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
+      };
+    }
     return {
       kind: 'agent',
       agentKind: 'claude-sdk',
@@ -792,9 +834,9 @@ export class AgentConversation implements Agent {
 
 
   private cyclePermissionMode(): void {
-    const index = PERMISSION_CYCLE.indexOf(this._permissionMode);
-    const next = PERMISSION_CYCLE[(index + 1) % PERMISSION_CYCLE.length];
-    this.session.setPermissionMode(next);
+    const index = this.modeIds.indexOf(this.currentModeId);
+    const next = this.modeIds[(index + 1) % this.modeIds.length];
+    if (next) this.applyModeSelection(next);
   }
 
   private submit(): void {
@@ -918,6 +960,7 @@ export class AgentConversation implements Agent {
       this.session.onCwd(({ cwd }) => this.announceWorktree(cwd)),
       this.session.onMode(() => {
         this._permissionMode = this.session.permissionMode;
+        this.refreshModeOptions(); // the advertised set / current id may have changed
         this.updateFooter();
         for (const handler of this.permissionModeHandlers) handler();
       }),
@@ -994,7 +1037,12 @@ export class AgentConversation implements Agent {
         if (this.handleTaskResult(id, text)) return; // TaskCreate result → record the new task id
         this.updateToolResult(id, isError, text);
       }),
-      this.session.onInit(({ model, slashCommands }) => { this.modelContext.setModel(model); this._slashCommands = slashCommands; }),
+      this.session.onInit(({ model, slashCommands }) => {
+        this.modelContext.setModel(model);
+        this._slashCommands = slashCommands;
+        this.refreshModeOptions(); // modes arrive with session setup, before/with init
+        this.updateFooter();
+      }),
       this.session.onContext((usage) => this.modelContext.setUsage(usage)),
       this.session.onResult(({ costUsd, contextWindow }) => {
         if (costUsd != null) this.modelContext.setCost(costUsd);
@@ -1019,6 +1067,21 @@ export class AgentConversation implements Agent {
       // A session-reported title (ACP session_info_update) behaves like a `/rename`
       // for display, but is never persisted; pinned/transient names still win.
       this.session.onSessionName?.(({ name }) => { this._sessionName = name; this.emitTitle(); }),
+      // An async history replay (ACP session/load): rows render statically and
+      // edits seed silently while active; the resume divider lands *after* the
+      // restored history, right where the live continuation begins.
+      this.session.onReplay?.(({ active }) => {
+        this.replaying = active;
+        if (active) return;
+        this.endTurn(); // close the last replayed bubble so the live turn starts clean
+        if (!this.resumeNoteRow && this.resumeSessionId) {
+          const divider = this.addRow('conversation-resume');
+          divider.setXalign(0.5);
+          divider.setHalign(Gtk.Align.CENTER);
+          this.resumeNoteRow = divider;
+          this.refreshResumeNote();
+        }
+      }),
     ];
     for (const sub of optional) if (sub) this.subs.add(sub);
   }

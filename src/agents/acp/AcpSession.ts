@@ -2,32 +2,41 @@
  * AcpSession — a ConversationSession over the Agent Client Protocol
  * (https://agentclientprotocol.com), the `acp` agent kind. It spawns an ACP
  * agent (Gemini CLI natively, Claude Code / Codex via their adapters) as a
- * subprocess speaking JSON-RPC over stdio, and maps the protocol onto the same
- * domain surface `SdkSession` exposes, so `AgentConversation` renders it
- * unchanged. See docs/agents/acp.md.
+ * subprocess speaking JSON-RPC over stdio, and maps the protocol onto the
+ * domain surface `AgentConversation` renders. See docs/agents/acp.md.
  *
  * Wire plumbing is `@agentclientprotocol/sdk` — unlike the Claude Agent SDK it
  * spawns nothing itself (it takes the streams we hand it), so zym keeps its own
- * spawn discipline: a long-lived streaming child over stdio, the LspClient /
- * ClaudeStreamTransport pattern (works under node-gtk's GLib loop; see
- * claude-sdk/transport.ts for the rationale).
+ * spawn discipline: a long-lived streaming child over stdio, the LspClient
+ * pattern (works under node-gtk's GLib loop).
  *
  * Protocol → domain mapping:
- *   session/prompt resolves        → turn end (stopReason → idle / interrupted / error)
- *   agent_message_chunk            → assistant-start / assistant-text deltas
- *   agent_thought_chunk            → assistant-thinking deltas
- *   tool_call / tool_call_update   → tool-use / tool-result (+ file-edited for edits)
- *   plan                           → plan (rendered into the tasks panel)
- *   session/request_permission     → permission (options + optional diff body)
- *   usage_update                   → context + result (context-window gauge, cost)
- *   available_commands_update      → init (slash-command completion)
- *   current_mode_update            → mode (when the id maps onto an AgentMode)
- *   session_info_update.title      → session-name (display-only)
- *   session/cancel (notify)        ← interrupt
+ *   session/prompt resolves          → turn end (stopReason → idle / interrupted / error)
+ *   agent_message_chunk              → assistant-start / assistant-text deltas
+ *   agent_thought_chunk              → assistant-thinking deltas
+ *   tool_call / tool_call_update     → tool-use / tool-result (+ file-edited on completed edits)
+ *   plan                             → plan (rendered into the tasks panel)
+ *   session/request_permission       → permission (options + optional diff body)
+ *   elicitation/create (form)        → question (the QuestionCard; AskUserQuestion rides this)
+ *   usage_update                     → context + result (context-window gauge, cost)
+ *   available_commands_update        → init (slash-command completion)
+ *   current_mode_update / set_mode   → mode (generic mode state; see getModeState)
+ *   session_info_update.title        → session-name (display-only)
+ *   session/load (loadSession cap)   → history replay between onReplay(true/false)
+ *   unstable_forkSession (fork cap)  → branch (fresh session off the same context)
+ *   session/cancel (notify)          ← interrupt() (pending permission/question resolve cancelled)
  *
- * Not wired yet (see docs/agents/acp.md): fs/terminal client capabilities,
- * resume via session/load, the zymBridge MCP tools (set_worktree/set_actions),
- * and auth flows (`authMethods` surfaces as an error row for now).
+ * Adapter extensions (the official claude-agent-acp; all optional, all under
+ * ACP's reserved `_meta` extension channel — anything absent degrades to the
+ * generic rendering):
+ *   _meta.claudeCode.toolName        → the real claude tool name; the widget's
+ *                                      claude-quality rows (Bash, file groups) key off it
+ *   _meta.claudeCode.parentToolUseId → subagent activity, captured into per-Task
+ *                                      transcripts (the SubagentView drill-down pages)
+ *   _meta.terminal_output/exit       → streamed command output for execute tools
+ *                                      (advertised via clientCapabilities._meta.terminal_output)
+ *   session/new _meta.claudeCode.options.resume → context-only resume fallback
+ *                                      when loadSession isn't advertised
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
@@ -35,10 +44,16 @@ import type { ReadableStream, WritableStream } from 'node:stream/web';
 import {
   client as acpClient,
   ndJsonStream,
+  RequestError,
   PROTOCOL_VERSION,
+  type AgentCapabilities,
   type ClientConnection,
   type ContentBlock,
   type ContentChunk,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
+  type ElicitationContentValue,
+  type McpServerStdio,
   type PlanEntry as AcpPlanEntry,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -49,11 +64,13 @@ import {
   type ToolCallUpdate,
   type ToolKind,
   type SessionMode,
+  type SessionModeState,
   type UsageUpdate,
 } from '@agentclientprotocol/sdk';
 import { Disposable, Emitter } from '../../util/eventKit.ts';
-import { AGENT_MODES, type AgentMode, type AgentStatus } from '../types.ts';
+import { AGENT_MODES, type AgentMode, type AgentResume, type AgentStatus } from '../types.ts';
 import type {
+  AgentQuestion,
   ConversationSession,
   ContextUsage,
   MonitorInfo,
@@ -62,22 +79,71 @@ import type {
   PlanEntry,
   QuestionRequest,
   SubagentInfo,
+  SubagentMessage,
   TaskProgress,
 } from '../session.ts';
 import type { Action } from '../../actions.ts';
+
+/** An MCP server passed to `session/new` (ACP's stdio shape). */
+export type AcpMcpServer = McpServerStdio;
+
+/** The zym editor bridge, injected by the kind registry (its implementation
+ *  imports Gio, which this module must not — see acp/bridge.ts). */
+export interface AcpBridge {
+  /** MCP servers to hand the agent at session setup. */
+  readonly mcpServers: AcpMcpServer[];
+  /** Start watching the bridge's IPC files, reporting into `host`. */
+  watch(host: { onActions(actions: Action[]): void; onCwd(cwd: string): void }): Disposable;
+  dispose(): void;
+}
 
 export interface AcpSessionOptions {
   /** The ACP agent argv (e.g. `['gemini', '--acp']`). */
   command: string[];
   /** Working directory — becomes the ACP session's `cwd`. */
   cwd: string;
+  /** Resume a past conversation: `session/load` when the agent advertises
+   *  `loadSession` (history replays), `unstable_forkSession` for `fork`, else a
+   *  context-only resume via the claude adapter's `_meta` extension. */
+  resume?: AgentResume;
+  /** The zym editor bridge (set_worktree / set_actions); optional so the
+   *  session stays drivable from plain node (tests / spikes). */
+  bridge?: AcpBridge;
 }
 
-/** A pending `session/request_permission`, resolved by `respondPermission`. */
-interface PendingPermission {
+/** A pending agent→client request, resolved by the user's decision. */
+interface Pending<T> {
   id: string;
-  resolve: (response: RequestPermissionResponse) => void;
+  resolve: (response: T) => void;
 }
+
+/** What we track per tool call: the ACP title (permission cards), the claude
+ *  tool name when the adapter stamps one (domain `name` — drives the widget's
+ *  per-tool rendering), edit paths (reported on completion), accumulated
+ *  terminal output, and `done` so a repeated terminal update can't append twice.
+ *
+ *  `emitted` implements input buffering: the adapter streams the initial
+ *  tool_call *before* rawInput has finished streaming (verified — it arrives
+ *  `{}` and a refine tool_call_update carries the full input). The widget
+ *  builds each row once from the tool-use event, so emission waits for the
+ *  input (or for execution to start / finish, whichever comes first). */
+interface ToolCallEntry {
+  title: string;
+  name: string;
+  kind: ToolKind;
+  rawInput: unknown;
+  emitted: boolean;
+  done: boolean;
+  paths: Set<string>;
+  terminalOutput?: string;
+  exitCode?: number | null;
+}
+
+// Elicitation form-field conventions of the claude adapter (question_<n> +
+// question_<n>_custom); generic MCP elicitations with enum fields parse the
+// same way, "custom" fields are simply absent then.
+const CUSTOM_FIELD_SUFFIX = '_custom';
+const OPTION_META_KEY = '_claude/askUserQuestionOption';
 
 export class AcpSession implements ConversationSession {
   private readonly options: AcpSessionOptions;
@@ -89,22 +155,33 @@ export class AcpSession implements ConversationSession {
   private _sessionId: string | null = null;
   // The agent's display name (initialize agentInfo), surfaced as the "model".
   private agentName = '';
+  private agentCaps: AgentCapabilities = {};
+  private authMethodNames: string[] = [];
   private slashCommands: string[] = [];
-  // The agent's session modes (session/new response); setPermissionMode only maps
-  // onto them when an id coincides with an AgentMode (the claude adapter's do).
+  // The agent's session modes (session/new / session/load response); surfaced
+  // generically via getModeState, and mapped onto AgentMode where ids coincide.
   private availableModes: SessionMode[] = [];
+  private currentModeId: string | null = null;
   // Prompts submitted before the handshake finished; flushed once the session exists.
   private readonly queued: string[] = [];
   // Whether an assistant bubble is open (a new messageId / turn end closes it).
   private assistantOpen = false;
   private lastMessageId: string | null = null;
-  private pendingPermission: PendingPermission | null = null;
-  private permCounter = 0;
-  // Tool calls seen this session: title/kind for permission fallbacks, `done` so a
-  // repeated terminal update can't append a second result to the row, and the
-  // edit-kind paths accumulated from locations/diffs — reported as changed files
-  // only when the call *completes* (a denied edit never touched the file).
-  private readonly toolCalls = new Map<string, { title: string; kind: ToolKind; done: boolean; paths: Set<string> }>();
+  private pendingPermission: Pending<RequestPermissionResponse> | null = null;
+  // Pending form elicitations (QuestionCard answers), keyed by our generated id,
+  // carrying the field keys to write the answers back into.
+  private readonly pendingQuestions = new Map<string, {
+    resolve: (response: CreateElicitationResponse) => void;
+    fields: Array<{ key: string; multiSelect: boolean; hasCustom: boolean }>;
+  }>();
+  private idCounter = 0;
+  private readonly toolCalls = new Map<string, ToolCallEntry>();
+  // Captured subagent transcripts (Task tool calls), keyed by the spawning
+  // tool call's id — populated from `_meta.claudeCode.parentToolUseId` updates.
+  private readonly subagents = new Map<string, SubagentInfo>();
+  // True while session/load replays history (rows render statically).
+  private replaying = false;
+  private bridgeWatch: Disposable | null = null;
   private readonly stderrTail: string[] = [];
   private exited = false;
 
@@ -116,7 +193,7 @@ export class AcpSession implements ConversationSession {
   get permissionMode(): AgentMode { return this._permissionMode; }
   get sessionId(): string | null { return this._sessionId; }
 
-  /** Spawn the agent and run the ACP handshake (initialize + session/new). */
+  /** Spawn the agent and run the ACP handshake (initialize + session setup). */
   start(): void {
     if (this.proc) return;
     const argv = this.options.command;
@@ -127,13 +204,11 @@ export class AcpSession implements ConversationSession {
     });
     this.proc = proc;
     // A spawn failure (ENOENT for a missing agent binary) arrives as 'error';
-    // 'exit' still follows. Absorb stdin EPIPE like the claude transport does —
-    // a write to a just-crashed child must not take zym down.
+    // 'exit' still follows. Closing the SDK connection aborts/cancels the
+    // Web-stream wrappers, which destroy the underlying sockets *with an error*
+    // — absorb on all three pipes or tearing a session down crashes zym.
     proc.on('error', (err) => this.captureStderr(String((err as Error).message ?? err)));
     proc.on('exit', (code) => this.handleExit(code));
-    // Closing the SDK connection aborts/cancels the Web-stream wrappers, which
-    // destroy the underlying sockets *with an error* — absorb on all three pipes
-    // or the teardown of a session crashes zym with an unhandled 'error'.
     proc.stdin.on('error', () => { /* pipe closed; surfaced via 'exit' */ });
     proc.stdout.on('error', () => { /* stream cancelled on close */ });
     proc.stderr.setEncoding('utf8');
@@ -148,11 +223,21 @@ export class AcpSession implements ConversationSession {
     );
     const app = acpClient({ name: 'zym' })
       .onNotification('session/update', (ctx) => this.onSessionUpdate(ctx.params))
-      .onRequest('session/request_permission', (ctx) => this.onPermissionRequest(ctx.params));
+      .onRequest('session/request_permission', (ctx) => this.onPermissionRequest(ctx.params))
+      .onRequest('elicitation/create', (ctx) => this.onElicitation(ctx.params));
     this.connection = app.connect(stream);
     void this.handshake(this.connection).catch((err: unknown) => {
       if (this.exited) return;
-      this.emitter.emit('error', { message: 'ACP handshake failed', detail: detailOf(err) || this.recentStderr() });
+      if (err instanceof RequestError && err.code === RequestError.authRequired().code) {
+        const methods = this.authMethodNames.length ? ` (login methods: ${this.authMethodNames.join(', ')})` : '';
+        this.emitter.emit('error', {
+          message: 'Agent requires login',
+          detail: `Authenticate with the agent's own CLI first — run \`${this.options.command.join(' ')}\` in a terminal${methods}.`,
+        });
+      } else {
+        this.emitter.emit('error', { message: 'ACP handshake failed', detail: detailOf(err) || this.recentStderr() });
+      }
+      this.endReplay();
       this.setStatus('idle');
     });
   }
@@ -161,27 +246,83 @@ export class AcpSession implements ConversationSession {
     const init = await conn.agent.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: 'zym', version: '0' },
-      // No client capabilities yet: the agent reads/writes/executes on its own
-      // side; fs (unsaved-buffer serving) and terminals are planned (docs).
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      clientCapabilities: {
+        // fs / terminal capabilities are planned (docs/agents/acp.md); the
+        // `_meta.terminal_output` channel + form elicitation are live.
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+        elicitation: { form: {} },
+        _meta: { terminal_output: true },
+      },
     });
     this.agentName = init.agentInfo?.name ?? '';
-    const session = await conn.agent.request('session/new', { cwd: this.options.cwd, mcpServers: [] });
-    this._sessionId = session.sessionId;
-    if (session.modes) {
-      this.availableModes = session.modes.availableModes;
-      this.applyModeId(session.modes.currentModeId);
-      // Start in the ask-first mode when the agent has one: the Claude Code
-      // adapter defaults its session to `acceptEdits` (verified — it writes files
-      // without ever requesting permission), which silently bypasses zym's
-      // permission cards. Mirrors claude-sdk's `--permission-mode default`.
-      if (session.modes.currentModeId !== 'default' && this.availableModes.some((m) => m.id === 'default')) {
-        void conn.agent.request('session/set_mode', { sessionId: session.sessionId, modeId: 'default' }).catch(() => { /* agent default stays */ });
-        this.applyModeId('default');
+    this.agentCaps = init.agentCapabilities ?? {};
+    this.authMethodNames = (init.authMethods ?? []).map((m) => m.name);
+    const mcpServers = this.options.bridge?.mcpServers ?? [];
+    const cwd = this.options.cwd;
+    const resume = this.options.resume;
+
+    if (resume?.sessionId && resume.fork && this.agentCaps.sessionCapabilities?.fork) {
+      // Branch: a fresh, independent session seeded with the original's context.
+      const forked = await conn.agent.request('session/fork', {
+        sessionId: resume.sessionId, cwd, mcpServers,
+      });
+      this._sessionId = forked.sessionId;
+      this.applyModes(forked.modes ?? null);
+    } else if (resume?.sessionId && this.agentCaps.loadSession) {
+      // Resume with history: the agent replays the whole conversation as
+      // session/update notifications before the request resolves.
+      this.replaying = true;
+      this.emitter.emit('replay', { active: true });
+      try {
+        const loaded = await conn.agent.request('session/load', { sessionId: resume.sessionId, cwd, mcpServers });
+        this._sessionId = resume.sessionId;
+        this.applyModes(loaded.modes ?? null);
+      } finally {
+        this.endReplay();
       }
+    } else {
+      // Fresh session — or a context-only resume through the claude adapter's
+      // `_meta` extension when the agent can't replay history.
+      const session = await conn.agent.request('session/new', {
+        cwd,
+        mcpServers,
+        ...(resume?.sessionId ? { _meta: { claudeCode: { options: { resume: resume.sessionId } } } } : {}),
+      });
+      this._sessionId = session.sessionId;
+      this.applyModes(session.modes ?? null);
+    }
+
+    // Start in the ask-first mode when the agent has one: the Claude Code
+    // adapter defaults its session to `acceptEdits` (verified — it writes files
+    // without ever requesting permission), which silently bypasses zym's
+    // permission cards. Mirrors claude-sdk's `--permission-mode default`.
+    if (this.currentModeId && this.currentModeId !== 'default' && this.availableModes.some((m) => m.id === 'default')) {
+      void conn.agent.request('session/set_mode', { sessionId: this._sessionId!, modeId: 'default' }).catch(() => { /* agent default stays */ });
+      this.applyModeId('default');
+    }
+    if (this.options.bridge) {
+      this.bridgeWatch = this.options.bridge.watch({
+        onActions: (actions) => this.emitter.emit('actions', { actions }),
+        onCwd: (dir) => this.emitter.emit('cwd', { cwd: dir }),
+      });
     }
     this.emitInit();
     for (const text of this.queued.splice(0)) this.sendPrompt(text);
+  }
+
+  // Close the replay window (idempotent — also called from the handshake's
+  // error path so a failed load doesn't leave the widget in replay mode).
+  private endReplay(): void {
+    if (!this.replaying) return;
+    this.replaying = false;
+    this.emitter.emit('replay', { active: false });
+  }
+
+  private applyModes(modes: SessionModeState | null): void {
+    if (!modes) return;
+    this.availableModes = modes.availableModes;
+    this.applyModeId(modes.currentModeId);
   }
 
   private emitInit(): void {
@@ -222,39 +363,82 @@ export class AcpSession implements ConversationSession {
     this.setStatus('idle');
   }
 
-  /** Interrupt the in-flight turn (`session/cancel`). A pending permission request
-   *  MUST resolve `cancelled` (spec); the turn then ends with stopReason `cancelled`. */
+  /** Interrupt the in-flight turn (`session/cancel`). Pending permission /
+   *  question requests MUST resolve `cancelled` (spec); the turn then ends with
+   *  stopReason `cancelled`. */
   interrupt(): boolean {
     const conn = this.connection;
     const sessionId = this._sessionId;
     if (!conn || !sessionId) return false;
     if (this._status !== 'working' && this._status !== 'waiting') return false;
-    this.resolvePendingPermission({ outcome: { outcome: 'cancelled' } });
+    this.cancelPendingInteractions();
     void conn.agent.notify('session/cancel', { sessionId });
     return true;
   }
 
-  /** Switch modes when the agent advertises one whose id is a zym AgentMode (the
-   *  Claude Code adapter's modes are; e.g. Gemini's ask/code/architect are not). */
+  /** Switch modes when the agent advertises one whose id is a zym AgentMode
+   *  (the Claude Code adapter's are); the footer's generic dropdown goes
+   *  through setModeById instead. */
   setPermissionMode(mode: AgentMode): void {
+    this.setModeById(mode);
+  }
+
+  getModeState(): { currentId: string; modes: Array<{ id: string; name: string }> } | null {
+    if (this.availableModes.length === 0) return null;
+    return {
+      currentId: this.currentModeId ?? this.availableModes[0].id,
+      modes: this.availableModes.map((m) => ({ id: m.id, name: m.name })),
+    };
+  }
+
+  setModeById(id: string): void {
     const conn = this.connection;
     const sessionId = this._sessionId;
-    if (!conn || !sessionId || mode === this._permissionMode) return;
-    if (!this.availableModes.some((m) => m.id === mode)) return;
-    void conn.agent.request('session/set_mode', { sessionId, modeId: mode }).catch(() => { /* mode stays */ });
-    this.applyModeId(mode); // optimistic; a current_mode_update corrects it
+    if (!conn || !sessionId || id === this.currentModeId) return;
+    if (!this.availableModes.some((m) => m.id === id)) return;
+    void conn.agent.request('session/set_mode', { sessionId, modeId: id }).catch(() => { /* mode stays */ });
+    this.applyModeId(id); // optimistic; a current_mode_update corrects it
   }
 
   respondPermission(id: string, decision: PermissionDecision): void {
     if (!this.pendingPermission || this.pendingPermission.id !== id) return; // stale / already answered
+    const pending = this.pendingPermission;
+    this.pendingPermission = null;
     const optionId = decision.optionId;
-    this.resolvePendingPermission(
-      optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } },
-    );
+    pending.resolve(optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } });
     this.setStatus('working'); // the agent resumes once it reads the decision
   }
 
-  getSubagent(_id: string): SubagentInfo | undefined { return undefined; }
+  /** Answer a form elicitation (the QuestionCard): selections land in the
+   *  question fields; notes ride the adapter's per-question "custom" field
+   *  (which takes precedence agent-side, so a note folds the selection in). */
+  answerQuestion(id: string, answers: Array<{ header: string; labels: string[]; notes?: string }>): void {
+    const pending = this.pendingQuestions.get(id);
+    if (!pending) return; // stale / already answered
+    this.pendingQuestions.delete(id);
+    const content: Record<string, ElicitationContentValue> = {};
+    let answered = false;
+    pending.fields.forEach((field, index) => {
+      const answer = answers[index];
+      if (!answer) return;
+      const notes = answer.notes?.trim();
+      if (answer.labels.length > 0) {
+        answered = true;
+        content[field.key] = field.multiSelect ? answer.labels : answer.labels[0];
+      }
+      if (notes && field.hasCustom) {
+        answered = true;
+        // Agent-side, a custom answer overrides the selection — fold it in.
+        content[`${field.key}${CUSTOM_FIELD_SUFFIX}`] = answer.labels.length > 0
+          ? `${answer.labels.join(', ')} (note: ${notes})`
+          : notes;
+      }
+    });
+    pending.resolve(answered ? { action: 'accept', content } : { action: 'decline' });
+    this.setStatus('working');
+  }
+
+  getSubagent(id: string): SubagentInfo | undefined { return this.subagents.get(id); }
   getMonitor(_id: string): MonitorInfo | undefined { return undefined; }
   stopTask(_taskId: string): void { /* no background tasks over ACP */ }
 
@@ -267,7 +451,10 @@ export class AcpSession implements ConversationSession {
 
   dispose(): void {
     this.exited = true;
-    this.resolvePendingPermission({ outcome: { outcome: 'cancelled' } });
+    this.cancelPendingInteractions();
+    this.bridgeWatch?.dispose();
+    this.bridgeWatch = null;
+    this.options.bridge?.dispose();
     this.connection?.close();
     this.connection = null;
     this.killProcess();
@@ -302,11 +489,19 @@ export class AcpSession implements ConversationSession {
   onPlan(cb: (m: { entries: PlanEntry[] }) => void): Disposable { return this.emitter.on('plan', cb as (v?: unknown) => void); }
   onFileEdited(cb: (m: { path: string }) => void): Disposable { return this.emitter.on('file-edited', cb as (v?: unknown) => void); }
   onSessionName(cb: (m: { name: string | null }) => void): Disposable { return this.emitter.on('session-name', cb as (v?: unknown) => void); }
+  onReplay(cb: (m: { active: boolean }) => void): Disposable { return this.emitter.on('replay', cb as (v?: unknown) => void); }
 
   // --- protocol → domain --------------------------------------------------------
 
   private onSessionUpdate(note: SessionNotification): void {
     const update = note.update;
+    // Subagent activity (the claude adapter stamps the spawning Task tool's id)
+    // is captured into that subagent's transcript, never the main thread.
+    const parentId = claudeMeta(update)?.parentToolUseId;
+    if (typeof parentId === 'string' && parentId) {
+      this.onSubagentChild(parentId, update);
+      return;
+    }
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
         this.onAssistantChunk(update);
@@ -316,8 +511,14 @@ export class AcpSession implements ConversationSession {
         if (text) this.emitter.emit('assistant-thinking', { delta: text });
         return;
       }
-      case 'user_message_chunk':
-        return; // history replay (session/load) — not wired yet; live turns render locally
+      case 'user_message_chunk': {
+        // Replayed history (session/load): re-render the user's past turns.
+        // Live turns are rendered locally in prompt(), and the adapter doesn't
+        // echo them — only replay produces these.
+        const text = contentText(update.content);
+        if (text) this.emitter.emit('user-message', { text });
+        return;
+      }
       case 'tool_call':
         this.onToolCall(update);
         return;
@@ -366,11 +567,17 @@ export class AcpSession implements ConversationSession {
 
   private onToolCall(call: ToolCallUpdate & { title?: string | null }): void {
     const title = call.title ?? 'tool';
-    const entry = { title, kind: call.kind ?? 'other', done: false, paths: new Set<string>() };
+    // The claude adapter stamps the real tool name — the widget's per-tool
+    // rendering (Bash command rows, collapsed Read/Edit groups) keys off it.
+    const claudeName = claudeMeta(call)?.toolName;
+    const name = typeof claudeName === 'string' && claudeName ? claudeName : title;
+    const entry: ToolCallEntry = { title, name, kind: call.kind ?? 'other', rawInput: call.rawInput, emitted: false, done: false, paths: new Set() };
     this.toolCalls.set(call.toolCallId, entry);
-    this.assistantOpen = false; // post-tool text opens a fresh bubble (mirrors claude-sdk)
-    this.emitter.emit('tool-use', { id: call.toolCallId, name: title, input: call.rawInput });
-    this.trackEdits(entry, call.kind ?? 'other', call.locations ?? null, call.content ?? null);
+    this.absorbToolMeta(entry, call);
+    this.trackEdits(entry, entry.kind, call.locations ?? null, call.content ?? null);
+    // Emit the row now if the input is already usable or the call is past the
+    // streaming stage; otherwise wait for the refine update carrying the input.
+    if (hasUsableInput(call.rawInput) || (call.status && call.status !== 'pending')) this.emitToolUse(call.toolCallId, entry);
     if (call.status === 'completed' || call.status === 'failed') this.finishToolCall(call.toolCallId, call.status, call.content ?? null, call.rawOutput);
   }
 
@@ -383,31 +590,150 @@ export class AcpSession implements ConversationSession {
       this.onToolCall(update);
       return;
     }
-    this.trackEdits(known, update.kind ?? known.kind, update.locations ?? null, update.content ?? null);
+    // Absorb refinements (the adapter re-sends title/kind/rawInput once the
+    // model finishes streaming the call).
+    if (update.rawInput !== undefined) known.rawInput = update.rawInput;
+    if (update.title) known.title = update.title;
+    if (update.kind) known.kind = update.kind;
+    const claudeName = claudeMeta(update)?.toolName;
+    if (typeof claudeName === 'string' && claudeName) known.name = claudeName;
+    this.absorbToolMeta(known, update);
+    this.trackEdits(known, known.kind, update.locations ?? null, update.content ?? null);
+    if (this.refreshSubagentInfo(update.toolCallId, known) && known.emitted) {
+      this.emitter.emit('subagent-update', { id: update.toolCallId }); // refined description/prompt → refresh the page
+    }
+    if (!known.emitted && (hasUsableInput(known.rawInput) || (update.status && update.status !== 'pending'))) {
+      this.emitToolUse(update.toolCallId, known);
+    }
     if (update.status === 'completed' || update.status === 'failed') {
       this.finishToolCall(update.toolCallId, update.status, update.content ?? null, update.rawOutput);
     }
   }
 
+  // Surface the buffered tool row: a Task spawn opens a captured subagent
+  // transcript (the widget keys the subagent UI off the domain name 'Agent');
+  // everything else is a plain tool row.
+  private emitToolUse(id: string, entry: ToolCallEntry): void {
+    if (entry.emitted) return;
+    entry.emitted = true;
+    this.assistantOpen = false; // post-tool text opens a fresh bubble
+    if (entry.name === 'Task' || entry.name === 'Agent') {
+      const info = this.refreshSubagentInfo(id, entry, true)!;
+      this.emitter.emit('subagent-start', { id, agentType: info.agentType, description: info.description });
+      this.emitter.emit('tool-use', { id, name: 'Agent', input: entry.rawInput });
+    } else {
+      this.emitter.emit('tool-use', { id, name: entry.name, input: entry.rawInput });
+    }
+  }
+
+  // Create/refresh a Task call's captured-subagent record from its (possibly
+  // refined) input, merging into whatever a child update already created.
+  private refreshSubagentInfo(id: string, entry: ToolCallEntry, create = false): SubagentInfo | undefined {
+    const isTask = entry.name === 'Task' || entry.name === 'Agent';
+    if (!isTask) return undefined;
+    let info = this.subagents.get(id);
+    if (!info) {
+      if (!create) return undefined;
+      info = { id, agentType: 'agent', description: entry.title, prompt: '', status: 'running', messages: [] };
+      this.subagents.set(id, info);
+    }
+    const input = (entry.rawInput && typeof entry.rawInput === 'object' ? entry.rawInput : {}) as Record<string, unknown>;
+    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    if (str(input.subagent_type)) info.agentType = str(input.subagent_type);
+    if (str(input.description)) info.description = str(input.description);
+    if (str(input.prompt)) info.prompt = str(input.prompt);
+    return info;
+  }
+
+  // Fold a tool update's `_meta.terminal_*` channel (streamed command output;
+  // codex-acp-compatible, sent by the claude adapter when we advertise
+  // `_meta.terminal_output`) into the call's accumulated output.
+  private absorbToolMeta(entry: ToolCallEntry, update: { _meta?: Record<string, unknown> | null }): void {
+    const meta = update._meta;
+    if (!meta || typeof meta !== 'object') return;
+    const output = (meta as { terminal_output?: { data?: unknown } }).terminal_output;
+    if (output && typeof output.data === 'string') entry.terminalOutput = output.data;
+    const exit = (meta as { terminal_exit?: { exit_code?: unknown } }).terminal_exit;
+    if (exit && typeof exit.exit_code === 'number') entry.exitCode = exit.exit_code;
+  }
+
   private finishToolCall(id: string, status: 'completed' | 'failed', content: ToolCallContent[] | null, rawOutput: unknown): void {
     const known = this.toolCalls.get(id);
     if (known?.done) return; // a repeated terminal update must not append twice
-    if (known) known.done = true;
-    // Only a *completed* edit changed anything — a denied/failed one never touched
-    // the file (verified: the adapter reports the write's locations up front).
+    if (known) {
+      known.done = true;
+      this.emitToolUse(id, known); // a still-buffered row surfaces before its result
+    }
+    // Only a *completed* edit changed anything — a denied/failed one never
+    // touched the file.
     if (known && status === 'completed') {
       for (const path of known.paths) this.emitter.emit('file-edited', { path });
     }
-    const text = toolContentText(content) || rawOutputText(rawOutput);
+    // A Task completion closes its captured subagent transcript; the result
+    // text is the subagent's final answer, appended to its page.
+    const sub = this.subagents.get(id);
+    if (sub) {
+      const answer = toolContentText(content) || rawOutputText(rawOutput);
+      if (answer) sub.messages.push({ kind: 'text', text: answer });
+      sub.status = 'completed';
+      this.emitter.emit('subagent-update', { id });
+      this.emitter.emit('subagent-done', { id });
+      return; // the widget renders the page, not a result row (no toolRows entry)
+    }
+    // Prefer the terminal channel's real output; fall back to content / rawOutput.
+    let text = known?.terminalOutput ?? '';
+    if (!text) text = toolContentText(content) || rawOutputText(rawOutput);
+    if (known?.exitCode != null && known.exitCode !== 0) text = `${text}${text ? '\n' : ''}(exit ${known.exitCode})`;
     this.emitter.emit('tool-result', { id, isError: status === 'failed', text });
   }
 
-  // An edit-kind tool call names the files it touches (locations, diff paths) —
-  // accumulated on the call, reported when it completes (finishToolCall).
-  private trackEdits(entry: { paths: Set<string> }, kind: ToolKind, locations: ToolCallLocation[] | null, content: ToolCallContent[] | null): void {
-    if (kind !== 'edit' && kind !== 'delete' && kind !== 'move') return;
-    for (const location of locations ?? []) entry.paths.add(location.path);
-    for (const item of content ?? []) if (item.type === 'diff') entry.paths.add(item.path);
+  // A subagent's activity (updates stamped with the spawning Task tool's id):
+  // capture into its transcript for the drill-down page, never the main thread.
+  private onSubagentChild(parentId: string, update: SessionNotification['update']): void {
+    let info = this.subagents.get(parentId);
+    if (!info) {
+      // A child before/without its parent Task row (defensive): open a transcript
+      // so nothing is lost; the parent's row appears when its tool_call arrives.
+      info = { id: parentId, agentType: 'agent', description: this.toolCalls.get(parentId)?.title ?? '', prompt: '', status: 'running', messages: [] };
+      this.subagents.set(parentId, info);
+    }
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk': {
+        // The adapter drops subagent prose today; keep the mapping so it appears
+        // if that changes. Merge consecutive text into one message.
+        const text = contentText(update.content);
+        if (!text) return;
+        const last = info.messages[info.messages.length - 1];
+        if (last?.kind === 'text') last.text += text;
+        else info.messages.push({ kind: 'text', text });
+        break;
+      }
+      case 'tool_call': {
+        const claudeName = claudeMeta(update)?.toolName;
+        info.messages.push({
+          kind: 'tool',
+          toolId: update.toolCallId,
+          name: typeof claudeName === 'string' && claudeName ? claudeName : (update.title ?? 'tool'),
+          input: update.rawInput,
+        });
+        break;
+      }
+      case 'tool_call_update': {
+        if (update.status !== 'completed' && update.status !== 'failed') return;
+        const message = info.messages.find(
+          (m): m is Extract<SubagentMessage, { kind: 'tool' }> => m.kind === 'tool' && m.toolId === update.toolCallId,
+        );
+        if (!message || message.result) return;
+        message.result = {
+          isError: update.status === 'failed',
+          text: toolContentText(update.content ?? null) || rawOutputText(update.rawOutput),
+        };
+        break;
+      }
+      default:
+        return; // other subagent updates (plans, usage) aren't captured
+    }
+    this.emitter.emit('subagent-update', { id: parentId });
   }
 
   private onUsage(usage: UsageUpdate): void {
@@ -423,10 +749,18 @@ export class AcpSession implements ConversationSession {
   private onPermissionRequest(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     // Only one outstanding request at a time (the turn blocks on it); a stale one
     // — shouldn't happen — is cancelled rather than leaked.
-    this.resolvePendingPermission({ outcome: { outcome: 'cancelled' } });
+    this.pendingPermission?.resolve({ outcome: { outcome: 'cancelled' } });
+    this.pendingPermission = null;
     const toolCall = params.toolCall;
     const known = this.toolCalls.get(toolCall.toolCallId);
-    const id = `perm-${++this.permCounter}`;
+    if (known) {
+      // The request's toolCall often carries the input the streamed tool_call
+      // didn't have yet — absorb it, and make sure the row is on screen before
+      // the approval card replaces the prompt.
+      if (toolCall.rawInput !== undefined) known.rawInput = toolCall.rawInput;
+      this.emitToolUse(toolCall.toolCallId, known);
+    }
+    const id = `perm-${++this.idCounter}`;
     const request: PermissionRequest = {
       id,
       toolName: toolCall.title ?? known?.title ?? 'tool',
@@ -441,16 +775,32 @@ export class AcpSession implements ConversationSession {
     });
   }
 
-  private resolvePendingPermission(response: RequestPermissionResponse): void {
-    const pending = this.pendingPermission;
-    if (!pending) return;
+  // A form elicitation (an MCP server's request, or the claude adapter's
+  // AskUserQuestion bridging) → the interactive QuestionCard. Forms we can't
+  // render (url mode, free-form fields without options) are declined.
+  private onElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse> | CreateElicitationResponse {
+    if (params.mode !== 'form') return { action: 'decline' };
+    const parsed = parseElicitationForm(params);
+    if (!parsed) return { action: 'decline' };
+    const id = `question-${++this.idCounter}`;
+    this.setStatus('waiting');
+    return new Promise((resolve) => {
+      this.pendingQuestions.set(id, { resolve, fields: parsed.fields });
+      this.emitter.emit('question', { id, questions: parsed.questions });
+    });
+  }
+
+  private cancelPendingInteractions(): void {
+    this.pendingPermission?.resolve({ outcome: { outcome: 'cancelled' } });
     this.pendingPermission = null;
-    pending.resolve(response);
+    for (const pending of this.pendingQuestions.values()) pending.resolve({ action: 'cancel' });
+    this.pendingQuestions.clear();
   }
 
   private applyModeId(modeId: string): void {
-    if (!AGENT_MODES.has(modeId as AgentMode) || modeId === this._permissionMode) return;
-    this._permissionMode = modeId as AgentMode;
+    if (modeId === this.currentModeId) return;
+    this.currentModeId = modeId;
+    if (AGENT_MODES.has(modeId as AgentMode)) this._permissionMode = modeId as AgentMode;
     this.emitter.emit('mode');
   }
 
@@ -471,7 +821,10 @@ export class AcpSession implements ConversationSession {
   private handleExit(code: number | null): void {
     if (this.exited) return;
     this.exited = true;
-    this.resolvePendingPermission({ outcome: { outcome: 'cancelled' } });
+    this.cancelPendingInteractions();
+    this.endReplay();
+    this.bridgeWatch?.dispose();
+    this.bridgeWatch = null;
     this.connection?.close();
     this.connection = null;
     this.setStatus('disconnected');
@@ -493,14 +846,30 @@ export class AcpSession implements ConversationSession {
   }
 
   private setStatus(status: AgentStatus): void {
-    // `disconnected` is terminal for a session object (mirrors SdkSession).
+    // `disconnected` is terminal for a session object (mirrors the claude kinds).
     if (this._status === 'disconnected' || status === this._status) return;
     this._status = status;
     this.emitter.emit('status');
   }
+
+  // An edit-kind tool call names the files it touches (locations, diff paths) —
+  // accumulated on the call, reported when it completes (finishToolCall).
+  private trackEdits(entry: ToolCallEntry, kind: ToolKind, locations: ToolCallLocation[] | null, content: ToolCallContent[] | null): void {
+    if (kind !== 'edit' && kind !== 'delete' && kind !== 'move') return;
+    for (const location of locations ?? []) entry.paths.add(location.path);
+    for (const item of content ?? []) if (item.type === 'diff') entry.paths.add(item.path);
+  }
 }
 
 // --- pure helpers -----------------------------------------------------------------
+
+/** The claude adapter's `_meta.claudeCode` extension on an update, if present. */
+function claudeMeta(update: { _meta?: Record<string, unknown> | null }): Record<string, unknown> | undefined {
+  const meta = update._meta;
+  if (!meta || typeof meta !== 'object') return undefined;
+  const claude = (meta as { claudeCode?: unknown }).claudeCode;
+  return claude && typeof claude === 'object' ? (claude as Record<string, unknown>) : undefined;
+}
 
 /** The renderable text of a content block (only text carries prose; a resource
  *  link renders as its uri so it isn't silently dropped). */
@@ -517,7 +886,7 @@ function toolContentText(content: ToolCallContent[] | null): string {
     .map((item) => {
       if (item.type === 'content') return contentText(item.content);
       if (item.type === 'diff') return `[diff] ${item.path}`;
-      return ''; // terminal content needs the terminal capability (not advertised)
+      return ''; // terminal content arrives via the _meta channel instead
     })
     .filter(Boolean)
     .join('\n');
@@ -544,4 +913,65 @@ function planEntry(entry: AcpPlanEntry): PlanEntry {
 function detailOf(err: unknown): string {
   if (err instanceof Error) return err.message;
   return err == null ? '' : String(err);
+}
+
+/** Whether a streamed rawInput is worth rendering: the adapter emits `{}` while
+ *  the model is still streaming the call's arguments (see ToolCallEntry.emitted). */
+function hasUsableInput(rawInput: unknown): boolean {
+  if (rawInput == null) return false;
+  if (typeof rawInput !== 'object') return true;
+  return Object.keys(rawInput as Record<string, unknown>).length > 0;
+}
+
+/** Parse a form elicitation into renderable questions + the field keys to write
+ *  answers back into. Follows the claude adapter's AskUserQuestion conventions
+ *  (`question_<n>` enums + `question_<n>_custom` free-text "Other" companions);
+ *  a generic MCP form parses the same way when its fields are enums. Returns
+ *  null when any primary field has no options (we can't render free-form-only
+ *  forms — the caller declines). Exported for tests. */
+export function parseElicitationForm(params: CreateElicitationRequest & { mode: 'form' }): {
+  questions: AgentQuestion[];
+  fields: Array<{ key: string; multiSelect: boolean; hasCustom: boolean }>;
+} | null {
+  const properties = (params.requestedSchema && typeof params.requestedSchema === 'object'
+    ? (params.requestedSchema as { properties?: unknown }).properties
+    : undefined);
+  if (!properties || typeof properties !== 'object') return null;
+  const entries = Object.entries(properties as Record<string, unknown>);
+  const customKeys = new Set(entries.map(([k]) => k).filter((k) => k.endsWith(CUSTOM_FIELD_SUFFIX)));
+  const questions: AgentQuestion[] = [];
+  const fields: Array<{ key: string; multiSelect: boolean; hasCustom: boolean }> = [];
+
+  for (const [key, rawField] of entries) {
+    if (customKeys.has(key)) continue; // the "Other" companion of its question
+    const field = (rawField && typeof rawField === 'object' ? rawField : {}) as Record<string, unknown>;
+    const multiSelect = field.type === 'array';
+    const items = (field.items && typeof field.items === 'object' ? field.items : {}) as Record<string, unknown>;
+    const rawOptions = multiSelect ? items.anyOf : field.oneOf;
+    if (!Array.isArray(rawOptions) || rawOptions.length === 0) return null; // free-form field — not renderable
+    const options = rawOptions
+      .filter((o): o is Record<string, unknown> => !!o && typeof o === 'object')
+      .map((o) => {
+        const label = typeof o.const === 'string' ? o.const : '';
+        const title = typeof o.title === 'string' ? o.title : '';
+        const meta = (o._meta && typeof o._meta === 'object' ? (o._meta as Record<string, unknown>)[OPTION_META_KEY] : undefined);
+        const metaDescription = meta && typeof meta === 'object' ? (meta as { description?: unknown }).description : undefined;
+        const description = typeof metaDescription === 'string' && metaDescription
+          ? metaDescription
+          // Fallback: the adapter flattens "label — description" into the title.
+          : title.startsWith(`${label} — `) ? title.slice(label.length + 3) : undefined;
+        return { label, description };
+      })
+      .filter((o) => o.label !== '');
+    if (options.length === 0) return null;
+    const question = typeof field.description === 'string' && field.description ? field.description : params.message;
+    questions.push({
+      question,
+      header: typeof field.title === 'string' && field.title ? field.title : question,
+      multiSelect,
+      options,
+    });
+    fields.push({ key, multiSelect, hasCustom: customKeys.has(`${key}${CUSTOM_FIELD_SUFFIX}`) });
+  }
+  return questions.length > 0 ? { questions, fields } : null;
 }

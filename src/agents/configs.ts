@@ -19,6 +19,7 @@ import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
 import { claudeSdkLaunchOptions } from './claude-sdk/config.ts';
 import { acpLaunchOptions, acpCommand } from './acp/config.ts';
 import { AcpSession } from './acp/AcpSession.ts';
+import { createAcpBridge } from './acp/bridge.ts';
 import type { Agent, AgentResume } from './types.ts';
 
 export type AgentKind = 'claude-tui' | 'claude-sdk' | 'acp';
@@ -105,22 +106,27 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
     create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile }),
   },
   // An Agent Client Protocol agent (Gemini CLI natively; Claude Code / Codex via
-  // their ACP adapters) in the same native conversation view. No resume yet
-  // (session/load — see docs/agents/acp.md); the argv comes from `agent.acp.command`.
+  // their ACP adapters) in the same native conversation view. The argv comes from
+  // `agent.acp.command` (resolved here so serialize/restore round-trips the exact
+  // agent, not whatever the config says later); resume goes over `session/load` /
+  // `session/fork` where the agent advertises them. See docs/agents/acp.md.
   'acp': {
     kind: 'acp',
     options: acpLaunchOptions,
-    create: (l) =>
-      new AgentConversation({
+    create: (l) => {
+      const command = l.command && l.command.length > 0 ? l.command : acpCommand();
+      return new AgentConversation({
         cwd: l.cwd,
-        command: l.command,
+        command,
         prompt: l.prompt,
         userPrompt: l.userPrompt,
+        resume: l.resume,
         onOpenFile: l.onOpenFile,
         kind: 'acp',
         defaultTitle: 'acp agent',
-        createSession: (o) => new AcpSession({ cwd: o.cwd, command: o.command && o.command.length > 0 ? o.command : acpCommand() }),
-      }),
+        createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge() }),
+      });
+    },
   },
 };
 
