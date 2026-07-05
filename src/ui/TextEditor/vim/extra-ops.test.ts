@@ -441,18 +441,28 @@ test('g c without a comment spec leaves the buffer untouched', () => {
   assert.equal(line(), 'a');
 });
 
-test('bottom-anchored visual g c does not leave the cursor below the toggled rows', () => {
+test('bottom-anchored visual g c keeps the cursor on the row it was on', () => {
   const { editor, run, at } = setup('one\ntwo\nthree\n');
   editor.setCommentSpecSource(() => ({ line: '//' }));
   at(0, 0);
   run('ActivateLinewiseVisualMode');
-  run('MoveDown'); // cursor at the BOTTOM of the selection (insert mark on row 2)
+  run('MoveDown'); // caret displays on row 1, the BOTTOM of the selection (insert mark on row 2)
   run('ToggleLineComments');
   assert.equal(editor.getText(), '// one\n// two\nthree\n');
-  assert.ok(
-    editor.getCursorBufferPosition().row <= 1,
-    `cursor landed below the toggled rows: ${editor.getCursorBufferPosition().row}`,
-  );
+  // stayAtSamePosition: no jump to the top of the range, and no falling below it.
+  assert.equal(editor.getCursorBufferPosition().row, 1, 'cursor stays on its row');
+});
+
+test('g c c keeps the cursor in place', () => {
+  const { editor, run, at } = setup('let a = 1\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 4); // on 'a'
+  run('ToggleLineCommentsCurrentLine');
+  assert.equal(editor.getText(), '// let a = 1\n');
+  // The marker rides the inserted leader: same character, shifted column.
+  assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 7]);
+  run('ToggleLineCommentsCurrentLine');
+  assert.deepEqual(editor.getCursorBufferPosition().toArray(), [0, 4]);
 });
 
 test('linewise visual keeps the display caret on the selected row (current-line band source)', () => {

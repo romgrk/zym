@@ -307,10 +307,13 @@ class AutoIndent extends TransformString {
 // -------------------------
 // `g c {motion}` toggles the motion's rows, `g c g c` the current line (via the
 // same-operator repeat), visual `g c` the selection. Delimiters come from the
-// file's language through EditorModel's comment-spec source.
+// file's language through EditorModel's comment-spec source. The cursor stays
+// where it was (marker-tracked through the edit) rather than jumping to the
+// start of the range — commenting is an in-place tweak, not a jump.
 class ToggleLineComments extends TransformString {
   flashTarget = false
   stayByMarker = true
+  stayAtSamePosition = true
   wise = 'linewise' as const
 
   mutateSelection (selection: Selection): void {
