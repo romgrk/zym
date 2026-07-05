@@ -25,7 +25,7 @@ events onto this surface.
 ## Architecture
 
 ```
-spawn agent argv (agent.acp.command)            src/agents/acp/AcpSession.ts
+spawn agent argv (an agent.profiles entry)      src/agents/acp/AcpSession.ts
   stdio ⇄ ndJsonStream ⇄ @agentclientprotocol/sdk client()
         │  session/update, session/request_permission   (agent → zym)
         │  initialize, session/new, session/prompt, session/cancel (zym → agent)
@@ -81,11 +81,15 @@ unabsorbed, disposing a session crashes zym).
 
 ## Configuration
 
-- `agent.implementation: "acp"` — make `agent:new` launch this kind (or
-  `ZYM_AGENT=acp zym` per-launch; the launcher's kind dropdown always offers it).
-- `agent.acp.command` — the agent argv, default `["gemini", "--acp"]`. E.g.
-  `["npx", "@agentclientprotocol/claude-agent-acp"]` for Claude Code. The
-  `ZYM_ACP_COMMAND` env var (whitespace-split) overrides it for one launch.
+- `agent.profiles` — named ACP agents, each `{ "name", "command" }`; the
+  launcher's agent dropdown lists them alongside `claude-tui` (resolution in
+  `agents/profiles.ts`). Defaults offer gemini and the claude adapter.
+- `agent.implementation: "acp"` — make `agent:new` default to the leading ACP
+  profile (or `ZYM_AGENT=acp zym` per-launch).
+- `agent.acp.command` — legacy single argv, superseded by profiles; when set
+  explicitly it surfaces as the *first* ACP profile (named after its binary,
+  deduped against identical profiles). The `ZYM_ACP_COMMAND` env var
+  (whitespace-split) does the same with higher precedence, for one launch.
 
 The launcher's model / permission-mode / effort dropdowns are pass-through
 `default` sentinels for this kind — those knobs are the agent's own, negotiated

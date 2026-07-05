@@ -172,13 +172,24 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
       "default) or 'acp' (an Agent Client Protocol agent, natively rendered — " +
       'see agent.acp.command).',
   },
+  'agent.profiles': {
+    type: 'array',
+    default: [
+      { name: 'gemini', command: ['gemini', '--acp'] },
+      { name: 'claude-acp', command: ['npx', '-y', '@agentclientprotocol/claude-agent-acp'] },
+    ],
+    description:
+      'Named ACP agents offered by the launcher\'s agent dropdown, each ' +
+      '{ "name", "command" } (command = argv, JSON-RPC over stdio). E.g. ' +
+      '[{ "name": "gemini", "command": ["gemini", "--acp"] }].',
+  },
   'agent.acp.command': {
     type: 'array',
     default: ['gemini', '--acp'],
     description:
-      "Argv of the ACP agent the 'acp' kind spawns (JSON-RPC over stdio). E.g. " +
-      '["gemini", "--acp"], or ["npx", "@agentclientprotocol/claude-agent-acp"] ' +
-      'for Claude Code via its ACP adapter.',
+      "Argv of the ACP agent the 'acp' kind spawns (JSON-RPC over stdio). " +
+      'Superseded by agent.profiles — when set explicitly it still surfaces ' +
+      'as the first ACP profile in the launcher.',
   },
   'agent.autoOpenChangedFiles': {
     type: 'boolean',

@@ -9,7 +9,7 @@ displayed:
   `src/ui/AgentTerminal.ts` + `src/agents/claude-tui/session.ts`.
 - **`acp`** *(opt-in via `agent.implementation: "acp"`)* — any **Agent Client
   Protocol** agent (Gemini CLI natively; Claude Code / Codex via adapters;
-  argv from `agent.acp.command`) rendered in **native GTK widgets** (no
+  argv from the `agent.profiles` picker) rendered in **native GTK widgets** (no
   terminal, no Ink/Vte repaint cost), over JSON-RPC/stdio. Deep dive:
   **[agents/acp.md](agents/acp.md)**.
 
@@ -649,11 +649,11 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
    agent → restart → it reappears and `session/load`s its history), the
    worktree launch flows now that the bridge rides `mcpServers` (does the agent
    actually call `set_worktree`?), and interrupt while a permission card is up.
-3. [ ] **Agent profiles** — `agent.profiles` (name + argv): the launcher's kind
-   dropdown becomes a profile picker, so gemini / the claude adapter /
-   codex-acp sit side by side instead of one global `agent.acp.command`; the
-   ACP registry manifest can seed suggestions later. (Subsumes the older
-   Profiles items below.)
+3. [x] **Agent profiles** — done 2026-07-05: `agent.profiles` (name + argv,
+   defaults offer gemini + the claude adapter), resolved in
+   `agents/profiles.ts`; the launcher's kind dropdown is a profile picker, and
+   a legacy `agent.acp.command` / `ZYM_ACP_COMMAND` surfaces as the leading
+   profile. The ACP registry manifest can seed suggestions later.
 4. [ ] **Terminal capability (acp)** — full client-side `terminal/*` backed by
    zym terminals: revives the monitors UX (live output rows, kill buttons) and
    upgrades long-running Bash from buffered-at-completion to streaming output.
@@ -668,11 +668,11 @@ switching for agents that expose them), and the in-app **`authenticate`** flow
 
 ### Backlog
 
-- [ ] Profiles: `AgentProfile` config schema + resolver; back-compat with
-      `agent.command`; `kind`-gated status integration
+- [x] Profiles: `agent.profiles` schema + resolver (`agents/profiles.ts`),
+      back-compat with `agent.acp.command`; picked in the launcher — done
+      2026-07-05 (see *Next* item 3 above)
 - [ ] Claude arg builder (model / tools / permission-mode / system-prompt)
       merged with the status `--settings`
-- [ ] Picker/starter: choose a profile when launching
 - [~] Attention notifications: in-app toasts on waiting / working→idle while
       the tab is inactive are done (`notifyAgentAttention`); header `waiting`
       badge and OS notifications while the window is unfocused are still todo
@@ -702,9 +702,9 @@ switching for agents that expose them), and the in-app **`authenticate`** flow
 
 ## Open questions
 
-- **Profile selection UX**: two-stage picker (profile → prompt) vs an
-  `@profile` prefix in the prompt entry vs per-profile `agent:new:<name>`
-  commands?
+- ~~**Profile selection UX**~~ — settled 2026-07-05: the launcher's agent
+  dropdown is the profile picker (sticky across launches, like the other
+  launch options).
 - **Generic-tool status**: leave non-claude agents at alive/exited, or attempt
   a generic "waiting for input" heuristic (PTY idle / prompt detection)?
 - **Review granularity inside a shared worktree**: N agents per worktree means

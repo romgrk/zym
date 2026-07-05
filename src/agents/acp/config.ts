@@ -2,25 +2,24 @@
  * Launch options for the `acp` kind (an Agent Client Protocol agent rendered in
  * the native conversation). Unlike the claude kinds, model / permission-mode /
  * effort are the *agent's* concern, negotiated per session (ACP session modes /
- * config options) — the launcher offers only the pass-through `default` for each,
- * and the argv comes from the `agent.acp.command` config (default Gemini CLI,
- * the reference native ACP agent).
+ * config options) — the launcher offers only the pass-through `default` for each.
+ * The argv comes from the agent *profiles* (`agent.profiles`; see
+ * `agents/profiles.ts`) — the launcher passes the picked profile's command, so
+ * `acpCommand()` only backs the launches that don't go through it.
  */
-import { zym } from '../../zym.ts';
 import type { AgentLaunchOptions, LaunchOption } from '../configs.ts';
+import { listAgentProfiles } from '../profiles.ts';
 
 const PASS_THROUGH: LaunchOption[] = [{ value: 'default', label: 'default', detail: 'agent default' }];
 
-/** The configured ACP agent argv (`agent.acp.command`), e.g. `['gemini', '--acp']`
- *  or `['npx', '@agentclientprotocol/claude-agent-acp']`. The `ZYM_ACP_COMMAND`
- *  env var (whitespace-split) overrides config for a single launch, mirroring
- *  `ZYM_AGENT` — e.g. `ZYM_ACP_COMMAND='npx -y @agentclientprotocol/claude-agent-acp'`. */
+/** The default ACP agent argv — the leading ACP profile's (which already folds
+ *  in the `ZYM_ACP_COMMAND` env override and a legacy explicit
+ *  `agent.acp.command`; see `agents/profiles.ts`). Backs launches that skip the
+ *  launcher's profile picker (a picker "start new" with
+ *  `agent.implementation: "acp"`). */
 export function acpCommand(): string[] {
-  const env = process.env.ZYM_ACP_COMMAND?.trim();
-  if (env) return env.split(/\s+/);
-  const value = zym.config.get('agent.acp.command');
-  if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string')) return value;
-  return ['gemini', '--acp'];
+  const first = listAgentProfiles().find((p) => p.kind === 'acp')?.command;
+  return first ?? ['gemini', '--acp'];
 }
 
 export const acpLaunchOptions: AgentLaunchOptions = {

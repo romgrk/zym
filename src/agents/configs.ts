@@ -9,8 +9,9 @@
  * `../ui/*`. The classes are referenced only inside the `create` closures (called
  * at launch time), so module evaluation stays free of an import cycle.
  *
- * (Agent *profiles* — user-configurable command/model/prompt per named agent —
- * are a later feature; this file is the minimal kind registry it will grow into.)
+ * (Agent *profiles* — the named launch targets the launcher's agent dropdown
+ * offers, one per configured ACP agent — live in `agents/profiles.ts`; a
+ * profile resolves to a kind here + an argv.)
  */
 import { AgentTerminal } from '../ui/AgentTerminal.ts';
 import { AgentConversation } from '../ui/AgentConversation.ts';
@@ -104,9 +105,11 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
   },
   // An Agent Client Protocol agent (Gemini CLI natively; Claude Code / Codex via
   // their ACP adapters) in the same native conversation view. The argv comes from
-  // `agent.acp.command` (resolved here so serialize/restore round-trips the exact
-  // agent, not whatever the config says later); resume goes over `session/load` /
-  // `session/fork` where the agent advertises them. See docs/agents/acp.md.
+  // the picked profile (`agent.profiles`; `acpCommand()` — the leading profile —
+  // backs launches that skip the picker), resolved here so serialize/restore
+  // round-trips the exact agent, not whatever the config says later; resume goes
+  // over `session/load` / `session/fork` where the agent advertises them. See
+  // docs/agents/acp.md.
   'acp': {
     kind: 'acp',
     options: acpLaunchOptions,
@@ -124,14 +127,6 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
     },
   },
 };
-
-/** The agent kinds as launcher options (value = kind, label = its display name). */
-export function listAgentKinds(): LaunchOption[] {
-  return (Object.keys(AGENT_CONFIGS) as AgentKind[]).map((kind) => ({
-    value: kind,
-    label: AGENT_CONFIGS[kind].options.label,
-  }));
-}
 
 /** Pick a kind from the `agent.implementation` config value: `acp` (an Agent
  *  Client Protocol agent, natively rendered) or anything else → `claude-tui`

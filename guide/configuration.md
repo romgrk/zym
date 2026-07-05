@@ -35,7 +35,8 @@ instead, use `space , c` (`config:open-as-text`).
 | `editor.fontSize`              | integer | `13`        | Editor font size in points (6–100) |
 | `agent.command`                | array   | `["claude"]`| Command used to launch a new agent |
 | `agent.implementation`         | string  | `claude-tui`| Agent kind `agent:new` launches: `claude-tui` or `acp` |
-| `agent.acp.command`            | array   | `["gemini", "--acp"]` | Argv of the ACP agent the `acp` kind spawns |
+| `agent.profiles`               | array   | gemini + claude-acp | Named ACP agents in the launcher's agent dropdown, each `{ "name", "command" }` |
+| `agent.acp.command`            | array   | `["gemini", "--acp"]` | Legacy single ACP argv; when set it surfaces as the first profile |
 
 The preferences window (`space , ,`) lists every available key with its type,
 range, and default — it is generated from the same schema that validates the
