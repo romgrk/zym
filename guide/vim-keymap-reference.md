@@ -107,7 +107,6 @@ space-separated, so `g g` is the two-press `gg` and `ctrl-v` is one chord.
 | `ctrl-j` | SplitLine | split line at cursor (inverse of `J`, normal only) |
 | `g c c` | ToggleLineCommentsCurrentLine | toggle the current line's comment (vim-commentary `gcc`) |
 | `y d` / `y u` | editor:duplicate-line-below/above | duplicate line down/up (editor, normal) |
-| `ctrl-/` | editor:toggle-line-comments | toggle line comments (any mode, incl. insert) |
 
 ## Text objects (operator-pending + visual)
 

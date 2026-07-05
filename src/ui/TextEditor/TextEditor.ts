@@ -205,8 +205,6 @@ function registerSearchKeymapsOnce(): void {
 // Yank operator; the KeymapManager's longest-match deferral resolves it (it waits
 // to see if `d`/`u` follows, falling back to bare Yank otherwise — exactly like
 // the `y s` surround binding).
-// `ctrl-/` toggles line comments (the VS Code stroke) in every mode, including
-// insert; the vim strokes (`g c` operator, `g c c`) live in the vim keymap.
 let editingKeymapsRegistered = false;
 function registerEditingKeymapsOnce(): void {
   if (editingKeymapsRegistered) return;
@@ -215,9 +213,6 @@ function registerEditingKeymapsOnce(): void {
     '.TextEditor.normal-mode': {
       'y d': 'editor:duplicate-line-below',
       'y u': 'editor:duplicate-line-above',
-    },
-    '.TextEditor': {
-      'ctrl-/': 'editor:toggle-line-comments',
     },
   });
 }
@@ -2108,12 +2103,13 @@ export class TextEditor implements DocumentHost {
     });
   }
 
-  /** `editor:toggle-line-comments` (`ctrl-/`): toggle line comments on the
-   *  current line / selection, in any mode. Normal/visual mode runs the vim
-   *  operator — it normalizes the visual selection (the raw range runs one row
-   *  past a bottom-anchored linewise selection), restores the cursor onto the
-   *  operated rows, and registers for `.` repeat. The direct path covers insert
-   *  mode (ctrl-/ while typing). */
+  /** `editor:toggle-line-comments` (no default keystroke — the vim `g c` family
+   *  covers the keyboard; reachable via the palette or a user binding): toggle
+   *  line comments on the current line / selection, in any mode. Normal/visual
+   *  mode runs the vim operator — it normalizes the visual selection (the raw
+   *  range runs one row past a bottom-anchored linewise selection), keeps the
+   *  cursor in place, and registers for `.` repeat. The direct path covers
+   *  insert mode. */
   private toggleLineComments(): void {
     const { vimState } = this;
     if (vimState.mode === 'visual') return void vimState.operationStack.run('ToggleLineComments');

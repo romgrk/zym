@@ -412,8 +412,8 @@ const INDENT_JOIN_BINDINGS: Record<string, string> = {
 // the current-line stroke (preset target, normal-mode only — the keymap's
 // longest-match deferral arbitrates it against the bare `g c` operator, exactly
 // like `y`/`y s`). Delimiters come from the file's language (`comments` in the
-// LanguageRegistry); the non-vim `ctrl-/` route is TextEditor's
-// `editor:toggle-line-comments`.
+// LanguageRegistry); TextEditor's `editor:toggle-line-comments` command is the
+// non-vim route (no default keystroke).
 const COMMENT_BINDINGS: Record<string, string> = {
   'g c': 'ToggleLineComments',
 };

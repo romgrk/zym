@@ -18,8 +18,9 @@ standard-vim keys we don't map), see
   - surround `f` = function *call* (text-based, not the tree-sitter `af`/`if`):
     `dsf` `fn(x)`→`x`, `csf` `fn(x)`→`|(x)`, `ysiwf` `x`→`|(x)`.
 - **Toggle line comments** (vim-commentary): `g c {motion}`, `g c c` /
-  `g c g c` current line, visual `g c`; `ctrl-/` works in any mode (incl.
-  insert) via `editor:toggle-line-comments`. Delimiters come from the file's
+  `g c g c` current line, visual `g c`; `editor:toggle-line-comments` is the
+  command behind them (no default keystroke of its own — palette / user
+  binding), and works in any mode incl. insert. Delimiters come from the file's
   language (`comments` on `LanguageDef`, see
   [language-config.md](language-config.md)) through
   `EditorModel.setCommentSpecSource` — the toggle lives in
