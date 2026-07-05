@@ -146,8 +146,8 @@ Single-file editing plus both multibuffer surfaces run on the
     `.git/COMMIT_EDITMSG` in a tab (save+close commits).
   - `space g o` opens the diff multibuffer (the `GitStagingView`
     replacement).
-- **Editable project search + replace-all** — `space p /` opens the search
-  surface (`ProjectSearchView`); `space p *` seeds the word under the cursor,
+- **Editable project search + replace-all** — `space s s` opens the search
+  surface (`ProjectSearchView`); `space s w` seeds the word under the cursor,
   and both seed the visual selection when one exists.
   A header carries a debounced search entry, ripgrep flag controls,
   one glob field (`!` excludes), and a presets combo. Matches **stream in** and grow
@@ -311,8 +311,8 @@ Single-file editing plus both multibuffer surfaces run on the
 - Model (`src/ui/multibuffer/`): `MultiBufferModel.ts`,
   `MultiBufferDocument.ts`, `diffMultiBuffer.ts`, `diffSegments.ts`,
   `projectSearch.ts`, `ExcerptSyntaxProjection.ts`.
-- Wiring: `src/ui/AppWindow.ts` (`openProjectSearch`/`space p /` +
-  `space p *`, `openLiveDiff`/`space g d d`, `file:save` routing,
+- Wiring: `src/ui/AppWindow.ts` (`openProjectSearch`/`space s s` +
+  `space s w`, `openLiveDiff`/`space g d d`, `file:save` routing,
   `diff:expand-*`); read-only commit/branch diffs in `src/ui/diffViews.ts`.
 - Reuse: `src/util/lineDiff.ts`, `applyDiffDecorations.ts`;
   `src/lsp/workspaceEdit.ts`.

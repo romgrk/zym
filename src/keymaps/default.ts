@@ -33,12 +33,15 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space f m': 'file:move', // move the current file to another folder (folder picker)
   'space f r': 'file:rename', // rename/relocate the current file
 
-  // Project search — `/` = search, `*` = word under cursor (vim idioms); add `p` for the
-  // full project-search multibuffer tab. All four seed the visual selection when one exists.
+  // Project search — quick picker on `/` and `*` (vim idioms: `/` = search, `*` = word under
+  // the cursor); the full multibuffer tab under the `space s` search leader (`space s s` opens
+  // it, double-letter like `space g g` / `space f f`). All seed the visual selection when one
+  // exists. Sessions live one shift away, on `space S`.
   'space /': 'project:search', // quick-jump picker
   'space *': 'project:search-word', // picker, seeded with the word under the cursor
-  'space p /': 'project:search-open', // the multibuffer tab (search entry + flags)
-  'space p *': 'project:search-open-word', // the tab, seeded with the word under the cursor
+  'space s s': 'project:search-open', // the multibuffer tab (search entry + flags)
+  'space s w': 'project:search-open-word', // the tab, seeded with the word under the cursor
+  'space s *': 'project:search-open-word', // alias — `*` = word under the cursor, as above
   'space q': 'app:quit',
   'space t': 'terminal:new',
   'space p r': 'scripts:run', // "p"ackage "r"un — run a package.json script in a terminal
@@ -131,11 +134,12 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space l R': 'lsp:rename', // "R"ename symbol
   'space l f': 'lsp:format', // "f"ormat document
   'space l l': 'lsp:toggle-diagnostics-panel', // "l"sp problems "l"ist
-  'space s s': 'session:save', // save the session (names it if unnamed)
-  'space s a': 'session:save-as', // save the session under a name
-  'space s o': 'session:open', // open a saved session
-  'space s c': 'session:close', // close the active session, reset the window
-  'space s R': 'session:rename', // rename the current session
+  // Sessions ("S"ession) — capital leader; lowercase `space s` is the search family.
+  'space S s': 'session:save', // save the session (names it if unnamed)
+  'space S a': 'session:save-as', // save the session under a name
+  'space S o': 'session:open', // open a saved session
+  'space S c': 'session:close', // close the active session, reset the window
+  'space S R': 'session:rename', // rename the current session
   'space p o': 'project:open', // open another folder as a project in this window
   'space p c': 'project:close', // close the active project
 };

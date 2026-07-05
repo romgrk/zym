@@ -310,16 +310,16 @@ named-only model — there is no launch restore.)
 
 ## Commands
 
-- `session:save` (`space s s`) — flush the active named session; on the
+- `session:save` (`space S s`) — flush the active named session; on the
   unnamed/default session it **acts as save-as** (prompt for a name,
   then persist).
-- `session:save-as` (`space s a`) — always prompt for a name and save
+- `session:save-as` (`space S a`) — always prompt for a name and save
   under it (also forks a named session under a new name).
-- `session:open` (`space s o`) — picker over `zym.session.list()`
+- `session:open` (`space S o`) — picker over `zym.session.list()`
   (label + `relativeTime(savedAt)`); switches into the chosen session. If
   another running instance already has that session open it **prompts first**
   ("Session already open" → Cancel / Open Anyway) — see "Cross-instance lock".
-- `session:close` (`space s c`) — flush the active named session, then
+- `session:close` (`space S c`) — flush the active named session, then
   reset the window to a fresh unnamed slate (one empty project rooted at
   the launch dir) — the inverse of `session:open`. Replace-semantics
   teardown (agents + extra projects go), guarded by the same unsaved-work
