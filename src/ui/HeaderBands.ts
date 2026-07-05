@@ -40,7 +40,7 @@ addStyles(/* css */`
   /* Fold markers  */
   .MultiBufferGap {
     background-color: var(--secondary-sidebar-bg-color);
-    padding: 0.5em calc(2 * var(--t-spacing));
+    padding: 0.5em 0;
   }
   .MultiBufferGap .text {
     color: var(--view-fg-color);
