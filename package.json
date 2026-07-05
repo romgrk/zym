@@ -63,7 +63,7 @@
     "diff": "^9.0.0",
     "marked": "^18.0.5",
     "native-keymap": "^3.3.9",
-    "node-gtk": "^4.0.1",
+    "node-gtk": "^4.1.1",
     "outdent": "^0.8.0",
     "postcss-selector-parser": "^7.1.4",
     "tree-sitter-wasms": "^0.1.13",

@@ -142,6 +142,13 @@ const schema: Record<string, ConfigSchema> = {
   },
 
   // --- Motion behavior ---
+  jumpListMinLines: {
+    type: 'integer',
+    default: 6,
+    minimum: 0,
+    description:
+      'Any motion that moves the cursor at least this many lines records a jump-list entry (ctrl-o / ctrl-i across editors, and the per-editor list), on top of the classic vim jump motions (G, search, etc). 0 records classic jumps only.',
+  },
   stayOnVerticalMotion: {
     type: 'boolean',
     default: false,

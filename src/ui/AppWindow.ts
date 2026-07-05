@@ -55,6 +55,7 @@ import { type DisposableLike } from '../util/eventKit.ts';
 import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
+import { GlobalJumpList } from './GlobalJumpList.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
 import { registerSessionCommands } from './sessionCommands.ts';
@@ -418,6 +419,9 @@ export class AppWindow {
     this.registerConfigCommands();
     registerSessionCommands({ sessionController: this.sessionController });
     registerLspCommands({ documents: this.paneItems.documents });
+    // The cross-editor jump trail (ctrl-o / ctrl-i) — self-contained on the
+    // `zym.workspace` seam (editors, active-editor changes, file-open).
+    new GlobalJumpList();
     this.keymapWatcher = loadKeymaps();
 
     // Seed/load the user config and keep it in sync with on-disk edits. Done
@@ -544,6 +548,8 @@ export class AppWindow {
     // Tab add/close/switch and split changes all route through here — a good,
     // cheap signal to (debounced-)persist the session.
     this.sessionController?.scheduleAutosave();
+    // Feed the workspace's `onDidChangeActiveTextEditor` (it dedups by editor).
+    zym.workspace.notifyActiveItemChanged();
   }
 
   // --- Commands --------------------------------------------------------------
