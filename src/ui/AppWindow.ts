@@ -55,6 +55,7 @@ import { type DisposableLike } from '../util/eventKit.ts';
 import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
+import { GlobalJumpList } from './GlobalJumpList.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
 import { registerSessionCommands } from './sessionCommands.ts';
@@ -82,6 +83,8 @@ export class AppWindow {
   // shared DocumentRegistry, and the `openFile` funnel. AppWindow delegates to it and
   // `zym.workspace` is backed by it. Built in the constructor.
   private readonly paneItems: PaneItems;
+  // Created late in the constructor; `onActiveTabChanged` can fire before it exists.
+  private globalJumpList: GlobalJumpList | undefined;
   // The agent feature: launch/close/restart/resume/branch, send-to-agent + review
   // routing, sessions, and the `agent:*` commands. Owns the per-agent subscriptions.
   private readonly agentController: AgentController;
@@ -418,6 +421,9 @@ export class AppWindow {
     this.registerConfigCommands();
     registerSessionCommands({ sessionController: this.sessionController });
     registerLspCommands({ documents: this.paneItems.documents });
+    // The cross-editor jump trail (ctrl-o / ctrl-i) — reads editors and file-opens
+    // off `zym.workspace`, fed tab switches through `onActiveTabChanged` below.
+    this.globalJumpList = new GlobalJumpList();
     this.keymapWatcher = loadKeymaps();
 
     // Seed/load the user config and keep it in sync with on-disk edits. Done
@@ -544,6 +550,8 @@ export class AppWindow {
     // Tab add/close/switch and split changes all route through here — a good,
     // cheap signal to (debounced-)persist the session.
     this.sessionController?.scheduleAutosave();
+    // Record the position left in the previous editor as a cross-editor jump.
+    this.globalJumpList?.activeEditorChanged();
   }
 
   // --- Commands --------------------------------------------------------------

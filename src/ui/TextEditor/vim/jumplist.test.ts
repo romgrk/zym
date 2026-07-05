@@ -29,17 +29,17 @@ function setup() {
   return { editor, vimState, run, at, row };
 }
 
-test('jump list: ctrl-o / ctrl-i walk the jump motions', () => {
+test('jump list: alt-o / alt-i walk the jump motions', () => {
   const { run, at, row } = setup();
   at(0);
   run('MoveToLastLine'); // G -> 99 (records 0)
   run('MoveToFirstLine'); // gg -> 0 (records 99)
   assert.equal(row(), 0);
-  run('JumpBackward'); // ctrl-o
+  run('JumpBackward'); // alt-o
   assert.equal(row(), 99);
   run('JumpBackward');
   assert.equal(row(), 0);
-  run('JumpForward'); // ctrl-i
+  run('JumpForward'); // alt-i
   assert.equal(row(), 99);
   run('JumpForward');
   assert.equal(row(), 0);
@@ -53,7 +53,7 @@ test('jump list: only true motions record (operator targets do not)', () => {
   editor.setCursorBufferPosition(new Point(50, 0));
   run('Delete');
   run('MoveToNextParagraph'); // operator target (} is a jump motion)
-  // ctrl-o should still go to line 0 (the only recorded jump), not line 50.
+  // alt-o should still go to line 0 (the only recorded jump), not line 50.
   run('JumpBackward');
   assert.equal(editor.getCursorBufferPosition().row, 0);
   void vimState;
@@ -65,9 +65,9 @@ test('jump list: motions of >= jumpListMinLines lines record without the jump fl
   vimState.operationStack.setCount(6);
   run('MoveDown'); // 6j — j is not a jump motion, but crosses the threshold
   assert.equal(row(), 6);
-  run('JumpBackward'); // ctrl-o
+  run('JumpBackward'); // alt-o
   assert.equal(row(), 0);
-  run('JumpForward'); // ctrl-i
+  run('JumpForward'); // alt-i
   assert.equal(row(), 6);
 });
 

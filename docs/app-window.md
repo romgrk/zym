@@ -57,6 +57,12 @@ State-owning controllers:
   show-hide), keyboard-focus memory, and directional/cyclic pane navigation. (Merges what
   an earlier plan called `FocusNavigator` + `DockController`; they share the active-
   workbench view state so heavily that splitting them would need heavy mutual injection.)
+- `src/ui/GlobalJumpList.ts` — **the cross-editor jump trail** (`workspace:jump-backward`
+  / `-forward`, ctrl-o / ctrl-i): a time-ordered ring of (path, point) entries fed by every
+  editor's vim jump recordings (via `TextEditor.onDidRecordJump`) plus the departure
+  position on each active-tab change (fanned out from `onActiveTabChanged`). Reads
+  editors / file-open off `zym.workspace`; the per-editor lists stay in the vim layer
+  (see [text-editor/vim-mode.md](text-editor/vim-mode.md)).
 - `src/ui/AgentController.ts` — **the agent feature**: launch / resume / close / restart /
   branch / rename, send-to-agent + diff-review routing, auto-open changed files, the
   per-agent subscriptions, viewed/attention tracking, agent session serialize+restore, and

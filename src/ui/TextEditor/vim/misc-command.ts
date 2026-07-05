@@ -603,7 +603,7 @@ class PreviousTab extends MiscCommand {
   }
 }
 
-// Jump list (ctrl-o / ctrl-i) and change list (g; / g,). Navigation moves the
+// Per-editor jump list (alt-o / alt-i) and change list (g; / g,). Navigation moves the
 // cursor directly (not via a jump motion), so stepping the list doesn't itself
 // record new jumps.
 class JumpBackward extends MiscCommand {

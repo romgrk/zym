@@ -449,12 +449,21 @@ const MACRO_BINDINGS: Record<string, string> = {
   '@': 'ReplayMacro',
 };
 
-// Jump list (ctrl-o/ctrl-i) and change list (g;/g,) — normal-mode navigation.
+// Per-editor jump list (alt-o/alt-i) and change list (g;/g,) — normal-mode
+// navigation. ctrl-o/ctrl-i walk the workspace-wide jump list instead (across
+// editors, vim's cross-buffer behavior) — see GLOBAL_JUMP_COMMANDS.
 const JUMP_BINDINGS: Record<string, string> = {
-  'ctrl-o': 'JumpBackward',
-  'ctrl-i': 'JumpForward',
+  'alt-o': 'JumpBackward',
+  'alt-i': 'JumpForward',
   'g ;': 'GoToOlderChange',
   'g ,': 'GoToNewerChange',
+};
+
+// Host commands (see ui/GlobalJumpList.ts), bound here so every jump key lives
+// beside JUMP_BINDINGS — the fold-command precedent for host-command keys.
+const GLOBAL_JUMP_COMMANDS: Record<string, string> = {
+  'ctrl-o': 'workspace:jump-backward',
+  'ctrl-i': 'workspace:jump-forward',
 };
 
 // Occurrence: `g o` toggles occurrence arming — it operates on the SEARCH matches
@@ -611,8 +620,10 @@ function registerKeymapsOnce(): void {
       // z-prefix: folds (→ editor `fold:*` commands) + zz/zt/zb cursor-line redraw.
       ...FOLD_KEYMAP,
       ...toKeymap(Z_SCROLL_BINDINGS),
-      // ctrl-o/ctrl-i jump list, g;/g, change list.
+      // alt-o/alt-i per-editor jump list, g;/g, change list; ctrl-o/ctrl-i the
+      // workspace-wide jump list (across editors).
       ...toKeymap(JUMP_BINDINGS),
+      ...GLOBAL_JUMP_COMMANDS,
       // q record / @ replay macros.
       ...toKeymap(MACRO_BINDINGS),
       // ctrl-alt-↑/↓ add a cursor; escape collapses multi-cursor back to one.

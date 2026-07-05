@@ -2488,6 +2488,19 @@ export class TextEditor implements DocumentHost {
     return this.editorModel.getSelectedText();
   }
 
+  /** The primary cursor's buffer position — the read workspace-level features
+   *  (e.g. the global jump list) use without reaching into the model. */
+  getCursorBufferPosition(): Point {
+    return this.editorModel.getCursorBufferPosition();
+  }
+
+  /** Fires with the departed buffer position each time the vim layer records a
+   *  jump-list entry (see vim/position-history.ts) — feeds the workspace-wide
+   *  jump list (GlobalJumpList). */
+  onDidRecordJump(fn: (point: Point) => void): Disposable {
+    return this.vimState.jumpList.onDidAdd(fn);
+  }
+
   /** The tab/window title for this editor (file basename, or "Untitled"). */
   get title(): string {
     return this.document.title;

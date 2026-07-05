@@ -30,12 +30,17 @@ standard-vim keys we don't map), see
   changed/yanked region (the `` `[ ``/`` `] `` change marks).
 - `]h`/`[h` jump to the next/previous git hunk; `]d`/`[d` to the next/previous
   LSP diagnostic (positions fed from the host via `EditorModel` providers).
-- **Jump list** (`ctrl-o`/`ctrl-i`) and change list (`g;`/`g,`), backed by
-  `vim/position-history.ts` (a zym addition — vmp leaned on Atom for this).
-  Beyond the `jump = true` motions, any motion moving the cursor ≥
-  `vim-mode-plus.jumpListMinLines` lines (default 6, `0` = classic-vim
-  recording only) records an entry (`motion.ts` `moveWithSaveJump`); operator
-  targets never record.
+- **Jump lists** — two, on parallel key pairs. Per-editor (`alt-o`/`alt-i`) and
+  change list (`g;`/`g,`): marker-backed rings in `vim/position-history.ts` (a
+  zym addition — vmp leaned on Atom for this). Workspace-wide (`ctrl-o`/`ctrl-i`,
+  vim's cross-buffer behavior): `ui/GlobalJumpList.ts` interleaves every editor's
+  jump recordings (surfaced via `TextEditor.onDidRecordJump`) with the position
+  left on each tab switch/file open, and re-opens closed files (plain
+  path+point entries — no marker tracking). Beyond the `jump = true` motions,
+  any motion moving the cursor ≥ `vim-mode-plus.jumpListMinLines` lines
+  (default 6, `0` = classic-vim recording only) records an entry (`motion.ts`
+  `moveWithSaveJump`); operator targets never record. Known gap: same-file LSP
+  jumps (`g d` in-file) bypass the vim layer and record in neither list.
 - **zym-original `g`-commands** (`vim/zym-commands.ts`): `gf` opens the file named
   under the cursor (resolving against the current file's dir, then the project
   root, then absolute / `~`); `gw` opens a Google search for the word under the
