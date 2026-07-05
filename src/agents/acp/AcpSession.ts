@@ -296,7 +296,7 @@ export class AcpSession implements ConversationSession {
     // Start in the ask-first mode when the agent has one: the Claude Code
     // adapter defaults its session to `acceptEdits` (verified — it writes files
     // without ever requesting permission), which silently bypasses zym's
-    // permission cards. Mirrors claude-sdk's `--permission-mode default`.
+    // permission cards. The analog of `claude --permission-mode default`.
     if (this.currentModeId && this.currentModeId !== 'default' && this.availableModes.some((m) => m.id === 'default')) {
       void conn.agent.request('session/set_mode', { sessionId: this._sessionId!, modeId: 'default' }).catch(() => { /* agent default stays */ });
       this.applyModeId('default');

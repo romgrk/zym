@@ -1,8 +1,8 @@
 /*
  * agents/types.ts — the tool-agnostic vocabulary shared by every agent
- * implementation (the `claude-tui` terminal host and the `claude-sdk` headless
- * one), so `AgentTerminal`, the registry, sidebar, and picker never depend on a
- * specific tool.
+ * implementation (the `claude-tui` terminal host and the `acp` conversation
+ * host), so `AgentTerminal`, the registry, sidebar, and picker never depend on
+ * a specific tool.
  *
  * A concrete implementation (e.g. `claude-tui`'s `ClaudeSession`) is an
  * `AgentDriver`: it augments the argv to spawn and, once `watch`n, reports live
@@ -106,7 +106,7 @@ type Widget = InstanceType<typeof Gtk.Widget>;
 export interface Agent {
   readonly root: Widget;
   /** Optional per-agent widgets the agent sidebar packs into its header bar (e.g. the
-   *  claude-sdk subagent/monitor count buttons). Stable instances; omitted by agents
+   *  conversation host's subagent/monitor count buttons). Stable instances; omitted by agents
    *  (like the terminal) that contribute none. */
   readonly headerWidgets?: Widget[];
   readonly title: string;

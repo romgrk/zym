@@ -150,7 +150,7 @@ export class AgentController {
   openAgent(
     options: { kind?: AgentKind; prompt?: string; userPrompt?: string; resume?: AgentResume; title?: string; root?: string; command?: string[]; background?: boolean } = {},
   ): Agent {
-    // Both kinds can resume now (claude-sdk rebuilds its transcript from disk), so a
+    // Both kinds can resume, so a
     // resume no longer forces the terminal agent — it respects the configured kind
     // unless a caller pins one (e.g. restoreAgent passes the saved agent's kind).
     const kind = options.kind ?? resolveAgentKind(zym.config.get('agent.implementation'));
@@ -394,8 +394,10 @@ export class AgentController {
     const a = state.agent;
     // Don't duplicate an agent that's already open (explicit restore over a live session).
     if (a.sessionId && zym.agents.getAgents().some((ag) => ag.sessionId === a.sessionId)) return null;
-    // Restore as the kind that was saved (older sessions have no tag → claude-tui).
-    const kind: AgentKind = a.agentKind ?? 'claude-tui';
+    // Restore as the kind that was saved. Older sessions have no tag, and states
+    // saved by the retired `claude-sdk` kind map to claude-tui — their session ids
+    // are claude's, so the terminal agent resumes them with --resume.
+    const kind: AgentKind = a.agentKind === 'acp' ? 'acp' : 'claude-tui';
     let agent: Agent;
     if (kind === 'acp') {
       // An acp agent restores with its *saved* argv (a gemini session must not
@@ -708,8 +710,8 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** The kind an agent was launched as: a conversation host carries its own kind
- *  (`claude-sdk` / `acp`); the terminal host is always `claude-tui`. */
+/** The kind an agent was launched as: the conversation host is the `acp` kind;
+ *  the terminal host is always `claude-tui`. */
 function agentKindOf(agent: Agent): AgentKind {
   return agent instanceof AgentConversation ? agent.agentKind : 'claude-tui';
 }

@@ -2,27 +2,25 @@
 
 The `acp` kind runs any [Agent Client Protocol](https://agentclientprotocol.com)
 agent — Gemini CLI natively (`gemini --acp`), Claude Code and Codex via their
-ACP adapters — inside the same native conversation view the `claude-sdk` kind
-uses. ACP is "LSP for coding agents": the client (zym) spawns the agent as a
-subprocess and speaks JSON-RPC 2.0 over stdio (protocol version 1).
+ACP adapters — in the native conversation view (`AgentConversation`). ACP is
+"LSP for coding agents": the client (zym) spawns the agent as a subprocess and
+speaks JSON-RPC 2.0 over stdio (protocol version 1). It replaced the former
+`claude-sdk` kind (headless `claude -p` stream-json, reverse-engineered): the
+official claude-agent-acp adapter provides the same claude features over the
+open protocol.
 
 ## The seam: `ConversationSession`
 
 `AgentConversation` (the native transcript UI) is typed against
 `src/agents/session.ts:ConversationSession` — the tool-agnostic session surface
-(status, granular transcript events, permission requests, metadata) extracted
-from `SdkSession`, which remains its reference implementation. A kind supplies
-its session via `AgentConversationOptions.createSession`; claude-only
-affordances degrade explicitly:
-
-- `resume`/transcript replay, `/rename` persistence, and launch auto-naming are
-  gated on the `claude-sdk` kind (`AgentConversation.kind` / the narrowed `sdk`
-  handle);
-- optional capabilities (`onQuestion`, `onPlan`, `onFileEdited`,
-  `onSessionName`) are wired with `?.` — a session that lacks one simply never
-  fires it;
-- `getSubagent`/`getMonitor` are required but may always return `undefined`
-  (the views only act on ids the session itself surfaced).
+(status, granular transcript events, permission requests, metadata).
+`AcpSession` is its implementation, supplied via
+`AgentConversationOptions.createSession`; optional capabilities (`onQuestion`,
+`onPlan`, `onFileEdited`, `onSessionName`, `onReplay`, `getModeState`) are
+wired with `?.` — a session that lacks one simply never fires it, and
+`getSubagent`/`getMonitor` may always return `undefined` (the views only act on
+ids the session itself surfaced). A future protocol only has to map its wire
+events onto this surface.
 
 ## Architecture
 
@@ -32,8 +30,8 @@ spawn agent argv (agent.acp.command)            src/agents/acp/AcpSession.ts
         │  session/update, session/request_permission   (agent → zym)
         │  initialize, session/new, session/prompt, session/cancel (zym → agent)
 AcpSession (protocol → ConversationSession domain mapping)
-        │  same events SdkSession emits
-AgentConversation (unchanged rendering)
+        │  ConversationSession domain events
+AgentConversation (rendering)
 ```
 
 **Dependency decision:** `@agentclientprotocol/sdk` is a runtime dep (unlike
@@ -74,8 +72,7 @@ unabsorbed, disposing a session crashes zym).
 - **Ask-first is forced at handshake:** the Claude Code adapter defaults its
   session mode to `acceptEdits` and writes files without ever requesting
   permission. When the agent advertises a mode with id `default`, zym switches
-  to it right after `session/new` (the analog of claude-sdk's
-  `--permission-mode default`).
+  to it right after session setup, so approvals are always exercised.
 - `setPermissionMode` (the footer dropdown / `shift-tab`) only maps when the
   agent advertises a mode whose id *is* a zym `AgentMode` (the Claude adapter's
   are; Gemini's `ask`/`architect`/`code` are not — the dropdown is inert there,
@@ -93,33 +90,58 @@ The launcher's model / permission-mode / effort dropdowns are pass-through
 `default` sentinels for this kind — those knobs are the agent's own, negotiated
 per session (ACP session modes / config options).
 
+## Implemented
+
+- **Subagents** — Task tool calls open a captured transcript (drill-down page,
+  robot count button); children arrive stamped `_meta.claudeCode.parentToolUseId`
+  and are kept out of the main thread. (The adapter drops subagent *prose*;
+  pages show the tool sequence + final answer.)
+- **Input buffering** — the adapter streams `tool_call` before `rawInput` has
+  finished streaming (verified: `{}` then a refine update); the row is emitted
+  once the input is usable, execution starts, a permission request lands, or
+  the result arrives — whichever comes first.
+- **Terminal channel** — `clientCapabilities._meta.terminal_output` is
+  advertised; command output + exit code arrive via `_meta.terminal_*`
+  (codex-acp-compatible) and feed the row result.
+- **Questions** — `elicitation/create` (form mode) parses into the interactive
+  card (enum options, descriptions via `_meta`, per-question "Other" custom
+  fields); non-form / free-form-only elicitations are declined.
+- **Resume / serialize / branch** — `session/load` replays history over the
+  wire (rows render statically between `onReplay` markers; the resume divider
+  lands after the restored rows); `session/fork` backs branch and
+  restart-of-live; `_meta.claudeCode.options.resume` is the context-only
+  fallback for agents without `loadSession`. Agents serialize argv + session
+  id and restore with their *saved* argv.
+- **zymBridge** — `session/new.mcpServers` carries the bundled bridge
+  (`set_worktree` / `set_actions` for any ACP agent), injected via
+  `acp/bridge.ts` (the Gio watcher) so `AcpSession` stays drivable from plain
+  node.
+- **Modes** — the footer dropdown is fed by the agent's advertised modes
+  (`getModeState`); ask-first is forced at session setup.
+- **Auth** — an `auth_required` handshake failure renders a login hint naming
+  the agent's auth methods.
+
 ## Limitations / planned
 
 - [ ] **fs capability** — advertise `fs.readTextFile`/`writeTextFile` and serve
-      them from the Document registry, so agents see unsaved buffer contents
-      (an integration the claude kinds don't have).
-- [ ] **terminal capability** — back `terminal/*` with the process runner and
-      render like monitors.
-- [ ] **Resume** — `session/load` (gated on the agent's `loadSession`
-      capability) replays history as `session/update` notifications;
-      `serialize()` returns null until then (no session persistence), and
-      restart/branch treat acp as fresh-launch/unsupported
-      (`AgentController.agentKindOf`).
-- [ ] **zymBridge MCP** — pass the bridge server via `session/new.mcpServers`
-      so `set_worktree`/`set_actions` work for any ACP agent; until then the
-      launcher's worktree flows (`agent:new-worktree` etc.) instruct a tool the
-      agent doesn't have — use the default flow with acp agents.
-- [ ] **Auth flows** — `authMethods` / the `authenticate` method aren't wired;
-      an agent that requires login must be authenticated from its own CLI first
-      (e.g. `gemini` once, interactively).
+      them from the Document registry, so agents see unsaved buffer contents.
+- [ ] **terminal capability** — full client-side `terminal/*` (zym-owned
+      terminals with live rows); today output arrives buffered at completion
+      via the `_meta` channel. The monitor views stay dormant until then.
+- [ ] Streamed tool output into live rows (the row fills once, at result time).
 - [ ] Session config options (`config_option_update`), `session/list`
       discovery, and the ACP registry (agent profiles) — later.
+- [ ] `authenticate` flow (in-app login) — today the hint says to log in via
+      the agent's own CLI.
 
 ## Validation
 
 No unit tests yet — the session was validated end-to-end against the real
-Claude Code ACP adapter (handshake, streamed turns, tool calls with results,
-permission request → deny round-trip, mode forcing, usage/cost, session title,
-interrupt-free dispose). The spike lives out of tree; re-run by driving
-`AcpSession` directly under plain node (the module chain is runtime-pure —
-`agents/types.ts` imports Gtk type-only for exactly this reason).
+Claude Code ACP adapter: streamed turns; subagent capture with drill-down
+data; the whitelisted-command terminal round-trip; AskUserQuestion →
+elicitation → answer; permission deny; mode forcing (the adapter defaults to
+`acceptEdits`!); session titles; and a full dispose → `session/load` resume
+whose follow-up question proved the restored context. The spike lives out of
+tree; re-run by driving `AcpSession` directly under plain node (the module
+chain is runtime-pure — `agents/types.ts` imports Gtk type-only for exactly
+this reason).

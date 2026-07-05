@@ -166,11 +166,11 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
   },
   'agent.implementation': {
     type: 'string',
-    default: 'claude-sdk',
+    default: 'claude-tui',
     description:
-      "Which agent host `agent:new` launches: 'claude-tui' (the terminal TUI), " +
-      "'claude-sdk' (headless `claude -p`, natively rendered; default), or 'acp' " +
-      '(an Agent Client Protocol agent — see agent.acp.command).',
+      "Which agent host `agent:new` launches: 'claude-tui' (the terminal TUI; " +
+      "default) or 'acp' (an Agent Client Protocol agent, natively rendered — " +
+      'see agent.acp.command).',
   },
   'agent.acp.command': {
     type: 'array',

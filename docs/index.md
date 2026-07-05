@@ -234,17 +234,17 @@ an exit prompt for unsaved work. **Named sessions** (the persistence model) and
 
 ## Agents
 
-Run coding agents inside zym via three interchangeable kinds — `claude-tui`
-(the CLI's terminal UI in a Vte tab, the default), `claude-sdk` (headless
-`claude -p` stream-json rendered in native GTK widgets), and `acp` (any Agent
-Client Protocol agent — Gemini CLI, adapters for Claude Code / Codex — in the
-same native view) — over a shared workbench / list / lifecycle / worktree
-spine. The native view is typed against the `ConversationSession` seam
-(`src/agents/session.ts`). Root ownership lives on a self-contained per-person
-`Workbench` (`cwd` + pooled `GitRepo`), so each agent can re-root to its own
-git worktree independently while per-agent edit baselines give change
-attribution within a shared tree. See [agents.md](agents.md),
-[agents/claude-sdk.md](agents/claude-sdk.md), [agents/acp.md](agents/acp.md).
+Run coding agents inside zym via two interchangeable kinds — `claude-tui`
+(the CLI's terminal UI in a Vte tab, the default) and `acp` (any Agent Client
+Protocol agent — Gemini CLI natively, Claude Code / Codex via adapters —
+rendered in native GTK widgets) — over a shared workbench / list / lifecycle /
+worktree spine. The native view is typed against the `ConversationSession`
+seam (`src/agents/session.ts`); the former `claude-sdk` kind was replaced by
+`acp` + the official claude-agent-acp adapter. Root ownership lives on a
+self-contained per-person `Workbench` (`cwd` + pooled `GitRepo`), so each
+agent can re-root to its own git worktree independently while per-agent edit
+baselines give change attribution within a shared tree. See
+[agents.md](agents.md), [agents/acp.md](agents/acp.md).
 
 Open, cross-kind: agent profiles/customization, richer management UX, reviewing an
 agent's diff (needs the editor Diff renderer first), and worktree lifecycle

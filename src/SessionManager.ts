@@ -38,6 +38,7 @@ export const SESSION_VERSION = 2;
 export type TabState =
   | { kind: 'file'; path: string; cursor?: [number, number]; scroll?: number; dirty?: boolean }
   | { kind: 'terminal'; cwd: string }
+  // agentKind 'claude-sdk' is a legacy tag from the retired kind; restore maps it to claude-tui.
   | { kind: 'agent'; command: string[]; cwd: string; prompt?: string; sessionId?: string; agentKind?: 'claude-tui' | 'claude-sdk' | 'acp' };
 
 /** The split tree of one workbench: `leaf` tab strips joined by `split` panes. */

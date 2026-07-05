@@ -1,11 +1,12 @@
 /*
- * AgentConversation — the native UI host for a headless `claude-sdk` agent: a
- * purpose-made conversation view (NOT a terminal, NOT a reused editor buffer). It
- * owns an `SdkSession` (which drives `claude -p` stream-json) and renders the
- * conversation incrementally as message bubbles — user turns right-aligned,
- * assistant turns left-aligned, plus dim thinking blocks, tool-use rows, and a
- * permission card. Message text is rendered through the app's markdown→Pango
- * converter (markdownMarkup).
+ * AgentConversation — the native UI host for the `acp` agent kind: a
+ * purpose-made conversation view (NOT a terminal, NOT a reused editor buffer).
+ * It owns a `ConversationSession` (an `AcpSession` driving an Agent Client
+ * Protocol agent — see docs/agents/acp.md) and renders the conversation
+ * incrementally as message bubbles — user turns right-aligned, assistant turns
+ * left-aligned, plus dim thinking blocks, tool-use rows, and a permission card.
+ * Message text is rendered through the app's markdown→Pango converter
+ * (markdownMarkup).
  *
  * The input is a buffer-only `TextEditor` (full vim editing); `enter` submits the
  * prompt and `alt-enter` inserts a newline, via commands bound on the prompt
@@ -38,12 +39,8 @@ import { MonitorView } from './conversation/MonitorView.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
-import { SdkSession } from '../agents/claude-sdk/SdkSession.ts';
 import type { ConversationSession, PermissionRequest, PlanEntry, QuestionRequest, TaskProgress } from '../agents/session.ts';
 import type { AgentKind } from '../agents/configs.ts';
-import type { Transport, TransportOptions } from '../agents/claude-sdk/transport.ts';
-import { readTranscript, readContextSeed } from '../agents/claude-sdk/transcript.ts';
-import { writeCustomTitle, readSessionName } from '../agentSessions.ts';
 import { createOneShotAgent, type OneShotAgent } from '../agents/oneshot.ts';
 import { generateAgentName } from '../agents/autoName.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
@@ -218,8 +215,8 @@ export interface AgentConversationOptions {
   cwd: string;
   /** Base argv (default `['claude']`). */
   command?: string[];
-  /** Resume a past conversation (`--resume`/`--continue`) instead of starting fresh.
-   *  On a `sessionId` resume the prior transcript is rebuilt into the view. */
+  /** Resume a past conversation (`session/load` / `session/fork`) instead of
+   *  starting fresh; the history replays into the view where the agent supports it. */
   resume?: AgentResume;
   /** An initial prompt to send once the session starts — what the agent is told
    *  (may include zym's editor instructions, e.g. worktree setup). */
@@ -229,35 +226,19 @@ export interface AgentConversationOptions {
   userPrompt?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
   onOpenFile?: (path: string) => void;
-  /** Override how the underlying session's transport is created — a test/POC seam
-   *  to drive the conversation off scripted stream events instead of spawning
-   *  `claude` (forwarded verbatim to SdkSession; see src/poc/conversation-transcript.ts). */
-  createTransport?: (spec: TransportOptions) => Transport;
   /** Override the one-shot agent used for auto-naming (test seam; default
    *  `createOneShotAgent()` → `claude -p --model sonnet`). */
   oneShot?: OneShotAgent;
-  /** Build the session driving this conversation (the `acp` kind passes its own);
-   *  default: a claude-sdk `SdkSession`. Claude-only affordances (transcript
-   *  restore, `/rename` persistence, launch auto-naming) stay off for other kinds. */
-  createSession?: (opts: { cwd: string; command?: string[]; resume?: AgentResume }) => ConversationSession;
-  /** The agent kind this conversation hosts (default `claude-sdk`); gates
-   *  serialization and the claude-only affordances above. */
-  kind?: AgentKind;
-  /** The title shown while nothing has named the session (default `claude (sdk)`). */
-  defaultTitle?: string;
+  /** Build the session driving this conversation (an `AcpSession`; a fake in tests). */
+  createSession: (opts: { cwd: string; command?: string[]; resume?: AgentResume }) => ConversationSession;
 }
 
 // The kind's default title, shown when nothing has named the session.
-const DEFAULT_TITLE = 'claude (sdk)';
+const DEFAULT_TITLE = 'acp agent';
 
 export class AgentConversation implements Agent {
   readonly root: InstanceType<typeof Adw.NavigationView>; // root page = the conversation; subagent transcripts push pages
   private readonly session: ConversationSession;
-  // The concrete claude-sdk session when this conversation hosts one (the default
-  // kind); null for other kinds. Claude-only paths (transcript replay) go through it.
-  private readonly sdk: SdkSession | null;
-  private readonly kind: AgentKind;
-  private readonly defaultTitle: string;
   private readonly cwd: string;
   // The scrollable column of entries (entries box + spacing + stick-to-bottom).
   private readonly transcript = new Transcript({ maxWidth: 820 });
@@ -279,7 +260,7 @@ export class AgentConversation implements Agent {
   private readonly promptContainer: InstanceType<typeof Gtk.Box>;
   // The input area is a Gtk.Stack: the prompt editor, or an "interaction" widget (a
   // permission prompt / question card) that REPLACES it while the agent waits for the
-  // user, restored to the prompt once answered. See docs/agents/claude-sdk.md.
+  // user, restored to the prompt once answered. See docs/agents/acp.md.
   private readonly promptStack = new Gtk.Stack();
   private readonly interactionSlot = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
   // The rounded input card; gets a status-coloured border (warning / info) while a
@@ -303,14 +284,11 @@ export class AgentConversation implements Agent {
   // teardown); cleared when the prompt is restored so they don't pile up per request.
   private readonly interactionSubs = this.subs.nest();
   private readonly launchPrompt?: string;
-  // Base argv this agent was launched with (default ['claude']); kept for serialize.
+  // Base argv this agent was launched with; kept for serialize/restart.
   private readonly baseCommand?: string[];
   // The session id this agent resumes, if any — kept so serialize() preserves it
   // even before the (deferred) live process has reported its own init session id.
   private readonly resumeSessionId?: string;
-  // A resumed agent defers spawning `claude -p --resume` until the user's first
-  // turn (its transcript is rebuilt from disk meanwhile); flipped false on connect.
-  private deferredStart = false;
   // The permanent "session resumed" divider row (boundary between restored history
   // and the live continuation); its text drops the reconnect nudge once connected.
   private resumeNoteRow: InstanceType<typeof Gtk.Widget> | null = null;
@@ -394,12 +372,7 @@ export class AgentConversation implements Agent {
     this.baseCommand = options.command;
     this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
-    this.kind = options.kind ?? 'claude-sdk';
-    this.defaultTitle = options.defaultTitle ?? DEFAULT_TITLE;
-    this.session = options.createSession
-      ? options.createSession({ cwd: options.cwd, command: options.command, resume: options.resume })
-      : new SdkSession({ cwd: options.cwd, command: options.command, resume: options.resume, createTransport: options.createTransport });
-    this.sdk = this.session instanceof SdkSession ? this.session : null;
+    this.session = options.createSession({ cwd: options.cwd, command: options.command, resume: options.resume });
     this.oneShot = options.oneShot ?? createOneShotAgent();
 
     // The footer's left slot: a live "Thinking… (N tokens)" indicator (spinner +
@@ -542,71 +515,16 @@ export class AgentConversation implements Agent {
     this.installCommands(); // after this.root exists (commands register on it)
     zym.agents.add(this); // join the registry → sidebar lists it
     this.wireSession();
-    // Resuming a specific session, claude-sdk: rebuild its visible transcript now
-    // (before the workbench subscribes to onDidChangeFiles, so historical edits
-    // seed its changed-files set rather than flood-opening). `--resume` restores
-    // claude's context but doesn't replay history as events, so we draw it from
-    // disk. An acp resume instead replays over the wire at start() (session/load
-    // → the onReplay wiring), which also places the divider after the history.
-    if (options.resume?.sessionId && this.sdk) this.restoreTranscript(options.cwd, options.resume.sessionId);
-    // A claude-sdk resume with no launch prompt reconnects lazily: the transcript
-    // is rebuilt above, but `claude -p --resume` isn't spawned until the user's
-    // first turn (so restoring N agents doesn't fire N claude processes up
-    // front). A resume that carries a prompt — e.g. the worktree re-announce —
-    // still starts eagerly. An acp resume always starts eagerly: its history
-    // lives agent-side, so showing it requires the process.
-    this.deferredStart = !!options.resume && !options.prompt && this.sdk !== null;
-    if (options.resume?.sessionId && this.sdk) {
-      // A permanent divider marking the boundary between the restored history and
-      // the live continuation: "session disconnected …" until the first turn, then
-      // "session resumed" (a dim hollow dot reflects the not-yet-live state too).
-      const divider = this.addRow('conversation-resume');
-      divider.setXalign(0.5);
-      divider.setHalign(Gtk.Align.CENTER);
-      this.resumeNoteRow = divider;
-      this.refreshResumeNote();
-      if (this.deferredStart) this.setStatus('disconnected');
-      // The Transcript follows the bottom by default, so the restored transcript lands
-      // at the latest message as its height settles over the first few layout passes.
-    }
+    // A resume replays its history over the wire at start() (session/load → the
+    // onReplay wiring), which also places the resume divider after the restored
+    // rows. The Transcript follows the bottom by default, so the restored
+    // transcript lands at the latest message as its height settles.
   }
 
-  // Set the resume divider's text: while disconnected it nudges the user to send a
-  // message; once connected it collapses to a plain "session resumed" marker.
+  // Set the resume divider's text (the boundary between restored history and the
+  // live continuation, placed by the onReplay wiring).
   private refreshResumeNote(): void {
-    if (!this.resumeNoteRow) return;
-    const text = this.deferredStart
-      ? '── session disconnected · send a message to resume ──'
-      : '── session resumed ──';
-    (this.resumeNoteRow as InstanceType<typeof Gtk.Label>).setText(text);
-  }
-
-  // Rebuild the conversation rows from a past session's on-disk transcript, by
-  // replaying its domain events through the same row handlers a live turn uses.
-  // Claude-sdk only (the transcript format and `replay` are claude's); other kinds
-  // never pass a resume, so this is unreachable for them.
-  private restoreTranscript(cwd: string, sessionId: string): void {
-    if (!this.sdk) return;
-    // Seed the title from the transcript (`/rename` custom title, else Claude's auto
-    // title). Headless has no live OSC channel, so without this a resumed agent
-    // would lose its name. A pinned `agent:rename` name, if any, still wins.
-    const name = readSessionName(cwd, sessionId);
-    if (name) { this._sessionName = name; this.emitTitle(); }
-    const entries = readTranscript(cwd, sessionId);
-    if (entries.length === 0) return;
-    this.replaying = true;
-    try {
-      this.sdk.replay(entries);
-    } finally {
-      this.replaying = false;
-      this.endTurn(); // close the last open bubble so the next live turn starts clean
-    }
-    // Seed the footer's model + context gauge from the transcript's latest usage, so
-    // a resumed agent shows its real context occupancy before the first live turn
-    // (cost + exact window arrive with the first live `result`).
-    const seed = readContextSeed(cwd, sessionId);
-    if (seed.model) this.modelContext.setModel(seed.model);
-    if (seed.usage) this.modelContext.setUsage(seed.usage);
+    (this.resumeNoteRow as InstanceType<typeof Gtk.Label> | null)?.setText('── session resumed ──');
   }
 
   // Route a chosen mode id: a session with advertised modes (ACP) takes ids
@@ -645,34 +563,21 @@ export class AgentConversation implements Agent {
     this.modeDropdown.addCssClass(`is-${this.currentModeId}`);
   }
 
-  /** Spawn claude and send the launch prompt (if any). A lazily-resumed agent
-   *  skips the spawn here — `ensureConnected` runs it on the first turn instead. */
+  /** Spawn the agent and send the launch prompt (if any). */
   start(): void {
-    if (!this.deferredStart) {
-      this.session.start();
-      if (this.launchPrompt) {
-        this.session.prompt(this.launchPrompt);
-        // Auto-name a fresh agent from the user's prompt — namingContext() strips zym's
-        // editor instructions (config-gated, non-blocking, runs alongside the first
-        // turn). No-op if there's no user prompt or it's somehow already named.
-        // Claude-sdk only: the one-shot namer spawns `claude -p`, which a user running
-        // another agent kind may not have (a bare `/rename` still names on demand).
-        if (this.kind === 'claude-sdk' && zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
-          void this.autoRename(this.namingContext());
-        }
+    this.session.start();
+    if (this.launchPrompt) {
+      this.session.prompt(this.launchPrompt);
+      // Auto-name a fresh agent from the user's prompt — namingContext() strips zym's
+      // editor instructions (config-gated, non-blocking, runs alongside the first
+      // turn; most ACP agents also title their sessions via session_info_update,
+      // which lands the same way). No-op if there's no user prompt or it's
+      // somehow already named.
+      if (zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
+        void this.autoRename(this.namingContext());
       }
     }
     this.input.focusInsert(); // ready to type immediately, not vim normal mode
-  }
-
-  // Spawn the (deferred) claude process on demand — the first time a resumed agent
-  // is actually given a turn. No-op once connected or for an eagerly-started agent.
-  private ensureConnected(): void {
-    if (!this.deferredStart) return;
-    this.deferredStart = false;
-    this.refreshResumeNote(); // keep the divider, drop the "send a message" nudge
-    this.setStatus('idle'); // leave disconnected; the turn that follows flips it to working
-    this.session.start();
   }
 
   // --- Agent surface ----------------------------------------------------------
@@ -680,10 +585,9 @@ export class AgentConversation implements Agent {
   // A transient auto-naming title (placeholder / failed fallback) wins while set;
   // then a pinned name (`agent:rename`), then Claude's session name (`/rename` /
   // resumed transcript title), then the default. Mirrors AgentTerminal.title.
-  get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? this.defaultTitle; }
-  /** The kind this conversation hosts (`claude-sdk` or `acp`) — read by the
-   *  controller's restart/branch paths, which only claude kinds can resume/fork. */
-  get agentKind(): AgentKind { return this.kind; }
+  get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? DEFAULT_TITLE; }
+  /** The kind this conversation hosts — read by the controller's restart/branch paths. */
+  get agentKind(): AgentKind { return 'acp'; }
   get status(): AgentStatus { return this._status; }
   get permissionMode(): AgentMode { return this._permissionMode; }
   get changedFiles(): string[] { return this._changedFiles.slice(); }
@@ -743,32 +647,20 @@ export class AgentConversation implements Agent {
 
   clearUnannouncedWorktree(): void { /* no worktree validator for sdk */ }
 
-  /** Session state: base argv + prompt + session id, tagged `claude-sdk` so a restore
+  /** Session state: base argv + prompt + session id, tagged `acp` so a restore
    *  relaunches this native host (not the terminal agent) and resumes the conversation.
    *  The editor root (worktree) is captured by the enclosing `AgentState.root` (= the
    *  workbench cwd), not here — this `cwd` is just the process spawn dir. */
   serialize(): TabState | null {
-    if (this.kind === 'acp') {
-      // The exact agent argv is part of the identity: a saved gemini session must
-      // not restore into whatever `agent.acp.command` says later.
-      return {
-        kind: 'agent',
-        agentKind: 'acp',
-        command: this.baseCommand ?? [],
-        cwd: this.cwd,
-        prompt: this.launchPrompt,
-        sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
-      };
-    }
+    // The exact agent argv is part of the identity: a saved gemini session must
+    // not restore into whatever `agent.acp.command` says later. The resume id
+    // stands in for a session that hasn't reported its own yet.
     return {
       kind: 'agent',
-      agentKind: 'claude-sdk',
-      command: this.baseCommand ?? ['claude'],
+      agentKind: 'acp',
+      command: this.baseCommand ?? [],
       cwd: this.cwd,
       prompt: this.launchPrompt,
-      // Fall back to the resume id: a lazily-resumed agent that the user hasn't
-      // sent a turn to yet has no live (init-reported) session id, but must still
-      // serialize the id it resumes so a later restart can resume it again.
       sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
     };
   }
@@ -844,7 +736,6 @@ export class AgentConversation implements Agent {
     if (!text) return;
     this.input.setText('');
     if (this.handleLocalCommand(text)) return; // client-side slash command (e.g. /rename), not a turn
-    this.ensureConnected(); // a lazily-resumed agent spawns claude on its first turn
     if (this._status === 'idle') { this.session.prompt(text); return; }
     // The agent is busy — queue (accumulate) the message; it's sent on next idle.
     this.setPendingText(this.pendingText ? `${this.pendingText}\n\n${text}` : text);
@@ -936,17 +827,12 @@ export class AgentConversation implements Agent {
     );
   }
 
-  /** Set Claude's session name (`/rename`): update the live title and persist it to
-   *  the transcript, exactly as the TUI does, so it survives resume and labels the
-   *  resume picker. A pinned `agent:rename` name still wins (see `title`). */
+  /** Set the session's display name (`/rename`). Display-only: the agent owns its
+   *  session store (many re-title via session_info_update anyway). A pinned
+   *  `agent:rename` name still wins (see `title`). */
   private setSessionName(name: string): void {
     this._sessionName = name;
     this.emitTitle();
-    // Persist like the TUI — into claude's transcript, so claude-sdk only; another
-    // kind's rename is display-only (its own session store is the agent's).
-    if (!this.sdk) return;
-    const id = this.sessionId ?? this.resumeSessionId;
-    if (id) writeCustomTitle(this.cwd, id, name);
   }
 
   // --- session → state + rows -------------------------------------------------

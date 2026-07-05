@@ -65,7 +65,7 @@ export function setMarkupSafe(label: InstanceType<typeof Gtk.Label>, markup: str
  * and forces the transcript column past its `Adw.Clamp` bound, widening every row.
  * `WORD_CHAR` keeps the minimum width small, so a single long line wraps instead of
  * stretching the column. Use this for every wrapping label in the conversation
- * transcript. See docs/agents/claude-sdk.md.
+ * transcript. See docs/agents/acp.md.
  */
 export function wrappingLabel(props: ConstructorParameters<typeof Gtk.Label>[0] = {}): InstanceType<typeof Gtk.Label> {
   const label = new Gtk.Label({ wrap: true, ...props });

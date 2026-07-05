@@ -16,13 +16,12 @@ import { AgentTerminal } from '../ui/AgentTerminal.ts';
 import { AgentConversation } from '../ui/AgentConversation.ts';
 import { createClaudeTuiDriver } from './claude-tui/session.ts';
 import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
-import { claudeSdkLaunchOptions } from './claude-sdk/config.ts';
 import { acpLaunchOptions, acpCommand } from './acp/config.ts';
 import { AcpSession } from './acp/AcpSession.ts';
 import { createAcpBridge } from './acp/bridge.ts';
 import type { Agent, AgentResume } from './types.ts';
 
-export type AgentKind = 'claude-tui' | 'claude-sdk' | 'acp';
+export type AgentKind = 'claude-tui' | 'acp';
 
 /** A selectable choice in the launcher (a model, a permission mode, a kind, …). */
 export interface LaunchOption {
@@ -66,14 +65,14 @@ export interface AgentLaunch {
    *  editor instructions, e.g. worktree setup). */
   prompt?: string;
   /** The user's own prompt, free of zym's editor instructions — context for
-   *  auto-naming (claude-sdk). Undefined when the user typed nothing. */
+   *  auto-naming (the acp conversation). Undefined when the user typed nothing. */
   userPrompt?: string;
-  /** Resume a past conversation. Both kinds honour it: claude-tui via `--resume`,
-   *  claude-sdk via `--resume` plus rebuilding the transcript from disk. */
+  /** Resume a past conversation: claude-tui via `--resume`, acp via
+   *  `session/load` / `session/fork` (see docs/agents/acp.md). */
   resume?: AgentResume;
   /** Initial title override. */
   title?: string;
-  /** Open a file the agent touched (sdk conversation rows; tui ignores it). */
+  /** Open a file the agent touched (acp conversation rows; tui ignores it). */
   onOpenFile?: (path: string) => void;
 }
 
@@ -100,11 +99,6 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         driverFactory: createClaudeTuiDriver,
       }),
   },
-  'claude-sdk': {
-    kind: 'claude-sdk',
-    options: claudeSdkLaunchOptions,
-    create: (l) => new AgentConversation({ cwd: l.cwd, command: l.command, prompt: l.prompt, userPrompt: l.userPrompt, resume: l.resume, onOpenFile: l.onOpenFile }),
-  },
   // An Agent Client Protocol agent (Gemini CLI natively; Claude Code / Codex via
   // their ACP adapters) in the same native conversation view. The argv comes from
   // `agent.acp.command` (resolved here so serialize/restore round-trips the exact
@@ -122,8 +116,6 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         userPrompt: l.userPrompt,
         resume: l.resume,
         onOpenFile: l.onOpenFile,
-        kind: 'acp',
-        defaultTitle: 'acp agent',
         createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge() }),
       });
     },
@@ -138,13 +130,14 @@ export function listAgentKinds(): LaunchOption[] {
   }));
 }
 
-/** Pick a kind from the `agent.implementation` config value (default claude-tui,
- *  the Vte terminal agent; `claude-sdk` for the headless, natively-rendered
- *  conversation; `acp` for an Agent Client Protocol agent).
+/** Pick a kind from the `agent.implementation` config value: `acp` (an Agent
+ *  Client Protocol agent, natively rendered) or anything else → `claude-tui`
+ *  (the Vte terminal agent) — which also maps the retired `claude-sdk` value
+ *  from older configs to a kind that can still resume its claude sessions.
  *
- *  The `ZYM_AGENT` env var overrides config when set (to any kind), so the host
- *  can be switched per-launch without editing config — e.g. `ZYM_AGENT=acp zym`. */
+ *  The `ZYM_AGENT` env var overrides config when set, so the host can be
+ *  switched per-launch without editing config — e.g. `ZYM_AGENT=acp zym`. */
 export function resolveAgentKind(implementation: unknown): AgentKind {
   const value = process.env.ZYM_AGENT || implementation;
-  return value === 'claude-sdk' || value === 'acp' ? value : 'claude-tui';
+  return value === 'acp' ? 'acp' : 'claude-tui';
 }

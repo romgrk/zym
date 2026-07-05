@@ -2,7 +2,8 @@
  * MonitorView — the UI for shell monitors (the `Monitor` tool). Like subagents:
  * an inline button in the main thread, a row in the agent header bar's terminal
  * count-button popover while running (with a Cancel button), and a pushed page to
- * inspect its output. Cancel uses the control protocol's stop_task (SdkSession.stopTask).
+ * inspect its output. Cancel goes through the session's stopTask. (Dormant until
+ * the acp kind grows client-side terminals — see docs/agents/acp.md.)
  */
 import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';

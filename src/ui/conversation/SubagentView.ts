@@ -1,6 +1,6 @@
 /*
  * SubagentView — the UI for spawned subagents (the `Agent` tool). A subagent's
- * activity is captured into its own transcript (see SdkSession); here it surfaces
+ * activity is captured into its own transcript (see the session's getSubagent); here it surfaces
  * as a single inline button in the main thread, a row in the agent header bar's
  * robot count-button popover (running ones), and a pushed NavigationView page
  * showing the full transcript.

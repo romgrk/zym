@@ -1,11 +1,10 @@
 /*
  * agents/session.ts — the tool-agnostic conversation-session vocabulary: the
  * domain types and the `ConversationSession` interface that `AgentConversation`
- * (the native transcript UI) consumes. `claude-sdk`'s `SdkSession` is the
- * reference implementation; `acp`'s `AcpSession` (the Agent Client Protocol
- * kind) is the second. The UI holds a `ConversationSession`, never a concrete
- * class, so a new agent protocol only has to map its wire events onto this
- * surface.
+ * (the native transcript UI) consumes. `AcpSession` (the Agent Client Protocol
+ * kind) is the implementation. The UI holds a `ConversationSession`, never a
+ * concrete class, so a new agent protocol only has to map its wire events onto
+ * this surface.
  *
  * Everything here mirrors what a live turn produces: a status, granular
  * transcript events (so the widget appends incrementally), permission
@@ -136,17 +135,16 @@ export interface PlanEntry {
  * required core is what every protocol can provide; the optional members are
  * per-protocol capabilities:
  *
- * - `onQuestion`/`answerQuestion` — claude's interactive `AskUserQuestion`.
+ * - `onQuestion`/`answerQuestion` — interactive questions (ACP form elicitation;
+ *   claude's AskUserQuestion rides it through the adapter).
  * - `onPlan` — ACP's execution plan (full replace per update).
  * - `onFileEdited` — protocols that report edited paths directly (ACP tool-call
- *   locations); claude-sdk edits are derived from tool inputs by the widget.
+ *   locations); the widget also derives edits from claude-named tool inputs.
  * - `onSessionName` — protocols that carry a session title (ACP
  *   `session_info_update`); never persisted by the widget.
  *
  * (`getSubagent`/`getMonitor` are required but may always return undefined; the
- * subagent/monitor views only act on ids the session itself surfaced. A resumed
- * transcript is rebuilt by the claude-sdk kind via its own `replay` — that stays
- * off this interface because its entry type is claude-transcript-shaped.)
+ * subagent/monitor views only act on ids the session itself surfaced.)
  */
 export interface ConversationSession {
   readonly status: AgentStatus;
@@ -177,7 +175,7 @@ export interface ConversationSession {
   stopTask(taskId: string): void;
 
   // --- optional capabilities --------------------------------------------------
-  /** Answer an `AskUserQuestion` request (claude-sdk; paired with `onQuestion`). */
+  /** Answer a question request (paired with `onQuestion`). */
   answerQuestion?(id: string, answers: Array<{ header: string; labels: string[]; notes?: string }>): void;
 
   // --- events -------------------------------------------------------------------
@@ -223,6 +221,6 @@ export interface ConversationSession {
   onSessionName?(cb: (m: { name: string | null }) => void): Disposable;
   /** A resumed conversation's history is being replayed into the transcript
    *  (`active` true → rows render statically, edits seed silently; false →
-   *  live again). ACP `session/load`; claude-sdk replays synchronously instead. */
+   *  live again). Driven by ACP `session/load`. */
   onReplay?(cb: (m: { active: boolean }) => void): Disposable;
 }

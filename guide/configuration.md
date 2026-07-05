@@ -34,7 +34,7 @@ instead, use `space , c` (`config:open-as-text`).
 | `editor.fontFamily`            | string  | `""`        | Editor font family; empty uses the platform mono |
 | `editor.fontSize`              | integer | `13`        | Editor font size in points (6–100) |
 | `agent.command`                | array   | `["claude"]`| Command used to launch a new agent |
-| `agent.implementation`         | string  | `claude-sdk`| Agent kind `agent:new` launches: `claude-tui`, `claude-sdk`, or `acp` |
+| `agent.implementation`         | string  | `claude-tui`| Agent kind `agent:new` launches: `claude-tui` or `acp` |
 | `agent.acp.command`            | array   | `["gemini", "--acp"]` | Argv of the ACP agent the `acp` kind spawns |
 
 The preferences window (`space , ,`) lists every available key with its type,
