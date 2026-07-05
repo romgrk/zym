@@ -174,6 +174,23 @@ handler (rule 2). Native leak = `app.run()` frame dominates CPU with JS idle
   per-class `connect` helper + the `widgetControllers.ts` `trackController`/
   `detachControllers` shim (folded into the bag). The full hunt + per-site table is
   in `LEAK.md` Investigation #3.
+- **GtkTreeListModel child models freed under the tree → GC-timed segfault —
+  resolved upstream (node-gtk 4.1.0, #482; dep now `^4.1.1`).** The `FileTree`
+  create-func returns a fresh `sortedDirectory` model per directory row; that
+  return is `(transfer full)` — the tree takes ownership — but node-gtk ≤ 4.0.1
+  never added the ownership ref, so each child model's only ref was the toggle
+  ref of a wrapper JS never kept. The first GC finalized the child models under
+  the live tree, and the next tree teardown (a `rebuild()`-discarded tree
+  collected later, or a row collapse) disconnected `items-changed` from the freed
+  instances: paired `GLib-GObject-CRITICAL`s (`disconnect_matched` + `unref` on
+  `'(null)'`) then SIGSEGV in `g_type_check_instance` — timed by GC, so it
+  presented far from the cause (while opening the git commit box). Diagnosed from
+  the coredump (`GObjectTeardownIdle → g_object_remove_toggle_ref →
+  gtk_tree_list_model_clear_node_children → g_signal_handlers_disconnect_matched`)
+  and reproduced standalone (autoexpanded `TreeListModel`, JS create-func, 2×GC →
+  same criticals + SIGSEGV on 4.0.1, clean on 4.1.1). Lesson: a JS callback
+  return handed to GTK is an ownership transfer like any other — if the wrapper
+  is collectable but the native side must outlive it, suspect the transfer.
 - **The same pin class via raw `.on()` *signal handlers* — the controller sweep's
   blind spot (~30 sites)** — #3 funnelled every `addController` but never the raw
   `obj.on('signal', …)` handlers on buffers/adjustments/`Gio.FileMonitor`s/buttons.
