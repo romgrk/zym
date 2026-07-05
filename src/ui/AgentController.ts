@@ -150,7 +150,7 @@ export class AgentController {
   openAgent(
     options: { kind?: AgentKind; prompt?: string; userPrompt?: string; resume?: AgentResume; title?: string; root?: string; command?: string[]; background?: boolean } = {},
   ): Agent {
-    // Both kinds can resume now (claude-sdk rebuilds its transcript from disk), so a
+    // Both kinds can resume, so a
     // resume no longer forces the terminal agent — it respects the configured kind
     // unless a caller pins one (e.g. restoreAgent passes the saved agent's kind).
     const kind = options.kind ?? resolveAgentKind(zym.config.get('agent.implementation'));
@@ -394,10 +394,23 @@ export class AgentController {
     const a = state.agent;
     // Don't duplicate an agent that's already open (explicit restore over a live session).
     if (a.sessionId && zym.agents.getAgents().some((ag) => ag.sessionId === a.sessionId)) return null;
-    // Restore as the kind that was saved (older sessions have no tag → claude-tui).
-    const kind: AgentKind = a.agentKind ?? 'claude-tui';
+    // Restore as the kind that was saved. Older sessions have no tag, and states
+    // saved by the retired `claude-sdk` kind map to claude-tui — their session ids
+    // are claude's, so the terminal agent resumes them with --resume.
+    const kind: AgentKind = a.agentKind === 'acp' ? 'acp' : 'claude-tui';
     let agent: Agent;
-    if (a.sessionId) {
+    if (kind === 'acp') {
+      // An acp agent restores with its *saved* argv (a gemini session must not
+      // reopen into whatever `agent.acp.command` says now); resume goes over
+      // session/load inside AcpSession, not the claude transcript store.
+      agent = this.openAgent({
+        kind,
+        root: state.root,
+        command: a.command,
+        prompt: a.sessionId ? undefined : a.prompt,
+        resume: a.sessionId ? { sessionId: a.sessionId } : undefined,
+      });
+    } else if (a.sessionId) {
       const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);
       // The saved workbench cwd (`state.root`) is authoritative for where the editor roots —
       // `resumeOptions` still relocates the transcript + supplies the resume id + title, but
@@ -540,17 +553,20 @@ export class AgentController {
   private branchCurrentAgent(): void {
     const agent = this.currentAgent();
     if (!agent) return;
+    const kind = agentKindOf(agent);
     const sessionId = agent.sessionId;
     if (!sessionId) {
       zym.notifications.addWarning('No conversation to branch yet');
       return;
     }
-    // Branch into the same kind as the source agent, its editor rooted at the same worktree.
+    // Branch into the same kind as the source agent, its editor rooted at the same
+    // worktree (acp: session/fork — an agent without the capability reports an error).
     this.openAgent({
-      kind: agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui',
+      kind,
       root: this.agentRoot(agent),
       resume: { sessionId, fork: true },
       title: `${agent.title} (branch)`,
+      command: agentCommandOf(agent),
     });
   }
 
@@ -603,17 +619,17 @@ export class AgentController {
     this.d.paneItems.openFileIn(path, panel, { focus: false, owner: workbench, select });
   }
 
-  // Restart an agent: retire the old one and relaunch in place, resuming its claude
-  // conversation (forking a still-live session so the original transcript isn't clobbered).
+  // Restart an agent: retire the old one and relaunch in place, resuming its
+  // conversation (forking a still-live session so the original transcript isn't
+  // clobbered — claude via --fork-session, acp via session/fork).
   restartAgent(agent: Agent): void {
-    const kind: AgentKind = agent instanceof AgentConversation ? 'claude-sdk' : 'claude-tui';
+    const kind = agentKindOf(agent);
     const title = agent.renamed ? agent.title : undefined;
-    // Both kinds resume by session id now; fork a copy if the agent is still live so the
-    // original keeps running. The editor re-roots to its (possibly moved) worktree.
     const resume = agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
     const root = this.agentRoot(agent);
+    const command = agentCommandOf(agent);
     this.closeAgent(agent);
-    this.openAgent({ kind, resume, title, root });
+    this.openAgent({ kind, resume, title, root, command });
   }
 
   // Close an agent for good: SIGTERM a live child, drop its workbench (falling back to
@@ -696,4 +712,18 @@ export class AgentController {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** The kind an agent was launched as: the conversation host is the `acp` kind;
+ *  the terminal host is always `claude-tui`. */
+function agentKindOf(agent: Agent): AgentKind {
+  return agent instanceof AgentConversation ? agent.agentKind : 'claude-tui';
+}
+
+/** The argv an acp agent runs (from its serialized state), so restart/branch
+ *  reuse the exact agent; undefined for the claude kinds (config default). */
+function agentCommandOf(agent: Agent): string[] | undefined {
+  if (agentKindOf(agent) !== 'acp') return undefined;
+  const saved = agent.serialize();
+  return saved?.kind === 'agent' ? saved.command : undefined;
 }

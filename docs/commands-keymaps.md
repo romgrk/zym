@@ -78,6 +78,12 @@ Core pieces:
   (`DEFAULT_PARTIAL_MATCH_TIMEOUT_MS` is the fallback).
 - Conflict detection at load: `KeymapManager.findConflicts()` reports
   keystrokes bound to multiple commands at the same selector + priority.
+- **Transient key grabs** — `KeymapManager.addListener(fn)` registers a listener
+  that sees every keystroke *before* binding dispatch; returning `true` claims the
+  key (the returned disposable releases the grab). This is the modal
+  "read the next key" primitive — use it (never an EventController or a temporary
+  keymap layer) for leap/readChar-style interactions: vim's `readChar` (`f`/`t`/
+  `r`, registers) and the workbench jump (`workbench:jump`) are the precedents.
 
 ## UI surfaces
 

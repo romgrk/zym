@@ -95,6 +95,7 @@ See [Agents](agents.md); highlights:
 | `space a n w` | new agent in a fresh git worktree |
 | `space a s s` | send the selection to the current agent |
 | `space a w`   | switch workbench (you / an agent) |
+| `space j`     | jump to a workbench (leap-style marks in the sidebar) |
 
 ### Sessions — `space s`, settings — `space ,`
 

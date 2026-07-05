@@ -36,16 +36,29 @@ const ACTION_LABELS: Readonly<Record<PermissionChoice, string>> = {
   auto: 'Switch to auto',
 };
 
+/** One action button of a permission prompt: its `label` and the `value` handed to
+ *  `decide`. Claude requests build theirs from `PermissionChoice`s (choiceActions);
+ *  an ACP request carries the agent's own labelled options. */
+export interface PermissionAction {
+  label: string;
+  value: string;
+}
+
+/** The widget's claude-flavoured choice set, as prompt actions. */
+export function choiceActions(choices: readonly PermissionChoice[]): PermissionAction[] {
+  return choices.map((choice) => ({ label: ACTION_LABELS[choice], value: choice }));
+}
+
 /** A permission prompt: a title, an optional command/detail line, and a row of equal,
- *  raised action buttons in `choices` order (none is the suggested/primary — the
- *  caller drops `acceptEdits` for non-edit tools). `decide` gets the chosen action;
- *  the caller responds to the session and restores the input. The `clicked` handlers
- *  are registered in `subs` (node-gtk roots them — rule 2). */
+ *  raised action buttons in `actions` order (none is the suggested/primary — the
+ *  caller drops `acceptEdits` for non-edit tools). `decide` gets the chosen action's
+ *  value; the caller responds to the session and restores the input. The `clicked`
+ *  handlers are registered in `subs` (node-gtk roots them — rule 2). */
 export function permissionPrompt(
   subs: CompositeDisposable,
   parts: PermissionPromptParts,
-  choices: readonly PermissionChoice[],
-  decide: (choice: PermissionChoice) => void,
+  actions: readonly PermissionAction[],
+  decide: (value: string) => void,
 ): Box {
   const root = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 6 });
   root.addCssClass('conversation-perm-prompt');
@@ -63,15 +76,15 @@ export function permissionPrompt(
     root.append(detail);
   }
 
-  const actions = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
-  actions.addCssClass('conversation-perm-actions');
-  for (const choice of choices) {
-    const button = new Gtk.Button({ label: ACTION_LABELS[choice] });
+  const buttonRow = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
+  buttonRow.addCssClass('conversation-perm-actions');
+  for (const action of actions) {
+    const button = new Gtk.Button({ label: action.label });
     button.addCssClass('raised'); // raised (not flat); none is the suggested/primary
-    subs.connect(button, 'clicked', () => decide(choice));
-    actions.append(button);
+    subs.connect(button, 'clicked', () => decide(action.value));
+    buttonRow.append(button);
   }
-  root.append(actions);
+  root.append(buttonRow);
 
   return root;
 }

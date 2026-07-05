@@ -10,7 +10,7 @@
 import Gtk from 'gi:Gtk-4.0';
 import { ContextRing } from './ContextRing.ts';
 import { ContextPopover } from './ContextPopover.ts';
-import type { ContextUsage } from '../../agents/claude-sdk/SdkSession.ts';
+import type { ContextUsage } from '../../agents/session.ts';
 
 export class ModelContext {
   readonly widget: InstanceType<typeof Gtk.Box>;

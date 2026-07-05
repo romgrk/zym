@@ -13,6 +13,13 @@
  * `onActivate`. The rail rebuilds wholesale when the owner set changes (project or agent
  * workbench opened/closed) — grouping/order can shift, so there's no per-row animation.
  *
+ * `startJump()` (workbench:jump) is the leap-style quick switch: every row shows a
+ * one-letter mark and the next keystroke — grabbed ahead of command dispatch —
+ * activates the marked row, exactly like clicking it. An agent row's mark flips its
+ * lead slot (a homogeneous Gtk.Stack) from status icon to letter — no layout shift;
+ * a project row (no icon) shows the mark as a lead pseudo-icon, shifting its title
+ * as if an icon had appeared. See docs/workbench.md.
+ *
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
  */
@@ -22,6 +29,7 @@ import Adw from 'gi:Adw-1';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
+import type { Key } from '../keymap/Key.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { Icons, iconLabel } from './icons.ts';
 import type { Agent } from '../agents/types.ts';
@@ -48,7 +56,21 @@ addStyles(/* css */`
   .WorkbenchRow--project {
     opacity: var(--dim-opacity);
   }
+  /* Leap-style jump mark (workbench:jump): a bold monospace letter, error-colored to
+     match the editor leap marks. On agent rows it swaps in over the status icon; on
+     project rows it appears as a lead pseudo-icon. The min-width matches the status
+     icon size, so a project title shifts exactly as if an icon had appeared. */
+  .Workbenchrow--jump {
+    font-family: var(--t-font-monospace-family);
+    font-weight: bold;
+    color: var(--t-ui-status-error);
+    min-width: 16px;
+  }
 `);
+
+// Jump labels in assignment order (home row first), one per row in rail order. Rows
+// past the alphabet stay unlabeled — unreachable by jump, still one `j/k` away.
+const JUMP_LABELS = 'asdfghjklqwertyuiopzxcvbnm';
 
 /** A project and the agents launched under it — the rail's grouped unit. */
 export interface ProjectGroup {
@@ -81,11 +103,18 @@ export interface WorkbenchListOptions {
 // A list entry: a project's default ("you") workbench, or one of its agents.
 type Entry = { kind: 'project'; project: Project } | { kind: 'agent'; agent: Agent };
 
-// A built row: its entry, the ListBoxRow, and the per-row unsubscribes (agent
-// title/status). Rebuilt wholesale, so there's no removal/animation bookkeeping.
+// A built row: its entry, the ListBoxRow, its jump-mark toggles, and the per-row
+// unsubscribes (agent title/status). Rebuilt wholesale, so there's no
+// removal/animation bookkeeping.
 interface RowHandle {
   entry: Entry;
   row: InstanceType<typeof Gtk.ListBoxRow>;
+  /** Show this row's jump mark (workbench:jump): an agent row flips its lead Stack
+   *  slot from the status icon to the letter (no shift); a project row reveals a
+   *  lead pseudo-icon mark (its title shifts as if an icon had appeared). */
+  showMark(mark: string): void;
+  /** Restore the row (status icon back / mark hidden) after the jump ends. */
+  hideMark(): void;
   unsubs: Array<() => void>;
 }
 
@@ -111,6 +140,9 @@ export class WorkbenchList {
   private modifiedDot: InstanceType<typeof Gtk.Label> | null = null;
   private named = false;
   private modified = false;
+  // The pending jump's key grab (workbench:jump) — non-null while labels are shown.
+  private jumpGrab: { dispose(): void } | null = null;
+  private jumpDone: ((jumped: boolean) => void) | null = null;
   private readonly subs = new CompositeDisposable();
 
   constructor(options: WorkbenchListOptions = {}) {
@@ -212,6 +244,7 @@ export class WorkbenchList {
 
   // Full (re)build of every row: per project, its default (header) row then its agents.
   private rebuild(): void {
+    this.endJump(false); // rows are being replaced — a pending jump's labels die with them
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
 
@@ -238,7 +271,7 @@ export class WorkbenchList {
 
   private createHandle(entry: Entry): RowHandle {
     const unsubs: Array<() => void> = [];
-    const content =
+    const built =
       entry.kind === 'project'
         ? this.buildProjectContent(entry.project)
         : this.buildAgentContent(entry.agent, unsubs);
@@ -246,8 +279,8 @@ export class WorkbenchList {
     const row = new Gtk.ListBoxRow();
     row.addCssClass('WorkbenchRow');
     if (entry.kind === 'project') row.addCssClass('WorkbenchRow--project'); // dimmed header
-    row.setChild(content);
-    return { entry, row, unsubs };
+    row.setChild(built.content);
+    return { entry, row, showMark: built.showMark, hideMark: built.hideMark, unsubs };
   }
 
   // The row content box: the leading icon plus the trailing widgets.
@@ -263,26 +296,47 @@ export class WorkbenchList {
   // name (its root basename), dimmed via the row's `--project` class. It's still an
   // activatable workbench row (editing the project directly, like the 'user' workbench on
   // master); its name just *is* the project's, so the agents below belong to it.
-  private buildProjectContent(project: Project): InstanceType<typeof Gtk.Box> {
+  // The jump mark is a lead pseudo-icon shown only while a jump is pending — the title
+  // shifts right as if an icon had appeared (sized/margined like the agents' icon slot,
+  // so the marks and titles line up with the agent rows').
+  private buildProjectContent(project: Project) {
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+    const mark = new Gtk.Label();
+    mark.addCssClass('Workbenchrow--icon'); // the same lead-slot margin as an agent's icon
+    mark.addCssClass('Workbenchrow--jump');
+    mark.setVisible(false); // invisible children drop out of layout — no width cost idle
+    box.append(mark);
     const label = new Gtk.Label({ label: project.title, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label');
     box.append(label);
-    return box;
+    return {
+      content: box,
+      showMark: (m: string) => {
+        mark.setLabel(m);
+        mark.setVisible(true);
+      },
+      hideMark: () => mark.setVisible(false),
+    };
   }
 
   // An agent row's content. Subscriptions (status/title) are pushed onto `unsubs`,
   // which the row's handle owns and tears down when the row goes away.
-  private buildAgentContent(
-    agent: Agent,
-    unsubs: Array<() => void>,
-  ): InstanceType<typeof Gtk.Box> {
+  private buildAgentContent(agent: Agent, unsubs: Array<() => void>) {
     // Status indicator (shared with the conversation footer): a bundled symbolic icon —
     // dot (idle/waiting), loading (working), circle outline (disconnected) — swapped in
     // place as the status changes.
     const status = createAgentStatusIcon(agent);
     unsubs.push(status.dispose);
-    const dot = status.widget;
+
+    // The lead slot: a homogeneous Gtk.Stack of [status icon | jump mark], so the
+    // slot keeps one constant size (the max of both) and flipping to the mark during
+    // a jump shifts nothing.
+    const mark = new Gtk.Label();
+    mark.addCssClass('Workbenchrow--jump');
+    const slot = new Gtk.Stack();
+    slot.addChild(status.widget);
+    slot.addChild(mark);
+    slot.setVisibleChild(status.widget);
 
     const label = new Gtk.Label({ xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label'); // same title font as the default row
@@ -291,7 +345,14 @@ export class WorkbenchList {
 
     // Single-line row: [status dot | name]. The edited-files badge lives on the
     // agent-sidebar header (AgentSidebar), reflecting the active agent, not per-row.
-    return this.rowContent(dot, label);
+    return {
+      content: this.rowContent(slot, label),
+      showMark: (m: string) => {
+        mark.setLabel(m);
+        slot.setVisibleChild(mark);
+      },
+      hideMark: () => slot.setVisibleChild(status.widget),
+    };
   }
 
   private handleForRow(row: InstanceType<typeof Gtk.ListBoxRow>): RowHandle | undefined {
@@ -362,6 +423,61 @@ export class WorkbenchList {
     else this.listBox.grabFocus();
   }
 
+  // --- Leap-style jump (workbench:jump) --------------------------------------
+
+  /** Show a one-letter label on every row and grab the next keystroke ahead of
+   *  command dispatch (`KeymapManager.addListener` — the vim `readChar` pattern, so
+   *  the key never reaches the focused widget). The label's key activates its row
+   *  exactly like clicking it; escape — or any key that isn't a shown label —
+   *  cancels. `onDone(jumped)` fires once, on either outcome. */
+  startJump(onDone?: (jumped: boolean) => void): void {
+    this.endJump(false); // a jump already in flight is cancelled — never tangle grabs
+    const byLabel = new Map<string, RowHandle>();
+    for (let i = 0; i < this.handles.length && i < JUMP_LABELS.length; i++) {
+      const handle = this.handles[i];
+      byLabel.set(JUMP_LABELS[i], handle);
+      handle.showMark(JUMP_LABELS[i]);
+    }
+    if (byLabel.size === 0) {
+      onDone?.(false);
+      return;
+    }
+    this.jumpDone = onDone ?? null;
+    this.jumpGrab = zym.keymaps.addListener((key: Key) => {
+      if (key.isModifier()) return false; // a bare modifier resolves nothing — keep waiting
+      // A plain printable key may be a label; a chord / control key always cancels.
+      // `string` comes from real GDK events; a synthetic `fromDescription` key (tests,
+      // macro replay) only carries `name`, so fall back to a single-char name.
+      const raw =
+        key.string && key.string.charCodeAt(0) >= 0x20 ? key.string
+        : key.name && key.name.length === 1 ? key.name
+        : null;
+      const char = !key.ctrl && !key.alt && !key.super && raw ? raw.toLowerCase() : null;
+      const handle = char !== null ? byLabel.get(char) : undefined;
+      this.endJump(handle !== undefined);
+      if (handle) this.activate(handle.entry);
+      return true; // claim the key either way — a pending jump swallows its keystroke
+    });
+  }
+
+  /** Cancel a pending jump, if any — labels hidden, key grab released, its
+   *  `onDone(false)` settled. Call before re-triggering so the previous jump's
+   *  cleanup (e.g. the host's sidebar restore) runs first. */
+  cancelJump(): void {
+    this.endJump(false);
+  }
+
+  // Tear down a pending jump — hide the labels, release the key grab, settle its
+  // `onDone`. Idempotent; safe to call when no jump is pending.
+  private endJump(jumped: boolean): void {
+    this.jumpGrab?.dispose();
+    this.jumpGrab = null;
+    for (const handle of this.handles) handle.hideMark();
+    const done = this.jumpDone;
+    this.jumpDone = null;
+    done?.(jumped);
+  }
+
   /** Select the row for `owner` (the active workbench's project or agent). Called on
    *  every workbench switch so the rail highlight follows the active owner. */
   selectOwner(owner: Owner | null): void {
@@ -377,6 +493,7 @@ export class WorkbenchList {
   }
 
   dispose(): void {
+    this.endJump(false);
     for (const handle of this.handles) for (const unsub of handle.unsubs) unsub();
     this.handles = [];
     this.subs.dispose();

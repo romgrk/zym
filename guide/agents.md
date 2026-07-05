@@ -13,6 +13,20 @@ listed so you can read its final output, restart it, or close it.
 The command used to launch an agent comes from the `agent.command` config key
 (default `["claude"]`).
 
+## Agent kinds
+
+zym can host an agent two ways, chosen by the `agent.implementation` config
+key or per-launch with the *kind* dropdown in the launcher:
+
+| Kind | What it is |
+| ---- | ---------- |
+| `claude-tui`  | Claude Code's own terminal UI in an embedded terminal (default). |
+| `acp`         | Any [Agent Client Protocol](https://agentclientprotocol.com) agent rendered as a native conversation — message bubbles, tool rows, diff previews, native permission prompts, subagent pages, plans. E.g. Gemini CLI (`["gemini", "--acp"]`, the default) or Claude Code via its adapter (`["npx", "@agentclientprotocol/claude-agent-acp"]`). Set the agent with the `agent.acp.command` key. |
+
+An `acp` agent must be signed in with its own CLI first (run it once in a
+terminal). Resuming, branching, permission prompts, diffs, plans, questions,
+and edited-file tracking all work.
+
 ## Launching and switching
 
 | Keys          | Command |
@@ -22,6 +36,7 @@ The command used to launch an agent comes from the `agent.command` config key
 | `space a n w` | new agent in a **fresh git worktree** |
 | `space a n e` | new agent in an existing worktree (picker) |
 | `space a n .` | new agent in the current worktree |
+| `space j`     | jump to a workbench — leap-style: each sidebar row shows a letter, pressing it switches there (any other key cancels) |
 | `space a w`   | switch workbench — you or any agent |
 | `space a l`   | focus the workbench sidebar |
 | `super-,` / `super-.` | cycle through workbenches |
@@ -31,6 +46,10 @@ The command used to launch an agent comes from the `agent.command` config key
 
 The worktree variants give each agent an isolated checkout, so agents can work
 in parallel without stepping on your tree or each other's.
+
+`space j` is the fastest switch: every sidebar row shows a one-letter mark and
+pressing a mark's key switches to that workbench — escape or any other key
+cancels, and a hidden sidebar flashes in for the duration.
 
 ## Agent status
 

@@ -80,7 +80,7 @@ export class PaneItems {
   // Terminal tabs share the center panel with editors; tracked separately so the
   // active child can be resolved back to its Terminal (it has no vim state).
   private readonly terminals = new Map<Widget, Terminal>();
-  // Headless `claude-sdk` agents mounted as center tabs (keyed by their root
+  // Conversation (`acp`) agents mounted as center tabs (keyed by their root
   // widget), disposed when their tab closes (see disposeChild).
   private readonly conversations = new Map<Widget, AgentConversation>();
   // Terminal tabs opened for a `terminal` workbench action, keyed by the terminal's

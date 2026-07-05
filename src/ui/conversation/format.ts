@@ -2,7 +2,7 @@
  * format.ts — pure text helpers for the agent conversation UI (no GTK), so they
  * are unit-testable and shared across the conversation components + toolDisplay.
  */
-import type { TaskProgress } from '../../agents/claude-sdk/SdkSession.ts';
+import type { TaskProgress } from '../../agents/session.ts';
 
 /** `text` truncated to `max` chars with a trailing ellipsis. */
 export function truncate(text: string, max: number): string {

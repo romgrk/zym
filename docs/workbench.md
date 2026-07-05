@@ -223,6 +223,27 @@ an editor's search bar), falling back to the tab's default focus target. Focus
 on the tab's own root drops the entry (so restore re-derives from the tab
 itself).
 
+## Workbench quick switch
+
+Three ways to change the active workbench: the fuzzy picker (`workbench:picker`,
+`space a w`), the cycle (`workbench:next`/`previous`, `super-.`/`super-,`), and the
+leap-style **jump** (`workbench:jump`, `space j`). The jump is
+`WorkbenchList.startJump()`: every rail row shows a one-letter mark (home-row
+order) — an agent row's lead slot is a homogeneous `Gtk.Stack` that flips from
+status icon to letter (zero shift), and a project row (no icon) reveals the mark as
+a lead pseudo-icon sized like the status icons, so its title shifts exactly as if
+an icon had appeared and the marks line up in one column. (First-character
+concealment à la editor leap was tried for project rows and looked bad — don't
+re-attempt.) The deciding keystroke is grabbed ahead of command dispatch via
+`KeymapManager.addListener` — the vim `readChar` pattern (see
+docs/commands-keymaps.md "Transient key grabs") — so a label key activates its row
+like a click, *any* other key (or escape) cancels, and nothing leaks to the focused
+widget: no focus move, no EventController, no temporary keymap layer.
+`AppWindow.startWorkbenchJump` reveals a hidden sidebar for the duration and
+restores it after, without steering focus (`WorkbenchView.setSidebarHidden(hidden,
+{ steerFocus })`). A rail rebuild mid-jump (owner set changed) cancels the pending
+jump. Tested in `WorkbenchJump.test.ts`.
+
 ## Actions
 
 Each `Workbench` owns a set of **runnable actions** (label + shell command — dev
