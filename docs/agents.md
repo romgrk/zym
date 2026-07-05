@@ -274,8 +274,8 @@ Lifecycle commands are registered on `AppWindow`, bound centrally in
 - Closing the agent's tab (`tab:close`) never retires the agent, whatever its
   state: the terminal-tab close is vetoed (the terminal stays in its workbench
   — a running agent keeps working in the background, a stopped one stays
-  listed) and the view falls back to the user's workbench; re-select the agent
-  to bring it back.
+  listed) and the view falls back to the agent's rail neighbor
+  (`WorkbenchManager.fallbackOwner`); re-select the agent to bring it back.
 - `agent:close` — close for good: terminate the child if it's still running,
   remove its workbench, and retire it from the list (`closeAgent`). The list's
   `d d` key; acts on the selected row, or the active/last-focused agent from

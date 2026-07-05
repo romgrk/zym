@@ -102,10 +102,27 @@ export class WorkbenchManager {
     }
   }
 
-  /** The primary (first-opened) project — the fallback owner to activate when an
-   *  agent workbench closes, and the session's primary root. */
+  /** The primary (first-opened) project — the session's primary root and the
+   *  last-resort owner to activate when nothing else remains. */
   get primaryProject(): Project {
     return this.projects[0];
+  }
+
+  /** The owner to activate when `closing`'s workbench goes away: the one just before it
+   *  in rail order, else the one just after — so a close lands on its neighbor rather
+   *  than jumping to the start of the rail. A closing project takes its agents down with
+   *  it, so those aren't candidates. Call before the owner is removed. */
+  fallbackOwner(closing: Owner): Owner | undefined {
+    const doomed = new Set<Owner>([closing]);
+    if (isProject(closing)) {
+      for (const agent of zym.agents.getAgents()) if (this.projectOf(agent) === closing) doomed.add(agent);
+    }
+    const owners = this.orderedOwners();
+    const index = owners.indexOf(closing);
+    if (index < 0) return undefined;
+    for (let i = index - 1; i >= 0; i--) if (!doomed.has(owners[i])) return owners[i];
+    for (let i = index + 1; i < owners.length; i++) if (!doomed.has(owners[i])) return owners[i];
+    return undefined;
   }
 
   /** The project an owner belongs to: a project is itself; an agent is the project it
@@ -269,10 +286,11 @@ export class WorkbenchManager {
     const workbench = this.workbenches.get(project);
     if (!workbench) return;
     // If the active owner belongs to this project (its default or one of its agents),
-    // switch to another project first — so nothing we're about to dispose is active
-    // (and closing the agents below never re-activates a workbench we're tearing down).
-    const fallback = this.projects.find((p) => p !== project) ?? this.primaryProject;
-    if (this.projectOf(this.activeWorkbench.owner) === project) this.activateOwner(fallback);
+    // switch to the closing project's rail neighbor first — so nothing we're about to
+    // dispose is active (and closing the agents below never re-activates a workbench
+    // we're tearing down).
+    const fallback = this.fallbackOwner(project);
+    if (this.projectOf(this.activeWorkbench.owner) === project && fallback) this.activateOwner(fallback);
     // Close the agents launched under this project (each tears down its own workbench).
     // `getAgents()` is a snapshot, so closing — which mutates the registry — is safe.
     for (const agent of zym.agents.getAgents()) {

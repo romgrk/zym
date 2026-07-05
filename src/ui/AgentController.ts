@@ -616,15 +616,19 @@ export class AgentController {
     this.openAgent({ kind, resume, title, root });
   }
 
-  // Close an agent for good: SIGTERM a live child, drop its workbench (returning to the
-  // user's workbench if it was active), and retire it from the registry.
+  // Close an agent for good: SIGTERM a live child, drop its workbench (falling back to
+  // its rail neighbor if it was active), and retire it from the registry.
   closeAgent(agent: Agent): void {
     if (!agent.exited) agent.kill();
     const workbench = this.d.workbenchManager.workbenches.get(agent);
     // Drop this workbench's action terminals (set_actions tabs in its center); disposeChild
     // won't reach them (they're terminals, not editors).
     if (workbench) this.d.paneItems.disposeWorkbenchActionTerminals(workbench);
-    if (this.workbench.owner === agent) this.d.workbenchManager.activateOwner(this.d.workbenchManager.primaryProject); // swap away first
+    if (this.workbench.owner === agent) {
+      // Swap away first — to the owner just before this one in the rail (never the start).
+      const fallback = this.d.workbenchManager.fallbackOwner(agent) ?? this.d.workbenchManager.primaryProject;
+      this.d.workbenchManager.activateOwner(fallback);
+    }
     this.d.workbenchManager.workbenches.delete(agent); // its workbench (center + Files/Git + bottom + tabs) goes
     if (workbench) {
       // Tear down the editors that lived in this workbench — closing it drops their widgets

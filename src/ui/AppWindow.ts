@@ -163,7 +163,8 @@ export class AppWindow {
     this.paneItems = new PaneItems({
       getWorkbench: () => this.workbench,
       activateWorkbench: (workbench) => this.workbenchManager.activateWorkbench(workbench),
-      activatePrimaryProject: () => this.workbenchManager.activateOwner(this.workbenchManager.primaryProject),
+      activateNeighborOf: (owner) => this.workbenchManager.activateOwner(
+        this.workbenchManager.fallbackOwner(owner) ?? this.workbenchManager.primaryProject),
       onActiveTabChanged: () => this.onActiveTabChanged(),
       onReview: (message) => this.agentController.reviewToAgent(message),
       setModified: (modified) => this.sidebar.list.setModified(modified),

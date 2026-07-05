@@ -49,8 +49,8 @@ export interface PaneItemsDeps {
   getWorkbench: () => Wb;
   /** Activate a workbench (the action-terminal runner runs beside its workbench). */
   activateWorkbench: (workbench: Wb) => void;
-  /** Activate the primary project (the agent-tab close veto returns there). */
-  activatePrimaryProject: () => void;
+  /** Activate `owner`'s rail neighbor (the agent-tab close veto returns there). */
+  activateNeighborOf: (owner: Owner) => void;
   /** Fired when the active split/tab changes (agent highlight / viewed + autosave). */
   onActiveTabChanged: () => void;
   /** Deliver a diff/comment review to an agent (editor `enter`, diff `onSend`). */
@@ -382,15 +382,15 @@ export class PaneItems {
         // An agent's terminal tab is never closed/destroyed here, whatever its state:
         // closing it would kill a running agent and would drop a stopped one from the
         // list. Veto the close (the terminal stays put in its workbench, alive) and just
-        // return to the user's workbench, so the agent is one switch away. Defer the swap
-        // out of the close-page emission: it reparents the agent workbench (an ancestor of
-        // the emitting tab view), unsafe mid-emit.
+        // step back to the agent's rail neighbor, so the agent is one switch away. Defer
+        // the swap out of the close-page emission: it reparents the agent workbench (an
+        // ancestor of the emitting tab view), unsafe mid-emit.
         const terminal = this.terminals.get(widget);
         const owner: Agent | null = terminal instanceof AgentTerminal ? terminal : (this.conversations.get(widget) ?? null);
         if (owner) {
           if (this.workbench.owner === owner)
             setTimeout(() => {
-              if (this.workbench.owner === owner) this.d.activatePrimaryProject();
+              if (this.workbench.owner === owner) this.d.activateNeighborOf(owner);
             }, 0);
           return false;
         }
