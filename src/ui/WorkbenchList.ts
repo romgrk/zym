@@ -15,10 +15,10 @@
  *
  * `startJump()` (workbench:jump) is the leap-style quick switch: every row shows a
  * one-letter mark and the next keystroke — grabbed ahead of command dispatch —
- * activates the marked row, exactly like clicking it. Marks render with zero layout
- * shift: an agent row flips its lead slot (a homogeneous Gtk.Stack) from status icon
- * to letter; a project row conceals its title's first character behind the letter
- * (markup swap). See docs/workbench.md.
+ * activates the marked row, exactly like clicking it. An agent row's mark flips its
+ * lead slot (a homogeneous Gtk.Stack) from status icon to letter — no layout shift;
+ * a project row (no icon) shows the mark as a lead pseudo-icon, shifting its title
+ * as if an icon had appeared. See docs/workbench.md.
  *
  * The assembled widget — an `Adw.ToolbarView` with the header bar as a top bar
  * over the scrollable list — is exposed via `root`.
@@ -28,12 +28,9 @@ import Gtk from 'gi:Gtk-4.0';
 import Adw from 'gi:Adw-1';
 import { zym } from '../zym.ts';
 import { addStyles } from '../styles.ts';
-import { fonts } from '../fonts.ts';
-import { theme } from '../theme/theme.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import type { Key } from '../keymap/Key.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
-import { escapeMarkup } from './proseMarkup.ts';
 import { Icons, iconLabel } from './icons.ts';
 import type { Agent } from '../agents/types.ts';
 import { type Owner, type Project } from './workbench/Owner.ts';
@@ -60,23 +57,20 @@ addStyles(/* css */`
     opacity: var(--dim-opacity);
   }
   /* Leap-style jump mark (workbench:jump): a bold monospace letter, error-colored to
-     match the editor leap marks. On agent rows it swaps in over the status icon. */
+     match the editor leap marks. On agent rows it swaps in over the status icon; on
+     project rows it appears as a lead pseudo-icon. The min-width matches the status
+     icon size, so a project title shifts exactly as if an icon had appeared. */
   .Workbenchrow--jump {
     font-family: var(--t-font-monospace-family);
     font-weight: bold;
     color: var(--t-ui-status-error);
+    min-width: 16px;
   }
 `);
 
 // Jump labels in assignment order (home row first), one per row in rail order. Rows
 // past the alphabet stay unlabeled — unreachable by jump, still one `j/k` away.
 const JUMP_LABELS = 'asdfghjklqwertyuiopzxcvbnm';
-
-// The Pango-markup twin of `.Workbenchrow--jump` for the project rows' in-title mark
-// (markup can't read CSS vars, so it interpolates the live family/color literals).
-function jumpMarkSpan(mark: string): string {
-  return `<span face="${fonts.monospaceFamily}" weight="bold" foreground="${theme.ui.status.error}">${escapeMarkup(mark)}</span>`;
-}
 
 /** A project and the agents launched under it — the rail's grouped unit. */
 export interface ProjectGroup {
@@ -115,11 +109,11 @@ type Entry = { kind: 'project'; project: Project } | { kind: 'agent'; agent: Age
 interface RowHandle {
   entry: Entry;
   row: InstanceType<typeof Gtk.ListBoxRow>;
-  /** Show this row's jump mark (workbench:jump), with no layout shift: an agent row
-   *  flips its lead Stack slot from the status icon to the letter; a project row
-   *  conceals its title's first character behind the letter (markup swap). */
+  /** Show this row's jump mark (workbench:jump): an agent row flips its lead Stack
+   *  slot from the status icon to the letter (no shift); a project row reveals a
+   *  lead pseudo-icon mark (its title shifts as if an icon had appeared). */
   showMark(mark: string): void;
-  /** Restore the row (status icon / title) after the jump ends. */
+  /** Restore the row (status icon back / mark hidden) after the jump ends. */
   hideMark(): void;
   unsubs: Array<() => void>;
 }
@@ -302,17 +296,26 @@ export class WorkbenchList {
   // name (its root basename), dimmed via the row's `--project` class. It's still an
   // activatable workbench row (editing the project directly, like the 'user' workbench on
   // master); its name just *is* the project's, so the agents below belong to it.
-  // With no icon slot, the jump mark conceals the title's *first character* instead
-  // (the editor leap's replace-the-glyph idiom) — a markup swap, no layout shift.
+  // The jump mark is a lead pseudo-icon shown only while a jump is pending — the title
+  // shifts right as if an icon had appeared (sized/margined like the agents' icon slot,
+  // so the marks and titles line up with the agent rows').
   private buildProjectContent(project: Project) {
     const box = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+    const mark = new Gtk.Label();
+    mark.addCssClass('Workbenchrow--icon'); // the same lead-slot margin as an agent's icon
+    mark.addCssClass('Workbenchrow--jump');
+    mark.setVisible(false); // invisible children drop out of layout — no width cost idle
+    box.append(mark);
     const label = new Gtk.Label({ label: project.title, xalign: 0, hexpand: true, ellipsize: Pango.EllipsizeMode.END });
     label.addCssClass('Workbenchrow--label');
     box.append(label);
     return {
       content: box,
-      showMark: (mark: string) => label.setMarkup(jumpMarkSpan(mark) + escapeMarkup(project.title.slice(1))),
-      hideMark: () => label.setText(project.title),
+      showMark: (m: string) => {
+        mark.setLabel(m);
+        mark.setVisible(true);
+      },
+      hideMark: () => mark.setVisible(false),
     };
   }
 

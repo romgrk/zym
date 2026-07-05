@@ -39,6 +39,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space q': 'app:quit',
   'space t': 'terminal:new',
   'space p r': 'scripts:run', // "p"ackage "r"un — run a package.json script in a terminal
+  'space j': 'workbench:jump', // leap-style workbench switch (jump marks in the sidebar)
   'space a a': 'agent:picker', // open the agent picker (agents, conversations, new)
   'space a l': 'workbench-list:focus', // focus the workbench sidebar
   'space a w': 'workbench:picker', // switch to a workbench (the user / an agent)

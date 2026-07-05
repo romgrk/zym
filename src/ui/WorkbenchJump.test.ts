@@ -45,11 +45,12 @@ function bareModifier(): Key {
   return key;
 }
 
-// Whether any Gtk.Label under `root` currently displays `text`.
-function findLabelText(root: InstanceType<typeof Gtk.Widget>, text: string): boolean {
-  if (root instanceof Gtk.Label && root.getText() === text) return true;
+// Whether any Gtk.Label under `root` displays `text` (`visibleOnly` requires the
+// label widget itself to be visible).
+function findLabelText(root: InstanceType<typeof Gtk.Widget>, text: string, visibleOnly = false): boolean {
+  if (root instanceof Gtk.Label && root.getText() === text && (!visibleOnly || root.getVisible())) return true;
   for (let child = root.getFirstChild(); child; child = child.getNextSibling())
-    if (findLabelText(child, text)) return true;
+    if (findLabelText(child, text, visibleOnly)) return true;
   return false;
 }
 
@@ -113,15 +114,15 @@ test('a rebuild (owner set changed) cancels a pending jump', () => {
   list.dispose();
 });
 
-test('a project row conceals its first title character behind the mark, restored on cancel', () => {
+test('a project row shows its mark as a lead pseudo-icon, hidden after cancel', () => {
   const activated: string[] = [];
   const { list } = makeList(activated);
 
   list.startJump();
-  // Second row: mark `s` over 'beta' → displays "seta" (the mark replaces the `b`).
-  assert.ok(findLabelText(list.root, 'seta'), 'the mark conceals the first character');
+  assert.ok(findLabelText(list.root, 's', true), 'the mark is shown in the lead slot');
+  assert.ok(findLabelText(list.root, 'beta'), 'the title itself is untouched');
   press(Key.fromDescription('escape')!);
-  assert.ok(findLabelText(list.root, 'beta'), 'the title is restored after cancel');
+  assert.ok(!findLabelText(list.root, 's', true), 'the mark is hidden after cancel');
   list.dispose();
 });
 

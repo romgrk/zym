@@ -597,10 +597,9 @@ export class AppWindow {
         }),
         description: 'Switch to a workbench (a project or an agent)',
       },
-      // Leap-style quick switch: label every sidebar row with a letter, the next
-      // keystroke jumps. Unbound by default while the interaction is iterated on —
-      // run it from the command palette.
-      'workbench:jump': { didDispatch: () => this.startWorkbenchJump(), description: 'Jump to a workbench (labeled sidebar rows)' },
+      // Leap-style quick switch (`space j`): mark every sidebar row with a letter,
+      // the next keystroke jumps.
+      'workbench:jump': { didDispatch: () => this.startWorkbenchJump(), description: 'Jump to a workbench (marked sidebar rows)' },
       // Show/hide each dock side without discarding the panels it holds.
       'dock:toggle-left': { didDispatch: () => this.workbenchView.toggleDockSide('left'), description: 'Toggle the left dock' },
       'dock:toggle-right': { didDispatch: () => this.workbenchView.toggleDockSide('right'), description: 'Toggle the right dock (Files / Source Control)' },

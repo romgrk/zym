@@ -22,6 +22,7 @@ The command used to launch an agent comes from the `agent.command` config key
 | `space a n w` | new agent in a **fresh git worktree** |
 | `space a n e` | new agent in an existing worktree (picker) |
 | `space a n .` | new agent in the current worktree |
+| `space j`     | jump to a workbench — leap-style: each sidebar row shows a letter, pressing it switches there (any other key cancels) |
 | `space a w`   | switch workbench — you or any agent |
 | `space a l`   | focus the workbench sidebar |
 | `super-,` / `super-.` | cycle through workbenches |
@@ -32,11 +33,9 @@ The command used to launch an agent comes from the `agent.command` config key
 The worktree variants give each agent an isolated checkout, so agents can work
 in parallel without stepping on your tree or each other's.
 
-There is also a leap-style quick switch, **Jump to a workbench**
-(`workbench:jump`): every sidebar row shows a one-letter label and pressing a
-label's key switches to that workbench (any other key cancels; a hidden sidebar
-flashes in for the duration). It has no default keybinding yet — run it from the
-command palette, or bind `workbench:jump` in `keymap.json`.
+`space j` is the fastest switch: every sidebar row shows a one-letter mark and
+pressing a mark's key switches to that workbench — escape or any other key
+cancels, and a hidden sidebar flashes in for the duration.
 
 ## Agent status
 
