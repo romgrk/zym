@@ -2488,6 +2488,19 @@ export class TextEditor implements DocumentHost {
     return this.editorModel.getSelectedText();
   }
 
+  /** The `\w+` identifier under (or touching) the cursor, '' when none — for seeding
+   *  a search or rename prompt. Codepoint-aware: columns are codepoints, so the line
+   *  is indexed as codepoints. */
+  getWordUnderCursor(): string {
+    const cursor = this.editorModel.getCursorBufferPosition();
+    const cp = [...this.editorModel.lineTextForBufferRow(cursor.row)];
+    let start = cursor.column;
+    let end = cursor.column;
+    while (start > 0 && /\w/.test(cp[start - 1])) start--;
+    while (end < cp.length && /\w/.test(cp[end])) end++;
+    return cp.slice(start, end).join('');
+  }
+
   /** The tab/window title for this editor (file basename, or "Untitled"). */
   get title(): string {
     return this.document.title;

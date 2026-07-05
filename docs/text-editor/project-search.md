@@ -15,14 +15,18 @@ the same stream.
 
 ## Surfaces
 
-Two distinct entry points; same backend, options, and presets.
+Two distinct entry points; same backend, options, and presets. The keymap is two vim-idiom
+pairs (`/` = search, `*` = word under cursor; add `p` for the full tab), and all four
+commands seed the visual selection when one exists (`project:search`,
+`project:search-word`, `project:search-open`, `project:search-open-word`).
 
-- **Picker** (`src/ui/SearchPicker.ts`, `space /`) — a quick-jump
-  [LocationPicker](../../src/ui/LocationPicker.ts) with a source preview. Results
-  append progressively as rg streams; the entry row carries case/word/regex option
-  chips (a Picker `headerAccessory`), and flipping one re-runs the search.
-- **Full view** (`src/ui/ProjectSearchView.ts`, `space p s`; `space *` seeds it with
-  the selection) — the editable [multibuffer](multibuffer.md) results surface
+- **Picker** (`src/ui/SearchPicker.ts`, `space /`; `space *` seeds the word under the
+  cursor) — a quick-jump [LocationPicker](../../src/ui/LocationPicker.ts) with a source
+  preview. Results append progressively as rg streams; the entry row carries
+  case/word/regex option chips (a Picker `headerAccessory`), and flipping one re-runs
+  the search.
+- **Full view** (`src/ui/ProjectSearchView.ts`, `space p /`; `space p *` seeds the word
+  under the cursor) — the editable [multibuffer](multibuffer.md) results surface
   (`SearchResultsView`), with one options row (flag toggles, a single glob field, a presets
   combo). It grows in place as matches stream: each refresh **appends** the new files' rows
   (`Screen.appendItems` — O(new), not `retarget`'s O(rows²) re-diff, which is what hung mid-search)

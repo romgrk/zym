@@ -20,7 +20,7 @@ covers everything else.
 | `space w`     | save file |
 | `space o`     | fuzzy file picker |
 | `space /`     | project search (quick-jump picker) |
-| `space *`     | selected text → all matches in the search multibuffer |
+| `space *`     | project search picker, seeded with the word under the cursor |
 | `space t`     | new terminal |
 | `space n`     | toggle the notification log |
 | `space q`     | quit |
@@ -43,13 +43,17 @@ files, `.` toggles hidden files.
 
 | Keys        | Command |
 | ----------- | ------- |
-| `space p s` | open the project-search multibuffer (editable results) |
+| `space p /` | open the project-search multibuffer (editable results) |
+| `space p *` | project-search multibuffer, seeded with the word under the cursor |
 | `space p r` | run a `package.json` script in a terminal |
 | `space x x` | run the project's default action |
 | `space x 1`…`9` | run the Nth project action |
 | `space x o` | pick an action to run |
 | `space x e` | edit the project settings (`.zym/settings.json`) |
 | `space x r` | reset the live action set to the project defaults |
+
+All four search bindings (`space /`, `space *`, `space p /`, `space p *`) seed the
+search with the visual selection when one exists.
 
 ### Git — `space g`, hunks — `space h`
 

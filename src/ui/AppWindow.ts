@@ -677,14 +677,37 @@ export class AppWindow {
     openDiffCollapseGlobPicker(this.overlay, diff);
   }
 
+  // Search seeds: the trimmed selection ('' when none) / the identifier under the cursor.
+  private selectionSeed(): string {
+    return this.paneItems.activeEditor?.getSelectedText().trim() ?? '';
+  }
+  private wordSeed(): string {
+    return this.paneItems.activeEditor?.getWordUnderCursor() ?? '';
+  }
+  private openSearchPickerWith(seed: string): void {
+    openSearchPicker(
+      this.overlay,
+      this.workbench.cwd,
+      (path, cursor) => this.paneItems.openFile(path).restoreCursor(cursor),
+      seed || undefined,
+    );
+  }
+
   // Window-level file/edit operations, surfaced in the command palette and (for
   // most) on the space leader. Handlers only; bindings live in the central keymap.
   private registerWindowCommands() {
     zym.commands.add('.AppWindow', {
+      // Project search: one picker + one multibuffer-tab command pair, each with a
+      // `-word` variant. All four seed the visual selection when one exists (so the
+      // visual-mode use-cases need no extra commands); the `-word` variants otherwise
+      // seed the identifier under the cursor (vim's `*` idiom).
       'project:search': {
-        didDispatch: () =>
-          openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.paneItems.openFile(path).restoreCursor(cursor)),
-        description: 'Search file contents (ripgrep)',
+        didDispatch: () => this.openSearchPickerWith(this.selectionSeed()),
+        description: 'Search file contents (ripgrep); seeds the selection when one exists',
+      },
+      'project:search-word': {
+        didDispatch: () => this.openSearchPickerWith(this.selectionSeed() || this.wordSeed()),
+        description: 'Search file contents for the word under the cursor (ripgrep)',
       },
       'git:diff-current': {
         didDispatch: () => this.paneItems.openCurrentFileDiff(),
@@ -700,13 +723,13 @@ export class AppWindow {
         description: 'Amend the last commit (edit the message in a tab)',
         when: () => this.workbench.git.getHead() !== null,
       },
-      'project:search-results': {
-        didDispatch: () => this.paneItems.openProjectSearch(this.paneItems.activeEditor?.getSelectedText().trim() ?? ''),
-        description: 'Project search, seeded with the selected text (multibuffer)',
-      },
       'project:search-open': {
-        didDispatch: () => this.paneItems.openProjectSearch(''),
-        description: 'Open project search (full-text, ripgrep) in a multibuffer',
+        didDispatch: () => this.paneItems.openProjectSearch(this.selectionSeed()),
+        description: 'Open project search (multibuffer); seeds the selection when one exists',
+      },
+      'project:search-open-word': {
+        didDispatch: () => this.paneItems.openProjectSearch(this.selectionSeed() || this.wordSeed()),
+        description: 'Project search (multibuffer) for the word under the cursor',
       },
       'git:diff-current-changes': {
         didDispatch: () => void this.paneItems.openLiveDiff(),

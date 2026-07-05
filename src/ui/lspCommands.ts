@@ -18,7 +18,7 @@ import { openDocumentSymbolPicker } from './DocumentSymbolPicker.ts';
 import { openReferencesPicker } from './ReferencesPicker.ts';
 import { openPicker, highlightSegment } from './Picker.ts';
 import { renderRowSingleLine } from './PickerRow.ts';
-import { type NavigationKind, type LspDocument } from '../lsp/LspManager.ts';
+import { type NavigationKind } from '../lsp/LspManager.ts';
 import type { CodeAction, Command } from 'vscode-languageserver-protocol';
 import type { Disposable } from '../util/eventKit.ts';
 
@@ -48,18 +48,6 @@ export function registerLspCommands(d: LspCommandsDeps): Disposable {
     'lsp:format': { didDispatch: () => void formatActive(), description: 'Format document' },
     'lsp:install-server': { didDispatch: () => installServerPicker(), description: 'Install a language server…' },
   });
-}
-
-// The identifier under the cursor (for prefilling the rename prompt). Codepoint-
-// aware: columns are codepoints, so index the line as codepoints.
-function wordUnderCursor(doc: LspDocument): string {
-  const cursor = doc.getCursorBufferPosition();
-  const cp = [...doc.lineTextForRow(cursor.row)];
-  let start = cursor.column;
-  let end = cursor.column;
-  while (start > 0 && /\w/.test(cp[start - 1])) start--;
-  while (end < cp.length && /\w/.test(cp[end])) end++;
-  return cp.slice(start, end).join('');
 }
 
 // Resolve a navigation (definition/declaration/type-def/impl) at the active
@@ -202,7 +190,7 @@ function renamePrompt() {
   openPicker({
     host: host(),
     placeholder: 'New name',
-    query: wordUnderCursor(editor.lsp),
+    query: editor.getWordUnderCursor(),
     items: [],
     actionWhenEmpty: true,
     onSelect: () => {}, // no items — the action row drives the rename

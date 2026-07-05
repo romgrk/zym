@@ -33,9 +33,12 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space f m': 'file:move', // move the current file to another folder (folder picker)
   'space f r': 'file:rename', // rename/relocate the current file
 
-  'space /': 'project:search', // full-text search (ripgrep) — quick-jump picker
-  'space *': 'project:search-results', // selected text → all matches in the search multibuffer
-  'space p s': 'project:search-open', // open the project-search multibuffer (search entry + flags)
+  // Project search — `/` = search, `*` = word under cursor (vim idioms); add `p` for the
+  // full project-search multibuffer tab. All four seed the visual selection when one exists.
+  'space /': 'project:search', // quick-jump picker
+  'space *': 'project:search-word', // picker, seeded with the word under the cursor
+  'space p /': 'project:search-open', // the multibuffer tab (search entry + flags)
+  'space p *': 'project:search-open-word', // the tab, seeded with the word under the cursor
   'space q': 'app:quit',
   'space t': 'terminal:new',
   'space p r': 'scripts:run', // "p"ackage "r"un — run a package.json script in a terminal

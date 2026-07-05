@@ -1,15 +1,15 @@
 /*
  * ProjectSearchView — the project-wide full-text search surface, hosted as a center tab
- * (opened via `project:search-open`, or `project:search-results` seeded with the editor
- * selection).
+ * (opened via `project:search-open` / `project:search-open-word`, both seeded with the
+ * editor selection when one exists).
  *
  * A header carries the search entry plus the ripgrep tuning flags — Match case / Whole word /
  * Regex toggles and "files to include / exclude" glob fields, with a "Hidden" toggle that also
  * searches git-ignored and dotfiles. Editing any of them re-runs the search (the entries are
  * `Gtk.SearchEntry`s, so their `search-changed` is already debounced; the toggles fire at once).
  *
- * Below the header sits the results: a `SearchResultsView` multibuffer (the same editable,
- * per-language-correct, collapsible surface `space *` always used). Each search rebuilds it from
+ * Below the header sits the results: a `SearchResultsView` multibuffer (an editable,
+ * per-language-correct, collapsible surface). Each search rebuilds it from
  * scratch — results change wholesale between queries, so a fresh view is simpler and more robust
  * than mutating the projection in place. While there are no results (empty query / no matches /
  * error) a muted status label shows instead. A generation counter drops stale async results when
@@ -410,7 +410,7 @@ export class ProjectSearchView {
           excerpts,
           cwd: this.cwd,
           // Editable results: edit in place (write-through + save) and replace across files as
-          // undo-coordinated steps, matching the original `space *` behaviour.
+          // undo-coordinated steps.
           editable: true,
           documents: this.documents,
           onActivate: this.onActivate,

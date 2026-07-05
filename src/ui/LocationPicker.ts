@@ -44,6 +44,8 @@ export interface LocationPickerOptions {
   proseEntry?: boolean;
   searchDelay?: number;
   frecency?: string;
+  /** Initial entry text (forwarded) — seeds the query (e.g. the editor selection). */
+  query?: string;
   /**
    * Show the source-preview pane (default true). Set false when the target is the
    * file already on screen behind the picker (e.g. the document-symbol picker),
@@ -81,6 +83,7 @@ export function openLocationPicker(options: LocationPickerOptions): PickerHandle
     proseEntry: options.proseEntry,
     searchDelay: options.searchDelay,
     frecency: options.frecency,
+    query: options.query,
     items: options.items,
     fetch: options.fetch,
     renderRow: options.renderRow,
