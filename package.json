@@ -53,7 +53,6 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --import node-gtk/register --test 'src/**/*.test.ts' 'plugins/**/*.test.ts'",
-    "test:sdk": "node --import node-gtk/register --test 'src/agents/claude-sdk/*.test.ts'",
     "generate-types": "node-gtk generate-types Gtk-4.0 Gio-2.0 Adw-1 GtkSource-5 Vte-3.91"
   },
   "dependencies": {
