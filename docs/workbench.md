@@ -229,9 +229,13 @@ Three ways to change the active workbench: the fuzzy picker (`workbench:picker`,
 `space a w`), the cycle (`workbench:next`/`previous`, `super-.`/`super-,`), and the
 leap-style **jump** (`workbench:jump` — deliberately unbound while the interaction
 is iterated on; palette-run for now). The jump is `WorkbenchList.startJump()`: every
-rail row shows a one-letter label (home-row order, the `Workbenchrow--jump` chip
-built hidden into each row) and the deciding keystroke is grabbed ahead of command
-dispatch via `KeymapManager.addListener` — the vim `readChar` pattern (see
+rail row shows a one-letter mark (home-row order) with **zero layout shift** — an
+agent row's lead slot is a homogeneous `Gtk.Stack` that flips from status icon to
+letter, and a project row (no icon slot) conceals its title's *first character*
+behind the letter via a markup swap (the editor leap's replace-the-glyph idiom;
+`jumpMarkSpan` is the Pango twin of `.Workbenchrow--jump`). The deciding keystroke
+is grabbed ahead of command dispatch via `KeymapManager.addListener` — the vim
+`readChar` pattern (see
 docs/commands-keymaps.md "Transient key grabs") — so a label key activates its row
 like a click, *any* other key (or escape) cancels, and nothing leaks to the focused
 widget: no focus move, no EventController, no temporary keymap layer.

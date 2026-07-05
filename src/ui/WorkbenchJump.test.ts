@@ -45,6 +45,14 @@ function bareModifier(): Key {
   return key;
 }
 
+// Whether any Gtk.Label under `root` currently displays `text`.
+function findLabelText(root: InstanceType<typeof Gtk.Widget>, text: string): boolean {
+  if (root instanceof Gtk.Label && root.getText() === text) return true;
+  for (let child = root.getFirstChild(); child; child = child.getNextSibling())
+    if (findLabelText(child, text)) return true;
+  return false;
+}
+
 test('a label key jumps to its row and releases the grab', () => {
   const activated: string[] = [];
   const { list } = makeList(activated);
@@ -102,6 +110,18 @@ test('a rebuild (owner set changed) cancels a pending jump', () => {
   rebuild();
   assert.equal(done, false);
   assert.equal(zym.keymaps.listeners.length, grabsBefore, 'grab released with the rows');
+  list.dispose();
+});
+
+test('a project row conceals its first title character behind the mark, restored on cancel', () => {
+  const activated: string[] = [];
+  const { list } = makeList(activated);
+
+  list.startJump();
+  // Second row: mark `s` over 'beta' → displays "seta" (the mark replaces the `b`).
+  assert.ok(findLabelText(list.root, 'seta'), 'the mark conceals the first character');
+  press(Key.fromDescription('escape')!);
+  assert.ok(findLabelText(list.root, 'beta'), 'the title is restored after cancel');
   list.dispose();
 });
 
