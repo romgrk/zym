@@ -440,3 +440,26 @@ test('g c without a comment spec leaves the buffer untouched', () => {
   run('ToggleLineCommentsCurrentLine');
   assert.equal(line(), 'a');
 });
+
+test('bottom-anchored visual g c does not leave the cursor below the toggled rows', () => {
+  const { editor, run, at } = setup('one\ntwo\nthree\n');
+  editor.setCommentSpecSource(() => ({ line: '//' }));
+  at(0, 0);
+  run('ActivateLinewiseVisualMode');
+  run('MoveDown'); // cursor at the BOTTOM of the selection (insert mark on row 2)
+  run('ToggleLineComments');
+  assert.equal(editor.getText(), '// one\n// two\nthree\n');
+  assert.ok(
+    editor.getCursorBufferPosition().row <= 1,
+    `cursor landed below the toggled rows: ${editor.getCursorBufferPosition().row}`,
+  );
+});
+
+test('linewise visual keeps the display caret on the selected row (current-line band source)', () => {
+  const { editor, run, at } = setup('one\ntwo\nthree\n');
+  at(0, 0);
+  run('ActivateLinewiseVisualMode');
+  run('MoveDown'); // selection rows 0-1; the raw insert mark sits at (2,0)
+  assert.equal(editor.getCursorBufferPosition().row, 2, 'raw insert mark is one row below');
+  assert.equal(editor.cursorDisplayIter().getLine(), 1, 'display caret stays on the last selected row');
+});

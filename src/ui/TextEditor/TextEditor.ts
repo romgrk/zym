@@ -1878,12 +1878,13 @@ export class TextEditor implements DocumentHost {
   private currentLineRgba: InstanceType<typeof Gdk.RGBA> | null = null;
 
   /** Re-draw the current-line highlight that GtkSourceView would have painted in its
-   *  own `snapshot_layer` (a full-width band on the insert line), in buffer coords. */
+   *  own `snapshot_layer` (a full-width band on the insert line), in buffer coords.
+   *  Reads the *display* caret position, not the raw insert mark — in a linewise
+   *  visual selection the mark sits at the next line's start, which painted the
+   *  band one row below the caret. */
   private paintCurrentLine(cr: any, rect: { x: number; width: number }): void {
     if (!(this.view as any).getHighlightCurrentLine?.()) return;
-    const buffer = this.view.getBuffer();
-    const r = buffer.getIterAtMark(buffer.getInsert());
-    const iter = Array.isArray(r) ? r[r.length - 1] : r;
+    const iter = this.editorModel.cursorDisplayIter();
     const loc = (this.view as any).getIterLocation(iter);
     if (!this.currentLineRgba) {
       this.currentLineRgba = new Gdk.RGBA();
@@ -2107,22 +2108,25 @@ export class TextEditor implements DocumentHost {
     });
   }
 
-  /** `editor:toggle-line-comments` (`ctrl-/`): toggle line comments on every
-   *  selection's rows (one undo group), in any mode — the mode-agnostic
-   *  counterpart of the vim `g c` operator. A visual selection is consumed
-   *  (back to normal mode), matching the operator's behavior. */
+  /** `editor:toggle-line-comments` (`ctrl-/`): toggle line comments on the
+   *  current line / selection, in any mode. Normal/visual mode runs the vim
+   *  operator — it normalizes the visual selection (the raw range runs one row
+   *  past a bottom-anchored linewise selection), restores the cursor onto the
+   *  operated rows, and registers for `.` repeat. The direct path covers insert
+   *  mode (ctrl-/ while typing). */
   private toggleLineComments(): void {
+    const { vimState } = this;
+    if (vimState.mode === 'visual') return void vimState.operationStack.run('ToggleLineComments');
+    if (vimState.mode === 'normal') return void vimState.operationStack.run('ToggleLineCommentsCurrentLine');
     const model = this.editorModel;
-    const hadSelection = !model.getSelectedBufferRange().isEmpty();
     model.transact(() => {
       for (const range of model.getSelectedBufferRanges()) {
         let endRow = range.end.row;
-        // A linewise-style tail at column 0 doesn't include its row.
+        // A selection tail at column 0 doesn't include its row.
         if (endRow > range.start.row && range.end.column === 0) endRow -= 1;
         model.toggleLineCommentsForBufferRows(range.start.row, endRow);
       }
     });
-    if (hadSelection && this.vimState.mode === 'visual') this.vimState.resetNormalMode();
   }
 
   // --- Folding commands (vim za/zo/zc/zr/zm, via the keymap's z-prefix) -------

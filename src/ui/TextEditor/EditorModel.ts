@@ -1831,6 +1831,17 @@ export class EditorModel {
     this.refreshCursorStyle();
   }
 
+  /** The iter where the caret is logically displayed: `cursorDisplayPoint` (the
+   *  vim layer's visual head — in a linewise visual selection the insert mark
+   *  sits at the next line's start) when set, else the insert mark. Anything
+   *  painting "the cursor line" (block caret, current-line highlight) reads this
+   *  so it tracks the caret the user sees, not the raw mark. */
+  cursorDisplayIter(): TextIter {
+    return this.cursorDisplayPoint
+      ? this.iterAtPoint(this.cursorDisplayPoint)
+      : unwrapIter(this.buffer.getIterAtMark(this.buffer.getInsert()));
+  }
+
   /**
    * Re-paint the block cursor at the current cursor position. Called on every
    * mode change and after every operation (the cursor moved). In beam mode (or
@@ -1842,9 +1853,7 @@ export class EditorModel {
     const [start, end] = this.buffer.getBounds();
     this.buffer.removeTag(this.cursorTag, start, end);
 
-    const iter = this.cursorDisplayPoint
-      ? this.iterAtPoint(this.cursorDisplayPoint)
-      : unwrapIter(this.buffer.getIterAtMark(this.buffer.getInsert()));
+    const iter = this.cursorDisplayIter();
 
     // A cursor-hidden line (e.g. a diff's read-only header row): no caret at all (the caret still
     // moved here — navigation works — it's just not drawn). Checked before every mode/EOL branch.
