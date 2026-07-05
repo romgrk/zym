@@ -25,6 +25,9 @@
  *   session/load (loadSession cap)   → history replay between onReplay(true/false)
  *   unstable_forkSession (fork cap)  → branch (fresh session off the same context)
  *   session/cancel (notify)          ← interrupt() (pending permission/question resolve cancelled)
+ *   fs/read_text_file / write_text_file ← served from the injected AcpFsHost (the
+ *                                      Document registry: reads see unsaved buffers,
+ *                                      writes land in open documents)
  *
  * Adapter extensions (the official claude-agent-acp; all optional, all under
  * ACP's reserved `_meta` extension channel — anything absent degrades to the
@@ -55,6 +58,8 @@ import {
   type ElicitationContentValue,
   type McpServerStdio,
   type PlanEntry as AcpPlanEntry,
+  type ReadTextFileRequest,
+  type ReadTextFileResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
@@ -66,6 +71,8 @@ import {
   type SessionMode,
   type SessionModeState,
   type UsageUpdate,
+  type WriteTextFileRequest,
+  type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { Disposable, Emitter } from '../../util/eventKit.ts';
 import { AGENT_MODES, type AgentMode, type AgentResume, type AgentStatus } from '../types.ts';
@@ -97,6 +104,19 @@ export interface AcpBridge {
   dispose(): void;
 }
 
+/** The editor's file backend for the ACP `fs` capability: reads return the live
+ *  buffer of an open document (unsaved edits included) and writes land in it,
+ *  so the agent and the editor share one view of every file. Injected like the
+ *  bridge — the implementation reaches the window's DocumentRegistry (GTK),
+ *  which this module must not (see acp/documentFs.ts). */
+export interface AcpFsHost {
+  /** Full current text of `path` (a throw with `code === 'ENOENT'` becomes
+   *  ACP's resource-not-found error). */
+  readTextFile(path: string): string | Promise<string>;
+  /** Replace `path` with `content`, creating the file (parents included) when new. */
+  writeTextFile(path: string, content: string): void | Promise<void>;
+}
+
 export interface AcpSessionOptions {
   /** The ACP agent argv (e.g. `['gemini', '--acp']`). */
   command: string[];
@@ -109,6 +129,9 @@ export interface AcpSessionOptions {
   /** The zym editor bridge (set_worktree / set_actions); optional so the
    *  session stays drivable from plain node (tests / spikes). */
   bridge?: AcpBridge;
+  /** Editor-backed file access; when present the `fs` capability is advertised
+   *  and `fs/read_text_file` / `fs/write_text_file` are served from it. */
+  fs?: AcpFsHost;
 }
 
 /** A pending agent→client request, resolved by the user's decision. */
@@ -224,7 +247,9 @@ export class AcpSession implements ConversationSession {
     const app = acpClient({ name: 'zym' })
       .onNotification('session/update', (ctx) => this.onSessionUpdate(ctx.params))
       .onRequest('session/request_permission', (ctx) => this.onPermissionRequest(ctx.params))
-      .onRequest('elicitation/create', (ctx) => this.onElicitation(ctx.params));
+      .onRequest('elicitation/create', (ctx) => this.onElicitation(ctx.params))
+      .onRequest('fs/read_text_file', (ctx) => this.onReadTextFile(ctx.params))
+      .onRequest('fs/write_text_file', (ctx) => this.onWriteTextFile(ctx.params));
     this.connection = app.connect(stream);
     void this.handshake(this.connection).catch((err: unknown) => {
       if (this.exited) return;
@@ -247,9 +272,11 @@ export class AcpSession implements ConversationSession {
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: 'zym', version: '0' },
       clientCapabilities: {
-        // fs / terminal capabilities are planned (docs/agents/acp.md); the
-        // `_meta.terminal_output` channel + form elicitation are live.
-        fs: { readTextFile: false, writeTextFile: false },
+        // fs is live when an editor backend is injected (reads see unsaved
+        // buffers — see AcpFsHost); the terminal capability is still planned
+        // (docs/agents/acp.md), but the `_meta.terminal_output` channel +
+        // form elicitation are live.
+        fs: { readTextFile: !!this.options.fs, writeTextFile: !!this.options.fs },
         terminal: false,
         elicitation: { form: {} },
         _meta: { terminal_output: true },
@@ -790,6 +817,33 @@ export class AcpSession implements ConversationSession {
     });
   }
 
+  // --- fs capability ---------------------------------------------------------
+  // Serving these from the editor is the point of the capability: the agent
+  // reads what the user actually sees (unsaved buffers included) and its writes
+  // land in the open document, not just on disk. Gemini CLI routes its file
+  // tools here; the claude adapter defines the plumbing but doesn't call it yet
+  // (verified against claude-agent-acp 0.55.0), so its tools still hit disk.
+
+  private async onReadTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+    const fs = this.options.fs;
+    if (!fs) throw RequestError.methodNotFound('fs/read_text_file'); // capability wasn't advertised
+    let content: string;
+    try {
+      content = await fs.readTextFile(params.path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw RequestError.resourceNotFound(params.path);
+      throw err; // → the SDK's internal-error response, message preserved
+    }
+    return { content: sliceLines(content, params.line, params.limit) };
+  }
+
+  private async onWriteTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+    const fs = this.options.fs;
+    if (!fs) throw RequestError.methodNotFound('fs/write_text_file');
+    await fs.writeTextFile(params.path, params.content);
+    return {};
+  }
+
   private cancelPendingInteractions(): void {
     this.pendingPermission?.resolve({ outcome: { outcome: 'cancelled' } });
     this.pendingPermission = null;
@@ -921,6 +975,16 @@ function hasUsableInput(rawInput: unknown): boolean {
   if (rawInput == null) return false;
   if (typeof rawInput !== 'object') return true;
   return Object.keys(rawInput as Record<string, unknown>).length > 0;
+}
+
+/** Apply `fs/read_text_file`'s optional window: `line` is the 1-based first
+ *  line, `limit` the max number of lines. Exported for tests. */
+export function sliceLines(content: string, line?: number | null, limit?: number | null): string {
+  if (line == null && limit == null) return content;
+  const lines = content.split('\n');
+  const start = Math.min(Math.max(0, (line ?? 1) - 1), lines.length);
+  const end = limit == null ? lines.length : start + Math.max(0, limit);
+  return lines.slice(start, end).join('\n');
 }
 
 /** Parse a form elicitation into renderable questions + the field keys to write

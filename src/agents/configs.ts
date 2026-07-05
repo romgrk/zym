@@ -17,7 +17,7 @@ import { AgentConversation } from '../ui/AgentConversation.ts';
 import { createClaudeTuiDriver } from './claude-tui/session.ts';
 import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
 import { acpLaunchOptions, acpCommand } from './acp/config.ts';
-import { AcpSession } from './acp/AcpSession.ts';
+import { AcpSession, type AcpFsHost } from './acp/AcpSession.ts';
 import { createAcpBridge } from './acp/bridge.ts';
 import type { Agent, AgentResume } from './types.ts';
 
@@ -74,6 +74,9 @@ export interface AgentLaunch {
   title?: string;
   /** Open a file the agent touched (acp conversation rows; tui ignores it). */
   onOpenFile?: (path: string) => void;
+  /** Editor-backed file access (the ACP `fs` capability: reads see unsaved
+   *  buffers, writes land in open documents; tui ignores it). */
+  fs?: AcpFsHost;
 }
 
 export interface AgentConfig {
@@ -116,7 +119,7 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         userPrompt: l.userPrompt,
         resume: l.resume,
         onOpenFile: l.onOpenFile,
-        createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge() }),
+        createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge(), fs: l.fs }),
       });
     },
   },

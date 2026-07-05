@@ -19,6 +19,7 @@ import type { Agent } from '../agents/types.ts';
 import { type AgentStatus, type AgentResume } from './AgentTerminal.ts';
 import { AgentConversation } from './AgentConversation.ts';
 import { AGENT_CONFIGS, resolveAgentKind, type AgentKind } from '../agents/configs.ts';
+import { createDocumentFs } from '../agents/acp/documentFs.ts';
 import { listResumableSessions, recordSessionWorktree, relativeTime, relocateTranscriptToMainRoot, type AgentSession } from '../agentSessions.ts';
 import { type AgentState, fileTabsOf } from '../SessionManager.ts';
 import type { TextEditor } from './TextEditor/index.ts';
@@ -168,6 +169,7 @@ export class AgentController {
     const agent = AGENT_CONFIGS[kind].create({
       cwd: mainRoot, command: options.command, prompt: options.prompt, userPrompt: options.userPrompt, resume: options.resume, title: options.title,
       onOpenFile: (path) => this.d.paneItems.openFile(path),
+      fs: createDocumentFs(this.d.paneItems.documents),
     });
     // Track in the tab registry (terminal focus-routing / headless disposal key off these).
     this.d.paneItems.trackAgent(agent);

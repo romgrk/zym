@@ -639,10 +639,11 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
 
 ### Next (prioritized, 2026-07-05)
 
-1. [ ] **fs capability (acp)** — advertise `fs/readTextFile`/`writeTextFile` and
-   serve them from the Document registry, so agents read **unsaved buffer
-   contents** instead of stale disk state; routing writes through Documents
-   opens the door to live edit review later. (See [agents/acp.md](agents/acp.md).)
+1. [x] **fs capability (acp)** — done 2026-07-05: `fs/readTextFile`/`writeTextFile`
+   advertised and served from the Document registry (reads see **unsaved buffer
+   contents**, writes land in open documents). Gemini CLI uses it; the claude
+   adapter doesn't route its file tools through client fs yet (as of 0.55.0).
+   (See [agents/acp.md](agents/acp.md).)
 2. [ ] **Manual QA pass on the less-happy acp paths** — wired but only
    spike-tested: the session-persistence round trip (quit zym with a live acp
    agent → restart → it reappears and `session/load`s its history), the

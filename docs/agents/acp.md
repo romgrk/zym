@@ -60,6 +60,7 @@ unabsorbed, disposing a session crashes zym).
 | `current_mode_update` / `session/set_mode` | `mode` (only ids that are zym `AgentMode`s map; below) |
 | `session_info_update.title` | `session-name` (display-only, never persisted) |
 | `session/cancel` (notify) | ← `interrupt()` (a pending permission resolves `cancelled`, per spec) |
+| `fs/read_text_file` / `fs/write_text_file` | ← served from the injected `AcpFsHost` (the window's Document registry; below) |
 | `user_message_chunk`, `config_option_update` | known; ignored (history replay / config options not wired) |
 | anything else | an `unhandled` raw-JSON row — never silently dropped |
 
@@ -116,6 +117,17 @@ per session (ACP session modes / config options).
   (`set_worktree` / `set_actions` for any ACP agent), injected via
   `acp/bridge.ts` (the Gio watcher) so `AcpSession` stays drivable from plain
   node.
+- **fs capability** — `fs/read_text_file` / `fs/write_text_file` are served
+  from the window's Document registry (`acp/documentFs.ts`, injected by
+  `AgentController` as an `AcpFsHost` — same pattern as the bridge): reads
+  return the **live buffer** of an open document (unsaved edits included, with
+  the protocol's 1-based `line`/`limit` window applied in `AcpSession`), writes
+  land on disk then reload an open document in place through the silent-reload
+  path (caret kept, LSP re-synced, no watcher re-fire) — an agent write over a
+  dirty buffer clobbers it by design, since the agent based its write on the
+  buffer state it read through this same capability. Gemini CLI routes its file
+  tools here when the capability is advertised; the claude adapter defines the
+  plumbing but doesn't call it yet (verified against claude-agent-acp 0.55.0).
 - **Modes** — the footer dropdown is fed by the agent's advertised modes
   (`getModeState`); ask-first is forced at session setup.
 - **Auth** — an `auth_required` handshake failure renders a login hint naming
@@ -123,8 +135,6 @@ per session (ACP session modes / config options).
 
 ## Limitations / planned
 
-- [ ] **fs capability** — advertise `fs.readTextFile`/`writeTextFile` and serve
-      them from the Document registry, so agents see unsaved buffer contents.
 - [ ] **terminal capability** — full client-side `terminal/*` (zym-owned
       terminals with live rows); today output arrives buffered at completion
       via the `_meta` channel. The monitor views stay dormant until then.
@@ -136,7 +146,9 @@ per session (ACP session modes / config options).
 
 ## Validation
 
-No unit tests yet — the session was validated end-to-end against the real
+Unit tests cover the fs capability's editor side (`acp/documentFs.test.ts`:
+buffer-over-disk reads, in-place writes, the `line`/`limit` window). The
+session itself was validated end-to-end against the real
 Claude Code ACP adapter: streamed turns; subagent capture with drill-down
 data; the whitelisted-command terminal round-trip; AskUserQuestion →
 elicitation → answer; permission deny; mode forcing (the adapter defaults to
