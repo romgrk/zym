@@ -55,6 +55,7 @@ import { type DisposableLike } from '../util/eventKit.ts';
 import { applyNotificationStyles } from './chromeStyles.ts';
 import { addStyles } from '../styles.ts';
 import { registerLspCommands } from './lspCommands.ts';
+import { GlobalJumpList } from './GlobalJumpList.ts';
 import { registerGitCommands } from './git/gitCommands.ts';
 import { registerFileCommands } from './fileCommands.ts';
 import { registerSessionCommands } from './sessionCommands.ts';
@@ -418,6 +419,9 @@ export class AppWindow {
     this.registerConfigCommands();
     registerSessionCommands({ sessionController: this.sessionController });
     registerLspCommands({ documents: this.paneItems.documents });
+    // The cross-editor jump trail (ctrl-o / ctrl-i) — self-contained on the
+    // `zym.workspace` seam (editors, active-editor changes, file-open).
+    new GlobalJumpList();
     this.keymapWatcher = loadKeymaps();
 
     // Seed/load the user config and keep it in sync with on-disk edits. Done
@@ -544,6 +548,8 @@ export class AppWindow {
     // Tab add/close/switch and split changes all route through here — a good,
     // cheap signal to (debounced-)persist the session.
     this.sessionController?.scheduleAutosave();
+    // Feed the workspace's `onDidChangeActiveTextEditor` (it dedups by editor).
+    zym.workspace.notifyActiveItemChanged();
   }
 
   // --- Commands --------------------------------------------------------------
@@ -677,14 +683,37 @@ export class AppWindow {
     openDiffCollapseGlobPicker(this.overlay, diff);
   }
 
+  // Search seeds: the trimmed selection ('' when none) / the identifier under the cursor.
+  private selectionSeed(): string {
+    return this.paneItems.activeEditor?.getSelectedText().trim() ?? '';
+  }
+  private wordSeed(): string {
+    return this.paneItems.activeEditor?.getWordUnderCursor() ?? '';
+  }
+  private openSearchPickerWith(seed: string): void {
+    openSearchPicker(
+      this.overlay,
+      this.workbench.cwd,
+      (path, cursor) => this.paneItems.openFile(path).restoreCursor(cursor),
+      seed || undefined,
+    );
+  }
+
   // Window-level file/edit operations, surfaced in the command palette and (for
   // most) on the space leader. Handlers only; bindings live in the central keymap.
   private registerWindowCommands() {
     zym.commands.add('.AppWindow', {
+      // Project search: one picker + one multibuffer-tab command pair, each with a
+      // `-word` variant. All four seed the visual selection when one exists (so the
+      // visual-mode use-cases need no extra commands); the `-word` variants otherwise
+      // seed the identifier under the cursor (vim's `*` idiom).
       'project:search': {
-        didDispatch: () =>
-          openSearchPicker(this.overlay, this.workbench.cwd, (path, cursor) => this.paneItems.openFile(path).restoreCursor(cursor)),
-        description: 'Search file contents (ripgrep)',
+        didDispatch: () => this.openSearchPickerWith(this.selectionSeed()),
+        description: 'Search file contents (ripgrep); seeds the selection when one exists',
+      },
+      'project:search-word': {
+        didDispatch: () => this.openSearchPickerWith(this.selectionSeed() || this.wordSeed()),
+        description: 'Search file contents for the word under the cursor (ripgrep)',
       },
       'git:diff-current': {
         didDispatch: () => this.paneItems.openCurrentFileDiff(),
@@ -700,13 +729,13 @@ export class AppWindow {
         description: 'Amend the last commit (edit the message in a tab)',
         when: () => this.workbench.git.getHead() !== null,
       },
-      'project:search-results': {
-        didDispatch: () => this.paneItems.openProjectSearch(this.paneItems.activeEditor?.getSelectedText().trim() ?? ''),
-        description: 'Project search, seeded with the selected text (multibuffer)',
-      },
       'project:search-open': {
-        didDispatch: () => this.paneItems.openProjectSearch(''),
-        description: 'Open project search (full-text, ripgrep) in a multibuffer',
+        didDispatch: () => this.paneItems.openProjectSearch(this.selectionSeed()),
+        description: 'Open project search (multibuffer); seeds the selection when one exists',
+      },
+      'project:search-open-word': {
+        didDispatch: () => this.paneItems.openProjectSearch(this.selectionSeed() || this.wordSeed()),
+        description: 'Project search (multibuffer) for the word under the cursor',
       },
       'git:diff-current-changes': {
         didDispatch: () => void this.paneItems.openLiveDiff(),

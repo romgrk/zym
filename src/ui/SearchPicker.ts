@@ -78,7 +78,8 @@ function buildChip(label: string, tooltip: string): InstanceType<typeof Gtk.Togg
   return button;
 }
 
-export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTarget): void {
+/** `initialQuery` seeds the entry (e.g. the selection / word under cursor) and searches it at once. */
+export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTarget, initialQuery?: string): void {
   const subs = new CompositeDisposable();
   const caseToggle = buildChip('Aa', 'Match case');
   const wordToggle = buildChip('W', 'Match whole word');
@@ -105,6 +106,7 @@ export function openSearchPicker(host: Overlay, cwd: string, onSelect: SearchTar
     placeholder: 'Search in project…',
     promptIcon: Icons.search, // doubles as the home for the fetch spinner
     localFilter: false, // ripgrep filters server-side; show its results in order
+    query: initialQuery,
     headerAccessory: chips,
     onClose: () => {
       search?.cancel();

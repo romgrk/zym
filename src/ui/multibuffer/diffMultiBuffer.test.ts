@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDiffMultiBuffer } from './diffMultiBuffer.ts';
+import { buildDiffMultiBuffer, enclosingSection } from './diffMultiBuffer.ts';
 import { CoordinatesMap, type Segment } from '../TextEditor/CoordinatesMap.ts';
 
 function project(dmb: ReturnType<typeof buildDiffMultiBuffer>): CoordinatesMap {
@@ -201,4 +201,22 @@ test('long unchanged runs are elided to a ⋯ gap; the change + context stay', (
   const gap = dmb.items[dmb.items.length - 1] as { type: 'block'; block: { kind: string; text: string } };
   assert.equal(gap.block.kind, 'gap');
   assert.equal(gap.block.text, '⋯'); // a TRAILING gap (no hunk follows) — git prints nothing, we show `⋯`
+});
+
+test('enclosingSection: nearest non-indented line above, skipping indented/blank; \'\' at file head', () => {
+  // The heuristic the diff's `@@ … @@` headers append — and the search multibuffer's gap labels
+  // use bare (no `@@` range; its gutter shows the line numbers).
+  const lines = [
+    'export function outer() {', // 0
+    '  const x = 1;',            // 1
+    '',                          // 2
+    '  return x;',               // 3
+    '}',                         // 4  ← starts with `}` (not letter/_/$) — never a section
+    '_private()',                // 5
+    '  body',                    // 6
+  ];
+  assert.equal(enclosingSection(lines, 3), 'export function outer() {', 'skips indented + blank lines');
+  assert.equal(enclosingSection(lines, 6), '_private()', 'a leading `_` counts (letter/_/$)');
+  assert.equal(enclosingSection(lines, 0), '', 'nothing above the first line');
+  assert.equal(enclosingSection(['x'.repeat(200), '  y'], 1).length, 80, 'section text truncates at 80');
 });

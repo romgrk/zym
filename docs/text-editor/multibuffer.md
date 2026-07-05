@@ -146,9 +146,10 @@ Single-file editing plus both multibuffer surfaces run on the
     `.git/COMMIT_EDITMSG` in a tab (save+close commits).
   - `space g o` opens the diff multibuffer (the `GitStagingView`
     replacement).
-- **Editable project search + replace-all** — `space p s` opens the search
-  surface (`ProjectSearchView`); `space *` opens it seeded with the editor
-  selection. A header carries a debounced search entry, ripgrep flag controls,
+- **Editable project search + replace-all** — `space s s` opens the search
+  surface (`ProjectSearchView`); `space s w` seeds the word under the cursor,
+  and both seed the visual selection when one exists.
+  A header carries a debounced search entry, ripgrep flag controls,
   one glob field (`!` excludes), and a presets combo. Matches **stream in** and grow
   the results multibuffer in place (`SearchResultsView.setExcerpts`) rather than
   rebuilding it. See [project-search.md](project-search.md) for the shared backend,
@@ -271,13 +272,13 @@ Single-file editing plus both multibuffer surfaces run on the
   are `sticky` block decorations (`StickyHeaders`) floating above an empty
   navigable header row — see `docs/text-editor/diff.md`.
 - **Per-row gutter alignment.** A row that carries a band ABOVE it (a
-  filename header, or the search `⋯` gap — anchored above the NEXT
+  filename header, or the search gap band — anchored above the NEXT
   region's first row) bottom-aligns its gutter number (`yalign=1`) so it
   sits next to the text under the reserved band; a band BELOW a row
   top-aligns it (`yalign=0`). Toggled per row inside the renderer's
   `virtual_queryData` (the only gutter vfunc node-gtk invokes), via
   `BlockDecorations.placementAtLine`.
-- **Anchor a separator band to the STABLE side.** The search `⋯` gap is
+- **Anchor a separator band to the STABLE side.** The search gap band is
   anchored ABOVE the *next* region's first row, not below the previous
   region's last row. A below-anchor uses a left-gravity mark at the line
   *start*, but `o` inserts at the line *end* (after the mark), so the mark
@@ -310,8 +311,8 @@ Single-file editing plus both multibuffer surfaces run on the
 - Model (`src/ui/multibuffer/`): `MultiBufferModel.ts`,
   `MultiBufferDocument.ts`, `diffMultiBuffer.ts`, `diffSegments.ts`,
   `projectSearch.ts`, `ExcerptSyntaxProjection.ts`.
-- Wiring: `src/ui/AppWindow.ts` (`openProjectSearch`/`space *` +
-  `space p s`, `openLiveDiff`/`space g d d`, `file:save` routing,
+- Wiring: `src/ui/AppWindow.ts` (`openProjectSearch`/`space s s` +
+  `space s w`, `openLiveDiff`/`space g d d`, `file:save` routing,
   `diff:expand-*`); read-only commit/branch diffs in `src/ui/diffViews.ts`.
 - Reuse: `src/util/lineDiff.ts`, `applyDiffDecorations.ts`;
   `src/lsp/workspaceEdit.ts`.

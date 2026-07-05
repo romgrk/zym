@@ -20,7 +20,7 @@ covers everything else.
 | `space w`     | save file |
 | `space o`     | fuzzy file picker |
 | `space /`     | project search (quick-jump picker) |
-| `space *`     | selected text → all matches in the search multibuffer |
+| `space *`     | project search picker, seeded with the word under the cursor |
 | `space t`     | new terminal |
 | `space n`     | toggle the notification log |
 | `space q`     | quit |
@@ -43,13 +43,23 @@ files, `.` toggles hidden files.
 
 | Keys        | Command |
 | ----------- | ------- |
-| `space p s` | open the project-search multibuffer (editable results) |
 | `space p r` | run a `package.json` script in a terminal |
 | `space x x` | run the project's default action |
 | `space x 1`…`9` | run the Nth project action |
 | `space x o` | pick an action to run |
 | `space x e` | edit the project settings (`.zym/settings.json`) |
 | `space x r` | reset the live action set to the project defaults |
+
+### Search — `space s`
+
+| Keys        | Command |
+| ----------- | ------- |
+| `space s s` | open the project-search multibuffer (editable results) |
+| `space s w` | project-search multibuffer, seeded with the word under the cursor |
+| `space s *` | alias for `space s w` (`*` = word under the cursor, as in vim) |
+
+All search bindings (`space /`, `space *`, and the `space s` family) seed the
+search with the visual selection when one exists.
 
 ### Git — `space g`, hunks — `space h`
 
@@ -97,15 +107,15 @@ See [Agents](agents.md); highlights:
 | `space a w`   | switch workbench (you / an agent) |
 | `space j`     | jump to a workbench (leap-style marks in the sidebar) |
 
-### Sessions — `space s`, settings — `space ,`
+### Sessions — `space S`, settings — `space ,`
 
 | Keys        | Command |
 | ----------- | ------- |
-| `space s s` | save the session (names it the first time) |
-| `space s a` | save the session under a name |
-| `space s o` | open a saved session |
-| `space s c` | close the session, reset the window |
-| `space s R` | rename the current session |
+| `space S s` | save the session (names it the first time) |
+| `space S a` | save the session under a name |
+| `space S o` | open a saved session |
+| `space S c` | close the session, reset the window |
+| `space S R` | rename the current session |
 | `space p o` | open another folder as a project in this window |
 | `space p c` | close the active project |
 | `space , ,` | preferences window |

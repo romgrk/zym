@@ -1,4 +1,5 @@
-// PositionHistory — the backing store for the jump list (ctrl-o / ctrl-i) and the
+// PositionHistory — the backing store for the per-editor jump list (the
+// vim-mode-plus:jump-backward/-forward commands, unbound by default) and the
 // change list (g; / g,). Both are an ordered ring of buffer positions, oldest →
 // newest, held as markers so they track edits, plus an `index` cursor used while
 // navigating. `index === entries.length` means "at the present" (not navigating).
@@ -7,6 +8,7 @@
 // a zym addition that the motion layer and the misc-command ops drive.
 import { Point } from '../../../text/Point.ts'
 import type { PointLike } from '../../../text/Point.ts'
+import { Emitter, type Disposable } from '../../../util/eventKit.ts'
 import type VimState from './vim-state.ts'
 import type { EditorModel } from '../EditorModel.ts'
 import type { MarkerLayer } from '../MarkerLayer.ts'
@@ -21,6 +23,7 @@ export default class PositionHistory {
   markerLayer: MarkerLayer | null
   entries: Marker[]
   index: number
+  private readonly emitter = new Emitter()
 
   constructor (vimState: VimState) {
     this.vimState = vimState
@@ -52,6 +55,12 @@ export default class PositionHistory {
     return (this.markerLayer!.markBufferPosition as any)(this.editor.clipBufferPosition(point), {invalidate: 'never'})
   }
 
+  /** Fires with the buffer position each time an entry is recorded via `add` —
+   *  the seam the workspace-wide jump list aggregates per-editor jumps through. */
+  onDidAdd (fn: (point: Point) => void): Disposable {
+    return this.emitter.on('did-add', fn as (value?: unknown) => void)
+  }
+
   // Append `point` as the newest entry and return to "present". Drops any forward
   // history left by navigation and collapses a consecutive same-row entry, so a
   // line appears once in a row (Vim's jump/change lists both dedup by line).
@@ -64,9 +73,10 @@ export default class PositionHistory {
     this.entries.push(this.mark(point as Point))
     while (this.entries.length > MAX_ENTRIES) this.entries.shift()!.destroy()
     this.index = this.entries.length
+    this.emitter.emit('did-add', point)
   }
 
-  // ctrl-o / g; — step `count` entries toward older positions. On the first step
+  // jump-backward / g; — step `count` entries toward older positions. On the first step
   // from the present, stash `currentPoint` as the newest entry so the matching
   // forward command can return to it. Returns the target position, or null when
   // there's nothing older.
@@ -83,7 +93,7 @@ export default class PositionHistory {
     return this.positionAt(this.index)
   }
 
-  // ctrl-i / g, — step `count` entries toward newer positions. Returns the target
+  // jump-forward / g, — step `count` entries toward newer positions. Returns the target
   // position, or null when already at the newest.
   goForward (_currentPoint: PointLike, count = 1): Point | null {
     if (this.index >= this.entries.length - 1) return null

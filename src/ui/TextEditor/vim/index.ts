@@ -449,12 +449,20 @@ const MACRO_BINDINGS: Record<string, string> = {
   '@': 'ReplayMacro',
 };
 
-// Jump list (ctrl-o/ctrl-i) and change list (g;/g,) — normal-mode navigation.
+// Change list (g;/g,) — normal-mode navigation. ctrl-o/ctrl-i walk the
+// workspace-wide jump list (across editors, vim's cross-buffer behavior) — see
+// GLOBAL_JUMP_COMMANDS. The per-editor jump list ships unbound: bind
+// vim-mode-plus:jump-backward / :jump-forward in keymap.json to use it.
 const JUMP_BINDINGS: Record<string, string> = {
-  'ctrl-o': 'JumpBackward',
-  'ctrl-i': 'JumpForward',
   'g ;': 'GoToOlderChange',
   'g ,': 'GoToNewerChange',
+};
+
+// Host commands (see ui/GlobalJumpList.ts), bound here so every jump key lives
+// beside JUMP_BINDINGS — the fold-command precedent for host-command keys.
+const GLOBAL_JUMP_COMMANDS: Record<string, string> = {
+  'ctrl-o': 'workspace:jump-backward',
+  'ctrl-i': 'workspace:jump-forward',
 };
 
 // Occurrence: `g o` toggles occurrence arming — it operates on the SEARCH matches
@@ -573,6 +581,10 @@ const NORMAL_OPERATIONS: Record<string, string> = {
   'visual:O': 'BlockwiseOtherEnd',
   'visual:I': 'InsertAtStartOfTarget',
   'visual:A': 'InsertAtEndOfTarget',
+  // The per-editor jump list, registered but unbound by default (ctrl-o/ctrl-i
+  // walk the workspace-wide list — see GLOBAL_JUMP_COMMANDS).
+  'jump:backward': 'JumpBackward',
+  'jump:forward': 'JumpForward',
   // Insert-mode commands, likewise under unique keys (ctrl-r/ctrl-a otherwise
   // collide with Redo / Increase).
   'insert:ctrl-w': 'DeleteToPreviousWordBoundary',
@@ -611,8 +623,10 @@ function registerKeymapsOnce(): void {
       // z-prefix: folds (→ editor `fold:*` commands) + zz/zt/zb cursor-line redraw.
       ...FOLD_KEYMAP,
       ...toKeymap(Z_SCROLL_BINDINGS),
-      // ctrl-o/ctrl-i jump list, g;/g, change list.
+      // g;/g, change list; ctrl-o/ctrl-i the workspace-wide jump list (across
+      // editors). The per-editor jump list has no default keys.
       ...toKeymap(JUMP_BINDINGS),
+      ...GLOBAL_JUMP_COMMANDS,
       // q record / @ replay macros.
       ...toKeymap(MACRO_BINDINGS),
       // ctrl-alt-↑/↓ add a cursor; escape collapses multi-cursor back to one.

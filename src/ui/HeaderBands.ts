@@ -40,7 +40,7 @@ addStyles(/* css */`
   /* Fold markers  */
   .MultiBufferGap {
     background-color: var(--secondary-sidebar-bg-color);
-    padding: 0.5em calc(2 * var(--t-spacing));
+    padding: 0.5em 0;
   }
   .MultiBufferGap .text {
     color: var(--view-fg-color);
@@ -144,7 +144,8 @@ export function buildHeaderWidget(
 
 /** A gap band — a fold marker (not a navigable buffer row), anchored between two diff windows (or
  *  above a file's first content row for the elided head) via `BlockDecorations`. `label` is the
- *  marker text (the diff passes a git-patch `@@ … @@` hunk header, search a bare `⋯`). `onActivate`
+ *  marker text, git-patch style (the diff passes a `@@ … @@` hunk header, search just the enclosing
+ *  section — see `enclosingSection`; both fall back to `⋯`). `onActivate`
  *  (click) expands more context. The band is an OPAQUE box wrapping the text label so the text's
  *  `--dim-opacity` never makes the band's background transparent (it must always cover the rows
  *  behind it). */

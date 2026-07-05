@@ -344,8 +344,9 @@ const SECTION_MAX = 80;
 
 /** The enclosing "section" for the line at `row` — the nearest non-indented, non-blank line above
  *  it (first char a letter / `_` / `$`): git's DEFAULT function-context heuristic, used when no
- *  language userdiff driver applies. '' when none is found (e.g. an elided file head). */
-function enclosingSection(lines: string[], row: number): string {
+ *  language userdiff driver applies. '' when none is found (e.g. an elided file head). Exported:
+ *  the search multibuffer's gap bands label themselves with the same heuristic. */
+export function enclosingSection(lines: string[], row: number): string {
   for (let i = row - 1; i >= 0; i--) {
     if (/^[A-Za-z$_]/.test(lines[i])) return lines[i].trimEnd().slice(0, SECTION_MAX);
   }
