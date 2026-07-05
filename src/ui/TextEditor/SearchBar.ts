@@ -3,9 +3,9 @@
  * editor's top-right corner (only its inner, bottom-left corner is rounded),
  * driving a `SearchController`.
  *
- * Layout is a 2-row grid so the search and replace entries line up in one column
- * (fixed-width, so the match count never reflows the input); the options sit in a
- * second column on the search row. The replace row is revealed by the ⇄ toggle.
+ * Layout is one row: the search and replace entries sit as a linked pair (the
+ * match count inset at the right end of the search field), with the option
+ * toggles beside them.
  *
  * Opened by vim `/` (forward) / `?` (backward). Typing searches incrementally and
  * previews the nearest match; Esc cancels back to where the search started;
@@ -19,6 +19,7 @@ import Gdk from 'gi:Gdk-4.0';
 import Gtk from 'gi:Gtk-4.0';
 import type GtkSource from 'gi:GtkSource-5';
 type SourceView = InstanceType<typeof GtkSource.View>;
+import { zym } from '../../zym.ts';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 import { addStyles } from '../../styles.ts';
 import { theme } from '../../theme/theme.ts';
@@ -385,10 +386,9 @@ export class SearchBar {
   }
 
   private replaceAll(): void {
-    // FIXME: enable info messaage
-    // const n = this.controller.replaceAll(this.replaceEntry.getText());
+    const n = this.controller.replaceAll(this.replaceEntry.getText());
     this.render(this.controller.state);
-    // this.onInfo(`Replaced ${n} ${n === 1 ? 'match' : 'matches'}`);
+    zym.notifications.addInfo(`Replaced ${n} ${n === 1 ? 'match' : 'matches'}`);
   }
 
   // --- behavior --------------------------------------------------------------
@@ -441,8 +441,12 @@ export class SearchBar {
         case Gdk.KEY_KP_Enter:
           // Search-motion: Enter confirms the seated match to the operator.
           if (this.motion) this.close(false);
-          else if (ctrl) this.replaceAll();
-          else if ((this.replaceEntry as any).hasFocus()) this.replaceCurrent();
+          // Focus lives on the entry's inner GtkText, so test FOCUS_WITHIN —
+          // has-focus on the entry itself is always false.
+          else if (this.replaceEntry.getStateFlags() & Gtk.StateFlags.FOCUS_WITHIN) {
+            if (ctrl) this.replaceAll();
+            else this.replaceCurrent();
+          }
           else this.render(shift ? this.controller.previous() : this.controller.next());
           return true;
         default:
