@@ -30,6 +30,7 @@ import { DocumentSyntax } from '../syntax/DocumentSyntax.ts';
 import { CoordinatesMap, type Item } from './TextEditor/CoordinatesMap.ts';
 import { Screen } from './TextEditor/Screen.ts';
 import { excerptsToItems, type Excerpt, type Segment, type MatchRange } from './multibuffer/MultiBufferModel.ts';
+import { enclosingSection } from './multibuffer/diffMultiBuffer.ts';
 import { ExcerptSyntaxProjection } from './multibuffer/ExcerptSyntaxProjection.ts';
 import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { SourceLineNumberGutter } from './SourceLineNumberGutter.ts';
@@ -91,7 +92,7 @@ export class SearchResultsView {
   private readonly editable: boolean;
   private readonly registry?: DocumentRegistry;
   private readonly gutter: SourceLineNumberGutter;
-  // Filename-header + `⋯` gap widget bands (not buffer rows), declared as SOURCE-anchored block
+  // Filename-header + gap widget bands (not buffer rows), declared as SOURCE-anchored block
   // decorations — the editor projects + reconciles them; their positions then ride the anchor marks.
   private bands!: BlockDecorationSet;
   // Per-excerpt collapse: the full excerpts (re-derived on toggle), the raw inputs (for re-
@@ -198,8 +199,9 @@ export class SearchResultsView {
     this.editor.model.setCursorBufferPosition({ row: 0, column: 0 });
   }
 
-  /** Declare the filename-header widget above each excerpt's first source row, and a `⋯` gap band
-   *  below the last row of each non-final segment (separating non-adjacent regions of one file).
+  /** Declare the filename-header widget above each excerpt's first source row, and a gap band
+   *  below the last row of each non-final segment (separating non-adjacent regions of one file),
+   *  labelled diff-style with the next region's enclosing section (fallback `⋯`).
    *  Both are SOURCE-anchored block decorations (the editor projects them to view rows + reconciles
    *  in place); their positions then ride their anchor marks across edits. Only the band SET changes
    *  here — on construct and on collapse/expand (the chevron + which gaps exist). */
@@ -220,20 +222,25 @@ export class SearchResultsView {
         build: () => buildHeaderWidget(headerScope, label, first.documentKey, () => this.onActivate?.({ path: first.documentKey, row: first.startRow })),
         dispose: () => headerScope.dispose(),
       });
-      // Gaps only when expanded (a collapsed excerpt is a single row — no gaps). Anchor the `⋯`
+      // Gaps only when expanded (a collapsed excerpt is a single row — no gaps). Anchor the gap
       // ABOVE the NEXT segment's first row (a start-anchor), not below the previous segment's last
       // row: `o` on that last line inserts after a left-gravity start-of-line mark, so a below-anchor
       // wouldn't ride the growth and the opened line would land below the gap. The next segment's
       // first row is stable content its mark tracks, keeping the gap between the two regions.
+      // The gap reads like the diff's fold markers: the enclosing section of the region below it
+      // (git's function-context heuristic — same text DiffView shows, minus the `@@ -old +new @@`
+      // range, which the source line-number gutter here would just restate), or a bare `⋯`.
       if (!collapsed) {
+        const lines = this.sources.get(first.documentKey)?.lines ?? [];
         for (let i = 1; i < excerpt.segments.length; i++) {
           const seg = excerpt.segments[i];
+          const gapLabel = enclosingSection(lines, seg.startRow) || '⋯';
           specs.push({
             id: `gap:${ei}:${i}`,
-            key: '⋯',
+            key: gapLabel,
             anchor: { documentKey: seg.documentKey, row: seg.startRow },
             placement: 'above',
-            build: () => buildGapWidget(new CompositeDisposable(), '⋯'), // no onActivate → no controller to sever
+            build: () => buildGapWidget(new CompositeDisposable(), gapLabel), // no onActivate → no controller to sever
           });
         }
       }

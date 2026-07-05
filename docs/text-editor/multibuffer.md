@@ -271,13 +271,13 @@ Single-file editing plus both multibuffer surfaces run on the
   are `sticky` block decorations (`StickyHeaders`) floating above an empty
   navigable header row — see `docs/text-editor/diff.md`.
 - **Per-row gutter alignment.** A row that carries a band ABOVE it (a
-  filename header, or the search `⋯` gap — anchored above the NEXT
+  filename header, or the search gap band — anchored above the NEXT
   region's first row) bottom-aligns its gutter number (`yalign=1`) so it
   sits next to the text under the reserved band; a band BELOW a row
   top-aligns it (`yalign=0`). Toggled per row inside the renderer's
   `virtual_queryData` (the only gutter vfunc node-gtk invokes), via
   `BlockDecorations.placementAtLine`.
-- **Anchor a separator band to the STABLE side.** The search `⋯` gap is
+- **Anchor a separator band to the STABLE side.** The search gap band is
   anchored ABOVE the *next* region's first row, not below the previous
   region's last row. A below-anchor uses a left-gravity mark at the line
   *start*, but `o` inserts at the line *end* (after the mark), so the mark

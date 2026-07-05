@@ -30,6 +30,10 @@ Two distinct entry points; same backend, options, and presets.
   adds at most `VIEW_FILES_PER_FLUSH` files per frame and caps the view at `MAX_VIEW_FILES`, and
   `SearchResultsView` skips a file whose size or longest line is pathological (`MAX_SOURCE_BYTES` /
   `MAX_SOURCE_LINE`) — a minified bundle / source map can't render without stalling GtkSourceView.
+  The gap band between two non-adjacent regions of a file is labelled like the diff's fold markers:
+  the next region's enclosing section (git's function-context heuristic, `enclosingSection` in
+  `diffMultiBuffer.ts`) without the `@@ -old +new @@` range — the source line-number gutter already
+  shows it — falling back to `⋯` (see [diff.md](diff.md) for the diff's full git-patch labels).
   Set `ZYM_SEARCH_PROFILE=1` to log per-step timings (`src/util/profile.ts`).
 
 ## Presets
