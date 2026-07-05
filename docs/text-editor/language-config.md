@@ -29,7 +29,8 @@ registerServer(langId, ServerDef): Disposable   // 0..n per language
   `.js`→javascript, `.jsx`→javascriptreact, `.tsx`→typescriptreact).
   `comments` declares the comment delimiters (`line` leader and/or `block` pair;
   omit for comment-less languages like JSON) — read via `commentsFor(langId)` by
-  the editor's toggle-line-comments (`g c`, see [vim-mode.md](vim-mode.md)).
+  the editor's toggle-line-comments (`g c` / `ctrl-/`, see
+  [vim-mode.md](vim-mode.md)).
 - `GrammarDef`: `wasm` (absolute path or node_modules specifier),
   `highlightsPath` + `foldsPath` (absolute `.scm` paths the plugin vendors via
   `ctx.resolve`), `foldTypes` (node-type folding fallback when no `foldsPath`),
