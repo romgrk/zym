@@ -81,6 +81,11 @@ space-separated, so `g g` is the two-press `gg` and `ctrl-v` is one chord.
 | `g /` / `g #` ... | editor:search-word-*[-loose] | normal | `g /`=`*`; `g *`/`g #` are substring (loose) |
 | `ctrl-l` | clear-search-highlight | normal | vim `:noh` — drop highlights, disarm occurrence |
 
+Inside the bar: `enter` / `shift-enter` step to the next/previous match; in the
+replace field, `enter` replaces the current match and `ctrl-enter` replaces all
+(a notification reports the count). `alt-s` cycles the case mode, `alt-r`
+toggles regex, `ctrl-p` / `ctrl-n` recall the search history, `esc` cancels.
+
 ## Operators (await a target in normal; act on selection in visual)
 
 | Key | Operation | Action |
