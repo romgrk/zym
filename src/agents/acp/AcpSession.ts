@@ -460,7 +460,15 @@ export class AcpSession implements ConversationSession {
       .then((res) => {
         if (res?.configOptions) { this.applyConfigOptions(res.configOptions); this.persistOptionsCache(); }
       })
-      .catch(() => { /* value not applicable for the current selection — leave as-is */ });
+      .catch((err: unknown) => {
+        if (this.exited) return;
+        // A rejected config change (a value not valid for the current selection,
+        // an agent-side refusal) mustn't vanish the way the mode reject used to —
+        // surface it, and re-emit so the footer control snaps back to the value
+        // actually in effect (we only updated state on success above).
+        this.emitter.emit('error', { message: `Couldn't set “${opt.name}”`, detail: requestErrorDetail(err) });
+        this.emitter.emit('config-options');
+      });
   }
 
   // Remember what this agent advertised (modes + config options) so the next
