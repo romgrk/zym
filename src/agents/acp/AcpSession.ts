@@ -396,8 +396,7 @@ export class AcpSession implements ConversationSession {
       ? chosenMode
       : 'default';
     if (this.currentModeId && this.currentModeId !== targetMode && this.availableModes.some((m) => m.id === targetMode)) {
-      void conn.agent.request('session/set_mode', { sessionId: this._sessionId!, modeId: targetMode }).catch(() => { /* agent default stays */ });
-      this.applyModeId(targetMode);
+      this.requestSetMode(conn, targetMode);
     }
     // Apply the launcher's config-option choices (model / effort / …), then
     // remember what this agent advertised so the next launcher can offer it.
@@ -550,8 +549,24 @@ export class AcpSession implements ConversationSession {
     const sessionId = this._sessionId;
     if (!conn || !sessionId || id === this.currentModeId) return;
     if (!this.availableModes.some((m) => m.id === id)) return;
-    void conn.agent.request('session/set_mode', { sessionId, modeId: id }).catch(() => { /* mode stays */ });
-    this.applyModeId(id); // optimistic; a current_mode_update corrects it
+    this.requestSetMode(conn, id);
+  }
+
+  // Switch session mode optimistically, but honestly: apply it right away (a
+  // current_mode_update may refine), and if the agent *rejects* it — e.g. gemini
+  // refusing a "privileged" mode (yolo / autoEdit) in an untrusted folder — revert
+  // the switch and surface why, instead of leaving the footer showing a mode that
+  // never took (which reads as "the mode is broken" when the agent kept prompting).
+  private requestSetMode(conn: ClientConnection, modeId: string): void {
+    const sessionId = this._sessionId;
+    if (!sessionId) return;
+    const previous = this.currentModeId;
+    void conn.agent.request('session/set_mode', { sessionId, modeId }).catch((err: unknown) => {
+      if (this.exited) return;
+      if (previous) this.applyModeId(previous); // undo the optimistic switch
+      this.emitter.emit('error', { message: `Couldn't switch to mode “${modeId}”`, detail: requestErrorDetail(err) });
+    });
+    this.applyModeId(modeId); // optimistic; reverted above if the agent rejects it
   }
 
   getConfigOptions(): ConfigOption[] | null {
@@ -1254,6 +1269,15 @@ function planEntry(entry: AcpPlanEntry): PlanEntry {
 function detailOf(err: unknown): string {
   if (err instanceof Error) return err.message;
   return err == null ? '' : String(err);
+}
+
+/** The human-facing reason from a JSON-RPC error: the agent's `data.details` when
+ *  present (e.g. gemini's "Cannot enable privileged approval modes in an untrusted
+ *  folder."), else the message. */
+function requestErrorDetail(err: unknown): string {
+  const data = err && typeof err === 'object' ? (err as { data?: unknown }).data : undefined;
+  const details = data && typeof data === 'object' ? (data as { details?: unknown }).details : undefined;
+  return typeof details === 'string' && details ? details : detailOf(err);
 }
 
 /** Whether a streamed rawInput is worth rendering: the adapter emits `{}` while

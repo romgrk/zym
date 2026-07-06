@@ -82,7 +82,17 @@ unabsorbed, disposing a session crashes zym).
   are. Gemini advertises `default`/`autoEdit`/`yolo`/`plan` (verified against
   gemini 0.49): `default` and `plan` map to the footer indicator; `autoEdit` /
   `yolo` don't (not zym `AgentMode`s) but are still switchable via the generic
-  mode dropdown (`getModeState`) and applied over `session/set_mode`.
+  mode dropdown (`getModeState`) and applied over `session/set_mode`. (`yolo` =
+  "auto-approve all tools" ≈ claude's `bypassPermissions`; gemini has no analog of
+  claude's classifier-driven `auto`.)
+- **A rejected `session/set_mode` is surfaced, not swallowed** (`requestSetMode`):
+  the switch is applied optimistically, but if the agent rejects it the footer
+  reverts and an error row explains why. The live case: gemini refuses its
+  *privileged* modes (`yolo` / `autoEdit`) in a folder it doesn't **trust**
+  ("Cannot enable privileged approval modes in an untrusted folder" — verified),
+  so those need the folder trusted in gemini's own settings first. Previously the
+  error was `.catch`-swallowed while zym optimistically showed the mode as active,
+  so gemini kept prompting while the footer claimed `yolo`.
 - **Config options** (`getConfigOptions` / `setConfigOption`) are the agent's
   *other* per-session knobs — ACP `configOptions`, a generic `select`/`boolean`
   system distinct from modes. The client opts in via `clientCapabilities.session.
