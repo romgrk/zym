@@ -30,19 +30,34 @@ standard-vim keys we don't map), see
   changed/yanked region (the `` `[ ``/`` `] `` change marks).
 - `]h`/`[h` jump to the next/previous git hunk; `]d`/`[d` to the next/previous
   LSP diagnostic (positions fed from the host via `EditorModel` providers).
-- **Jump lists** — two. Per-editor (`vim-mode-plus:jump-backward`/`-forward`,
-  registered but unbound by default) and change list (`g;`/`g,`): marker-backed
-  rings in `vim/position-history.ts` (a zym addition — vmp leaned on Atom for
-  this). Workspace-wide (`ctrl-o`/`ctrl-i`, vim's cross-buffer behavior):
-  `ui/GlobalJumpList.ts` interleaves every editor's jump recordings (surfaced
-  via `TextEditor.onDidRecordJump`) with the position left on each
-  active-editor change (`zym.workspace.onDidChangeActiveTextEditor`, Atom's
-  API), and re-opens closed files (plain path+point entries — no marker
-  tracking). Beyond the `jump = true` motions,
-  any motion moving the cursor ≥ `vim-mode-plus.jumpListMinLines` lines
-  (default 6, `0` = classic-vim recording only) records an entry (`motion.ts`
-  `moveWithSaveJump`); operator targets never record. Known gap: same-file LSP
-  jumps (`g d` in-file) bypass the vim layer and record in neither list.
+- **Jump list** — one, workspace-wide (`ctrl-o`/`ctrl-i`, vim's cross-buffer
+  behavior): `ui/GlobalJumpList.ts` is the single engine. It has two detectors,
+  feeding one ring (duplicates collapse):
+  1. **Caret distance** — it watches the focused editor's caret directly
+     (`TextEditor.onDidChangeCursorPosition`); any far same-file move
+     (≥ `vim-mode-plus.jumpListMinLines` rows, default 6, `0` = off) records where
+     the caret left. This catches jumps with no per-command wiring — a big motion,
+     a mouse click, an in-file `g d`.
+  2. **Explicit hints** (`vimState.emitDidRecordJump` → `TextEditor.onDidRecordJump`)
+     — for jumps that are semantically jumps but may be *shorter* than the
+     threshold, so the distance detector would miss them. Two sources emit: vim
+     jump motions (`motion.ts` `moveWithSaveJump`, its `jump = true` motions — `}`,
+     `%`, …; operator targets like `d}` never hint), and the host's `*`/`#`/`n`/`N`
+     search (`TextEditor.recordSearchJump`, since search is a jump at any distance).
+
+  There is no per-editor jump ring anymore. Entries are plain path+point pairs (so
+  they can re-open closed files and drift when lines are inserted above — vim
+  tolerates the same for unloaded buffers; no marker tracking).
+  `vim-mode-plus:jump-backward`/`-forward` (registered, unbound by default)
+  delegate to this engine via a host-injected navigator, so they and
+  `workspace:jump-*` stay in lockstep. Deliberately dropped vs classic vim: a jump
+  motion under the threshold that neither detector sees (short, unflagged, not a
+  search) won't record — but flagged motions and search always hint, so this only
+  affects non-flagged short hops.
+- **Change list** (`g;`/`g,`) — still a per-editor, marker-backed ring in
+  `vim/position-history.ts` (a zym addition — vmp leaned on Atom for this). It's a
+  separate concern (edit positions, not jumps), fed on `onDidChangeText`, and
+  keeps marker precision so entries track edits.
 - **zym-original `g`-commands** (`vim/zym-commands.ts`): `gf` opens the file named
   under the cursor (resolving against the current file's dir, then the project
   root, then absolute / `~`); `gw` opens a Google search for the word under the

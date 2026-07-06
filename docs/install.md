@@ -6,10 +6,15 @@ test rig, and publish script in [`packaging/aur/`](../packaging/aur/README.md)).
 
 ## Dev
 
-`pnpm start [file]` runs `node --import node-gtk/register src/index.ts`. The
+`pnpm start [file]` runs `node --import ./bin/register-gtk.mjs src/index.ts`. The
 `--import` flag installs node-gtk's `gi:` import hooks before the entry module's
 static `import … from 'gi:…'` resolve — without it the app cannot load any GTK
 namespace. node strips the TypeScript types itself (no build step).
+
+`bin/register-gtk.mjs` wraps `node-gtk/register` (see [Renderer](#renderer)) and
+is the single registration entry point shared by the launcher and `pnpm start`.
+The POC/test scripts still import `node-gtk/register` directly — they are dev-only
+and keep node-gtk's fast `gl` default rather than waking a discrete GPU.
 
 ## Global command (`zym`)
 
@@ -28,7 +33,9 @@ dynamically imports, in order:
    the no-build-step model. (Strip mode blanks types in place, so stack traces stay
    accurate with no source maps. The hook uses experimental node APIs and prints
    one `ExperimentalWarning` to stderr on boot.)
-2. `node-gtk/register` — installs the `gi:` hooks (same effect as `--import`).
+2. `bin/register-gtk.mjs` — installs the `gi:` hooks (wraps `node-gtk/register`,
+   same effect as `--import`) and neutralizes its `GSK_RENDERER` default (see
+   [Renderer](#renderer)).
 3. `src/index.ts` — the entry, whose static `gi:` and `.ts` imports now resolve
    under both hooks.
 
@@ -36,6 +43,18 @@ Both must be dynamic imports: a *static* `import 'node-gtk/register'` in the sam
 file would be hoisted above that ordering (see node-gtk/register's own note). The
 launcher passes the optional file argument straight through (`src/index.ts` reads
 `process.argv[2]`).
+
+## Renderer
+
+node-gtk's register hook defaults `GSK_RENDERER=gl` on Linux when the variable is
+unset — GTK ≥ 4.22 otherwise picks Vulkan, which on dual-GPU (Optimus) laptops
+renders on the discrete GPU and pins it awake. zym opts back into GTK's own
+renderer selection: `bin/register-gtk.mjs` captures the inherited `GSK_RENDERER`,
+runs the register hook, then restores the pre-register state (deleting the value
+node-gtk added). A `GSK_RENDERER` the user set themselves is preserved. This is
+safe because GTK reads the variable lazily at window realization, long after
+registration. To force a renderer, set `GSK_RENDERER` yourself (`gl`, `vulkan`,
+`cairo`, …) before launching.
 
 Subcommands, handled before any GTK is loaded:
 

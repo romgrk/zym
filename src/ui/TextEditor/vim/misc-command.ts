@@ -603,29 +603,32 @@ class PreviousTab extends MiscCommand {
   }
 }
 
-// Per-editor jump list (commands only, unbound by default) and change list (g; / g,). Navigation moves the
-// cursor directly (not via a jump motion), so stepping the list doesn't itself
-// record new jumps.
-class JumpBackward extends MiscCommand {
-  list: 'jumpList' | 'changeList' = 'jumpList'
+// Change list (g; / g,) — the per-editor, marker-backed edit-position ring.
+// Navigation moves the cursor directly (not via a jump motion), so stepping the
+// list doesn't itself record.
+class GoToOlderChange extends MiscCommand {
   direction: 'goBackward' | 'goForward' = 'goBackward'
   execute (): void {
-    // Dynamic dispatch over jumpList/changeList × goBackward/goForward.
-    const list = this.vimState[this.list]
-    const point: Point | null = list[this.direction](this.getCursorBufferPosition(), this.getCount())
+    const point: Point | null = this.vimState.changeList[this.direction](this.getCursorBufferPosition(), this.getCount())
     if (point) this.editor.setCursorBufferPosition(point)
   }
 }
+class GoToNewerChange extends GoToOlderChange {
+  direction: 'goBackward' | 'goForward' = 'goForward'
+}
+
+// Jump list (ctrl-o / ctrl-i). There is no per-editor jump ring anymore — these
+// walk the single workspace-wide list (GlobalJumpList) through the host-injected
+// navigator, so `vim-mode-plus:jump-backward`/`-forward` and `workspace:jump-*`
+// stay in lockstep. Unbound by default (ctrl-o/ctrl-i bind the workspace command).
+class JumpBackward extends MiscCommand {
+  direction: 'backward' | 'forward' = 'backward'
+  execute (): void {
+    this.vimState.jumpNavigate(this.direction)
+  }
+}
 class JumpForward extends JumpBackward {
-  direction: 'goBackward' | 'goForward' = 'goForward'
-}
-class GoToOlderChange extends JumpBackward {
-  list: 'jumpList' | 'changeList' = 'changeList'
-  direction: 'goBackward' | 'goForward' = 'goBackward'
-}
-class GoToNewerChange extends JumpBackward {
-  list: 'jumpList' | 'changeList' = 'changeList'
-  direction: 'goBackward' | 'goForward' = 'goForward'
+  direction: 'backward' | 'forward' = 'forward'
 }
 
 const __operations = {

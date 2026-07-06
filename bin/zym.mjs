@@ -5,12 +5,12 @@
  * `pnpm i -g` installs this file as the `zym` command (see package.json "bin").
  * Booting the editor needs node-gtk's `gi:` import hooks installed *before* the
  * entry module's static `import … from 'gi:…'` resolve. `pnpm start` does that
- * with `node --import node-gtk/register src/index.ts`; here we replicate it
- * in-process: dynamically import `node-gtk/register` first (its top-level
- * `register()` installs the hooks), then dynamically import the entry, so the
- * entry's `gi:` imports resolve with the hooks active. A *static* import of the
- * register module in this same file would be hoisted above that ordering — see
- * node-gtk/register's own note — hence both are dynamic imports.
+ * with `node --import ./bin/register-gtk.mjs src/index.ts`; here we replicate it
+ * in-process: dynamically import `./register-gtk.mjs` first (it installs the
+ * hooks and neutralizes node-gtk's GSK_RENDERER default), then dynamically import
+ * the entry, so the entry's `gi:` imports resolve with the hooks active. A
+ * *static* import of the register module in this same file would be hoisted above
+ * that ordering — see node-gtk/register's own note — hence both are dynamic imports.
  *
  * Subcommands are handled before any GTK is touched:
  *   zym --install-desktop   write the desktop launcher (scripts/install-desktop.ts)
@@ -51,7 +51,9 @@ if (cmd === '--help' || cmd === '-h') {
 } else {
   // Boot the editor. Order is load-bearing: strip-types hook + gi: hooks first,
   // then the entry (whose static `gi:` and `.ts` imports resolve under both).
+  // register-gtk.mjs installs the gi: hooks and neutralizes node-gtk's
+  // GSK_RENDERER=gl default so zym uses GTK's own renderer choice (see it).
   await import('./ts-strip-hook.mjs');
-  await import('node-gtk/register');
+  await import('./register-gtk.mjs');
   await import(new URL('src/index.ts', root).href);
 }

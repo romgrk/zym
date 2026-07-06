@@ -26,81 +26,83 @@ function setup() {
   const run = (klass: string) => vimState.operationStack.run(klass);
   const at = (row: number) => editor.setCursorBufferPosition(new Point(row, 0));
   const row = () => editor.getCursorBufferPosition().row;
-  return { editor, vimState, run, at, row };
+  // Capture the jump hints the vim layer emits into the workspace jump engine.
+  const jumpRows: number[] = [];
+  vimState.onDidRecordJump((point: Point) => jumpRows.push(point.row));
+  return { editor, vimState, run, at, row, jumpRows };
 }
 
-test('jump list: JumpBackward / JumpForward walk the jump motions', () => {
-  const { run, at, row } = setup();
+// The vim layer no longer keeps its own jump ring: jump motions emit a hint that
+// the single workspace engine (GlobalJumpList) folds in. These tests cover which
+// motions hint and with what departed position; the ring walk lives in
+// GlobalJumpList.test.ts.
+
+test('jump list: jump motions emit a hint with the departed position', () => {
+  const { run, at, jumpRows } = setup();
   at(0);
-  run('MoveToLastLine'); // G -> 99 (records 0)
-  run('MoveToFirstLine'); // gg -> 0 (records 99)
-  assert.equal(row(), 0);
-  run('JumpBackward');
-  assert.equal(row(), 99);
-  run('JumpBackward');
-  assert.equal(row(), 0);
-  run('JumpForward');
-  assert.equal(row(), 99);
-  run('JumpForward');
-  assert.equal(row(), 0);
+  run('MoveToLastLine'); // G -> 99, hint departs 0
+  run('MoveToFirstLine'); // gg -> 0, hint departs 99
+  assert.deepEqual(jumpRows, [0, 99]);
 });
 
-test('jump list: only true motions record (operator targets do not)', () => {
-  const { editor, vimState, run, at } = setup();
+test('jump list: only true motions hint (operator targets do not)', () => {
+  const { editor, run, at, jumpRows } = setup();
   at(0);
-  run('MoveToLastLine'); // G — records line 0
-  // A `d}`-style operator motion must NOT add to the jump list.
+  run('MoveToLastLine'); // G — hints line 0
+  // A `d}`-style operator motion must NOT hint a jump.
   editor.setCursorBufferPosition(new Point(50, 0));
   run('Delete');
   run('MoveToNextParagraph'); // operator target (} is a jump motion)
-  // JumpBackward should still go to line 0 (the only recorded jump), not line 50.
-  run('JumpBackward');
-  assert.equal(editor.getCursorBufferPosition().row, 0);
-  void vimState;
+  assert.deepEqual(jumpRows, [0]); // only the G, not the operator target
 });
 
-test('jump list: motions of >= jumpListMinLines lines record without the jump flag', () => {
-  const { vimState, run, at, row } = setup();
+test('jump list: motions of >= jumpListMinLines lines hint without the jump flag', () => {
+  const { vimState, run, at, row, jumpRows } = setup();
   at(0);
   vimState.operationStack.setCount(6);
   run('MoveDown'); // 6j — j is not a jump motion, but crosses the threshold
   assert.equal(row(), 6);
-  run('JumpBackward');
-  assert.equal(row(), 0);
-  run('JumpForward');
-  assert.equal(row(), 6);
+  assert.deepEqual(jumpRows, [0]);
 });
 
-test('jump list: motions below jumpListMinLines do not record', () => {
-  const { vimState, run, at, row } = setup();
+test('jump list: motions below jumpListMinLines do not hint', () => {
+  const { vimState, run, at, row, jumpRows } = setup();
   at(0);
   vimState.operationStack.setCount(5);
   run('MoveDown'); // 5j — under the default threshold of 6
   assert.equal(row(), 5);
-  run('JumpBackward'); // nothing recorded — cursor stays put
-  assert.equal(row(), 5);
+  assert.deepEqual(jumpRows, []);
 });
 
-test('jump list: jumpListMinLines is configurable and 0 disables distance recording', () => {
-  const { vimState, run, at, row } = setup();
+test('jump list: jumpListMinLines is configurable and 0 disables distance hints', () => {
+  const { vimState, run, at, jumpRows } = setup();
   try {
     settings.set('jumpListMinLines', 3);
     at(0);
     vimState.operationStack.setCount(3);
-    run('MoveDown'); // 3j records at the lowered threshold
-    run('JumpBackward');
-    assert.equal(row(), 0);
+    run('MoveDown'); // 3j hints at the lowered threshold
+    assert.deepEqual(jumpRows, [0]);
 
     settings.set('jumpListMinLines', 0);
     at(10);
     vimState.operationStack.setCount(50);
-    run('MoveDown'); // 50j — distance recording disabled
-    assert.equal(row(), 60);
-    run('JumpBackward');
-    assert.equal(row(), 60);
+    run('MoveDown'); // 50j — distance hinting disabled
+    assert.deepEqual(jumpRows, [0]); // unchanged: no new hint
   } finally {
     settings.set('jumpListMinLines', 6);
   }
+});
+
+test('jump list: JumpBackward / JumpForward delegate to the workspace navigator', () => {
+  const { vimState, run } = setup();
+  const calls: string[] = [];
+  vimState.setJumpNavigator({
+    backward: () => calls.push('backward'),
+    forward: () => calls.push('forward'),
+  });
+  run('JumpBackward');
+  run('JumpForward');
+  assert.deepEqual(calls, ['backward', 'forward']);
 });
 
 test('change list: g; / g, walk recent edit positions', () => {
@@ -117,14 +119,4 @@ test('change list: g; / g, walk recent edit positions', () => {
   assert.equal(row(), 10);
   run('GoToNewerChange'); // g,
   assert.equal(row(), 20);
-});
-
-test('jump positions track edits above them', () => {
-  const { editor, run, at, row } = setup();
-  at(40);
-  run('MoveToLastLine'); // records line 40, cursor at 99
-  // insert two lines at the top — the recorded jump should shift down to 42
-  editor.transact(() => editor.setTextInBufferRange(new Range([0, 0], [0, 0]), 'a\nb\n'));
-  run('JumpBackward');
-  assert.equal(row(), 42);
 });

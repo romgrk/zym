@@ -39,7 +39,7 @@
     "zym": "bin/zym.mjs"
   },
   "scripts": {
-    "start": "pnpm run generate-icons && NODE_ENV=development node --import node-gtk/register src/index.ts",
+    "start": "pnpm run generate-icons && NODE_ENV=development node --import ./bin/register-gtk.mjs src/index.ts",
     "install-desktop": "node scripts/install-desktop.ts",
     "prepare": "pnpm run generate-types && pnpm run generate-icons",
     "generate-icons": "node scripts/generate-icons.ts",
