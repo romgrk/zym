@@ -80,8 +80,10 @@ import {
   type ToolCallLocation,
   type ToolCallUpdate,
   type ToolKind,
+  type SessionConfigOption,
   type SessionMode,
   type SessionModeState,
+  type SetSessionConfigOptionRequest,
   type UsageUpdate,
   type WaitForTerminalExitRequest,
   type WaitForTerminalExitResponse,
@@ -89,10 +91,12 @@ import {
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { AcpTerminalRegistry, type AcpTerminal } from './terminals.ts';
+import { writeAcpOptionsCache, type CachedAgentOptions, type CachedConfigOption } from './optionsCache.ts';
 import { Disposable, Emitter } from '../../util/eventKit.ts';
 import { AGENT_MODES, type AgentMode, type AgentResume, type AgentStatus } from '../types.ts';
 import type {
   AgentQuestion,
+  ConfigOption,
   ConversationSession,
   ContextUsage,
   MonitorInfo,
@@ -154,6 +158,12 @@ export interface AcpSessionOptions {
    *  mode to force after setup instead of the ask-first `default`. */
   model?: string;
   permissionMode?: string;
+  /** Generic config options to apply after session setup (ACP
+   *  `session/set_config_option`): value id per option id (a boolean for a
+   *  boolean option). The launcher fills these from the agent's advertised
+   *  `configOptions` (model / effort / …); the `mode` category rides
+   *  `permissionMode`, not here. */
+  configOptions?: Record<string, string | boolean>;
 }
 
 /** A pending agent→client request, resolved by the user's decision. */
@@ -210,6 +220,10 @@ export class AcpSession implements ConversationSession {
   // generically via getModeState, and mapped onto AgentMode where ids coincide.
   private availableModes: SessionMode[] = [];
   private currentModeId: string | null = null;
+  // The agent's generic config options (session/new + session/set_config_option +
+  // config_option_update all carry the full set). The `mode` category is filtered
+  // out — it rides the mode channel above. Surfaced via getConfigOptions.
+  private availableConfigOptions: SessionConfigOption[] = [];
   // Prompts submitted before the handshake finished; flushed once the session exists.
   private readonly queued: string[] = [];
   // Whether an assistant bubble is open (a new messageId / turn end closes it).
@@ -319,6 +333,10 @@ export class AcpSession implements ConversationSession {
         fs: { readTextFile: !!this.options.fs, writeTextFile: !!this.options.fs },
         terminal: true,
         elicitation: { form: {} },
+        // Opt into generic session config options (model / effort / … via
+        // `configOptions` + `session/set_config_option`); `boolean: {}` also lets
+        // the agent send boolean toggles (e.g. the claude adapter's "Fast mode").
+        session: { configOptions: { boolean: {} } },
         _meta: { terminal_output: true },
       },
     });
@@ -336,6 +354,7 @@ export class AcpSession implements ConversationSession {
       });
       this._sessionId = forked.sessionId;
       this.applyModes(forked.modes ?? null);
+      this.applyConfigOptions(forked.configOptions ?? null);
     } else if (resume?.sessionId && this.agentCaps.loadSession) {
       // Resume with history: the agent replays the whole conversation as
       // session/update notifications before the request resolves.
@@ -345,6 +364,7 @@ export class AcpSession implements ConversationSession {
         const loaded = await conn.agent.request('session/load', { sessionId: resume.sessionId, cwd, mcpServers });
         this._sessionId = resume.sessionId;
         this.applyModes(loaded.modes ?? null);
+        this.applyConfigOptions(loaded.configOptions ?? null);
       } finally {
         this.endReplay();
       }
@@ -363,6 +383,7 @@ export class AcpSession implements ConversationSession {
       });
       this._sessionId = session.sessionId;
       this.applyModes(session.modes ?? null);
+      this.applyConfigOptions(session.configOptions ?? null);
     }
 
     // Start in the launcher-chosen session mode — else ask-first: the Claude
@@ -378,6 +399,10 @@ export class AcpSession implements ConversationSession {
       void conn.agent.request('session/set_mode', { sessionId: this._sessionId!, modeId: targetMode }).catch(() => { /* agent default stays */ });
       this.applyModeId(targetMode);
     }
+    // Apply the launcher's config-option choices (model / effort / …), then
+    // remember what this agent advertised so the next launcher can offer it.
+    await this.applyLaunchConfigOptions(conn);
+    this.persistOptionsCache();
     if (this.options.bridge) {
       this.bridgeWatch = this.options.bridge.watch({
         onActions: (actions) => this.emitter.emit('actions', { actions }),
@@ -400,6 +425,58 @@ export class AcpSession implements ConversationSession {
     if (!modes) return;
     this.availableModes = modes.availableModes;
     this.applyModeId(modes.currentModeId);
+  }
+
+  // Replace the config-option set wholesale (every wire source — session/new, the
+  // set-response, config_option_update — carries the full list). The `mode`
+  // category is dropped: it duplicates the mode channel (getModeState), which
+  // owns the footer's mode dropdown and the ask-first forcing.
+  private applyConfigOptions(raw: SessionConfigOption[] | null): void {
+    const next = (raw ?? []).filter((o) => o.category !== 'mode' && o.id !== 'mode');
+    this.availableConfigOptions = next;
+    this.emitter.emit('config-options');
+  }
+
+  // Apply the launcher's chosen config values (session/set_config_option), in
+  // advertised order so interdependent options settle correctly (e.g. the claude
+  // adapter's effort list depends on the chosen model). Best-effort per option —
+  // a value no longer valid for the current selection just fails and is skipped.
+  private async applyLaunchConfigOptions(conn: ClientConnection): Promise<void> {
+    const chosen = this.options.configOptions;
+    if (!chosen) return;
+    for (const opt of [...this.availableConfigOptions]) {
+      if (!Object.prototype.hasOwnProperty.call(chosen, opt.id)) continue;
+      await this.sendConfigOption(conn, opt, chosen[opt.id]);
+    }
+  }
+
+  // Send one session/set_config_option and fold the returned (full) set back in.
+  private sendConfigOption(conn: ClientConnection, opt: SessionConfigOption, value: string | boolean): Promise<void> {
+    const sessionId = this._sessionId;
+    if (!sessionId) return Promise.resolve();
+    const body: SetSessionConfigOptionRequest = opt.type === 'boolean'
+      ? { sessionId, configId: opt.id, type: 'boolean', value: value === true || value === 'true' }
+      : { sessionId, configId: opt.id, value: String(value) };
+    return conn.agent.request('session/set_config_option', body)
+      .then((res) => {
+        if (res?.configOptions) { this.applyConfigOptions(res.configOptions); this.persistOptionsCache(); }
+      })
+      .catch(() => { /* value not applicable for the current selection — leave as-is */ });
+  }
+
+  // Remember what this agent advertised (modes + config options) so the next
+  // launcher can offer real choices without a probe spawn. Keyed by the argv.
+  private persistOptionsCache(): void {
+    if (this.availableModes.length === 0 && this.availableConfigOptions.length === 0) return;
+    const snapshot: CachedAgentOptions = {};
+    if (this.availableModes.length) {
+      snapshot.modes = this.availableModes.map((m) => ({ id: m.id, name: m.name, ...(m.description ? { description: m.description } : {}) }));
+      if (this.currentModeId) snapshot.currentModeId = this.currentModeId;
+    }
+    if (this.availableConfigOptions.length) {
+      snapshot.configOptions = this.availableConfigOptions.map(configOptionToCache);
+    }
+    writeAcpOptionsCache(this.options.command, snapshot);
   }
 
   private emitInit(): void {
@@ -475,6 +552,18 @@ export class AcpSession implements ConversationSession {
     if (!this.availableModes.some((m) => m.id === id)) return;
     void conn.agent.request('session/set_mode', { sessionId, modeId: id }).catch(() => { /* mode stays */ });
     this.applyModeId(id); // optimistic; a current_mode_update corrects it
+  }
+
+  getConfigOptions(): ConfigOption[] | null {
+    if (this.availableConfigOptions.length === 0) return null;
+    return this.availableConfigOptions.map(configOptionToDomain);
+  }
+
+  setConfigOption(id: string, value: string | boolean): void {
+    const conn = this.connection;
+    const opt = this.availableConfigOptions.find((o) => o.id === id);
+    if (!conn || !opt) return;
+    void this.sendConfigOption(conn, opt, value); // the returned full set corrects the UI
   }
 
   respondPermission(id: string, decision: PermissionDecision): void {
@@ -581,6 +670,7 @@ export class AcpSession implements ConversationSession {
   onFileEdited(cb: (m: { path: string }) => void): Disposable { return this.emitter.on('file-edited', cb as (v?: unknown) => void); }
   onSessionName(cb: (m: { name: string | null }) => void): Disposable { return this.emitter.on('session-name', cb as (v?: unknown) => void); }
   onReplay(cb: (m: { active: boolean }) => void): Disposable { return this.emitter.on('replay', cb as (v?: unknown) => void); }
+  onConfigOptions(cb: () => void): Disposable { return this.emitter.on('config-options', cb as (v?: unknown) => void); }
 
   // --- protocol → domain --------------------------------------------------------
 
@@ -633,6 +723,11 @@ export class AcpSession implements ConversationSession {
         if (update.title !== undefined) this.emitter.emit('session-name', { name: update.title ?? null });
         return;
       case 'config_option_update':
+        // The agent pushed a new full config-option set (some agents echo it on
+        // the set-response instead — handled there); refresh + re-cache.
+        this.applyConfigOptions(update.configOptions);
+        this.persistOptionsCache();
+        return;
       case 'plan_update': // unstable granular plan patches — the full `plan` replaces suffice
       case 'plan_removed':
         return; // known; ignored
@@ -1071,6 +1166,43 @@ export class AcpSession implements ConversationSession {
 }
 
 // --- pure helpers -----------------------------------------------------------------
+
+/** Flatten a select option's values (a flat list, or grouped) into `{value,name,description}`. */
+function selectChoices(option: SessionConfigOption): Array<{ value: string; name: string; description?: string }> {
+  if (option.type !== 'select') return [];
+  const out: Array<{ value: string; name: string; description?: string }> = [];
+  for (const item of option.options) {
+    const values = 'group' in item ? item.options : [item]; // a group carries nested options
+    for (const v of values) out.push({ value: v.value, name: v.name, ...(v.description ? { description: v.description } : {}) });
+  }
+  return out;
+}
+
+/** ACP `SessionConfigOption` → the tool-agnostic domain `ConfigOption` the UI renders. */
+function configOptionToDomain(option: SessionConfigOption): ConfigOption {
+  return {
+    id: option.id,
+    name: option.name,
+    ...(option.description ? { description: option.description } : {}),
+    ...(option.category ? { category: option.category } : {}),
+    kind: option.type,
+    current: option.currentValue,
+    ...(option.type === 'select' ? { choices: selectChoices(option).map((c) => ({ value: c.value, label: c.name, ...(c.description ? { description: c.description } : {}) })) } : {}),
+  };
+}
+
+/** ACP `SessionConfigOption` → the cache snapshot (launcher-seed shape). */
+function configOptionToCache(option: SessionConfigOption): CachedConfigOption {
+  return {
+    id: option.id,
+    name: option.name,
+    ...(option.description ? { description: option.description } : {}),
+    ...(option.category ? { category: option.category } : {}),
+    kind: option.type,
+    current: option.currentValue,
+    ...(option.type === 'select' ? { choices: selectChoices(option) } : {}),
+  };
+}
 
 /** The claude adapter's `_meta.claudeCode` extension on an update, if present. */
 function claudeMeta(update: { _meta?: Record<string, unknown> | null }): Record<string, unknown> | undefined {

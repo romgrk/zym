@@ -49,6 +49,9 @@ let savedPermission = '';
 let savedEffort = '';
 let savedProfile = ''; // an AgentProfile id (see agents/profiles.ts)
 let savedWorktree = '';
+// Last-used generic config-option values (ACP configOptions — model / effort / …),
+// keyed by option id, so a re-launch pre-fills the previous choice.
+const savedConfigOptions: Record<string, string> = {};
 
 /** The worktree choice: run in the current workbench cwd (no worktree), create a fresh
  *  worktree, or work on an existing branch (in its own worktree). */
@@ -73,6 +76,10 @@ export interface AgentLaunchRequest {
    *  agent's own — nothing to apply). claude-tui encodes both in `command`. */
   model?: string;
   permissionMode?: string;
+  /** Generic config-option choices (ACP `configOptions` — model / effort / … —
+   *  discovered from the agent and applied via `session/set_config_option`), value
+   *  id per option id. Empty for claude-tui. */
+  configOptions?: Record<string, string>;
   /** Create a fresh worktree, or work on a chosen branch (the agent sets it up). */
   worktree: WorktreeChoice;
   /** Start the agent without switching to it (it runs in the background). */
@@ -230,6 +237,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
       savedPermission = permissionDropdown.getValue();
       savedEffort = effortDropdown.getValue();
       savedProfile = profileDropdown.getValue();
+      for (const [id, combo] of configDropdowns) savedConfigOptions[id] = combo.getValue();
       if (worktreeDropdown) savedWorktree = worktreeDropdown.getValue();
       commandsSub?.dispose();
       disposables.dispose();
@@ -264,15 +272,31 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const modelDropdown = disposables.use(new Combobox({ title: 'model', options: kindOptions.models, value: savedModel || kindOptions.defaultModel }));
   const permissionDropdown = disposables.use(new Combobox({ title: 'permission', options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
   const effortDropdown = disposables.use(new Combobox({ title: 'effort', options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort }));
+
+  // A fixed model / permission / effort slot with only the pass-through `default`
+  // (an ACP profile with nothing configured/discovered for it) reads as dead UI —
+  // hide it. Its real options ride the generic config dropdowns (below) instead.
+  const applySlotVisibility = (opts: AgentLaunchOptions): void => {
+    modelDropdown.root.setVisible(opts.models.length > 1);
+    permissionDropdown.root.setVisible(opts.permissionModes.length > 1);
+    effortDropdown.root.setVisible(opts.efforts.length > 1);
+  };
+  // Assigned once the options row exists (it rebuilds the generic config-option
+  // dropdowns for the picked profile). Declared here so the profile onChange can call it.
+  let rebuildConfigDropdowns: (profile: AgentProfile) => void = () => {};
+
   const profileDropdown = disposables.use(new Combobox({
     title: 'agent',
     options: profiles.map((p) => ({ value: p.id, label: p.label })),
     value: profile0.id,
     onChange: (value) => {
-      const opts = optionsFor(profileById(value) ?? profile0);
+      const profile = profileById(value) ?? profile0;
+      const opts = optionsFor(profile);
       modelDropdown.setOptions(opts.models, opts.defaultModel);
       permissionDropdown.setOptions(opts.permissionModes, opts.defaultPermissionMode);
       effortDropdown.setOptions(opts.efforts, opts.defaultEffort);
+      applySlotVisibility(opts);
+      rebuildConfigDropdowns(profile);
     },
   }));
 
@@ -354,8 +378,39 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   optionsRow.append(modelDropdown.root);
   optionsRow.append(permissionDropdown.root);
   optionsRow.append(effortDropdown.root);
-  if (worktreeDropdown && mode === 'default') optionsRow.append(worktreeDropdown.root);
+  const worktreeInRow = !!worktreeDropdown && mode === 'default';
+  if (worktreeInRow) optionsRow.append(worktreeDropdown!.root);
   panel.append(optionsRow);
+
+  // The picked profile's generic config-option dropdowns (ACP configOptions,
+  // cache-seeded — model / effort / …). Their set changes per profile, so they're
+  // rebuilt (not just re-optioned) on every profile change; their controllers +
+  // popovers live in a re-armable nested bag. Kept just before the worktree field.
+  const configBag = disposables.nest();
+  const configDropdowns = new Map<string, Combobox>();
+  let configWidgets: Array<InstanceType<typeof Gtk.Widget>> = [];
+  rebuildConfigDropdowns = (profile: AgentProfile): void => {
+    for (const w of configWidgets) optionsRow.remove(w);
+    if (worktreeInRow) optionsRow.remove(worktreeDropdown!.root); // re-added last, after the new config fields
+    configBag.clear();
+    configWidgets = [];
+    configDropdowns.clear();
+    for (const option of profile.configOptions ?? []) {
+      const saved = savedConfigOptions[option.id];
+      const value = option.options.some((o) => o.value === saved) ? saved : option.default;
+      const combo = configBag.use(new Combobox({
+        title: option.name,
+        options: option.options.map((o) => ({ value: o.value, label: o.label })),
+        value,
+      }));
+      configDropdowns.set(option.id, combo);
+      configWidgets.push(combo.root);
+      optionsRow.append(combo.root);
+    }
+    if (worktreeInRow) optionsRow.append(worktreeDropdown!.root);
+  };
+  applySlotVisibility(kindOptions);
+  rebuildConfigDropdowns(profile0);
 
   const submit = (background: boolean) => {
     const profile = profileById(profileDropdown.getValue()) ?? profile0;
@@ -368,6 +423,9 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     // An ACP profile is its argv plus the chosen options' args; the terminal
     // kind assembles its own from the model/permission/effort selections.
     const command = profile.command ? profileCommand(profile, selections) : AGENT_CONFIGS[kind].options.buildCommand(selections);
+    // Generic config-option choices (applied over session/set_config_option).
+    const configOptions: Record<string, string> = {};
+    for (const [id, combo] of configDropdowns) { const v = combo.getValue(); if (v) configOptions[id] = v; }
     const prompt = input.getText().trim();
     // No dropdown (the new-worktree flow) → always a fresh worktree.
     const sel = worktreeDropdown?.getValue();
@@ -377,7 +435,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
           : { branch: sel };
     card.close(false); // onClose stashes the text…
     savedDraft = ''; // …but it was submitted, so don't restore it next time
-    onLaunch({ prompt, command, cwd, kind, worktree, background, model: selections.model, permissionMode: selections.permissionMode });
+    onLaunch({ prompt, command, cwd, kind, worktree, background, model: selections.model, permissionMode: selections.permissionMode, configOptions });
   };
 
   // Cycle keyboard focus through the card's controls in their real tab order, wrapping at the

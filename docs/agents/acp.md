@@ -58,11 +58,12 @@ unabsorbed, disposing a session crashes zym).
 | `usage_update` (`used`/`size`/`cost`) | `context` (gauge) + `result` (window, USD cost) |
 | `available_commands_update` | `init` re-emit → slash-command completion |
 | `current_mode_update` / `session/set_mode` | `mode` (only ids that are zym `AgentMode`s map; below) |
+| `session/new` `configOptions` + `config_option_update` + set-response | `config-options` → the footer's generic option controls (model / effort / …; the `mode` category is dropped — it rides the mode channel above) |
 | `session_info_update.title` | `session-name` (display-only, never persisted) |
 | `session/cancel` (notify) | ← `interrupt()` (a pending permission resolves `cancelled`, per spec) |
 | `fs/read_text_file` / `fs/write_text_file` | ← served from the injected `AcpFsHost` (the window's Document registry; below) |
 | `terminal/create` / `output` / `wait_for_exit` / `kill` / `release` | ← zym-owned command execution (`acp/terminals.ts`; live terminals wear the monitor surface — below) |
-| `user_message_chunk`, `config_option_update` | known; ignored (history replay / config options not wired) |
+| `user_message_chunk` | known; ignored (history replay renders these) |
 | anything else | an `unhandled` raw-JSON row — never silently dropped |
 
 ## Permissions & modes (verified against claude-agent-acp)
@@ -82,6 +83,16 @@ unabsorbed, disposing a session crashes zym).
   gemini 0.49): `default` and `plan` map to the footer indicator; `autoEdit` /
   `yolo` don't (not zym `AgentMode`s) but are still switchable via the generic
   mode dropdown (`getModeState`) and applied over `session/set_mode`.
+- **Config options** (`getConfigOptions` / `setConfigOption`) are the agent's
+  *other* per-session knobs — ACP `configOptions`, a generic `select`/`boolean`
+  system distinct from modes. The client opts in via `clientCapabilities.session.
+  configOptions`; the agent returns the full set on `session/new` and re-sends the
+  full set on every `session/set_config_option` response and `config_option_update`
+  (so the footer rebuilds wholesale — options are interdependent: on the claude
+  adapter, choosing `model: sonnet` drops the `fast` toggle). The `mode` category
+  is filtered out (it duplicates the mode channel). Verified against
+  claude-agent-acp: it advertises `mode` / `model` / `effort` / `fast`; gemini 0.49
+  advertises none.
 
 ## Configuration
 
@@ -91,20 +102,30 @@ unabsorbed, disposing a session crashes zym).
 - **Per-profile launch options** — a profile entry may carry `models` /
   `permissionModes` / `efforts` lists (`{ "value", "label"?, "args"? }` or a
   bare string); the launcher shows them for that profile and appends the
-  chosen options' `args` to the argv. **Recognized agents import their
-  options**: the claude adapter gets zym's claude model list (applied via
-  `_meta.claudeCode.options.model` on session/new — no argv flags exist) and
-  its session modes (applied via `session/set_mode` after setup, replacing the
-  blanket ask-first forcing); gemini gets its advertised session modes
-  (`autoEdit`/`yolo`/`plan`), also applied via `session/set_mode` (empty
-  `args`). The old `--approval-mode` argv import was dropped: its snake_case
-  values (`auto_edit`) don't match gemini's camelCase mode ids, so the
-  ask-first forcing silently reset the chosen mode back to `default` (verified).
-  A configured list on the entry wins over importing — a user who wants a
+  chosen options' `args` to the argv. A configured list on the entry always
+  wins over the discovered/seeded options below — a user who wants a
   restart-surviving mode configures the argv explicitly (`{ "value": "yolo",
-  "args": ["--approval-mode", "yolo"] }`; note `yolo`/`default` happen to match
-  both spellings). Protocol-applied selections (model/mode) don't survive a
-  restart — argv-encoded ones do (argv is what serializes).
+  "args": ["--approval-mode", "yolo"] }`). Protocol-applied selections don't
+  survive a restart — argv-encoded ones do (argv is what serializes).
+- **Discovered options + the cache** (`agents/acp/optionsCache.ts`) — the
+  launcher can't ask an unspawned agent what it offers, so zym **remembers** what
+  each agent advertised last run, keyed by argv, at
+  `$XDG_STATE_HOME/zym/acp-options.json`. `AcpSession` writes it on every
+  handshake and live config change; `agents/profiles.ts` (`importCachedOptions`)
+  seeds a profile from it — advertised **modes** fill the permission dropdown,
+  `select` **config options** (model / effort / …) become their own launcher
+  dropdowns, applied at launch via `session/set_config_option`. Precedence:
+  configured `agent.profiles` list **>** cache **>** the hardcoded first-launch
+  seed (`importKnownAgentOptions` — gemini's `default`/`autoEdit`/`yolo`/`plan`,
+  the claude adapter's modes) **>** bare `default`. A brand-new agent shows the
+  seed (or nothing) until its first session fills the cache in. **The claude
+  model list is no longer hardcoded** — the adapter advertises `model` (and
+  `effort`, `fast`) as config options, so it rides this path; the old
+  `_meta.claudeCode.options.model` application remains only as a fallback for
+  adapters that don't advertise a `model` config option. The old
+  `--approval-mode` argv import for gemini was dropped: its snake_case values
+  (`auto_edit`) don't match gemini's camelCase mode ids, so the ask-first forcing
+  silently reset the chosen mode back to `default` (verified).
 - `agent.implementation: "acp"` — make `agent:new` default to the leading ACP
   profile (or `ZYM_AGENT=acp zym` per-launch).
 - `agent.acp.command` — legacy single argv, superseded by profiles; when set
@@ -112,9 +133,11 @@ unabsorbed, disposing a session crashes zym).
   deduped against identical profiles). The `ZYM_ACP_COMMAND` env var
   (whitespace-split) does the same with higher precedence, for one launch.
 
-The launcher's model / permission-mode / effort dropdowns are pass-through
-`default` sentinels for this kind — those knobs are the agent's own, negotiated
-per session (ACP session modes / config options).
+The launcher's *fixed* model / permission-mode / effort dropdowns hold only the
+pass-through `default` for this kind unless a profile configures/discovers real
+choices; a fixed slot with just `default` is hidden. The agent's own knobs surface
+instead through the permission dropdown (session modes) and the cache-seeded
+config-option dropdowns (model / effort / …), negotiated per session.
 
 ## Implemented
 
@@ -166,6 +189,11 @@ per session (ACP session modes / config options).
   plumbing but doesn't call it yet (verified against claude-agent-acp 0.55.0).
 - **Modes** — the footer dropdown is fed by the agent's advertised modes
   (`getModeState`); ask-first is forced at session setup.
+- **Config options** — the footer also renders a control per advertised
+  `configOption` (model / effort / … via `getConfigOptions` / `setConfigOption`);
+  what's advertised is cached per-agent and seeds the *next* launcher (see the
+  cache under Configuration). Verified end-to-end against claude-agent-acp: launch
+  from the cache, live-switch model/effort, cache round-trip.
 - **Auth** — an `auth_required` handshake failure renders a login hint naming
   the agent's auth methods.
 - **First-touch baselines** — the OLD side of the Agent Changes review diff
@@ -180,8 +208,11 @@ per session (ACP session modes / config options).
 
 - [ ] Streamed tool output into live *rows* (the row fills once, at result
       time; live output is on the monitor inspect page meanwhile).
-- [ ] Session config options (`config_option_update`), `session/list`
-      discovery, and the ACP registry (agent profiles) — later.
+- [x] Session config options — wired (`configOptions` / `config_option_update` /
+      `session/set_config_option`), cached per agent to seed the launcher.
+- [ ] `session/list` discovery and the ACP registry (agent profiles) — later.
+- [ ] Boolean config options in the *launcher* (live footer only for now — they're
+      interdependent and the spec marks them unstable).
 - [ ] `authenticate` flow (in-app login) — today the hint says to log in via
       the agent's own CLI.
 
@@ -190,15 +221,20 @@ per session (ACP session modes / config options).
 Unit tests cover the fs capability's editor side (`acp/documentFs.test.ts`:
 buffer-over-disk reads, in-place writes, the `line`/`limit` window), the
 terminal registry (`acp/terminals.test.ts`: output capture, byte-limit
-truncation, kill/release, spawn failures), and baseline capture
+truncation, kill/release, spawn failures), baseline capture
 (`acp/baselines.test.ts`: first-touch wins, created files, fs-host routing,
-replay guard). The
+replay guard), the options cache (`acp/optionsCache.test.ts`: argv-keyed
+round-trip, corrupt/missing → no cache), and cache-seeded profiles
+(`profiles.test.ts`: modes → permission, `select` config options →
+configOptions, configured-wins). The
 session itself was validated end-to-end against the real
 Claude Code ACP adapter: streamed turns; subagent capture with drill-down
 data; the whitelisted-command terminal round-trip; AskUserQuestion →
 elicitation → answer; permission deny; mode forcing (the adapter defaults to
-`acceptEdits`!); session titles; and a full dispose → `session/load` resume
-whose follow-up question proved the restored context. The spike lives out of
-tree; re-run by driving `AcpSession` directly under plain node (the module
+`acceptEdits`!); session titles; a full dispose → `session/load` resume whose
+follow-up question proved the restored context; and the config-option path
+(discover `model`/`effort`/`fast`, apply a launch choice via
+`session/set_config_option`, live-switch, cache round-trip). The spike lives out
+of tree; re-run by driving `AcpSession` directly under plain node (the module
 chain is runtime-pure — `agents/types.ts` imports Gtk type-only for exactly
 this reason).

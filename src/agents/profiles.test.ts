@@ -5,16 +5,36 @@
  * env override) surfacing as the leading ACP entry. Pure config/env plumbing —
  * no GTK needed.
  */
-import { test, afterEach } from 'node:test';
+import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as Fs from 'node:fs';
+import * as Os from 'node:os';
+import * as Path from 'node:path';
 import { zym } from '../zym.ts';
 import { listAgentProfiles, defaultProfileFor, profileNameFor, profileCommand } from './profiles.ts';
 import { acpCommand } from './acp/config.ts';
+import { writeAcpOptionsCache } from './acp/optionsCache.ts';
+
+// Isolate the argv-keyed options cache (importCachedOptions reads it) so a real
+// dev-machine cache can't perturb the assertions; each test starts cache-empty.
+let stateDir: string;
+let prevXdg: string | undefined;
+before(() => {
+  prevXdg = process.env.XDG_STATE_HOME;
+  stateDir = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'zym-profiles-'));
+  process.env.XDG_STATE_HOME = stateDir;
+});
+after(() => {
+  if (prevXdg === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = prevXdg;
+  Fs.rmSync(stateDir, { recursive: true, force: true });
+});
 
 afterEach(() => {
   zym.config.unset('agent.profiles');
   zym.config.unset('agent.acp.command');
   delete process.env.ZYM_ACP_COMMAND;
+  Fs.rmSync(Path.join(stateDir, 'zym', 'acp-options.json'), { force: true });
 });
 
 test('defaults: the terminal kind, then the built-in acp profiles', () => {
@@ -87,12 +107,37 @@ test('recognized agents import their launch options', () => {
   assert.equal(gemini.models, undefined);
   assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'autoEdit', 'yolo', 'plan']);
   assert.ok(gemini.permissionModes!.every((o) => o.args.length === 0));
-  // claude adapter: models over _meta, modes over session/set_mode — no argv args.
+  // claude adapter: modes over session/set_mode (the first-launch seed). Its model
+  // list is no longer hardcoded — it's discovered as a `model` config option and
+  // cached, so with an empty cache there's no models / configOptions list yet.
   assert.equal(claudeAcp.id, 'acp:claude-acp');
-  assert.equal(claudeAcp.models?.[0].value, 'default');
-  assert.ok(claudeAcp.models!.length > 1);
-  assert.ok(claudeAcp.models!.every((o) => o.args.length === 0));
+  assert.equal(claudeAcp.models, undefined);
+  assert.equal(claudeAcp.configOptions, undefined);
   assert.deepEqual(claudeAcp.permissionModes?.map((o) => o.value), ['default', 'acceptEdits', 'plan', 'bypassPermissions']);
+});
+
+test('cached options seed the launcher: modes → permission, select config options → configOptions', () => {
+  writeAcpOptionsCache(['gemini', '--acp'], {
+    modes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO', description: 'all' }],
+    configOptions: [
+      { id: 'model', name: 'Model', category: 'model', kind: 'select', current: 'pro', choices: [{ value: 'pro', name: 'Pro' }, { value: 'flash', name: 'Flash' }] },
+      { id: 'fast', name: 'Fast', category: 'model_config', kind: 'boolean', current: false }, // boolean → live footer only, not the launcher
+    ],
+  });
+  const [, gemini] = listAgentProfiles();
+  // Cache modes replace the hardcoded seed (default/autoEdit/yolo/plan).
+  assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'yolo']);
+  // Only the `select` option seeds configOptions; the boolean is excluded.
+  assert.deepEqual(gemini.configOptions?.map((o) => o.id), ['model']);
+  assert.equal(gemini.configOptions?.[0].default, 'pro');
+  assert.deepEqual(gemini.configOptions?.[0].options.map((o) => o.value), ['pro', 'flash']);
+});
+
+test('a configured permission list wins over the cache', () => {
+  writeAcpOptionsCache(['gemini', '--acp'], { modes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] });
+  zym.config.set('agent.profiles', [{ name: 'gemini', command: ['gemini', '--acp'], permissionModes: ['plan'] }]);
+  const [, gemini] = listAgentProfiles();
+  assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'plan']); // configured, not cached
 });
 
 test('configured option lists are parsed, default-led, and suppress importing', () => {

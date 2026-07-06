@@ -29,12 +29,15 @@ ACP agents are configured as named **profiles** in `agent.profiles` (each
 Gemini and the Claude adapter are offered out of the box. (A legacy
 `agent.acp.command`, if set, still appears as the first profile.)
 
-The launcher's model / permission / effort dropdowns follow the chosen
-profile. Recognized agents come pre-filled — the Claude adapter offers zym's
-claude model list and its permission modes, gemini its approval modes — and
-any profile entry can define its own lists: `"models": [{ "value":
-"gemini-2.5-pro", "args": ["-m", "gemini-2.5-pro"] }]` appends those args to
-the launch command when picked (`default` always means the agent's own).
+The launcher's option dropdowns follow the chosen profile. zym **remembers what
+each agent advertised last time it ran** and offers it on the next launch: the
+Claude adapter's permission modes, model, and reasoning effort, gemini its
+approval modes. A brand-new agent shows a small built-in set until its first
+session fills these in. You can also switch these live in the agent's footer
+while it runs. Any profile entry can still define its own argv-based lists:
+`"models": [{ "value": "gemini-2.5-pro", "args": ["-m", "gemini-2.5-pro"] }]`
+appends those args to the launch command when picked (`default` always means the
+agent's own), and a configured list wins over the remembered one.
 
 An `acp` agent must be signed in with its own CLI first (run it once in a
 terminal). Resuming, branching, permission prompts, diffs, plans, questions,

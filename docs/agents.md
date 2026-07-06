@@ -674,8 +674,10 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
    editable continuous DiffView in the agent's work area, comments delivered
    to that agent. claude-tui / resumed sessions diff against git HEAD.
 
-Smaller, whenever convenient: session **config options** in the footer (model
-switching for agents that expose them), and the in-app **`authenticate`** flow
+Smaller: session **config options** in the footer (model / effort switching for
+agents that expose them) — done 2026-07-06, plus an argv-keyed cache that seeds
+the *launcher* from what an agent advertised last run (see agents/acp.md
+"Discovered options + the cache"). Still open: the in-app **`authenticate`** flow
 (replacing the "log in via the agent's CLI" hint).
 
 ### Backlog

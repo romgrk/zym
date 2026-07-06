@@ -133,6 +133,26 @@ export interface PlanEntry {
   status: 'pending' | 'in_progress' | 'completed';
 }
 
+/** One generic session config option the agent advertises (ACP
+ *  `SessionConfigOption`) — a `select` dropdown (model / reasoning effort / …) or
+ *  a `boolean` toggle. Distinct from the permission-mode channel (`getModeState`):
+ *  the `mode` category is dropped upstream, since modes ride that channel. Options
+ *  are interdependent (choosing a model can change which efforts exist), so the UI
+ *  rebuilds the whole set whenever `onConfigOptions` fires. */
+export interface ConfigOption {
+  id: string;
+  name: string;
+  description?: string;
+  /** ACP semantic category (`model` / `thought_level` / `model_config` / …); UX
+   *  only, may be an unknown string or absent. */
+  category?: string;
+  kind: 'select' | 'boolean';
+  /** The currently selected value (a value id for `select`, a boolean for `boolean`). */
+  current: string | boolean;
+  /** The selectable values (`select` only). */
+  choices?: Array<{ value: string; label: string; description?: string }>;
+}
+
 /**
  * The session surface `AgentConversation` (and its child views) consume. The
  * required core is what every protocol can provide; the optional members are
@@ -220,6 +240,15 @@ export interface ConversationSession {
   /** Switch to an advertised mode by id (pairs with getModeState). */
   setModeById?(id: string): void;
 
+  /** The session's generic config options (ACP `configOptions` — model / effort /
+   *  … — the `mode` category excluded, since it rides `getModeState`), or null
+   *  when the agent advertises none. The footer renders a control per option;
+   *  `onConfigOptions` fires whenever the set or a current value changes. */
+  getConfigOptions?(): ConfigOption[] | null;
+  /** Change a config option (`select` → a value id, `boolean` → a flag). The agent
+   *  echoes the full updated set, which re-fires `onConfigOptions`. */
+  setConfigOption?(id: string, value: string | boolean): void;
+
   // --- optional events ----------------------------------------------------------
   onQuestion?(cb: (r: QuestionRequest) => void): Disposable;
   /** The agent reported its execution plan (full replace per update). */
@@ -232,4 +261,7 @@ export interface ConversationSession {
    *  (`active` true → rows render statically, edits seed silently; false →
    *  live again). Driven by ACP `session/load`. */
   onReplay?(cb: (m: { active: boolean }) => void): Disposable;
+  /** The agent's generic config options changed — the set, or a current value
+   *  (pairs with `getConfigOptions`). */
+  onConfigOptions?(cb: () => void): Disposable;
 }

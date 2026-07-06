@@ -15,7 +15,7 @@
  */
 import { zym } from '../zym.ts';
 import { claudeTuiLaunchOptions } from './claude-tui/config.ts';
-import { CLAUDE_MODELS } from './claudeOptions.ts';
+import { readAcpOptionsCache } from './acp/optionsCache.ts';
 import type { AgentKind } from './configs.ts';
 
 /** One launch-option choice a profile offers (a model, a permission mode, …).
@@ -34,6 +34,22 @@ export interface ProfileLaunchOption {
  *  default, nothing appended or sent. */
 const DEFAULT_OPTION: ProfileLaunchOption = { value: 'default', label: 'default', detail: 'agent default', args: [] };
 
+/** A generic config option the launcher offers for a profile (an ACP `select`
+ *  `configOption` — model / effort / … — discovered from the cache). Applied over
+ *  the protocol (`session/set_config_option`), never argv; the launcher routes the
+ *  chosen value into the launch request's `configOptions`. Boolean options are
+ *  left to the live footer (they're interdependent and unstable). */
+export interface ProfileConfigOption {
+  /** The ACP `configOption` id, sent as `configId`. */
+  id: string;
+  /** Human label (the option's name; the launcher's dropdown title). */
+  name: string;
+  /** Selectable values. */
+  options: ProfileLaunchOption[];
+  /** The value selected by default (the option's advertised current value). */
+  default: string;
+}
+
 export interface AgentProfile {
   /** Dropdown value: `claude-tui`, or `acp:<name>` for an ACP profile. */
   id: string;
@@ -49,6 +65,9 @@ export interface AgentProfile {
   models?: ProfileLaunchOption[];
   permissionModes?: ProfileLaunchOption[];
   efforts?: ProfileLaunchOption[];
+  /** Generic config options the agent advertised last run (cache-seeded); the
+   *  launcher shows a dropdown per entry, applied over `session/set_config_option`. */
+  configOptions?: ProfileConfigOption[];
 }
 
 interface AcpProfileEntry {
@@ -57,6 +76,7 @@ interface AcpProfileEntry {
   models?: ProfileLaunchOption[];
   permissionModes?: ProfileLaunchOption[];
   efforts?: ProfileLaunchOption[];
+  configOptions?: ProfileConfigOption[];
 }
 
 function isArgv(value: unknown): value is string[] {
@@ -118,12 +138,14 @@ function configuredAcpProfiles(): AcpProfileEntry[] {
 // knows, fill the option lists it didn't configure itself, so the launcher
 // offers real choices instead of the bare pass-through `default`.
 
-/** The claude adapter (claude-agent-acp): models ride the sanctioned
- *  `_meta.claudeCode.options.model` on session/new (no argv flags exist — see
- *  AcpSession.handshake), permission modes are its advertised ACP session
- *  modes, applied via `session/set_mode` after setup. Both use empty `args`. */
+/** The claude adapter (claude-agent-acp): its permission modes are advertised ACP
+ *  session modes, applied via `session/set_mode` after setup (empty `args`). This
+ *  is only the first-launch seed — the modes (and its model / effort / … options)
+ *  are discovered from the live session and cached (see importCachedOptions), which
+ *  supersedes this. Its model list is *not* hardcoded here anymore: the adapter
+ *  advertises it as a `model` config option (applied via `session/set_config_option`),
+ *  so it rides the generic configOptions path once the cache has seen a session. */
 function importClaudeAcpOptions(entry: AcpProfileEntry): void {
-  entry.models ??= [DEFAULT_OPTION, ...CLAUDE_MODELS.map((m) => ({ ...m, args: [] }))];
   entry.permissionModes ??= [
     { ...DEFAULT_OPTION, detail: 'ask before edits' },
     { value: 'acceptEdits', label: 'acceptEdits', detail: 'auto-accept edits', args: [] },
@@ -152,6 +174,34 @@ function importGeminiOptions(entry: AcpProfileEntry): void {
 function importKnownAgentOptions(entry: AcpProfileEntry): AcpProfileEntry {
   if (entry.command.some((t) => t.includes('claude-agent-acp'))) importClaudeAcpOptions(entry);
   else if (entry.command.some((t) => t === 'gemini' || t.endsWith('/gemini'))) importGeminiOptions(entry);
+  return entry;
+}
+
+/** Seed a profile's option lists from what the agent advertised the last time it
+ *  ran (the argv-keyed cache — see acp/optionsCache.ts). This is the "remember for
+ *  next launch" half: modes fill the permission dropdown, `select` config options
+ *  (model / effort / …) fill the generic dropdowns. Runs *before* the hardcoded
+ *  seed (both use `??=`), so a real, current session snapshot wins over the static
+ *  guess; an explicitly-configured `agent.profiles` list still wins over both. */
+function importCachedOptions(entry: AcpProfileEntry): AcpProfileEntry {
+  const cached = readAcpOptionsCache(entry.command);
+  if (!cached) return entry;
+  if (cached.modes?.length) {
+    entry.permissionModes ??= cached.modes.map((m) => ({
+      value: m.id, label: m.name, ...(m.description ? { detail: m.description } : {}), args: [],
+    }));
+  }
+  // Only `select` options reach the launcher (booleans are interdependent/unstable
+  // — live footer only); the `mode` category is already excluded by AcpSession.
+  const selects = (cached.configOptions ?? []).filter((o) => o.kind === 'select' && o.category !== 'mode');
+  if (selects.length) {
+    entry.configOptions ??= selects.map((o): ProfileConfigOption => ({
+      id: o.id,
+      name: o.name,
+      options: (o.choices ?? []).map((c) => ({ value: c.value, label: c.name, ...(c.description ? { detail: c.description } : {}), args: [] })),
+      default: typeof o.current === 'string' ? o.current : (o.choices?.[0]?.value ?? 'default'),
+    }));
+  }
   return entry;
 }
 
@@ -187,7 +237,9 @@ export function listAgentProfiles(): AgentProfile[] {
   }
   return [
     { id: 'claude-tui', label: claudeTuiLaunchOptions.label, kind: 'claude-tui' },
-    ...acp.map(importKnownAgentOptions).map((p): AgentProfile => ({
+    // Cache first (a real session's advertised options), then the hardcoded seed as
+    // a first-launch fallback; a configured `agent.profiles` list wins over both.
+    ...acp.map(importCachedOptions).map(importKnownAgentOptions).map((p): AgentProfile => ({
       id: `acp:${p.name}`,
       label: p.name,
       kind: 'acp',
@@ -195,6 +247,7 @@ export function listAgentProfiles(): AgentProfile[] {
       models: p.models,
       permissionModes: p.permissionModes,
       efforts: p.efforts,
+      configOptions: p.configOptions,
     })),
   ];
 }

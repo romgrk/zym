@@ -39,7 +39,8 @@ import { MonitorView } from './conversation/MonitorView.ts';
 import { ModelContext } from './conversation/ModelContext.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
-import type { ConversationSession, PermissionRequest, PlanEntry, QuestionRequest, TaskProgress } from '../agents/session.ts';
+import type { ConfigOption, ConversationSession, PermissionRequest, PlanEntry, QuestionRequest, TaskProgress } from '../agents/session.ts';
+import { Combobox } from './Combobox.ts';
 import type { AgentKind } from '../agents/configs.ts';
 import { createOneShotAgent, type OneShotAgent } from '../agents/oneshot.ts';
 import { generateAgentName } from '../agents/autoName.ts';
@@ -283,6 +284,12 @@ export class AgentConversation implements Agent {
   // Holds the active permission prompt's button handlers (a question card owns its own
   // teardown); cleared when the prompt is restored so they don't pile up per request.
   private readonly interactionSubs = this.subs.nest();
+  // The footer's generic config-option controls (ACP configOptions — model /
+  // effort / … — the mode dropdown owns `mode`). Rebuilt whole on every change
+  // (options are interdependent): the box is emptied and its controls' handlers
+  // severed via configControlSubs.clear() each time.
+  private readonly configBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 10 });
+  private readonly configControlSubs = this.subs.nest();
   private readonly launchPrompt?: string;
   // Base argv this agent was launched with; kept for serialize/restart.
   private readonly baseCommand?: string[];
@@ -456,6 +463,8 @@ export class AgentConversation implements Agent {
     this.footer.append(this.statusIcon.widget);
     this.footer.append(this.thinkingFooter);
     this.footer.append(new Gtk.Box({ hexpand: true })); // spacer → right-aligns the rest
+    this.configBox.setVisible(false); // shown once the agent advertises config options
+    this.footer.append(this.configBox);
     this.footer.append(this.modeDropdown);
     this.modelContext.widget.setHexpand(false); // the spacer owns the slack, not the gauge
     this.footer.append(this.modelContext.widget);
@@ -547,6 +556,38 @@ export class AgentConversation implements Agent {
       this.modeDropdown.setModel(Gtk.StringList.new(names));
       this.applyingMode = false;
     }
+  }
+
+  // Rebuild the footer's generic config-option controls (ACP configOptions) from
+  // the session's current set. Whole-rebuild because the options are
+  // interdependent (choosing a model changes which efforts/toggles exist), so the
+  // whole set can change on any single change; getConfigOptions already excludes
+  // the `mode` category (the mode dropdown owns it).
+  private refreshConfigOptions(): void {
+    const options = this.session.getConfigOptions?.() ?? null;
+    this.configControlSubs.clear(); // sever the previous controls' handlers/popovers
+    let child = this.configBox.getFirstChild();
+    while (child) { const next = child.getNextSibling(); this.configBox.remove(child); child = next; }
+    if (!options || options.length === 0) { this.configBox.setVisible(false); return; }
+    this.configBox.setVisible(true);
+    for (const option of options) this.configBox.append(this.buildConfigControl(option));
+  }
+
+  // One footer control for a config option: a searchable dropdown for `select`, an
+  // on/off dropdown for `boolean`. A commit routes straight to the session, which
+  // echoes the full updated set (→ onConfigOptions → refreshConfigOptions).
+  private buildConfigControl(option: ConfigOption): InstanceType<typeof Gtk.Widget> {
+    const boolean = option.kind === 'boolean';
+    const combo = this.configControlSubs.use(new Combobox({
+      title: option.name,
+      options: boolean
+        ? [{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }]
+        : (option.choices ?? []).map((c) => ({ value: c.value, label: c.label })),
+      value: boolean ? (option.current === true ? 'on' : 'off') : (typeof option.current === 'string' ? option.current : ''),
+      onChange: (value) => this.session.setConfigOption?.(option.id, boolean ? value === 'on' : value),
+    }));
+    combo.root.addCssClass('conversation-config');
+    return combo.root;
   }
 
   // Sync the permission-mode dropdown (selection + color). The status itself is the
@@ -929,6 +970,7 @@ export class AgentConversation implements Agent {
         this.modelContext.setModel(model);
         this._slashCommands = slashCommands;
         this.refreshModeOptions(); // modes arrive with session setup, before/with init
+        this.refreshConfigOptions(); // config options arrive the same way
         this.updateFooter();
       }),
       this.session.onContext((usage) => this.modelContext.setUsage(usage)),
@@ -952,6 +994,9 @@ export class AgentConversation implements Agent {
       this.session.onQuestion?.((req) => this.addQuestionCard(req)),
       this.session.onPlan?.(({ entries }) => this.applyPlan(entries)),
       this.session.onFileEdited?.(({ path }) => this.recordChangedPath(path)),
+      // The agent's generic config options changed (set or a current value) — rebuild
+      // the footer controls (options are interdependent, so refetch the whole set).
+      this.session.onConfigOptions?.(() => this.refreshConfigOptions()),
       // A session-reported title (ACP session_info_update) behaves like a `/rename`
       // for display, but is never persisted; pinned/transient names still win.
       this.session.onSessionName?.(({ name }) => { this._sessionName = name; this.emitTitle(); }),

@@ -78,6 +78,9 @@ export interface AgentLaunch {
    *  the agent's own default). claude-tui encodes both in `command`. */
   model?: string;
   permissionMode?: string;
+  /** Generic ACP config-option choices (model / effort / … applied over
+   *  `session/set_config_option`); value id per option id. acp only. */
+  configOptions?: Record<string, string>;
   /** Open a file the agent touched (acp conversation rows; tui ignores it). */
   onOpenFile?: (path: string) => void;
   /** Editor-backed file access (the ACP `fs` capability: reads see unsaved
@@ -127,7 +130,7 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         userPrompt: l.userPrompt,
         resume: l.resume,
         onOpenFile: l.onOpenFile,
-        createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge(), fs: l.fs, model: l.model, permissionMode: l.permissionMode }),
+        createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge(), fs: l.fs, model: l.model, permissionMode: l.permissionMode, configOptions: l.configOptions }),
       });
     },
   },
