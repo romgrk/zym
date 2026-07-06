@@ -44,6 +44,12 @@ it writes the `.desktop` entry and icons for your user.
 light/dark preference (`core.followSystemColorScheme`). Editor font and size
 are `editor.fontFamily` / `editor.fontSize` in the preferences (`space , ,`).
 
+**Rendering glitches, or the discrete GPU stays awake.** zym lets GTK pick its
+own renderer. To pin one, set `GSK_RENDERER` before launching — `GSK_RENDERER=gl
+zym` uses the GL renderer (follows the compositor's GPU; good on dual-GPU/Optimus
+laptops), `GSK_RENDERER=vulkan` forces Vulkan, `GSK_RENDERER=cairo` the software
+renderer.
+
 **A language server isn't starting.** zym offers to install missing servers
 when it recognizes the language; installed servers live under
 `~/.cache/zym/`. The diagnostics panel (`space l l`) and the notification log

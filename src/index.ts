@@ -14,8 +14,9 @@
  *     Ctrl+Q quit
  *
  * Run with:  pnpm start [file]
- *   (directly: node --import node-gtk/register src/index.ts [file] — the flag
- *    installs node-gtk's `gi:` import hooks before the static graph resolves)
+ *   (directly: node --import ./bin/register-gtk.mjs src/index.ts [file] — the
+ *    flag installs node-gtk's `gi:` import hooks before the static graph resolves,
+ *    and neutralizes node-gtk's GSK_RENDERER default; see docs/install.md)
  *
  * Structure:
  *   application.ts    Adw.Application + main-loop lifecycle
