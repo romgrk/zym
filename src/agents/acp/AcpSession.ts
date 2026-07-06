@@ -92,6 +92,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import { AcpTerminalRegistry, type AcpTerminal } from './terminals.ts';
 import { writeAcpOptionsCache, type CachedAgentOptions, type CachedConfigOption } from './optionsCache.ts';
+import { Result } from '../../core/Result.ts';
 import { Disposable, Emitter } from '../../util/eventKit.ts';
 import { AGENT_MODES, type AgentMode, type AgentResume, type AgentStatus } from '../types.ts';
 import type {
@@ -304,24 +305,30 @@ export class AcpSession implements ConversationSession {
       .onRequest('terminal/kill', (ctx) => this.onTerminalKill(ctx.params))
       .onRequest('terminal/release', (ctx) => this.onTerminalRelease(ctx.params));
     this.connection = app.connect(stream);
-    void this.handshake(this.connection).catch((err: unknown) => {
-      if (this.exited) return;
-      if (err instanceof RequestError && err.code === RequestError.authRequired().code) {
-        const methods = this.authMethodNames.length ? ` (login methods: ${this.authMethodNames.join(', ')})` : '';
-        this.emitter.emit('error', {
-          message: 'Agent requires login',
-          detail: `Authenticate with the agent's own CLI first — run \`${this.options.command.join(' ')}\` in a terminal${methods}.`,
-        });
-      } else {
-        this.emitter.emit('error', { message: 'ACP handshake failed', detail: detailOf(err) || this.recentStderr() });
-      }
-      this.endReplay();
-      this.setStatus('idle');
-    });
+    // handshake() surfaces its own request failures via failHandshake and returns;
+    // the .catch is a backstop for any unexpected (non-request) throw.
+    void this.handshake().catch((err: unknown) => this.failHandshake(err));
   }
 
-  private async handshake(conn: ClientConnection): Promise<void> {
-    const init = await conn.agent.request('initialize', {
+  /** Report a failed handshake: an `auth_required` reject renders a login hint
+   *  (naming the agent's auth methods), anything else a generic failure. */
+  private failHandshake(err: unknown): void {
+    if (this.exited) return;
+    if (err instanceof RequestError && err.code === RequestError.authRequired().code) {
+      const methods = this.authMethodNames.length ? ` (login methods: ${this.authMethodNames.join(', ')})` : '';
+      this.emitter.emit('error', {
+        message: 'Agent requires login',
+        detail: `Authenticate with the agent's own CLI first — run \`${this.options.command.join(' ')}\` in a terminal${methods}.`,
+      });
+    } else {
+      this.emitter.emit('error', { message: 'ACP handshake failed', detail: detailOf(err) || this.recentStderr() });
+    }
+    this.endReplay();
+    this.setStatus('idle');
+  }
+
+  private async handshake(): Promise<void> {
+    const initR = await this.request((agent) => agent.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: 'zym', version: '0' },
       clientCapabilities: {
@@ -339,7 +346,9 @@ export class AcpSession implements ConversationSession {
         session: { configOptions: { boolean: {} } },
         _meta: { terminal_output: true },
       },
-    });
+    }));
+    if (initR.isErr()) return this.failHandshake(initR.unwrapErr());
+    const init = initR.unwrap();
     this.agentName = init.agentInfo?.name ?? '';
     this.agentCaps = init.agentCapabilities ?? {};
     this.authMethodNames = (init.authMethods ?? []).map((m) => m.name);
@@ -349,9 +358,9 @@ export class AcpSession implements ConversationSession {
 
     if (resume?.sessionId && resume.fork && this.agentCaps.sessionCapabilities?.fork) {
       // Branch: a fresh, independent session seeded with the original's context.
-      const forked = await conn.agent.request('session/fork', {
-        sessionId: resume.sessionId, cwd, mcpServers,
-      });
+      const forkedR = await this.request((agent) => agent.request('session/fork', { sessionId: resume.sessionId!, cwd, mcpServers }));
+      if (forkedR.isErr()) return this.failHandshake(forkedR.unwrapErr());
+      const forked = forkedR.unwrap();
       this._sessionId = forked.sessionId;
       this.applyModes(forked.modes ?? null);
       this.applyConfigOptions(forked.configOptions ?? null);
@@ -360,14 +369,13 @@ export class AcpSession implements ConversationSession {
       // session/update notifications before the request resolves.
       this.replaying = true;
       this.emitter.emit('replay', { active: true });
-      try {
-        const loaded = await conn.agent.request('session/load', { sessionId: resume.sessionId, cwd, mcpServers });
-        this._sessionId = resume.sessionId;
-        this.applyModes(loaded.modes ?? null);
-        this.applyConfigOptions(loaded.configOptions ?? null);
-      } finally {
-        this.endReplay();
-      }
+      const loadedR = await this.request((agent) => agent.request('session/load', { sessionId: resume.sessionId!, cwd, mcpServers }));
+      this.endReplay(); // close the replay window whether or not it loaded
+      if (loadedR.isErr()) return this.failHandshake(loadedR.unwrapErr());
+      const loaded = loadedR.unwrap();
+      this._sessionId = resume.sessionId;
+      this.applyModes(loaded.modes ?? null);
+      this.applyConfigOptions(loaded.configOptions ?? null);
     } else {
       // Fresh session — or a context-only resume through the claude adapter's
       // `_meta` extension when the agent can't replay history. The launcher's
@@ -376,11 +384,13 @@ export class AcpSession implements ConversationSession {
       const claudeOptions: Record<string, unknown> = {};
       if (resume?.sessionId) claudeOptions.resume = resume.sessionId;
       if (this.options.model && this.options.model !== 'default') claudeOptions.model = this.options.model;
-      const session = await conn.agent.request('session/new', {
+      const sessionR = await this.request((agent) => agent.request('session/new', {
         cwd,
         mcpServers,
         ...(Object.keys(claudeOptions).length ? { _meta: { claudeCode: { options: claudeOptions } } } : {}),
-      });
+      }));
+      if (sessionR.isErr()) return this.failHandshake(sessionR.unwrapErr());
+      const session = sessionR.unwrap();
       this._sessionId = session.sessionId;
       this.applyModes(session.modes ?? null);
       this.applyConfigOptions(session.configOptions ?? null);
@@ -396,11 +406,11 @@ export class AcpSession implements ConversationSession {
       ? chosenMode
       : 'default';
     if (this.currentModeId && this.currentModeId !== targetMode && this.availableModes.some((m) => m.id === targetMode)) {
-      this.requestSetMode(conn, targetMode);
+      void this.requestSetMode(targetMode);
     }
     // Apply the launcher's config-option choices (model / effort / …), then
     // remember what this agent advertised so the next launcher can offer it.
-    await this.applyLaunchConfigOptions(conn);
+    await this.applyLaunchConfigOptions();
     this.persistOptionsCache();
     if (this.options.bridge) {
       this.bridgeWatch = this.options.bridge.watch({
@@ -409,7 +419,7 @@ export class AcpSession implements ConversationSession {
       });
     }
     this.emitInit();
-    for (const text of this.queued.splice(0)) this.sendPrompt(text);
+    for (const text of this.queued.splice(0)) void this.sendPrompt(text);
   }
 
   // Close the replay window (idempotent — also called from the handshake's
@@ -418,6 +428,16 @@ export class AcpSession implements ConversationSession {
     if (!this.replaying) return;
     this.replaying = false;
     this.emitter.emit('replay', { active: false });
+  }
+
+  /** Send an ACP request as a Result rather than a rejecting promise, so every
+   *  outbound call site branches on Ok/Err (the git.ts Result convention) and the
+   *  "connection gone" guard lives in one place. The agent's RequestError — which
+   *  carries `data.details` — rides through on the Err (see requestErrorDetail). */
+  private request<T>(send: (agent: ClientConnection['agent']) => Promise<T>): Promise<Result<T>> {
+    const conn = this.connection;
+    if (!conn) return Promise.resolve(Result.Err(new Error('agent connection is closed')));
+    return Result.asPromise(send(conn.agent));
   }
 
   private applyModes(modes: SessionModeState | null): void {
@@ -440,35 +460,35 @@ export class AcpSession implements ConversationSession {
   // advertised order so interdependent options settle correctly (e.g. the claude
   // adapter's effort list depends on the chosen model). Best-effort per option —
   // a value no longer valid for the current selection just fails and is skipped.
-  private async applyLaunchConfigOptions(conn: ClientConnection): Promise<void> {
+  private async applyLaunchConfigOptions(): Promise<void> {
     const chosen = this.options.configOptions;
     if (!chosen) return;
     for (const opt of [...this.availableConfigOptions]) {
       if (!Object.prototype.hasOwnProperty.call(chosen, opt.id)) continue;
-      await this.sendConfigOption(conn, opt, chosen[opt.id]);
+      await this.sendConfigOption(opt, chosen[opt.id]);
     }
   }
 
   // Send one session/set_config_option and fold the returned (full) set back in.
-  private sendConfigOption(conn: ClientConnection, opt: SessionConfigOption, value: string | boolean): Promise<void> {
+  private async sendConfigOption(opt: SessionConfigOption, value: string | boolean): Promise<void> {
     const sessionId = this._sessionId;
-    if (!sessionId) return Promise.resolve();
+    if (!sessionId) return;
     const body: SetSessionConfigOptionRequest = opt.type === 'boolean'
       ? { sessionId, configId: opt.id, type: 'boolean', value: value === true || value === 'true' }
       : { sessionId, configId: opt.id, value: String(value) };
-    return conn.agent.request('session/set_config_option', body)
-      .then((res) => {
-        if (res?.configOptions) { this.applyConfigOptions(res.configOptions); this.persistOptionsCache(); }
-      })
-      .catch((err: unknown) => {
-        if (this.exited) return;
-        // A rejected config change (a value not valid for the current selection,
-        // an agent-side refusal) mustn't vanish the way the mode reject used to —
-        // surface it, and re-emit so the footer control snaps back to the value
-        // actually in effect (we only updated state on success above).
-        this.emitter.emit('error', { message: `Couldn't set “${opt.name}”`, detail: requestErrorDetail(err) });
-        this.emitter.emit('config-options');
-      });
+    const result = await this.request((agent) => agent.request('session/set_config_option', body));
+    if (result.isErr()) {
+      if (this.exited) return;
+      // A rejected config change (a value not valid for the current selection, an
+      // agent-side refusal) mustn't vanish the way the mode reject used to —
+      // surface it, and re-emit so the footer control snaps back to the value
+      // actually in effect (state is only updated on success below).
+      this.emitter.emit('error', { message: `Couldn't set “${opt.name}”`, detail: requestErrorDetail(result.unwrapErr()) });
+      this.emitter.emit('config-options');
+      return;
+    }
+    const res = result.unwrap();
+    if (res?.configOptions) { this.applyConfigOptions(res.configOptions); this.persistOptionsCache(); }
   }
 
   // Remember what this agent advertised (modes + config options) so the next
@@ -500,20 +520,20 @@ export class AcpSession implements ConversationSession {
     this.assistantOpen = false;
     this.setStatus('working');
     if (!this._sessionId) { this.queued.push(text); return; }
-    this.sendPrompt(text);
+    void this.sendPrompt(text);
   }
 
-  private sendPrompt(text: string): void {
-    const conn = this.connection;
+  private async sendPrompt(text: string): Promise<void> {
     const sessionId = this._sessionId;
-    if (!conn || !sessionId) return;
-    conn.agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] })
-      .then((res) => this.onTurnEnd(res.stopReason))
-      .catch((err: unknown) => {
-        if (this.exited) return; // the exit row already tells the story
-        this.emitter.emit('error', { message: 'Agent error', detail: detailOf(err) || this.recentStderr() });
-        this.setStatus('idle');
-      });
+    if (!sessionId) return;
+    const result = await this.request((agent) => agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }));
+    if (result.isErr()) {
+      if (this.exited) return; // the exit row already tells the story
+      this.emitter.emit('error', { message: 'Agent error', detail: requestErrorDetail(result.unwrapErr()) || this.recentStderr() });
+      this.setStatus('idle');
+      return;
+    }
+    this.onTurnEnd(result.unwrap().stopReason);
   }
 
   // The turn's terminal outcome, from the session/prompt response.
@@ -553,11 +573,9 @@ export class AcpSession implements ConversationSession {
   }
 
   setModeById(id: string): void {
-    const conn = this.connection;
-    const sessionId = this._sessionId;
-    if (!conn || !sessionId || id === this.currentModeId) return;
+    if (id === this.currentModeId) return;
     if (!this.availableModes.some((m) => m.id === id)) return;
-    this.requestSetMode(conn, id);
+    void this.requestSetMode(id);
   }
 
   // Switch session mode optimistically, but honestly: apply it right away (a
@@ -565,16 +583,17 @@ export class AcpSession implements ConversationSession {
   // refusing a "privileged" mode (yolo / autoEdit) in an untrusted folder — revert
   // the switch and surface why, instead of leaving the footer showing a mode that
   // never took (which reads as "the mode is broken" when the agent kept prompting).
-  private requestSetMode(conn: ClientConnection, modeId: string): void {
+  private async requestSetMode(modeId: string): Promise<void> {
     const sessionId = this._sessionId;
     if (!sessionId) return;
     const previous = this.currentModeId;
-    void conn.agent.request('session/set_mode', { sessionId, modeId }).catch((err: unknown) => {
+    this.applyModeId(modeId); // optimistic; reverted below if the agent rejects it
+    const result = await this.request((agent) => agent.request('session/set_mode', { sessionId, modeId }));
+    if (result.isErr()) {
       if (this.exited) return;
       if (previous) this.applyModeId(previous); // undo the optimistic switch
-      this.emitter.emit('error', { message: `Couldn't switch to mode “${modeId}”`, detail: requestErrorDetail(err) });
-    });
-    this.applyModeId(modeId); // optimistic; reverted above if the agent rejects it
+      this.emitter.emit('error', { message: `Couldn't switch to mode “${modeId}”`, detail: requestErrorDetail(result.unwrapErr()) });
+    }
   }
 
   getConfigOptions(): ConfigOption[] | null {
@@ -583,10 +602,9 @@ export class AcpSession implements ConversationSession {
   }
 
   setConfigOption(id: string, value: string | boolean): void {
-    const conn = this.connection;
     const opt = this.availableConfigOptions.find((o) => o.id === id);
-    if (!conn || !opt) return;
-    void this.sendConfigOption(conn, opt, value); // the returned full set corrects the UI
+    if (!opt) return;
+    void this.sendConfigOption(opt, value); // the returned full set corrects the UI
   }
 
   respondPermission(id: string, decision: PermissionDecision): void {

@@ -42,6 +42,16 @@ stdio pipes need `error` absorbers (verified: the SDK's `connection.close()`
 cancels the Web-stream wrappers, which destroy the sockets *with an error* —
 unabsorbed, disposing a session crashes zym).
 
+**Error handling:** every *outbound* request goes through `AcpSession.request()`,
+which returns a `Result<T>` (`core/Result.ts` — the same convention `git.ts` uses)
+instead of a rejecting promise, so each call site must branch on `isErr()`; it
+also centralizes the "connection gone" guard. `failHandshake` is the single setup
+failure handler (auth-required → login hint, else generic). A rejected
+`set_mode` / `set_config_option` is *surfaced and reverted*, never swallowed (see
+below). *Inbound* handlers (`fs/*`, `terminal/*`) still `throw RequestError` — the
+SDK's contract converts a throw into the RPC error response, so Result doesn't
+apply there.
+
 ## Protocol → domain mapping
 
 | ACP | zym domain |
