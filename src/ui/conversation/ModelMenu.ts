@@ -1,24 +1,31 @@
 /*
- * ModelContext — the conversation footer's context-window segment: a "123k" token
- * count and circular fill gauge that opens a detailed token/cost breakdown popover.
- * (The model name isn't shown in the footer; it still appears in the popover.)
+ * ModelMenu — the conversation footer's model/context segment: a `Gtk.MenuButton`
+ * whose gauge shows a "123k" token count + circular context-fill ring, and which
+ * opens a `ModelPopover` holding the agent's config-option controls (model /
+ * reasoning effort / … — handed in via `setConfig`) plus a detailed token/cost
+ * breakdown.
  *
  * It owns all of the model / cost / usage state and the composed widgets
- * (ContextRing + ContextPopover), so AgentConversation just forwards session
- * events to the setters and appends `widget` to the footer.
+ * (ContextRing + ModelPopover), so AgentConversation just forwards session events
+ * to the setters, feeds the config controls through `setConfig`, and appends
+ * `widget` to the footer. The gauge shows a muted "…" placeholder (no ring) until
+ * the first usage lands, then the "123k" count + ring; the config options ride
+ * along inside its popover throughout.
  */
 import Gtk from 'gi:Gtk-4.0';
 import { ContextRing } from './ContextRing.ts';
-import { ContextPopover } from './ContextPopover.ts';
+import { ModelPopover } from './ModelPopover.ts';
 import type { ContextUsage } from '../../agents/session.ts';
 
-export class ModelContext {
+type Widget = InstanceType<typeof Gtk.Widget>;
+
+export class ModelMenu {
   readonly widget: InstanceType<typeof Gtk.Box>;
 
   private readonly tokensLabel: InstanceType<typeof Gtk.Label>;
   private readonly button: InstanceType<typeof Gtk.MenuButton>;
   private readonly ring = new ContextRing();
-  private readonly popover = new ContextPopover();
+  private readonly popover = new ModelPopover();
 
   private model: string | null = null;
   private costUsd: number | null = null;
@@ -48,15 +55,23 @@ export class ModelContext {
   setWindow(window: number): void { this.window = window; this.render(); }
   setUsage(usage: ContextUsage): void { this.tokens = usage.tokens; this.usage = usage; this.render(); }
 
+  /** Replace the agent's config-option controls (built + owned by AgentConversation);
+   *  they render inside the popover, above the token/cost breakdown. */
+  setConfig(controls: Widget[]): void {
+    this.popover.setConfig(controls);
+  }
+
   private render(): void {
+    this.ring.widget.setVisible(this.tokens != null); // no ring until a count is loaded
     if (this.tokens != null) {
       const fraction = this.tokens / this.window;
       this.tokensLabel.setText(`${(this.tokens / 1000).toFixed(0)}k`);
       this.ring.setFraction(fraction);
       this.button.setTooltipText(`${Math.round(fraction * 100)}% of context window used`);
-      this.button.setVisible(true);
     } else {
-      this.button.setVisible(false);
+      // No context number yet: a muted "…" placeholder stands in for the count.
+      this.tokensLabel.setText('…');
+      this.button.setTooltipText('Context not yet reported');
     }
 
     const usage = this.usage;

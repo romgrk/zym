@@ -68,7 +68,7 @@ apply there.
 | `usage_update` (`used`/`size`/`cost`) | `context` (gauge) + `result` (window, USD cost) |
 | `available_commands_update` | `init` re-emit → slash-command completion |
 | `current_mode_update` / `session/set_mode` | `mode` (only ids that are zym `AgentMode`s map; below) |
-| `session/new` `configOptions` + `config_option_update` + set-response | `config-options` → the footer's generic option controls (model / effort / …; the `mode` category is dropped — it rides the mode channel above) |
+| `session/new` `configOptions` + `config_option_update` + set-response | `config-options` → the model-menu popover's generic option controls (model / effort / …; the `mode` category is dropped — it rides the mode channel above) |
 | `session_info_update.title` | `session-name` (display-only, never persisted) |
 | `session/cancel` (notify) | ← `interrupt()` (a pending permission resolves `cancelled`, per spec) |
 | `fs/read_text_file` / `fs/write_text_file` | ← served from the injected `AcpFsHost` (the window's Document registry; below) |
@@ -209,11 +209,15 @@ config-option dropdowns (model / effort / …), negotiated per session.
   plumbing but doesn't call it yet (verified against claude-agent-acp 0.55.0).
 - **Modes** — the footer dropdown is fed by the agent's advertised modes
   (`getModeState`); ask-first is forced at session setup.
-- **Config options** — the footer also renders a control per advertised
-  `configOption` (model / effort / … via `getConfigOptions` / `setConfigOption`);
-  what's advertised is cached per-agent and seeds the *next* launcher (see the
-  cache under Configuration). Verified end-to-end against claude-agent-acp: launch
-  from the cache, live-switch model/effort, cache round-trip.
+- **Config options** — a control per advertised `configOption` (model / effort /
+  … via `getConfigOptions` / `setConfigOption`) lives in the **model-menu popover**
+  (`ModelMenu` / `ModelPopover`, the footer's model/context gauge), above the
+  token/cost breakdown — the `mode` dropdown stays inline in the footer, the other
+  per-session knobs live here so the footer isn't crowded. The gauge button shows a
+  muted "…" placeholder (no ring) until the first usage lands, then the "123k" count
+  + ring. What's advertised is cached per-agent and seeds the *next* launcher (see the cache under
+  Configuration). Verified end-to-end against claude-agent-acp: launch from the
+  cache, live-switch model/effort, cache round-trip.
 - **Auth** — an `auth_required` handshake failure renders a login hint naming
   the agent's auth methods.
 - **First-touch baselines** — the OLD side of the Agent Changes review diff

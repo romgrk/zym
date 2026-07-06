@@ -1,18 +1,24 @@
 /*
- * ContextPopover — the detailed breakdown shown when the footer's context gauge is
- * clicked. A `Gtk.Popover` managed by the footer `Gtk.MenuButton` (the same path the
- * mode `Gtk.DropDown` uses in this footer), holding a
- * two-column grid: the window total broken into input / cache-read / cache-write,
- * then model · cost · this-turn output.
+ * ModelPopover — the panel shown when the footer's model/context gauge is clicked.
+ * A `Gtk.Popover` managed by the footer `Gtk.MenuButton` (the same path the mode
+ * `Gtk.DropDown` uses in this footer). It stacks two sections:
+ *
+ *  1. the agent's live config-option controls (model / reasoning effort / … — the
+ *     ACP `configOptions`, built by AgentConversation and handed in via `setConfig`),
+ *     shown only while the agent advertises any;
+ *  2. a two-column context breakdown: the window total split into
+ *     input / cache-read / cache-write, then model · cost · this-turn output.
  *
  * Values are formatted with thousands separators and right-aligned with tabular
- * figures so the digits line up. `update()` only rewrites label text — the rows are
- * built once.
+ * figures so the digits line up. `update()` only rewrites label text — the grid rows
+ * are built once; `setConfig()` swaps the (externally-owned) config controls.
  */
 import Pango from 'gi:Pango-1.0';
 import Gtk from 'gi:Gtk-4.0';
 import { addStyles } from '../../styles.ts';
 import type { ContextUsage } from '../../agents/session.ts';
+
+type Widget = InstanceType<typeof Gtk.Widget>;
 
 export interface ContextDetail extends ContextUsage {
   model: string | null;
@@ -23,16 +29,22 @@ export interface ContextDetail extends ContextUsage {
 const n = (v: number): string => v.toLocaleString('en-US');
 
 addStyles(`
-  /* The detail popover: a compact two-column key/value grid. */
-  .ContextPopover grid { padding: 6px 4px; }
-  .ContextPopover .context-popover-title { font-weight: bold; margin-bottom: 2px; }
-  .ContextPopover .context-popover-caption { color: var(--t-ui-text-muted); }
+  /* The popover: a config section (comboboxes) over a compact key/value grid. */
+  .ModelPopover > contents { padding: 10px; }
+  .ModelPopover grid { padding: 6px 4px; }
+  .ModelPopover .model-popover-config { margin-bottom: 4px; }
+  .ModelPopover .model-popover-title { font-weight: bold; margin-bottom: 2px; }
+  .ModelPopover .model-popover-caption { color: var(--t-ui-text-muted); }
 `);
 
-export class ContextPopover {
+export class ModelPopover {
   readonly widget: InstanceType<typeof Gtk.Popover>;
 
   private readonly values = new Map<string, InstanceType<typeof Gtk.Label>>();
+  // The agent's config-option controls (owned/rebuilt by AgentConversation) + the
+  // divider under them; both hidden while the agent advertises no options.
+  private readonly configBox = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 8 });
+  private readonly configDivider = new Gtk.Separator({ orientation: Gtk.Orientation.HORIZONTAL });
   private row = 0;
 
   constructor() {
@@ -50,9 +62,29 @@ export class ContextPopover {
     this.field(grid, 'output', 'Output (turn)');
     this.field(grid, 'cost', 'Cost');
 
+    this.configBox.addCssClass('model-popover-config');
+    this.configBox.setVisible(false);
+    this.configDivider.setVisible(false);
+
+    const body = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
+    body.append(this.configBox);
+    body.append(this.configDivider);
+    body.append(grid);
+
     this.widget = new Gtk.Popover();
-    this.widget.addCssClass('ContextPopover');
-    this.widget.setChild(grid);
+    this.widget.addCssClass('ModelPopover');
+    this.widget.setChild(body);
+  }
+
+  /** Replace the config-option controls (built + owned by AgentConversation). The
+   *  section (and its divider) hide when there are none. */
+  setConfig(controls: Widget[]): void {
+    let child = this.configBox.getFirstChild();
+    while (child) { const next = child.getNextSibling(); this.configBox.remove(child); child = next; }
+    for (const control of controls) this.configBox.append(control);
+    const has = controls.length > 0;
+    this.configBox.setVisible(has);
+    this.configDivider.setVisible(has);
   }
 
   update(d: ContextDetail): void {
@@ -73,13 +105,13 @@ export class ContextPopover {
 
   private heading(grid: InstanceType<typeof Gtk.Grid>, text: string): void {
     const label = new Gtk.Label({ label: text, xalign: 0 });
-    label.addCssClass('context-popover-title');
+    label.addCssClass('model-popover-title');
     grid.attach(label, 0, this.row++, 2, 1);
   }
 
   private field(grid: InstanceType<typeof Gtk.Grid>, key: string, name: string): void {
     const caption = new Gtk.Label({ label: name, xalign: 0 });
-    caption.addCssClass('context-popover-caption');
+    caption.addCssClass('model-popover-caption');
     const value = new Gtk.Label({ label: '—', xalign: 1, hexpand: true });
     value.setAttributes(tnum());
     grid.attach(caption, 0, this.row, 1, 1);

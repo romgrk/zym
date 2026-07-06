@@ -36,7 +36,7 @@ import { ToolRow } from './conversation/ToolRow.ts';
 import { appendToolRow, permissionPromptParts, editDiffLines, diffBlock, EDIT_TOOLS } from './conversation/toolRows.ts';
 import { SubagentView, SUBAGENT_GROUP } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
-import { ModelContext } from './conversation/ModelContext.ts';
+import { ModelMenu } from './conversation/ModelMenu.ts';
 import { createAgentStatusIcon } from './agentStatusIcon.ts';
 import { NERDFONT } from './nerdfont.ts';
 import type { ConfigOption, ConversationSession, PermissionRequest, PlanEntry, QuestionRequest, TaskProgress } from '../agents/session.ts';
@@ -268,8 +268,9 @@ export class AgentConversation implements Agent {
   // permission / question replaces the prompt — see showInteraction.
   private readonly inputCard: InstanceType<typeof Gtk.Box>;
   private readonly footer: InstanceType<typeof Gtk.Box>;
-  // Footer model name + context-window gauge + token/cost popover (owns its state).
-  private readonly modelContext = new ModelContext();
+  // Footer model/context gauge: a MenuButton whose popover holds the agent's
+  // config-option controls + the token/cost breakdown (owns its state).
+  private readonly modelMenu = new ModelMenu();
   private readonly modeDropdown: InstanceType<typeof Gtk.DropDown>;
   private applyingMode = false; // guards the dropdown's notify::selected feedback loop
   // The dropdown's entries: the session's advertised modes (getModeState — ACP)
@@ -284,11 +285,11 @@ export class AgentConversation implements Agent {
   // Holds the active permission prompt's button handlers (a question card owns its own
   // teardown); cleared when the prompt is restored so they don't pile up per request.
   private readonly interactionSubs = this.subs.nest();
-  // The footer's generic config-option controls (ACP configOptions — model /
-  // effort / … — the mode dropdown owns `mode`). Rebuilt whole on every change
-  // (options are interdependent): the box is emptied and its controls' handlers
-  // severed via configControlSubs.clear() each time.
-  private readonly configBox = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 10 });
+  // The agent's generic config-option controls (ACP configOptions — model / effort /
+  // … — the mode dropdown owns `mode`) live in the model-menu popover (modelMenu).
+  // Rebuilt whole on every change (options are interdependent): the controls are
+  // rebuilt and handed to `modelMenu.setConfig`, their previous handlers severed via
+  // configControlSubs.clear() each time.
   private readonly configControlSubs = this.subs.nest();
   private readonly launchPrompt?: string;
   // Base argv this agent was launched with; kept for serialize/restart.
@@ -445,7 +446,8 @@ export class AgentConversation implements Agent {
     this.promptContainer.append(this.input.root);
 
     // A thin footer: the agent status icon (same as the sidebar) + a permission-mode
-    // dropdown (colored per mode) + the model/context gauge (ModelContext).
+    // dropdown (colored per mode) + the model/context gauge (ModelMenu), whose popover
+    // also hosts the agent's config options.
     this.statusIcon = createAgentStatusIcon(this);
     this.modeDropdown = Gtk.DropDown.newFromStrings(PERMISSION_CYCLE);
     this.modeDropdown.addCssClass('flat');
@@ -457,17 +459,16 @@ export class AgentConversation implements Agent {
     });
     // Footer layout: a LEFT slot (the status icon, or the thinking indicator that
     // replaces it while working) · a spacer · then the permission-mode dropdown and
-    // the model/context gauge pushed to the RIGHT edge.
+    // the model/context gauge (its popover holds the agent's config options) pushed to
+    // the RIGHT edge.
     this.footer = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 14 });
     this.footer.addCssClass('conversation-footer');
     this.footer.append(this.statusIcon.widget);
     this.footer.append(this.thinkingFooter);
     this.footer.append(new Gtk.Box({ hexpand: true })); // spacer → right-aligns the rest
-    this.configBox.setVisible(false); // shown once the agent advertises config options
-    this.footer.append(this.configBox);
     this.footer.append(this.modeDropdown);
-    this.modelContext.widget.setHexpand(false); // the spacer owns the slack, not the gauge
-    this.footer.append(this.modelContext.widget);
+    this.modelMenu.widget.setHexpand(false); // the spacer owns the slack, not the gauge
+    this.footer.append(this.modelMenu.widget);
     this.updateFooter();
 
     // The input and its status strip live together in a bordered, rounded card.
@@ -558,24 +559,21 @@ export class AgentConversation implements Agent {
     }
   }
 
-  // Rebuild the footer's generic config-option controls (ACP configOptions) from
-  // the session's current set. Whole-rebuild because the options are
-  // interdependent (choosing a model changes which efforts/toggles exist), so the
-  // whole set can change on any single change; getConfigOptions already excludes
-  // the `mode` category (the mode dropdown owns it).
+  // Rebuild the model-menu popover's generic config-option controls (ACP
+  // configOptions) from the session's current set, and hand them to modelMenu.
+  // Whole-rebuild because the options are interdependent (choosing a model changes
+  // which efforts/toggles exist), so the whole set can change on any single change;
+  // getConfigOptions already excludes the `mode` category (the mode dropdown owns it).
   private refreshConfigOptions(): void {
     const options = this.session.getConfigOptions?.() ?? null;
     this.configControlSubs.clear(); // sever the previous controls' handlers/popovers
-    let child = this.configBox.getFirstChild();
-    while (child) { const next = child.getNextSibling(); this.configBox.remove(child); child = next; }
-    if (!options || options.length === 0) { this.configBox.setVisible(false); return; }
-    this.configBox.setVisible(true);
-    for (const option of options) this.configBox.append(this.buildConfigControl(option));
+    const controls = (options ?? []).map((option) => this.buildConfigControl(option));
+    this.modelMenu.setConfig(controls); // empty → the popover hides its config section
   }
 
-  // One footer control for a config option: a searchable dropdown for `select`, an
-  // on/off dropdown for `boolean`. A commit routes straight to the session, which
-  // echoes the full updated set (→ onConfigOptions → refreshConfigOptions).
+  // One config-option control for the model-menu popover: a searchable dropdown for
+  // `select`, an on/off dropdown for `boolean`. A commit routes straight to the
+  // session, which echoes the full updated set (→ onConfigOptions → refreshConfigOptions).
   private buildConfigControl(option: ConfigOption): InstanceType<typeof Gtk.Widget> {
     const boolean = option.kind === 'boolean';
     const combo = this.configControlSubs.use(new Combobox({
@@ -591,7 +589,7 @@ export class AgentConversation implements Agent {
   }
 
   // Sync the permission-mode dropdown (selection + color). The status itself is the
-  // icon to the left (self-updating); model/context live in ModelContext.
+  // icon to the left (self-updating); model/context live in ModelMenu.
   private updateFooter(): void {
     const index = this.modeIds.indexOf(this.currentModeId);
     if (index >= 0 && this.modeDropdown.getSelected() !== index) {
@@ -967,16 +965,16 @@ export class AgentConversation implements Agent {
         this.updateToolResult(id, isError, text);
       }),
       this.session.onInit(({ model, slashCommands }) => {
-        this.modelContext.setModel(model);
+        this.modelMenu.setModel(model);
         this._slashCommands = slashCommands;
         this.refreshModeOptions(); // modes arrive with session setup, before/with init
         this.refreshConfigOptions(); // config options arrive the same way
         this.updateFooter();
       }),
-      this.session.onContext((usage) => this.modelContext.setUsage(usage)),
+      this.session.onContext((usage) => this.modelMenu.setUsage(usage)),
       this.session.onResult(({ costUsd, contextWindow }) => {
-        if (costUsd != null) this.modelContext.setCost(costUsd);
-        if (contextWindow) this.modelContext.setWindow(contextWindow);
+        if (costUsd != null) this.modelMenu.setCost(costUsd);
+        if (contextWindow) this.modelMenu.setWindow(contextWindow);
       }),
       this.session.onError(({ message, detail }) => this.addErrorRow(message, detail)),
       this.session.onInterrupted(() => this.addInterruptedRow()),
