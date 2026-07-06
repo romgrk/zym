@@ -200,17 +200,18 @@ toggles regex, `ctrl-p` / `ctrl-n` recall the search history, `esc` cancels.
 | `ctrl-o` / `ctrl-i` | workspace:jump-backward / -forward | jump list, across editors |
 | `g ;` / `g ,` | GoToOlderChange / GoToNewerChange | change list |
 
-There are two jump lists. `ctrl-o`/`ctrl-i` walk the workspace-wide one — like
-vim's cross-buffer jump list, it re-traces navigation across tabs (including
-tab switches and files opened via `g d`, pickers, or the file tree, re-opening
-the file if its tab was closed). The current editor's own list — skipping
-excursions into other files — has no default keys; bind
-`vim-mode-plus:jump-backward` / `vim-mode-plus:jump-forward` in `keymap.json`
-to use it. Besides the classic vim jump
-motions (`G`, `{`/`}`, search, …), any motion that moves the cursor by 6+
-lines (e.g. `10j`) records into both, so a large move can always be jumped
-back from. The threshold is the `vim-mode-plus.jumpListMinLines` config key
-(default `6`; `0` restores classic-vim recording).
+`ctrl-o`/`ctrl-i` walk the jump list — like vim's cross-buffer jump list, it
+re-traces navigation across tabs (including tab switches and files opened via
+`g d`, pickers, or the file tree, re-opening the file if its tab was closed). It
+watches the caret directly, so a far same-file jump made by *any* means — `*`/`n`
+search, an in-file `g d`, a click, a big motion — lands you back where you
+started on `ctrl-o`. Besides those, the classic vim jump motions (`G`, `{`/`}`,
+search, …) always record even over a short distance. The distance threshold for
+everything else is the `vim-mode-plus.jumpListMinLines` config key (default `6`;
+`0` records only the classic flagged motions). `vim-mode-plus:jump-backward` /
+`-forward` are the same commands under different names (bindable in `keymap.json`).
+Separately, `g;`/`g,` walk the **change list** — the positions of your recent
+edits, per file.
 
 ## Occurrence & multi-cursor
 

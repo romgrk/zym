@@ -13,6 +13,7 @@ import MarkManager from './mark-manager.ts'
 import RegisterManager from './register-manager.ts'
 import MutationManager from './mutation-manager.ts'
 import PositionHistory from './position-history.ts'
+import type { Point } from '../../../text/Point.ts'
 import swrap, { type SelectionProperties } from './selection-wrapper.ts'
 import globalState from './global-state.ts'
 import { CursorStyleManager, HoverManager, FlashManager, OccurrenceManager, SequentialPasteManager, ScrollManager } from './stubs.ts'
@@ -47,6 +48,12 @@ interface InputOptions {
  * options shape is purpose-dependent (search confirms a string, leap confirms a
  * Point), so providers receive a loosely-typed options bag. */
 type InputProvider = (options: any) => void
+
+/** Walks the workspace-wide jump list (GlobalJumpList) for `vim-mode-plus:jump-*`. */
+export interface JumpNavigator {
+  backward(): void
+  forward(): void
+}
 
 /**
  * Bridge from the preset-occurrence command (`g o`) to the host's search engine,
@@ -131,7 +138,6 @@ export default class VimState {
   __cursorStyleManager?: CursorStyleManager
   __sequentialPasteManager?: SequentialPasteManager
   __scrollManager?: ScrollManager
-  __jumpList?: PositionHistory
   __changeList?: PositionHistory
   __swrap?: typeof swrap
   __utils?: typeof utils
@@ -142,6 +148,7 @@ export default class VimState {
   __inputGrabListener?: ((key: Key) => boolean) | null
   __leapInput?: InputProvider
   __occurrenceSearchProvider?: OccurrenceSearchProvider
+  __jumpNavigator?: JumpNavigator
   __macros?: Record<string, Key[]>
 
   // Proxy propperties and methods
@@ -187,7 +194,6 @@ export default class VimState {
   get cursorStyleManager (): CursorStyleManager { return this.__cursorStyleManager || (this.__cursorStyleManager = this.load('./cursor-style-manager')) } // prettier-ignore
   get sequentialPasteManager (): SequentialPasteManager { return this.__sequentialPasteManager || (this.__sequentialPasteManager = this.load('./sequential-paste-manager')) } // prettier-ignore
   get scrollManager (): ScrollManager { return this.__scrollManager || (this.__scrollManager = this.load('./scroll-manager')) } // prettier-ignore
-  get jumpList (): PositionHistory { return this.__jumpList || (this.__jumpList = new PositionHistory(this)) } // prettier-ignore
   get changeList (): PositionHistory { return this.__changeList || (this.__changeList = new PositionHistory(this)) } // prettier-ignore
   get swrap (): typeof swrap { return this.__swrap || (this.__swrap = this.load('./selection-wrapper', false)) } // prettier-ignore
   get utils (): typeof utils { return this.__utils || (this.__utils = this.load('./utils', false)) } // prettier-ignore
@@ -305,6 +311,14 @@ export default class VimState {
   // / Esc `:noh` would silently stop clearing once you'd run any operator).
   onDidRequestClearSearchHighlight (fn: EventCallback): DisposableType { return this.emitter.on('did-request-clear-search-highlight', fn) } // prettier-ignore
   emitDidRequestClearSearchHighlight (): void { this.emitter.emit('did-request-clear-search-highlight') } // prettier-ignore
+
+  // A discrete navigation left `point` behind — the editor's jump-hint bus into the
+  // single workspace jump engine (GlobalJumpList), which owns the ring. Fed by vim
+  // jump motions (motion.ts) and by the host's `*`/`#`/`n`/`N` search (TextEditor),
+  // for jumps too short for the caret-distance detector to catch. Lifetime-scoped
+  // (host wires it once), not per-operation `subscribe`. See docs/text-editor/vim-mode.md.
+  onDidRecordJump (fn: EventCallback): DisposableType { return this.emitter.on('did-record-jump', fn) } // prettier-ignore
+  emitDidRecordJump (point: Point): void { this.emitter.emit('did-record-jump', point) } // prettier-ignore
 
   // Events
   // -------------------------
@@ -743,6 +757,17 @@ export default class VimState {
   /** Wire the occurrence↔search bridge — the host's SearchController, in practice. */
   setOccurrenceSearchProvider (provider: OccurrenceSearchProvider): void {
     this.__occurrenceSearchProvider = provider
+  }
+
+  /** Wire the workspace jump navigator — the host routes `vim-mode-plus:jump-backward`
+   *  / `-forward` to the single GlobalJumpList so there is no separate per-editor ring. */
+  setJumpNavigator (navigator: JumpNavigator): void {
+    this.__jumpNavigator = navigator
+  }
+
+  /** Step the workspace jump list (no-op without a host, e.g. a headless buffer). */
+  jumpNavigate (direction: 'backward' | 'forward'): void {
+    this.__jumpNavigator?.[direction]()
   }
 
   /** Arm occurrence from the cursor (DWIM: active-search-if-on-hit, else cursor

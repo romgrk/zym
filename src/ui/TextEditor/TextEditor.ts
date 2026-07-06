@@ -782,13 +782,19 @@ export class TextEditor implements DocumentHost {
       // n/N outside the bar repeat the last search (no-op when none is active).
       'editor:search-next': {
         didDispatch: () => {
-          if (this.search.hasActiveSearch) this.search.next();
+          if (!this.search.hasActiveSearch) return;
+          const from = this.editorModel.getCursorBufferPosition();
+          this.search.next();
+          this.recordSearchJump(from);
         },
         description: 'Repeat the search forward',
       },
       'editor:search-previous': {
         didDispatch: () => {
-          if (this.search.hasActiveSearch) this.search.previous();
+          if (!this.search.hasActiveSearch) return;
+          const from = this.editorModel.getCursorBufferPosition();
+          this.search.previous();
+          this.recordSearchJump(from);
         },
         description: 'Repeat the search backward',
       },
@@ -841,6 +847,13 @@ export class TextEditor implements DocumentHost {
     (this.vimState as unknown as VimLeapBridge).setLeapInput?.((req) => {
       void this.leap.start(req);
     });
+
+    // `vim-mode-plus:jump-backward`/`-forward` walk the single workspace jump list;
+    // route them to the same command GlobalJumpList registers (ctrl-o / ctrl-i).
+    this.vimState.setJumpNavigator({
+      backward: () => zym.commands.dispatch(this.view, 'workspace:jump-backward'),
+      forward: () => zym.commands.dispatch(this.view, 'workspace:jump-forward'),
+    });
   }
 
   /** The word under (or next on the line after) the cursor, or null when none —
@@ -863,10 +876,23 @@ export class TextEditor implements DocumentHost {
   private searchWordUnderCursor(reverse: boolean, wholeWord: boolean): void {
     const word = this.wordAtOrAfterCursor();
     if (!word) return;
+    const from = this.editorModel.getCursorBufferPosition();
     this.search.searchWord(word, reverse, wholeWord);
     // Mirror the searched word into the search bar so its value tracks the active
     // search, like vim setting the `/` register on `*`/`#`.
     this.searchBar.reflectQuery(word);
+    this.recordSearchJump(from);
+  }
+
+  /** Hint the jump list that a search navigation (`*`/`#`/`n`/`N`) departed `from`,
+   *  but only if it actually moved the caret. Search is a jump at any distance
+   *  (vim treats it so); without this hint a match nearer than
+   *  `jumpListMinLines` would slip past the caret-distance detector and `ctrl-o`
+   *  wouldn't return to before the search. */
+  private recordSearchJump(from: Point): void {
+    if (!this.editorModel.getCursorBufferPosition().isEqual(from)) {
+      this.vimState.emitDidRecordJump(from);
+    }
   }
 
   /** `g o` arm from the cursor: a *visible* search wins (you can see the amber, so
@@ -2507,11 +2533,11 @@ export class TextEditor implements DocumentHost {
     return this.editorModel.getCursorBufferPosition();
   }
 
-  /** Fires with the departed buffer position each time the vim layer records a
-   *  jump-list entry (see vim/position-history.ts) — feeds the workspace-wide
-   *  jump list (GlobalJumpList). */
+  /** Fires with the departed buffer position each time a vim jump motion runs —
+   *  the semantic-jump hint the workspace-wide jump list (GlobalJumpList) folds in
+   *  alongside its own cursor-distance detection. */
   onDidRecordJump(fn: (point: Point) => void): Disposable {
-    return this.vimState.jumpList.onDidAdd(fn);
+    return this.vimState.onDidRecordJump(fn);
   }
 
   /** The tab/window title for this editor (file basename, or "Untitled"). */

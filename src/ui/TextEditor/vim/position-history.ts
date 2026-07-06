@@ -1,14 +1,13 @@
-// PositionHistory — the backing store for the per-editor jump list (the
-// vim-mode-plus:jump-backward/-forward commands, unbound by default) and the
-// change list (g; / g,). Both are an ordered ring of buffer positions, oldest →
-// newest, held as markers so they track edits, plus an `index` cursor used while
-// navigating. `index === entries.length` means "at the present" (not navigating).
+// PositionHistory — the backing store for the change list (g; / g,): an ordered
+// ring of buffer positions, oldest → newest, held as markers so they track edits,
+// plus an `index` cursor used while navigating. `index === entries.length` means
+// "at the present" (not navigating). (The jump list no longer uses this — jumps
+// live in the single workspace ring, GlobalJumpList; see docs/text-editor/vim-mode.md.)
 //
 // This isn't an upstream vim-mode-plus module (vmp leans on Atom for jumps); it's
-// a zym addition that the motion layer and the misc-command ops drive.
+// a zym addition that the misc-command change-list ops drive.
 import { Point } from '../../../text/Point.ts'
 import type { PointLike } from '../../../text/Point.ts'
-import { Emitter, type Disposable } from '../../../util/eventKit.ts'
 import type VimState from './vim-state.ts'
 import type { EditorModel } from '../EditorModel.ts'
 import type { MarkerLayer } from '../MarkerLayer.ts'
@@ -23,7 +22,6 @@ export default class PositionHistory {
   markerLayer: MarkerLayer | null
   entries: Marker[]
   index: number
-  private readonly emitter = new Emitter()
 
   constructor (vimState: VimState) {
     this.vimState = vimState
@@ -55,12 +53,6 @@ export default class PositionHistory {
     return (this.markerLayer!.markBufferPosition as any)(this.editor.clipBufferPosition(point), {invalidate: 'never'})
   }
 
-  /** Fires with the buffer position each time an entry is recorded via `add` —
-   *  the seam the workspace-wide jump list aggregates per-editor jumps through. */
-  onDidAdd (fn: (point: Point) => void): Disposable {
-    return this.emitter.on('did-add', fn as (value?: unknown) => void)
-  }
-
   // Append `point` as the newest entry and return to "present". Drops any forward
   // history left by navigation and collapses a consecutive same-row entry, so a
   // line appears once in a row (Vim's jump/change lists both dedup by line).
@@ -73,7 +65,6 @@ export default class PositionHistory {
     this.entries.push(this.mark(point as Point))
     while (this.entries.length > MAX_ENTRIES) this.entries.shift()!.destroy()
     this.index = this.entries.length
-    this.emitter.emit('did-add', point)
   }
 
   // jump-backward / g; — step `count` entries toward older positions. On the first step

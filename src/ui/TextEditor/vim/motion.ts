@@ -72,10 +72,10 @@ class Motion extends Base {
 
       this.vimState.mark.set('`', originalPosition)
       this.vimState.mark.set("'", originalPosition)
-      // Record the jump for the per-editor and workspace-wide jump lists. Only
-      // for true motions — operator
-      // targets (e.g. `d}`) don't populate the jump list in Vim.
-      if (!this.operator) this.vimState.jumpList.add(originalPosition)
+      // Hint the workspace jump engine (GlobalJumpList) that this was a jump, so
+      // sub-threshold semantic jumps (`}`, `%`) it can't infer from distance still
+      // record. Only true motions — operator targets (`d}`) never populate it.
+      if (!this.operator) this.vimState.emitDidRecordJump(originalPosition)
     }
   }
 
