@@ -132,14 +132,20 @@ function importClaudeAcpOptions(entry: AcpProfileEntry): void {
   ];
 }
 
-/** Gemini CLI: the approval mode is a launch flag; models drift too fast to
- *  hardcode (configure them on the profile entry: `{ "value": "...", "args":
- *  ["-m", "..."] }`). */
+/** Gemini CLI: its approval modes are advertised as ACP session modes
+ *  (`autoEdit` / `yolo` / `plan`, verified against gemini 0.49), so — like the
+ *  claude adapter — they ride `session/set_mode` after setup (empty `args`,
+ *  ids matching the advertised modes). The old `--approval-mode` argv flag is
+ *  avoided: its snake_case values (`auto_edit`) don't match the camelCase mode
+ *  ids, so the handshake's ask-first forcing silently reset the session back to
+ *  `default`. Models drift too fast to hardcode (configure them on the profile
+ *  entry: `{ "value": "...", "args": ["-m", "..."] }`). */
 function importGeminiOptions(entry: AcpProfileEntry): void {
   entry.permissionModes ??= [
-    DEFAULT_OPTION,
-    { value: 'auto_edit', label: 'auto_edit', detail: 'auto-accept edits', args: ['--approval-mode', 'auto_edit'] },
-    { value: 'yolo', label: 'yolo', detail: 'auto-approve everything', args: ['--approval-mode', 'yolo'] },
+    { ...DEFAULT_OPTION, detail: 'ask before edits' },
+    { value: 'autoEdit', label: 'autoEdit', detail: 'auto-accept edits', args: [] },
+    { value: 'yolo', label: 'yolo', detail: 'auto-approve everything', args: [] },
+    { value: 'plan', label: 'plan', detail: 'read-only planning', args: [] },
   ];
 }
 

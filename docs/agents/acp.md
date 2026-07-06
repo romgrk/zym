@@ -76,9 +76,12 @@ unabsorbed, disposing a session crashes zym).
   permission. When the agent advertises a mode with id `default`, zym switches
   to it right after session setup, so approvals are always exercised.
 - `setPermissionMode` (the footer dropdown / `shift-tab`) only maps when the
-  agent advertises a mode whose id *is* a zym `AgentMode` (the Claude adapter's
-  are; Gemini's `ask`/`architect`/`code` are not — the dropdown is inert there,
-  by design, until modes are surfaced generically).
+  agent advertises a mode whose id *is* a zym `AgentMode`. The Claude adapter's
+  ids (`default`/`acceptEdits`/`plan`/`bypassPermissions`/`auto`/`dontAsk`) all
+  are. Gemini advertises `default`/`autoEdit`/`yolo`/`plan` (verified against
+  gemini 0.49): `default` and `plan` map to the footer indicator; `autoEdit` /
+  `yolo` don't (not zym `AgentMode`s) but are still switchable via the generic
+  mode dropdown (`getModeState`) and applied over `session/set_mode`.
 
 ## Configuration
 
@@ -92,10 +95,16 @@ unabsorbed, disposing a session crashes zym).
   options**: the claude adapter gets zym's claude model list (applied via
   `_meta.claudeCode.options.model` on session/new — no argv flags exist) and
   its session modes (applied via `session/set_mode` after setup, replacing the
-  blanket ask-first forcing); gemini gets `--approval-mode` choices. A
-  configured list on the entry wins over importing. Protocol-applied
-  selections (model/mode) don't survive a restart — argv-encoded ones do
-  (argv is what serializes).
+  blanket ask-first forcing); gemini gets its advertised session modes
+  (`autoEdit`/`yolo`/`plan`), also applied via `session/set_mode` (empty
+  `args`). The old `--approval-mode` argv import was dropped: its snake_case
+  values (`auto_edit`) don't match gemini's camelCase mode ids, so the
+  ask-first forcing silently reset the chosen mode back to `default` (verified).
+  A configured list on the entry wins over importing — a user who wants a
+  restart-surviving mode configures the argv explicitly (`{ "value": "yolo",
+  "args": ["--approval-mode", "yolo"] }`; note `yolo`/`default` happen to match
+  both spellings). Protocol-applied selections (model/mode) don't survive a
+  restart — argv-encoded ones do (argv is what serializes).
 - `agent.implementation: "acp"` — make `agent:new` default to the leading ACP
   profile (or `ZYM_AGENT=acp zym` per-launch).
 - `agent.acp.command` — legacy single argv, superseded by profiles; when set

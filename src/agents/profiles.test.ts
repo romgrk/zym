@@ -81,11 +81,12 @@ test('defaultProfileFor picks the first profile of the kind', () => {
 
 test('recognized agents import their launch options', () => {
   const [, gemini, claudeAcp] = listAgentProfiles();
-  // gemini: approval mode is a launch flag; models are left to configuration.
+  // gemini: approval modes ride session/set_mode (advertised mode ids, no argv);
+  // models are left to configuration.
   assert.equal(gemini.id, 'acp:gemini');
   assert.equal(gemini.models, undefined);
-  assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'auto_edit', 'yolo']);
-  assert.deepEqual(gemini.permissionModes?.[2].args, ['--approval-mode', 'yolo']);
+  assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'autoEdit', 'yolo', 'plan']);
+  assert.ok(gemini.permissionModes!.every((o) => o.args.length === 0));
   // claude adapter: models over _meta, modes over session/set_mode — no argv args.
   assert.equal(claudeAcp.id, 'acp:claude-acp');
   assert.equal(claudeAcp.models?.[0].value, 'default');
@@ -114,6 +115,9 @@ test('profileCommand appends the chosen options’ args; default appends nothing
     name: 'gemini',
     command: ['gemini', '--acp'],
     models: [{ value: 'gemini-2.5-pro', args: ['-m', 'gemini-2.5-pro'] }],
+    // A user who prefers argv-encoded (restart-surviving) modes over the
+    // protocol default configures the args explicitly (suppresses importing).
+    permissionModes: [{ value: 'yolo', args: ['--approval-mode', 'yolo'] }],
   }]);
   const [, gemini] = listAgentProfiles();
   assert.deepEqual(
