@@ -294,8 +294,12 @@ open-changes), mirroring FileTree; hover action buttons on rows.
 **Rename** — `AgentTerminal.rename()` pins a display name over the CLI's
 reported title (`renamed` reports whether pinned); `agent:rename` prompts via
 the picker (the `R` key in the list). The `acp` kind also handles a typed
-**`/rename`** client-side (display-only; most ACP agents re-title sessions
-themselves via `session_info_update`).
+**`/rename`** client-side (display-only). Most ACP agents also emit an evolving
+**topic** (`session_info_update.title`) as the conversation shifts; that is
+**not** the name — it's surfaced as the agent-sidebar header **subtitle**
+(`Agent.topic` / `onDidChangeTopic`, off the churning list/tab name), and only
+the *first* one seeds the stable name (once) when nothing else has named the
+session. A pinned/auto name still wins.
 
 **Auto-name** — an optional one-shot LLM names a session from its task. A
 **one-shot agent** (`src/agents/oneshot.ts`: `OneShotAgent` interface +

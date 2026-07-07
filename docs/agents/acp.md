@@ -69,7 +69,7 @@ apply there.
 | `available_commands_update` | `init` re-emit → slash-command completion |
 | `current_mode_update` / `session/set_mode` | `mode` (only ids that are zym `AgentMode`s map; below) |
 | `session/new` `configOptions` + `config_option_update` + set-response | `config-options` → the model-menu popover's generic option controls (model / effort / …; the `mode` category is dropped — it rides the mode channel above) |
-| `session_info_update.title` | `session-name` (display-only, never persisted) |
+| `session_info_update.title` | `topic` (evolving; the sidebar-header subtitle, never persisted — seeds the stable name once) |
 | `session/cancel` (notify) | ← `interrupt()` (a pending permission resolves `cancelled`, per spec) |
 | `fs/read_text_file` / `fs/write_text_file` | ← served from the injected `AcpFsHost` (the window's Document registry; below) |
 | `terminal/create` / `output` / `wait_for_exit` / `kill` / `release` | ← zym-owned command execution (`acp/terminals.ts`; live terminals wear the monitor surface — below) |

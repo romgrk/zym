@@ -202,6 +202,12 @@ export class AgentController {
     agentSubs.add(new Disposable(agent.onTitleChange(() => {
       if (this.activeAgent === agent) this.d.agentSidebar.setTitle(agent.title);
     })));
+    // The agent's live topic (ACP session_info_update) drives the sidebar header
+    // subtitle for the active agent — kept off the churning name/list.
+    const topicUnsub = agent.onDidChangeTopic?.(() => {
+      if (this.activeAgent === agent) this.d.agentSidebar.setTopic(agent.topic ?? null);
+    });
+    if (topicUnsub) agentSubs.add(new Disposable(topicUnsub));
     // Notify when the agent needs attention while the user isn't looking at it.
     let previousStatus = agent.status;
     agentSubs.add(new Disposable(agent.onDidChangeStatus(() => {

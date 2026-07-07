@@ -21,7 +21,7 @@
  *   usage_update                     → context + result (context-window gauge, cost)
  *   available_commands_update        → init (slash-command completion)
  *   current_mode_update / set_mode   → mode (generic mode state; see getModeState)
- *   session_info_update.title        → session-name (display-only)
+ *   session_info_update.title        → topic (evolving; sidebar subtitle, seeds name once)
  *   session/load (loadSession cap)   → history replay between onReplay(true/false)
  *   unstable_forkSession (fork cap)  → branch (fresh session off the same context)
  *   session/cancel (notify)          ← interrupt() (pending permission/question resolve cancelled)
@@ -709,7 +709,7 @@ export class AcpSession implements ConversationSession {
   onQuestion(cb: (r: QuestionRequest) => void): Disposable { return this.emitter.on('question', cb as (v?: unknown) => void); }
   onPlan(cb: (m: { entries: PlanEntry[] }) => void): Disposable { return this.emitter.on('plan', cb as (v?: unknown) => void); }
   onFileEdited(cb: (m: { path: string }) => void): Disposable { return this.emitter.on('file-edited', cb as (v?: unknown) => void); }
-  onSessionName(cb: (m: { name: string | null }) => void): Disposable { return this.emitter.on('session-name', cb as (v?: unknown) => void); }
+  onTopic(cb: (m: { topic: string | null }) => void): Disposable { return this.emitter.on('topic', cb as (v?: unknown) => void); }
   onReplay(cb: (m: { active: boolean }) => void): Disposable { return this.emitter.on('replay', cb as (v?: unknown) => void); }
   onConfigOptions(cb: () => void): Disposable { return this.emitter.on('config-options', cb as (v?: unknown) => void); }
 
@@ -761,7 +761,7 @@ export class AcpSession implements ConversationSession {
         this.onUsage(update);
         return;
       case 'session_info_update':
-        if (update.title !== undefined) this.emitter.emit('session-name', { name: update.title ?? null });
+        if (update.title !== undefined) this.emitter.emit('topic', { topic: update.title ?? null });
         return;
       case 'config_option_update':
         // The agent pushed a new full config-option set (some agents echo it on

@@ -349,9 +349,14 @@ export class AgentConversation implements Agent {
   private readonly permissionModeHandlers: Array<() => void> = [];
   // A user-pinned override (`agent:rename`); wins over everything when set.
   private _displayName: string | null = null;
-  // Claude's session name — set by the local `/rename` command (and seeded from the
-  // transcript on resume). Mirrors AgentTerminal._sessionName.
+  // The stable session name — set by the local `/rename` command, auto-naming, or
+  // seeded ONCE from the agent's first reported topic (see the onTopic wiring),
+  // so it doesn't churn as the topic evolves. Mirrors AgentTerminal._sessionName.
   private _sessionName: string | null = null;
+  // The agent's live, evolving topic (ACP session_info_update.title) — what the
+  // conversation is currently about. NOT the name: shown as the agent-sidebar header's
+  // subtitle, never persisted; the first non-empty one also seeds `_sessionName`.
+  private _topic: string | null = null;
   // A transient, in-app-only title (never persisted): the "…" placeholder shown
   // while auto-naming runs. Wins over the persisted names while set; cleared on
   // completion (success → the new name; failure → reverts to the previous name).
@@ -370,6 +375,7 @@ export class AgentConversation implements Agent {
   private readonly statusHandlers: Array<() => void> = [];
   private readonly fileHandlers: Array<() => void> = [];
   private readonly titleHandlers: Array<() => void> = [];
+  private readonly topicHandlers: Array<() => void> = [];
   private readonly attentionHandlers: Array<() => void> = [];
   private readonly worktreeHandlers: Array<(cwd: string) => void> = [];
 
@@ -625,6 +631,9 @@ export class AgentConversation implements Agent {
   // then a pinned name (`agent:rename`), then Claude's session name (`/rename` /
   // resumed transcript title), then the default. Mirrors AgentTerminal.title.
   get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? DEFAULT_TITLE; }
+  /** The agent's live topic (ACP session_info_update.title), shown as the sidebar
+   *  header's subtitle; null when the agent has reported none. */
+  get topic(): string | null { return this._topic; }
   /** The kind this conversation hosts — read by the controller's restart/branch paths. */
   get agentKind(): AgentKind { return 'acp'; }
   get status(): AgentStatus { return this._status; }
@@ -722,6 +731,7 @@ export class AgentConversation implements Agent {
     this.boundActions = controller;
   }
   onTitleChange(cb: () => void): () => void { return push(this.titleHandlers, cb); }
+  onDidChangeTopic(cb: () => void): () => void { return push(this.topicHandlers, cb); }
   onDidChangeAttention(cb: () => void): () => void { return push(this.attentionHandlers, cb); }
   onDidChangePermissionMode(cb: () => void): () => void { return push(this.permissionModeHandlers, cb); }
   onDidChangeWorktree(cb: (cwd: string) => void): () => void { return push(this.worktreeHandlers, cb); }
@@ -995,9 +1005,19 @@ export class AgentConversation implements Agent {
       // The agent's generic config options changed (set or a current value) — rebuild
       // the footer controls (options are interdependent, so refetch the whole set).
       this.session.onConfigOptions?.(() => this.refreshConfigOptions()),
-      // A session-reported title (ACP session_info_update) behaves like a `/rename`
-      // for display, but is never persisted; pinned/transient names still win.
-      this.session.onSessionName?.(({ name }) => { this._sessionName = name; this.emitTitle(); }),
+      // A session-reported title (ACP session_info_update) is an evolving *topic*, not
+      // a name: it feeds `_topic` (the sidebar header's subtitle), never persisted. The
+      // FIRST non-empty one also seeds the stable `_sessionName` once (when nothing has
+      // named the session yet), so the list/tab get a meaningful name that then stops
+      // moving as the topic keeps evolving. A pinned/auto name still wins.
+      this.session.onTopic?.(({ topic }) => {
+        this._topic = topic;
+        if (topic && this._sessionName === null && this._displayName === null) {
+          this._sessionName = topic;
+          this.emitTitle();
+        }
+        this.emitTopic();
+      }),
       // An async history replay (ACP session/load): rows render statically and
       // edits seed silently while active; the resume divider lands *after* the
       // restored history, right where the live continuation begins.
@@ -1110,6 +1130,7 @@ export class AgentConversation implements Agent {
   }
 
   private emitTitle(): void { for (const h of this.titleHandlers) h(); }
+  private emitTopic(): void { for (const h of this.topicHandlers) h(); }
   private emitAttention(): void { for (const h of this.attentionHandlers) h(); }
 
   // --- tasks panel (TaskCreate/TaskUpdate) ------------------------------------

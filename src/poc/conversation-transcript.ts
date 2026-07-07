@@ -196,7 +196,7 @@ class FakeSession implements ConversationSession {
   onMonitorUpdate(cb: (m: { id: string }) => void): Disposable { return this.on2('monitor-update', cb); }
   onQuestion(cb: (r: QuestionRequest) => void): Disposable { return this.on2('question', cb); }
   onPlan(cb: (m: { entries: import('../agents/session.ts').PlanEntry[] }) => void): Disposable { return this.on2('plan', cb); }
-  onSessionName(cb: (m: { name: string | null }) => void): Disposable { return this.on2('session-name', cb); }
+  onTopic(cb: (m: { topic: string | null }) => void): Disposable { return this.on2('topic', cb); }
   onConfigOptions(cb: () => void): Disposable { return this.on2('config-options', () => cb()); }
 
   // --- scene machinery --------------------------------------------------------
@@ -285,8 +285,12 @@ class FakeSession implements ConversationSession {
       await this.stream("Here's a tour of the transcript so you can iterate on the styling. I'll read a file, make an edit, run a shell command, kick off a subagent, and watch a process — each renders as its own row.\n\n");
       await this.stream('A short list, to check prose rhythm:\n\n- streaming markdown\n- tool rows with a collapsible detail\n- a fenced code block below\n\n');
       await this.stream('```ts\nfunction greet(name: string) {\n  return `hello, ${name}`;\n}\n```\n\n');
-      await this.stream('The footer carries the **permission-mode dropdown** and, right after it, a **"…" overflow menu** with the model / effort / fast config options — open it to see them.\n\n');
+      await this.stream('The footer carries the **permission-mode dropdown** and the **model/context gauge** — click the gauge to open its popover, where the model / effort / fast config options sit above the token breakdown.\n\n');
       this.emitter.emit('context', this.usage(38000));
+      // The agent's first reported topic (ACP session_info_update): it seeds the stable
+      // name (shown in the sidebar list/header) once, then later updates only move the
+      // header subtitle — see the second emit near the end.
+      this.emitter.emit('topic', { topic: 'transcript tour' });
 
       // Read (clickable file row — boilerplate result is suppressed).
       await wait(250);
@@ -429,8 +433,9 @@ class FakeSession implements ConversationSession {
         { id: 'open-app', label: 'Open the app', command: 'pnpm start', terminal: true },
       ] });
 
-      // A session title (ACP session_info_update) — display-only, never persisted.
-      this.emitter.emit('session-name', { name: 'transcript tour' });
+      // The topic evolves (a later ACP session_info_update): the stable name stays
+      // 'transcript tour', but the agent-sidebar header subtitle now shows this.
+      this.emitter.emit('topic', { topic: 'polishing the footer redesign' });
 
       // Question card (AskUserQuestion): REPLACES the input. A SINGLE request carrying
       // several questions, so the one card demos every option through its view-switcher:
@@ -519,6 +524,10 @@ app.on('activate', () => {
     const sidebar = new AgentSidebar({ onOpenChanges: (a) => console.log('[POC] open changes:', a.title) });
     sidebar.addAgent(agent.root);
     sidebar.show(agent);
+    // AppWindow's AgentController normally forwards topic changes to the header
+    // subtitle; the POC has no controller, so wire it directly (unsub discarded — the
+    // agent + sidebar are torn down together on window close).
+    void agent.onDidChangeTopic(() => sidebar.setTopic(agent.topic));
 
     const window = new Adw.ApplicationWindow({ application: app });
     window.setName('AppWindow'); // so the --t-* theme CSS variables resolve

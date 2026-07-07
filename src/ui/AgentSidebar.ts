@@ -127,17 +127,25 @@ export class AgentSidebar {
   show(agent: Agent): void {
     if (agent.root.getParent() === this.stack) this.stack.setVisibleChild(agent.root);
     this.title.setTitle(agent.title);
+    this.setTopic(agent.topic ?? null);
     this.setActiveAgent(agent);
   }
 
   /** No agent is shown (the user workbench) — drop the edited-files tracking. */
   clearActive(): void {
+    this.title.setSubtitle('');
     this.setActiveAgent(null);
   }
 
   /** Update the header title (the active agent was renamed). */
   setTitle(title: string): void {
     this.title.setTitle(title);
+  }
+
+  /** Update the header subtitle to the active agent's live topic. Hidden while empty
+   *  or identical to the name (a first topic that just seeded the name isn't echoed). */
+  setTopic(topic: string | null): void {
+    this.title.setSubtitle(topic && topic !== this.title.getTitle() ? topic : '');
   }
 
   // Point the header (edited-files button) at `agent`, swapping the file-change

@@ -163,8 +163,8 @@ export interface ConfigOption {
  * - `onPlan` — ACP's execution plan (full replace per update).
  * - `onFileEdited` — protocols that report edited paths directly (ACP tool-call
  *   locations); the widget also derives edits from claude-named tool inputs.
- * - `onSessionName` — protocols that carry a session title (ACP
- *   `session_info_update`); never persisted by the widget.
+ * - `onTopic` — protocols that report an evolving conversation topic (ACP
+ *   `session_info_update.title`); shown as the sidebar subtitle, never persisted.
  *
  * (`getSubagent`/`getMonitor` are required but may always return undefined; the
  * subagent/monitor views only act on ids the session itself surfaced.)
@@ -255,8 +255,11 @@ export interface ConversationSession {
   onPlan?(cb: (m: { entries: PlanEntry[] }) => void): Disposable;
   /** The agent edited a file at `path` (absolute). */
   onFileEdited?(cb: (m: { path: string }) => void): Disposable;
-  /** The agent reported a session title (shown, never persisted by the widget). */
-  onSessionName?(cb: (m: { name: string | null }) => void): Disposable;
+  /** The agent reported an evolving conversation *topic* (ACP
+   *  `session_info_update.title`) — what it's currently about, not a stable name.
+   *  The widget shows it as the sidebar-header subtitle (and seeds the name once
+   *  from the first); never persisted. */
+  onTopic?(cb: (m: { topic: string | null }) => void): Disposable;
   /** A resumed conversation's history is being replayed into the transcript
    *  (`active` true → rows render statically, edits seed silently; false →
    *  live again). Driven by ACP `session/load`. */

@@ -110,6 +110,11 @@ export interface Agent {
    *  (like the terminal) that contribute none. */
   readonly headerWidgets?: Widget[];
   readonly title: string;
+  /** A live, evolving "topic" the agent reports for the conversation (ACP
+   *  `session_info_update.title`) — what it's currently about, distinct from the
+   *  stable `title`/name. Shown as the agent-sidebar header's subtitle. Optional:
+   *  not every kind has one (the terminal's OSC title is its name, not a topic). */
+  readonly topic?: string | null;
   readonly status: AgentStatus;
   readonly permissionMode: AgentMode;
   readonly changedFiles: string[];
@@ -125,6 +130,8 @@ export interface Agent {
   readonly unannouncedWorktree: string | null;
 
   onTitleChange(callback: () => void): () => void;
+  /** Fires when `topic` changes (paired with the optional `topic`). */
+  onDidChangeTopic?(callback: () => void): () => void;
   onDidChangeStatus(callback: () => void): () => void;
   onDidChangePermissionMode(callback: () => void): () => void;
   onDidChangeFiles(callback: () => void): () => void;
