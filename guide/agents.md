@@ -21,18 +21,18 @@ key or per-launch with the *agent* dropdown in the launcher:
 | Kind | What it is |
 | ---- | ---------- |
 | `claude-tui`  | Claude Code's own terminal UI in an embedded terminal (default). |
-| `acp`         | Any [Agent Client Protocol](https://agentclientprotocol.com) agent rendered as a native conversation — message bubbles, tool rows, diff previews, native permission prompts, subagent pages, plans. E.g. Gemini CLI (`["gemini", "--acp"]`) or Claude Code via its adapter (`["npx", "-y", "@agentclientprotocol/claude-agent-acp"]`). |
+| `acp`         | Any [Agent Client Protocol](https://agentclientprotocol.com) agent rendered as a native conversation — message bubbles, tool rows, diff previews, native permission prompts, subagent pages, plans. E.g. Codex (`["npx", "-y", "@agentclientprotocol/codex-acp"]`) or Claude Code via its adapter (`["npx", "-y", "@agentclientprotocol/claude-agent-acp"]`). |
 
 ACP agents are configured as named **profiles** in `agent.profiles` (each
 `{ "name", "command" }`); the launcher's agent dropdown lists them alongside
-`claude-tui`, so gemini, the Claude adapter, codex, etc. sit side by side.
-Gemini and the Claude adapter are offered out of the box. (A legacy
+`claude-tui`, so Codex, the Claude adapter, etc. sit side by side.
+**Codex and the Claude adapter are offered out of the box.** (A legacy
 `agent.acp.command`, if set, still appears as the first profile.)
 
 The launcher's option dropdowns follow the chosen profile. zym **remembers what
 each agent advertised last time it ran** and offers it on the next launch: the
-Claude adapter's permission modes, model, and reasoning effort, gemini its
-approval modes. A brand-new agent shows a small built-in set until its first
+Claude adapter's permission modes, model, and reasoning effort, Codex its
+sandbox/approval modes. A brand-new agent shows a small built-in set until its first
 session fills these in. You can also switch these live in the agent's footer
 while it runs. Any profile entry can still define its own argv-based lists:
 `"models": [{ "value": "gemini-2.5-pro", "args": ["-m", "gemini-2.5-pro"] }]`

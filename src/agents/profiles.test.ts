@@ -39,10 +39,10 @@ afterEach(() => {
 
 test('defaults: the terminal kind, then the built-in acp profiles', () => {
   const profiles = listAgentProfiles();
-  assert.deepEqual(profiles.map((p) => p.id), ['claude-tui', 'acp:antigravity', 'acp:claude-acp']);
+  assert.deepEqual(profiles.map((p) => p.id), ['claude-tui', 'acp:codex', 'acp:claude-acp']);
   assert.equal(profiles[0].kind, 'claude-tui');
   assert.equal(profiles[0].command, undefined); // argv comes from buildCommand
-  assert.deepEqual(profiles[1].command, ['bunx', 'antigravity-acp']);
+  assert.deepEqual(profiles[1].command, ['npx', '-y', '@agentclientprotocol/codex-acp']);
   assert.deepEqual(profiles[2].command, ['npx', '-y', '@agentclientprotocol/claude-agent-acp']);
 });
 
@@ -68,9 +68,9 @@ test('an explicitly-set agent.acp.command leads the acp profiles', () => {
 });
 
 test('a legacy command equal to an existing profile is not duplicated', () => {
-  zym.config.set('agent.acp.command', ['bunx', 'antigravity-acp']);
+  zym.config.set('agent.acp.command', ['npx', '-y', '@agentclientprotocol/codex-acp']);
   const profiles = listAgentProfiles();
-  assert.deepEqual(profiles.map((p) => p.id), ['claude-tui', 'acp:antigravity', 'acp:claude-acp']);
+  assert.deepEqual(profiles.map((p) => p.id), ['claude-tui', 'acp:codex', 'acp:claude-acp']);
 });
 
 test('ZYM_ACP_COMMAND wins over config and leads the list', () => {
@@ -84,7 +84,7 @@ test('ZYM_ACP_COMMAND wins over config and leads the list', () => {
 test('an env command matching an existing profile is not duplicated', () => {
   process.env.ZYM_ACP_COMMAND = 'npx -y @agentclientprotocol/claude-agent-acp';
   const profiles = listAgentProfiles();
-  assert.deepEqual(profiles.map((p) => p.id), ['claude-tui', 'acp:antigravity', 'acp:claude-acp']);
+  assert.deepEqual(profiles.map((p) => p.id), ['claude-tui', 'acp:codex', 'acp:claude-acp']);
 });
 
 test('profileNameFor skips runners and flags, basenames the binary', () => {
@@ -96,18 +96,20 @@ test('profileNameFor skips runners and flags, basenames the binary', () => {
 test('defaultProfileFor picks the first profile of the kind', () => {
   const profiles = listAgentProfiles();
   assert.equal(defaultProfileFor('claude-tui', profiles).id, 'claude-tui');
-  assert.equal(defaultProfileFor('acp', profiles).id, 'acp:antigravity');
+  assert.equal(defaultProfileFor('acp', profiles).id, 'acp:codex');
 });
 
 test('recognized agents import their launch options', () => {
-  const [, antigravity, claudeAcp] = listAgentProfiles();
-  // antigravity: modes are a `mode` config option (Standard/plan/bypassPermissions),
-  // promoted into the mode channel by AcpSession and switched over
-  // session/set_config_option (no argv); models are discovered by agy per session.
-  assert.equal(antigravity.id, 'acp:antigravity');
-  assert.equal(antigravity.models, undefined);
-  assert.deepEqual(antigravity.permissionModes?.map((o) => o.value), ['default', 'plan', 'bypassPermissions']);
-  assert.ok(antigravity.permissionModes!.every((o) => o.args.length === 0));
+  const [, codex, claudeAcp] = listAgentProfiles();
+  // codex: native ACP session modes (read-only / agent default / agent-full-access),
+  // switched over session/set_mode (no argv). No `default` mode id — the pass-through
+  // `default` leaves it in its sandboxed `agent` mode. Models/effort ride the generic
+  // config-option path, discovered per session (empty cache → none seeded yet).
+  assert.equal(codex.id, 'acp:codex');
+  assert.equal(codex.models, undefined);
+  assert.equal(codex.configOptions, undefined);
+  assert.deepEqual(codex.permissionModes?.map((o) => o.value), ['default', 'read-only', 'agent-full-access']);
+  assert.ok(codex.permissionModes!.every((o) => o.args.length === 0));
   // claude adapter: modes over session/set_mode (the first-launch seed). Its model
   // list is no longer hardcoded — it's discovered as a `model` config option and
   // cached, so with an empty cache there's no models / configOptions list yet.
@@ -117,21 +119,30 @@ test('recognized agents import their launch options', () => {
   assert.deepEqual(claudeAcp.permissionModes?.map((o) => o.value), ['default', 'acceptEdits', 'plan', 'bypassPermissions']);
 });
 
+test('antigravity is still recognized when configured explicitly (back-compat)', () => {
+  zym.config.set('agent.profiles', [{ name: 'antigravity', command: ['bunx', 'antigravity-acp'] }]);
+  const [, antigravity] = listAgentProfiles();
+  // Its modes are a `mode` config option (Standard/plan/bypassPermissions), promoted
+  // into the mode channel by AcpSession and switched over session/set_config_option.
+  assert.deepEqual(antigravity.permissionModes?.map((o) => o.value), ['default', 'plan', 'bypassPermissions']);
+  assert.ok(antigravity.permissionModes!.every((o) => o.args.length === 0));
+});
+
 test('cached options seed the launcher: modes → permission, select config options → configOptions', () => {
-  writeAcpOptionsCache(['bunx', 'antigravity-acp'], {
+  writeAcpOptionsCache(['npx', '-y', '@agentclientprotocol/codex-acp'], {
     modes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO', description: 'all' }],
     configOptions: [
       { id: 'model', name: 'Model', category: 'model', kind: 'select', current: 'pro', choices: [{ value: 'pro', name: 'Pro' }, { value: 'flash', name: 'Flash' }] },
       { id: 'fast', name: 'Fast', category: 'model_config', kind: 'boolean', current: false }, // boolean → live footer only, not the launcher
     ],
   });
-  const [, antigravity] = listAgentProfiles();
-  // Cache modes replace the hardcoded seed (default/plan/bypassPermissions).
-  assert.deepEqual(antigravity.permissionModes?.map((o) => o.value), ['default', 'yolo']);
+  const [, codex] = listAgentProfiles();
+  // Cache modes replace the hardcoded seed (default/read-only/agent-full-access).
+  assert.deepEqual(codex.permissionModes?.map((o) => o.value), ['default', 'yolo']);
   // Only the `select` option seeds configOptions; the boolean is excluded.
-  assert.deepEqual(antigravity.configOptions?.map((o) => o.id), ['model']);
-  assert.equal(antigravity.configOptions?.[0].default, 'pro');
-  assert.deepEqual(antigravity.configOptions?.[0].options.map((o) => o.value), ['pro', 'flash']);
+  assert.deepEqual(codex.configOptions?.map((o) => o.id), ['model']);
+  assert.equal(codex.configOptions?.[0].default, 'pro');
+  assert.deepEqual(codex.configOptions?.[0].options.map((o) => o.value), ['pro', 'flash']);
 });
 
 test('a configured permission list wins over the cache', () => {
@@ -177,7 +188,7 @@ test('profileCommand appends the chosen options’ args; default appends nothing
 });
 
 test('acpCommand() is the leading acp profile argv', () => {
-  assert.deepEqual(acpCommand(), ['bunx', 'antigravity-acp']);
+  assert.deepEqual(acpCommand(), ['npx', '-y', '@agentclientprotocol/codex-acp']);
   zym.config.set('agent.profiles', [{ name: 'codex', command: ['codex-acp'] }]);
   assert.deepEqual(acpCommand(), ['codex-acp']);
   process.env.ZYM_ACP_COMMAND = 'gemini --experimental-acp';

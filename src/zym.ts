@@ -175,22 +175,21 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
   'agent.profiles': {
     type: 'array',
     default: [
-      { name: 'antigravity', command: ['bunx', 'antigravity-acp'] },
+      { name: 'codex', command: ['npx', '-y', '@agentclientprotocol/codex-acp'] },
       { name: 'claude-acp', command: ['npx', '-y', '@agentclientprotocol/claude-agent-acp'] },
     ],
     description:
       'Named ACP agents offered by the launcher\'s agent dropdown, each ' +
       '{ "name", "command" } (command = argv, JSON-RPC over stdio). E.g. ' +
-      '[{ "name": "antigravity", "command": ["bunx", "antigravity-acp"] }]. ' +
-      '(Antigravity requires Bun + a one-time `agy` login.) Entries may ' +
-      'also carry "models"/"permissionModes"/"efforts" launch-option ' +
-      'lists ({ "value", "label"?, "args"? } — args are appended to the ' +
-      'argv when picked); recognized agents (the claude adapter, ' +
-      'antigravity) come pre-filled.',
+      '[{ "name": "codex", "command": ["npx", "-y", "@agentclientprotocol/codex-acp"] }]. ' +
+      'Entries may also carry "models"/"permissionModes"/"efforts" ' +
+      'launch-option lists ({ "value", "label"?, "args"? } — args are ' +
+      'appended to the argv when picked); recognized agents (codex, the ' +
+      'claude adapter) come pre-filled.',
   },
   'agent.acp.command': {
     type: 'array',
-    default: ['bunx', 'antigravity-acp'],
+    default: ['npx', '-y', '@agentclientprotocol/codex-acp'],
     description:
       "Argv of the ACP agent the 'acp' kind spawns (JSON-RPC over stdio). " +
       'Superseded by agent.profiles — when set explicitly it still surfaces ' +

@@ -19,7 +19,7 @@ const PASS_THROUGH: LaunchOption[] = [{ value: 'default', label: 'default', deta
  *  `agent.implementation: "acp"`). */
 export function acpCommand(): string[] {
   const first = listAgentProfiles().find((p) => p.kind === 'acp')?.command;
-  return first ?? ['bunx', 'antigravity-acp'];
+  return first ?? ['npx', '-y', '@agentclientprotocol/codex-acp'];
 }
 
 export const acpLaunchOptions: AgentLaunchOptions = {

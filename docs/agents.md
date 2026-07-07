@@ -8,11 +8,12 @@ displayed:
   in a `Vte.Terminal` tab. Mature; live status via Claude Code hooks.
   `src/ui/AgentTerminal.ts` + `src/agents/claude-tui/session.ts`.
 - **`acp`** *(opt-in via `agent.implementation: "acp"`)* — any **Agent Client
-  Protocol** agent (Google Antigravity via `antigravity-acp`; Claude Code / Codex
-  via adapters; argv from the `agent.profiles` picker) rendered in **native GTK
-  widgets** (no terminal, no Ink/Vte repaint cost), over JSON-RPC/stdio. (The
-  free-tier Gemini CLI it once used natively was retired by Google — see
-  agents/acp.md.) Deep dive: **[agents/acp.md](agents/acp.md)**.
+  Protocol** agent (default profiles: **Codex** and **Claude Code** via their
+  adapters; Google Antigravity via `antigravity-acp` still configurable but
+  dropped from the defaults; argv from the `agent.profiles` picker) rendered in
+  **native GTK widgets** (no terminal, no Ink/Vte repaint cost), over
+  JSON-RPC/stdio. (The free-tier Gemini CLI it once used natively was retired by
+  Google — see agents/acp.md.) Deep dive: **[agents/acp.md](agents/acp.md)**.
 
 (The former `claude-sdk` kind — headless `claude -p` stream-json — was
 replaced by `acp` + the official claude-agent-acp adapter, which covers the
@@ -668,9 +669,11 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
    worktree launch flows now that the bridge rides `mcpServers` (does the agent
    actually call `set_worktree`?), and interrupt while a permission card is up.
 3. [x] **Agent profiles** — done 2026-07-05: `agent.profiles` (name + argv,
-   defaults offer antigravity + the claude adapter — the gemini default was
-   dropped 2026-07-06 when Google retired the free-tier Gemini CLI; see
-   agents/acp.md), resolved in `agents/profiles.ts`; the launcher's kind dropdown
+   defaults offer **codex** + the **claude adapter** — the gemini default was
+   dropped 2026-07-06 when Google retired the free-tier Gemini CLI, and
+   antigravity was dropped from the defaults 2026-07-07 as its `antigravity-acp`
+   adapter honors almost none of zym's client capabilities; see agents/acp.md),
+   resolved in `agents/profiles.ts`; the launcher's kind dropdown
    is a profile picker, and a legacy `agent.acp.command` / `ZYM_ACP_COMMAND`
    surfaces as the leading profile. The ACP registry manifest can seed
    suggestions later.

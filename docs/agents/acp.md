@@ -1,13 +1,31 @@
 # Agent: acp (Agent Client Protocol)
 
 The `acp` kind runs any [Agent Client Protocol](https://agentclientprotocol.com)
-agent — Google Antigravity (`bunx antigravity-acp`, wrapping the `agy` CLI),
-Claude Code and Codex via their ACP adapters — in the native conversation view
-(`AgentConversation`). ACP is "LSP for coding agents": the client (zym) spawns
-the agent as a subprocess and speaks JSON-RPC 2.0 over stdio (protocol version
-1). It replaced the former `claude-sdk` kind (headless `claude -p` stream-json,
+agent in the native conversation view (`AgentConversation`). The **default
+profiles** are **Codex** (`npx -y @agentclientprotocol/codex-acp`) and the
+**Claude Code** adapter (`@agentclientprotocol/claude-agent-acp`); Google
+Antigravity (`bunx antigravity-acp`, wrapping the `agy` CLI) is still
+configurable but dropped from the defaults — its adapter honors almost none of
+zym's client capabilities (see the Antigravity note and the bridge caveat
+below). ACP is "LSP for coding agents": the client (zym) spawns the agent as a
+subprocess and speaks JSON-RPC 2.0 over stdio (protocol version 1). It replaced
+the former `claude-sdk` kind (headless `claude -p` stream-json,
 reverse-engineered): the official claude-agent-acp adapter provides the same
 claude features over the open protocol.
+
+**Codex (default, 2026-07-07):** the `@agentclientprotocol/codex-acp` adapter
+(the one Zed ships) is a well-behaved ACP citizen — unlike antigravity it
+**forwards client-provided `mcpServers`** (so the zym bridge's `set_worktree` /
+`set_actions` reach it), serves the ACP **fs** and **terminal** capabilities,
+and raises real **`session/request_permission`** cards. It advertises native
+session modes `read-only` / `agent` (its sandboxed default — asks before
+escaping the sandbox) / `agent-full-access`, switched over `session/set_mode`;
+model + reasoning-effort + sandbox ride the generic config-option path. It has
+no `default` mode id, so zym's ask-first force (below) is a no-op for it — the
+sandboxed `agent` default is already ask-first, not a silent bypass like the
+claude adapter's `acceptEdits`. (Not yet driven end-to-end against zym — the
+capability claims are the adapter's; a QA pass on the bridge + permission flow
+is pending.)
 
 **Gemini → Antigravity (2026-07-06):** the free-tier Gemini CLI (`gemini --acp`)
 stopped working — Google's backend now rejects the old client
@@ -139,8 +157,10 @@ apply there.
 
 - `agent.profiles` — named ACP agents, each `{ "name", "command" }`; the
   launcher's agent dropdown lists them alongside `claude-tui` (resolution in
-  `agents/profiles.ts`). Defaults offer **antigravity** (`bunx antigravity-acp`)
-  and the claude adapter.
+  `agents/profiles.ts`). Defaults offer **codex** (`npx -y
+  @agentclientprotocol/codex-acp`) and the **claude adapter**; antigravity
+  (`bunx antigravity-acp`) is still recognized (its seed modes fill in) when a
+  user configures it, but is no longer a default.
 - **Per-profile launch options** — a profile entry may carry `models` /
   `permissionModes` / `efforts` lists (`{ "value", "label"?, "args"? }` or a
   bare string); the launcher shows them for that profile and appends the
@@ -216,9 +236,14 @@ config-option dropdowns (model / effort / …), negotiated per session.
   fallback for agents without `loadSession`. Agents serialize argv + session
   id and restore with their *saved* argv.
 - **zymBridge** — `session/new.mcpServers` carries the bundled bridge
-  (`set_worktree` / `set_actions` for any ACP agent), injected via
-  `acp/bridge.ts` (the Gio watcher) so `AcpSession` stays drivable from plain
-  node.
+  (`set_worktree` / `set_actions`), injected via `acp/bridge.ts` (the Gio
+  watcher) so `AcpSession` stays drivable from plain node. **It reaches an agent
+  only if that agent's adapter forwards client-provided `mcpServers`** — codex
+  (`codex-acp`) and the claude adapter do; **Antigravity's `antigravity-acp`
+  drops the field entirely** (it shells out to `agy -p`, and `agy` has no
+  client-MCP injection path — only its own on-disk `mcp_config.json`), so
+  `set_worktree` / `set_actions` never appear to it. Same story for the other
+  client capabilities antigravity ignores (fs / terminal, noted above).
 - **fs capability** — `fs/read_text_file` / `fs/write_text_file` are served
   from the window's Document registry (`acp/documentFs.ts`, injected by
   `AgentController` as an `AcpFsHost` — same pattern as the bridge): reads

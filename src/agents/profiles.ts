@@ -170,10 +170,29 @@ function importAntigravityOptions(entry: AcpProfileEntry): void {
   ];
 }
 
+/** Codex (the `@agentclientprotocol/codex-acp` adapter over OpenAI's Codex CLI):
+ *  it advertises native ACP session modes — `read-only` (planning), `agent`
+ *  (its sandboxed default, which asks before escaping the sandbox) and
+ *  `agent-full-access` (unsandboxed) — switched over `session/set_mode` (empty
+ *  `args` — protocol-applied, like the claude adapter). Its model /
+ *  reasoning-effort / sandbox knobs ride the generic config-option path,
+ *  discovered per session and cached (importCachedOptions supersedes this seed).
+ *  Codex advertises no `default` mode id, so the pass-through `default` choice
+ *  leaves it in `agent` (sandboxed, ask-first) — there is no silent-bypass
+ *  default to force away from (unlike the claude adapter's `acceptEdits`). */
+function importCodexOptions(entry: AcpProfileEntry): void {
+  entry.permissionModes ??= [
+    { ...DEFAULT_OPTION, detail: 'agent (sandboxed)' },
+    { value: 'read-only', label: 'read-only', detail: 'read-only planning', args: [] },
+    { value: 'agent-full-access', label: 'agent-full-access', detail: 'unsandboxed, auto-approve', args: [] },
+  ];
+}
+
 const isAntigravity = (t: string) => t === 'antigravity-acp' || t === 'agy-acp' || t.endsWith('/antigravity-acp') || t.endsWith('/agy-acp');
 
 function importKnownAgentOptions(entry: AcpProfileEntry): AcpProfileEntry {
   if (entry.command.some((t) => t.includes('claude-agent-acp'))) importClaudeAcpOptions(entry);
+  else if (entry.command.some((t) => t.includes('codex-acp'))) importCodexOptions(entry);
   else if (entry.command.some(isAntigravity)) importAntigravityOptions(entry);
   return entry;
 }
