@@ -248,6 +248,15 @@ agent workbench has its own) and reused across close/reopen — closing the tab
 keeps it alive for the next reveal. `#GitPanel` is the CSS/selector identity.
 (The file tree keeps the right-side dock; `git:` was previously a dock tab.)
 
+The panel `root` carries a **non-zero minimum size** (`setSizeRequest`). Its content
+is a `ScrolledWindow`, whose minimum is `0×0` (it scrolls), so the outer `Gtk.Paned`
+measured `0×0`. On **close → re-add** (the path above), if a git refresh was relaying
+out the change list at that moment, `Adw.TabView` latched that `0` and allocated the
+re-added page's bin `0×0` — the whole tab then painted **blank** (persistently, until
+an unrelated full relayout happened to run; ~4-in-5 reopens under repo activity). A
+small always-satisfied floor stops Adw from ever caching a zero page size. First opens
+and in-place reveals never hit this — only the re-add path does.
+
 ### Status viewer — `src/ui/git/GitPanel.ts`
 
 Component **`GitPanel`** (`#GitPanel`), whose `root` is an **outer vertical

@@ -239,6 +239,13 @@ export class GitPanel {
     this.root.setEndChild(this.split);
     this.root.setResizeStartChild(false);
     this.root.setShrinkStartChild(false);
+    // Give the panel a non-zero MINIMUM size. Its content is a ScrolledWindow, whose minimum is
+    // 0×0 (it can scroll), so the whole Paned measures 0×0 too. When the Git tab is closed and
+    // later re-added while a git refresh is relaying out the list, Adw.TabView latches that 0
+    // measure and allocates the re-added page's bin 0×0 — the tab then paints blank until a full
+    // relayout happens to run. A modest floor (always satisfied in a real center tab) stops Adw
+    // from ever caching a zero size. See docs/git/index.md.
+    this.root.setSizeRequest(120, 80);
 
     this.registerCommands();
     this.gitUnsub = this.git.onChange(() => this.refresh());
