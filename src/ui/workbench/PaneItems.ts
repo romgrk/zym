@@ -576,6 +576,14 @@ export class PaneItems {
   /** Show every changed file (working tree vs HEAD) as ONE continuous diff in a tab — the live,
    *  editable staging surface. */
   async openLiveDiff(): Promise<void> {
+    // Reveal an already-open live diff for this workbench instead of stacking a second one —
+    // the staging surface is effectively a singleton (built fresh, but only one shown at a time).
+    const existing = this.workbench.center.allChildren().find((w) => DiffView.forRoot(w)?.live);
+    if (existing) {
+      this.workbench.center.reveal(existing);
+      DiffView.forRoot(existing)!.focus();
+      return;
+    }
     const view = await this.buildCurrentChangesDiff(this.workbench);
     if (!view) {
       zym.notifications.addInfo('Not in a git repository'); // a clean tree still opens the diff (its empty state)

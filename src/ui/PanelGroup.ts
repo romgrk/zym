@@ -160,6 +160,12 @@ export class PanelGroup {
     return false;
   }
 
+  /** Every open child widget across all leaves, in leaf-then-tab order. Lets a caller
+   *  find an already-open tab (e.g. reveal-instead-of-reopen) without tracking one itself. */
+  allChildren(): Widget[] {
+    return this.leaves().flatMap((leaf) => leaf.panel.getChildren());
+  }
+
   /**
    * Pin `child` into the root leaf as the agent panel: a single tab in a leaf that
    * can't be split, takes no other tabs, and is never collapsed. Must be called on a

@@ -27,7 +27,10 @@ files live but doesn't add newly-changed ones — reopen to refresh.)
 - **`git:diff-current-changes`** (`space g d d`) — the working tree's changes as
   one editable, stageable diff (the staging surface). `DiffView` in editable
   mode: the new side is a live `Document`, edits write through, hunks stage with
-  `s`/`u`.
+  `s`/`u`. Only **one live diff per workbench**: re-triggering it reveals + focuses
+  the already-open tab (found by scanning `workbench.center.allChildren()` for a
+  `DiffView.forRoot(w)?.live`) rather than stacking a second one — see
+  `PaneItems.openLiveDiff`.
 - **`git:diff-current`** (`space g D`) — just the active file, working tree vs
   HEAD, on the same multibuffer surface (one file, read-only).
 - **`git:diff-commit`** (`space g d c`) / **`git:diff-branch`** (`space g d b`)
