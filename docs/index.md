@@ -237,8 +237,8 @@ an exit prompt for unsaved work. **Named sessions** (the persistence model) and
 
 Run coding agents inside zym via two interchangeable kinds — `claude-tui`
 (the CLI's terminal UI in a Vte tab, the default) and `acp` (any Agent Client
-Protocol agent — Gemini CLI natively, Claude Code / Codex via adapters —
-rendered in native GTK widgets) — over a shared workbench / list / lifecycle /
+Protocol agent — Google Antigravity via `antigravity-acp`, Claude Code / Codex
+via adapters — rendered in native GTK widgets) — over a shared workbench / list / lifecycle /
 worktree spine. The native view is typed against the `ConversationSession`
 seam (`src/agents/session.ts`); the former `claude-sdk` kind was replaced by
 `acp` + the official claude-agent-acp adapter. Root ownership lives on a

@@ -84,6 +84,7 @@ import {
   type SessionMode,
   type SessionModeState,
   type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
   type UsageUpdate,
   type WaitForTerminalExitRequest,
   type WaitForTerminalExitResponse,
@@ -225,6 +226,12 @@ export class AcpSession implements ConversationSession {
   // config_option_update all carry the full set). The `mode` category is filtered
   // out — it rides the mode channel above. Surfaced via getConfigOptions.
   private availableConfigOptions: SessionConfigOption[] = [];
+  // Set when an agent exposes its modes ONLY as a `mode` config option and no
+  // native ACP modes (Antigravity's agy-acp: no session/new modes, no
+  // session/set_mode). We then promote that option into the mode channel above,
+  // and route mode switches through session/set_config_option instead of
+  // session/set_mode. Null for agents with real ACP modes (the claude adapter).
+  private modeConfigOption: SessionConfigOption | null = null;
   // Prompts submitted before the handshake finished; flushed once the session exists.
   private readonly queued: string[] = [];
   // Whether an assistant bubble is open (a new messageId / turn end closes it).
@@ -448,11 +455,24 @@ export class AcpSession implements ConversationSession {
 
   // Replace the config-option set wholesale (every wire source — session/new, the
   // set-response, config_option_update — carries the full list). The `mode`
-  // category is dropped: it duplicates the mode channel (getModeState), which
-  // owns the footer's mode dropdown and the ask-first forcing.
+  // category is normally dropped: it duplicates the mode channel (getModeState),
+  // which owns the footer's mode dropdown and the ask-first forcing. But an agent
+  // that exposes its modes ONLY as a `mode` config option — no session/new modes,
+  // no session/set_mode (Antigravity's agy-acp) — would otherwise show no mode
+  // control at all: promote that option into the mode channel (switched over
+  // session/set_config_option, see requestSetMode). applyModes runs first, so
+  // availableModes is already populated for agents with real ACP modes.
   private applyConfigOptions(raw: SessionConfigOption[] | null): void {
-    const next = (raw ?? []).filter((o) => o.category !== 'mode' && o.id !== 'mode');
-    this.availableConfigOptions = next;
+    const all = raw ?? [];
+    const modeOption = all.find((o) => (o.category === 'mode' || o.id === 'mode') && o.type === 'select');
+    if (modeOption && (this.availableModes.length === 0 || this.modeConfigOption)) {
+      this.modeConfigOption = modeOption;
+      this.availableModes = selectChoices(modeOption).map((c) => ({
+        id: c.value, name: c.name, ...(c.description ? { description: c.description } : {}),
+      }));
+      if (typeof modeOption.currentValue === 'string') this.applyModeId(modeOption.currentValue);
+    }
+    this.availableConfigOptions = all.filter((o) => o.category !== 'mode' && o.id !== 'mode');
     this.emitter.emit('config-options');
   }
 
@@ -587,12 +607,24 @@ export class AcpSession implements ConversationSession {
     const sessionId = this._sessionId;
     if (!sessionId) return;
     const previous = this.currentModeId;
+    const configOption = this.modeConfigOption;
     this.applyModeId(modeId); // optimistic; reverted below if the agent rejects it
-    const result = await this.request((agent) => agent.request('session/set_mode', { sessionId, modeId }));
+    // A promoted `mode` config option switches over session/set_config_option
+    // (the agent has no session/set_mode); a native ACP mode over session/set_mode.
+    const result = configOption
+      ? await this.request((agent) => agent.request('session/set_config_option', { sessionId, configId: configOption.id, value: modeId }))
+      : await this.request((agent) => agent.request('session/set_mode', { sessionId, modeId }));
     if (result.isErr()) {
       if (this.exited) return;
       if (previous) this.applyModeId(previous); // undo the optimistic switch
       this.emitter.emit('error', { message: `Couldn't switch to mode “${modeId}”`, detail: requestErrorDetail(result.unwrapErr()) });
+      return;
+    }
+    // The set_config_option response carries the full option set (with the mode's
+    // new currentValue) — fold it back in so the promoted mode stays in sync.
+    if (configOption) {
+      const res = result.unwrap() as SetSessionConfigOptionResponse | undefined;
+      if (res?.configOptions) { this.applyConfigOptions(res.configOptions); this.persistOptionsCache(); }
     }
   }
 
