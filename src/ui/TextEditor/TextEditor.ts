@@ -513,7 +513,8 @@ export class TextEditor implements DocumentHost {
   private get _currentFile(): string | null {
     return this.document.currentFile;
   }
-  // Caret captured before a silent reload (so the post-load host hook restores it).
+  // Caret captured before a silent reload (so the post-load host hook restores it). Only the
+  // full-replace fallback path uses this; a minimal-splice reload preserves the caret in place.
   private pendingReloadCaret: [number, number] | null = null;
 
   // Lazy open (file mode): the file is assigned up front but its content/parse/highlight/
@@ -2392,11 +2393,23 @@ export class TextEditor implements DocumentHost {
 
   // --- DocumentHost (the active view's reactions to load/save) ---------------
 
-  /** @internal Capture the caret before a silent reload so didLoad can restore it. */
+  /** @internal Capture the caret before a full-replace reload so didLoad can restore it. */
   willReplaceContent(reload: boolean): void {
     this.pendingReloadCaret = reload
       ? ((c) => [c.row, c.column] as [number, number])(this.editorModel.getCursorBufferPosition())
       : null;
+  }
+
+  /** @internal A minimal-splice reload replaced only the changed lines, so the caret, scroll,
+   *  folds and selection are already intact — just refresh the view-side derived state that keys
+   *  off content (syntax/long-line mode, diagnostics, inlay hints, git gutter). No cursor move,
+   *  no focus grab, no scroll: that is the whole point of the splice path. */
+  didReload(content: string, path: string): void {
+    this.applyDetectedIndentation(content);
+    this.applySyntaxOrLongLineMode(content, path);
+    this.diagnostics.render();
+    this.inlayHints.scheduleRefresh();
+    this.gitGutter?.refresh();
   }
 
   /** @internal View-side setup after the document loaded content: cursor, indentation,

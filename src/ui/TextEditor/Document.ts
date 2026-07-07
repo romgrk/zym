@@ -33,6 +33,7 @@ import { Point } from '../../text/Point.ts';
 import type { LspDocument, DocumentEdit } from '../../lsp/LspManager.ts';
 import { DocumentSyntax } from '../../syntax/DocumentSyntax.ts';
 import { Screen } from './Screen.ts';
+import { diffLines } from '../../util/lineDiff.ts';
 import type { Item } from './CoordinatesMap.ts';
 import type { SyntaxProjection } from '../../syntax/SyntaxProjection.ts';
 import type { TextEditorSource } from './TextEditorSource.ts';
@@ -41,6 +42,11 @@ import type { TextIter } from './iter.ts';
 // The stable source key for this document's model in each view's Screen. A normal
 // file is single-source, so the key is arbitrary but must match the projection's segment.
 const SOURCE_KEY = 'model';
+
+// Above this many changed (non-`eq`) diff lines, a disk-change reload stops splicing line-by-line
+// and falls back to a whole-buffer `setText` (see `reloadInPlace`): a wholesale rewrite would
+// otherwise apply thousands of tiny edits (slow, and its scroll/caret preservation is moot anyway).
+const RELOAD_SPLICE_MAX_LINES = 2000;
 
 // node-gtk quirk: Gio.File instance methods are undefined on the concrete instance,
 // so reach them through the prototype (see config/load.ts).
@@ -60,6 +66,7 @@ export interface DocumentHost {
    *  apply detected indentation, and grab focus (unless `reload`). Syntax follows the
    *  view buffer's own change automatically. */
   didLoad(content: string, path: string, reload: boolean): void;
+  didReload(content: string, path: string): void;
   /** Content was written to `path`: refresh the git gutter. */
   didSave(path: string): void;
   /** Present a modal dialog parented to the view (overwrite-confirm). */
@@ -443,23 +450,97 @@ export class Document implements TextEditorSource {
 
   loadFile(path: string, opts: { silent?: boolean } = {}): void {
     try {
-      // Close the old LSP doc before replacing content (a reload re-opens with the new
-      // text). A first load — even when the path is already assigned (lazy open) — has
-      // nothing open yet, so this is gated on the content having actually been loaded.
-      if (this.contentLoaded) zym.lsp.didClose(this.lspDocument);
-      this.host?.willReplaceContent(!!opts.silent);
       const content = Fs.readFileSync(path, 'utf8');
-      this.setText(content); // re-syncs every view + clears modified
-      this.contentLoaded = true;
+      const reload = this.contentLoaded;
       this._currentFile = path;
+      if (reload && this.reloadInPlace(content)) {
+        // Reloaded by splicing in only the changed lines: every view kept its scroll, caret,
+        // folds and selection, and the model signals emitted an incremental LSP didChange. Just
+        // refresh the content-derived view state.
+        this.host?.didReload(content, path);
+      } else {
+        // First load, or a change too large to splice: replace the whole buffer and re-open the
+        // LSP doc. The whole-buffer replace resets each view, so the host restores the caret
+        // (silent reload) or places it at the top (first/manual load).
+        if (reload) zym.lsp.didClose(this.lspDocument);
+        this.host?.willReplaceContent(!!opts.silent);
+        this.setText(content); // re-syncs every view + clears modified
+        this.contentLoaded = true;
+        zym.lsp.didOpen(this.lspDocument);
+        this.host?.didLoad(content, path, !!opts.silent);
+      }
       this.diskMtimeMs = this.statMtimeMs(path);
       this.setDiskState('synced');
       this.watchFile(path);
-      zym.lsp.didOpen(this.lspDocument);
-      this.host?.didLoad(content, path, !!opts.silent);
       this.emitTitleChange();
     } catch (error) {
       this.host?.showBanner(`Could not open ${Path.basename(path)}: ${(error as Error).message}`, 'error');
+    }
+  }
+
+  /** Reload an already-open file by splicing in only its changed lines instead of replacing the
+   *  whole buffer. Each model edit is mirrored into every view by the normal reverse-sync (see the
+   *  class header), so the unchanged lines — the bulk of a typical external edit — keep their
+   *  buffer geometry: every view's scroll, caret, folds and selection stay put, where a
+   *  whole-buffer `setText` would drop and lazily re-validate the geometry and reset the scroll.
+   *  The model signals drive an incremental LSP didChange. Returns false — telling `loadFile` to
+   *  fall back to `setText` — for a wholesale rewrite (too many changed lines to splice cheaply). */
+  private reloadInPlace(newText: string): boolean {
+    const current = this.getText();
+    if (current === newText) return true; // spurious watch event (mtime touched, bytes unchanged)
+    const targetLines = newText.split('\n');
+    const ops = diffLines(current.split('\n'), targetLines);
+    let changed = 0;
+    for (const op of ops) if (op !== 'eq') changed++;
+    if (changed > RELOAD_SPLICE_MAX_LINES) return false; // too divergent → caller does a full replace
+    this.transact(() => {
+      let row = 0; // row in the (mutating) model
+      let ti = 0; // index into targetLines
+      for (const op of ops) {
+        if (op === 'eq') {
+          row++;
+          ti++;
+        } else if (op === 'del') {
+          this.deleteModelLine(row); // line removed; the next line shifts into `row`
+        } else {
+          this.insertModelLine(row, targetLines[ti]);
+          row++;
+          ti++;
+        }
+      }
+    });
+    this.model.setModified(false); // now matches disk
+    return true;
+  }
+
+  /** Delete the whole of model line `row` (its text + the newline joining it to the next). The
+   *  final line has no trailing newline, so swallow the PRECEDING one instead. Mirror of
+   *  Screen.deleteViewLine, on the model. */
+  private deleteModelLine(row: number): void {
+    const buffer = this.model;
+    const lastLine = buffer.getLineCount() - 1;
+    let start = asIter(buffer.getIterAtLine(row));
+    let end: TextIter;
+    if (row < lastLine) {
+      end = asIter(buffer.getIterAtLine(row + 1));
+    } else {
+      end = buffer.getEndIter();
+      if (row > 0) {
+        start = asIter(buffer.getIterAtLine(row));
+        start.backwardChar(); // consume the '\n' before the last line, leaving no empty row
+      }
+    }
+    buffer.delete(start, end);
+  }
+
+  /** Insert `text` as a new model line at `row` (before the line currently there, or as a new
+   *  final line when `row` is past the end). Mirror of Screen.insertViewLine, on the model. */
+  private insertModelLine(row: number, text: string): void {
+    const buffer = this.model;
+    if (row < buffer.getLineCount()) {
+      buffer.insert(asIter(buffer.getIterAtLine(row)), text + '\n', -1);
+    } else {
+      buffer.insert(buffer.getEndIter(), '\n' + text, -1); // append past the (unterminated) last line
     }
   }
 
