@@ -1,13 +1,25 @@
 # Agent: acp (Agent Client Protocol)
 
 The `acp` kind runs any [Agent Client Protocol](https://agentclientprotocol.com)
-agent — Gemini CLI natively (`gemini --acp`), Claude Code and Codex via their
-ACP adapters — in the native conversation view (`AgentConversation`). ACP is
-"LSP for coding agents": the client (zym) spawns the agent as a subprocess and
-speaks JSON-RPC 2.0 over stdio (protocol version 1). It replaced the former
-`claude-sdk` kind (headless `claude -p` stream-json, reverse-engineered): the
-official claude-agent-acp adapter provides the same claude features over the
-open protocol.
+agent — Google Antigravity (`bunx antigravity-acp`, wrapping the `agy` CLI),
+Claude Code and Codex via their ACP adapters — in the native conversation view
+(`AgentConversation`). ACP is "LSP for coding agents": the client (zym) spawns
+the agent as a subprocess and speaks JSON-RPC 2.0 over stdio (protocol version
+1). It replaced the former `claude-sdk` kind (headless `claude -p` stream-json,
+reverse-engineered): the official claude-agent-acp adapter provides the same
+claude features over the open protocol.
+
+**Gemini → Antigravity (2026-07-06):** the free-tier Gemini CLI (`gemini --acp`)
+stopped working — Google's backend now rejects the old client
+(`IneligibleTierError: … migrate to the Antigravity suite`) and moved individuals
+to **Antigravity** (`agy` CLI). `agy` doesn't speak ACP itself, so the default
+profile now points at the community **`antigravity-acp`** adapter (bin
+`agy-acp` / `antigravity-acp`; also used by the OpenAB harness, so it's the
+de-facto Antigravity ACP bridge). Caveats: it needs **Bun** installed and a
+one-time `agy` login; it spawns `agy -p <prompt>` per turn and streams by polling
+agy's SQLite conversation DB (so no interactive per-edit permission cards — modes
+are Standard / Plan / Skip-Permissions, below); `agy` is auto-downloaded from
+GitHub (`google-antigravity/antigravity-cli`) or `$AGY_BIN`.
 
 ## The seam: `ConversationSession`
 
@@ -68,7 +80,7 @@ apply there.
 | `usage_update` (`used`/`size`/`cost`) | `context` (gauge) + `result` (window, USD cost) |
 | `available_commands_update` | `init` re-emit → slash-command completion |
 | `current_mode_update` / `session/set_mode` | `mode` (only ids that are zym `AgentMode`s map; below) |
-| `session/new` `configOptions` + `config_option_update` + set-response | `config-options` → the model-menu popover's generic option controls (model / effort / …; the `mode` category is dropped — it rides the mode channel above) |
+| `session/new` `configOptions` + `config_option_update` + set-response | `config-options` → the model-menu popover's generic option controls (model / effort / …); a `mode`-category option is **promoted to the mode channel** when the agent has no native modes (antigravity), else dropped (rides the mode channel above) |
 | `session_info_update.title` | `topic` (evolving; the sidebar-header subtitle, never persisted — seeds the stable name once) |
 | `session/cancel` (notify) | ← `interrupt()` (a pending permission resolves `cancelled`, per spec) |
 | `fs/read_text_file` / `fs/write_text_file` | ← served from the injected `AcpFsHost` (the window's Document registry; below) |
@@ -89,20 +101,28 @@ apply there.
 - `setPermissionMode` (the footer dropdown / `shift-tab`) only maps when the
   agent advertises a mode whose id *is* a zym `AgentMode`. The Claude adapter's
   ids (`default`/`acceptEdits`/`plan`/`bypassPermissions`/`auto`/`dontAsk`) all
-  are. Gemini advertises `default`/`autoEdit`/`yolo`/`plan` (verified against
-  gemini 0.49): `default` and `plan` map to the footer indicator; `autoEdit` /
-  `yolo` don't (not zym `AgentMode`s) but are still switchable via the generic
-  mode dropdown (`getModeState`) and applied over `session/set_mode`. (`yolo` =
-  "auto-approve all tools" ≈ claude's `bypassPermissions`; gemini has no analog of
-  claude's classifier-driven `auto`.)
-- **A rejected `session/set_mode` is surfaced, not swallowed** (`requestSetMode`):
-  the switch is applied optimistically, but if the agent rejects it the footer
-  reverts and an error row explains why. The live case: gemini refuses its
-  *privileged* modes (`yolo` / `autoEdit`) in a folder it doesn't **trust**
-  ("Cannot enable privileged approval modes in an untrusted folder" — verified),
-  so those need the folder trusted in gemini's own settings first. Previously the
-  error was `.catch`-swallowed while zym optimistically showed the mode as active,
-  so gemini kept prompting while the footer claimed `yolo`.
+  are. Antigravity's `antigravity-acp` exposes `default` (Standard) / `plan` /
+  `bypassPermissions` — all zym `AgentMode`s, so they map to the footer indicator.
+  (The dead Gemini CLI advertised `default`/`autoEdit`/`yolo`/`plan` as native ACP
+  modes; only `default`/`plan` were zym `AgentMode`s.)
+- **Modes via the mode channel vs. a `mode` config option.** Two wire shapes reach
+  the same footer control (`getModeState`):
+  - **Native ACP modes** (`session/new.modes` + `current_mode_update`, switched
+    over `session/set_mode`) — the Claude adapter, the old Gemini CLI.
+  - **A `mode`-category *config option*** — Antigravity's `antigravity-acp`
+    advertises **no** native modes and no `session/set_mode`; it carries
+    Standard/Plan/Skip-Permissions as a `select` config option with `category:
+    "mode"`. When an agent has no native modes, `applyConfigOptions` **promotes**
+    that option into the mode channel (`availableModes` + `modeConfigOption`), and
+    `requestSetMode` routes the switch through `session/set_config_option` instead
+    of `session/set_mode` (folding the returned full option set back in). Agents
+    with real ACP modes still own the channel — their `mode` config option is
+    dropped as before.
+- **A rejected mode switch is surfaced, not swallowed** (`requestSetMode`): the
+  switch is applied optimistically, but if the agent rejects it the footer reverts
+  and an error row explains why. (Historic live case: the Gemini CLI refused its
+  *privileged* modes in an untrusted folder while zym optimistically showed the
+  mode active, so it kept prompting under a footer claiming `yolo`.)
 - **Config options** (`getConfigOptions` / `setConfigOption`) are the agent's
   *other* per-session knobs — ACP `configOptions`, a generic `select`/`boolean`
   system distinct from modes. The client opts in via `clientCapabilities.session.
@@ -110,15 +130,17 @@ apply there.
   full set on every `session/set_config_option` response and `config_option_update`
   (so the footer rebuilds wholesale — options are interdependent: on the claude
   adapter, choosing `model: sonnet` drops the `fast` toggle). The `mode` category
-  is filtered out (it duplicates the mode channel). Verified against
-  claude-agent-acp: it advertises `mode` / `model` / `effort` / `fast`; gemini 0.49
-  advertises none.
+  is filtered out of `getConfigOptions` (it rides the mode channel — either native
+  or promoted, above). Verified against claude-agent-acp: it advertises `mode` /
+  `model` / `effort` / `fast`. Antigravity advertises `mode` + `model` (models
+  discovered by `agy` per session).
 
 ## Configuration
 
 - `agent.profiles` — named ACP agents, each `{ "name", "command" }`; the
   launcher's agent dropdown lists them alongside `claude-tui` (resolution in
-  `agents/profiles.ts`). Defaults offer gemini and the claude adapter.
+  `agents/profiles.ts`). Defaults offer **antigravity** (`bunx antigravity-acp`)
+  and the claude adapter.
 - **Per-profile launch options** — a profile entry may carry `models` /
   `permissionModes` / `efforts` lists (`{ "value", "label"?, "args"? }` or a
   bare string); the launcher shows them for that profile and appends the
@@ -136,16 +158,15 @@ apply there.
   `select` **config options** (model / effort / …) become their own launcher
   dropdowns, applied at launch via `session/set_config_option`. Precedence:
   configured `agent.profiles` list **>** cache **>** the hardcoded first-launch
-  seed (`importKnownAgentOptions` — gemini's `default`/`autoEdit`/`yolo`/`plan`,
-  the claude adapter's modes) **>** bare `default`. A brand-new agent shows the
-  seed (or nothing) until its first session fills the cache in. **The claude
-  model list is no longer hardcoded** — the adapter advertises `model` (and
-  `effort`, `fast`) as config options, so it rides this path; the old
-  `_meta.claudeCode.options.model` application remains only as a fallback for
-  adapters that don't advertise a `model` config option. The old
-  `--approval-mode` argv import for gemini was dropped: its snake_case values
-  (`auto_edit`) don't match gemini's camelCase mode ids, so the ask-first forcing
-  silently reset the chosen mode back to `default` (verified).
+  seed (`importKnownAgentOptions` — antigravity's `default`/`plan`/
+  `bypassPermissions`, the claude adapter's modes) **>** bare `default`. A
+  brand-new agent shows the seed (or nothing) until its first session fills the
+  cache in. **The claude model list is no longer hardcoded** — the adapter
+  advertises `model` (and `effort`, `fast`) as config options, so it rides this
+  path; the old `_meta.claudeCode.options.model` application remains only as a
+  fallback for adapters that don't advertise a `model` config option.
+  Antigravity's seed modes carry empty `args` (protocol-applied via the promoted
+  `mode` config option, above — not argv), and its models are left to discovery.
 - `agent.implementation: "acp"` — make `agent:new` default to the leading ACP
   profile (or `ZYM_AGENT=acp zym` per-launch).
 - `agent.acp.command` — legacy single argv, superseded by profiles; when set
@@ -177,9 +198,11 @@ config-option dropdowns (model / effort / …), negotiated per session.
   (near-)live-output inspect page — the revived monitors UX, via the session's
   `getMonitor`/`onMonitorUpdate`/`stopTask` mapping. A terminal embedded in a
   tool call's content (`{type:'terminal'}`) backs that row's result on
-  completion. Gemini CLI's shell tool rides this; the claude adapter doesn't
-  call `terminal/*` yet (verified 0.55.0) and keeps using the buffered `_meta`
-  channel below.
+  completion. An ACP agent that runs its shell through the client rides this (the
+  retired Gemini CLI did); the claude adapter doesn't call `terminal/*` yet
+  (verified 0.55.0) and keeps using the buffered `_meta` channel below.
+  **Antigravity's `antigravity-acp` does *not* use it** — `agy` runs shell
+  directly on disk (rooted via `--add-dir`), so no monitor rows for it.
 - **Terminal channel (`_meta`)** — `clientCapabilities._meta.terminal_output`
   is advertised; command output + exit code arrive via `_meta.terminal_*`
   (codex-acp-compatible) and feed the row result.
@@ -204,9 +227,13 @@ config-option dropdowns (model / effort / …), negotiated per session.
   land on disk then reload an open document in place through the silent-reload
   path (caret kept, LSP re-synced, no watcher re-fire) — an agent write over a
   dirty buffer clobbers it by design, since the agent based its write on the
-  buffer state it read through this same capability. Gemini CLI routes its file
-  tools here when the capability is advertised; the claude adapter defines the
-  plumbing but doesn't call it yet (verified against claude-agent-acp 0.55.0).
+  buffer state it read through this same capability. An agent that routes file
+  tools through the client uses this when advertised (the retired Gemini CLI did);
+  the claude adapter defines the plumbing but doesn't call it yet (verified against
+  claude-agent-acp 0.55.0), and **Antigravity's `antigravity-acp` reads/writes
+  disk directly through `agy`** (so unsaved-buffer reads / in-place writes don't
+  apply to it — its edits land on disk and baselines fall back to the git-HEAD
+  path).
 - **Modes** — the footer dropdown is fed by the agent's advertised modes
   (`getModeState`); ask-first is forced at session setup.
 - **Config options** — a control per advertised `configOption` (model / effort /

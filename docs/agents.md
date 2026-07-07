@@ -8,10 +8,11 @@ displayed:
   in a `Vte.Terminal` tab. Mature; live status via Claude Code hooks.
   `src/ui/AgentTerminal.ts` + `src/agents/claude-tui/session.ts`.
 - **`acp`** *(opt-in via `agent.implementation: "acp"`)* — any **Agent Client
-  Protocol** agent (Gemini CLI natively; Claude Code / Codex via adapters;
-  argv from the `agent.profiles` picker) rendered in **native GTK widgets** (no
-  terminal, no Ink/Vte repaint cost), over JSON-RPC/stdio. Deep dive:
-  **[agents/acp.md](agents/acp.md)**.
+  Protocol** agent (Google Antigravity via `antigravity-acp`; Claude Code / Codex
+  via adapters; argv from the `agent.profiles` picker) rendered in **native GTK
+  widgets** (no terminal, no Ink/Vte repaint cost), over JSON-RPC/stdio. (The
+  free-tier Gemini CLI it once used natively was retired by Google — see
+  agents/acp.md.) Deep dive: **[agents/acp.md](agents/acp.md)**.
 
 (The former `claude-sdk` kind — headless `claude -p` stream-json — was
 replaced by `acp` + the official claude-agent-acp adapter, which covers the
@@ -652,8 +653,9 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
 
 1. [x] **fs capability (acp)** — done 2026-07-05: `fs/readTextFile`/`writeTextFile`
    advertised and served from the Document registry (reads see **unsaved buffer
-   contents**, writes land in open documents). Gemini CLI uses it; the claude
-   adapter doesn't route its file tools through client fs yet (as of 0.55.0).
+   contents**, writes land in open documents). The Gemini CLI used it; the claude
+   adapter doesn't route its file tools through client fs yet (as of 0.55.0), and
+   antigravity does its file IO directly through `agy`.
    (See [agents/acp.md](agents/acp.md).)
 2. [ ] **Manual QA pass on the less-happy acp paths** — wired but only
    spike-tested: the session-persistence round trip (quit zym with a live acp
@@ -661,15 +663,18 @@ exists, so it's cheap and high-value; the rest are bigger or more speculative.
    worktree launch flows now that the bridge rides `mcpServers` (does the agent
    actually call `set_worktree`?), and interrupt while a permission card is up.
 3. [x] **Agent profiles** — done 2026-07-05: `agent.profiles` (name + argv,
-   defaults offer gemini + the claude adapter), resolved in
-   `agents/profiles.ts`; the launcher's kind dropdown is a profile picker, and
-   a legacy `agent.acp.command` / `ZYM_ACP_COMMAND` surfaces as the leading
-   profile. The ACP registry manifest can seed suggestions later.
+   defaults offer antigravity + the claude adapter — the gemini default was
+   dropped 2026-07-06 when Google retired the free-tier Gemini CLI; see
+   agents/acp.md), resolved in `agents/profiles.ts`; the launcher's kind dropdown
+   is a profile picker, and a legacy `agent.acp.command` / `ZYM_ACP_COMMAND`
+   surfaces as the leading profile. The ACP registry manifest can seed
+   suggestions later.
 4. [x] **Terminal capability (acp)** — done 2026-07-05: full client-side
    `terminal/*` (`acp/terminals.ts`, zym-owned processes); live terminals
    revive the monitors UX (running panel with kill buttons, live-output
-   inspect page). Gemini's shell tool rides it; the claude adapter still
-   buffers over `_meta.terminal_output` (as of 0.55.0). Live output into the
+   inspect page). The Gemini CLI's shell tool rode it; the claude adapter still
+   buffers over `_meta.terminal_output` (as of 0.55.0), and antigravity runs
+   shell directly through `agy` (no client terminals). Live output into the
    tool *rows* themselves remains open (see agents/acp.md limitations).
 5. [x] **Review story** — done 2026-07-05: the "Agent Changes" tab (see
    *Feature: reviewing an agent's work* above) — first-touch baselines off the

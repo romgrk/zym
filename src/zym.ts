@@ -175,20 +175,22 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
   'agent.profiles': {
     type: 'array',
     default: [
-      { name: 'gemini', command: ['gemini', '--acp'] },
+      { name: 'antigravity', command: ['bunx', 'antigravity-acp'] },
       { name: 'claude-acp', command: ['npx', '-y', '@agentclientprotocol/claude-agent-acp'] },
     ],
     description:
       'Named ACP agents offered by the launcher\'s agent dropdown, each ' +
       '{ "name", "command" } (command = argv, JSON-RPC over stdio). E.g. ' +
-      '[{ "name": "gemini", "command": ["gemini", "--acp"] }]. Entries may ' +
-      'also carry "models"/"permissionModes"/"efforts" launch-option lists ' +
-      '({ "value", "label"?, "args"? } — args are appended to the argv when ' +
-      'picked); recognized agents (the claude adapter, gemini) come pre-filled.',
+      '[{ "name": "antigravity", "command": ["bunx", "antigravity-acp"] }]. ' +
+      '(Antigravity requires Bun + a one-time `agy` login.) Entries may ' +
+      'also carry "models"/"permissionModes"/"efforts" launch-option ' +
+      'lists ({ "value", "label"?, "args"? } — args are appended to the ' +
+      'argv when picked); recognized agents (the claude adapter, ' +
+      'antigravity) come pre-filled.',
   },
   'agent.acp.command': {
     type: 'array',
-    default: ['gemini', '--acp'],
+    default: ['bunx', 'antigravity-acp'],
     description:
       "Argv of the ACP agent the 'acp' kind spawns (JSON-RPC over stdio). " +
       'Superseded by agent.profiles — when set explicitly it still surfaces ' +

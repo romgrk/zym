@@ -4,8 +4,8 @@
  * A profile is what the user picks when starting an agent: the terminal kind
  * (`claude-tui`, whose argv is built from the model/permission/effort
  * selections) or one named ACP agent from `agent.profiles` (name + argv), so
- * gemini / the claude adapter / codex sit side by side in the dropdown instead
- * of hiding behind one global `agent.acp.command`.
+ * antigravity / the claude adapter / codex sit side by side in the dropdown
+ * instead of hiding behind one global `agent.acp.command`.
  *
  * Pre-profiles setups keep working: an explicitly-set `agent.acp.command` (or
  * the one-shot `ZYM_ACP_COMMAND` env override) surfaces as the *first* ACP
@@ -154,26 +154,27 @@ function importClaudeAcpOptions(entry: AcpProfileEntry): void {
   ];
 }
 
-/** Gemini CLI: its approval modes are advertised as ACP session modes
- *  (`autoEdit` / `yolo` / `plan`, verified against gemini 0.49), so — like the
- *  claude adapter — they ride `session/set_mode` after setup (empty `args`,
- *  ids matching the advertised modes). The old `--approval-mode` argv flag is
- *  avoided: its snake_case values (`auto_edit`) don't match the camelCase mode
- *  ids, so the handshake's ask-first forcing silently reset the session back to
- *  `default`. Models drift too fast to hardcode (configure them on the profile
- *  entry: `{ "value": "...", "args": ["-m", "..."] }`). */
-function importGeminiOptions(entry: AcpProfileEntry): void {
+/** Antigravity (the `antigravity-acp` / `agy-acp` adapter over Google's `agy`
+ *  CLI): it exposes its modes as a `mode` *config option* (Standard `default` /
+ *  `plan` / `bypassPermissions`), not native ACP modes — no `session/set_mode`.
+ *  AcpSession promotes that config option into the mode channel and switches it
+ *  over `session/set_config_option` (empty `args` here — protocol-applied). This
+ *  is only the first-launch seed; the live modes/models are discovered and cached
+ *  (importCachedOptions supersedes this). Models drift too fast to hardcode
+ *  (`agy` discovers them per session). Requires Bun + a one-time `agy` login. */
+function importAntigravityOptions(entry: AcpProfileEntry): void {
   entry.permissionModes ??= [
-    { ...DEFAULT_OPTION, detail: 'ask before edits' },
-    { value: 'autoEdit', label: 'autoEdit', detail: 'auto-accept edits', args: [] },
-    { value: 'yolo', label: 'yolo', detail: 'auto-approve everything', args: [] },
+    { ...DEFAULT_OPTION, detail: 'standard mode' },
     { value: 'plan', label: 'plan', detail: 'read-only planning', args: [] },
+    { value: 'bypassPermissions', label: 'bypassPermissions', detail: 'skip permission prompts', args: [] },
   ];
 }
 
+const isAntigravity = (t: string) => t === 'antigravity-acp' || t === 'agy-acp' || t.endsWith('/antigravity-acp') || t.endsWith('/agy-acp');
+
 function importKnownAgentOptions(entry: AcpProfileEntry): AcpProfileEntry {
   if (entry.command.some((t) => t.includes('claude-agent-acp'))) importClaudeAcpOptions(entry);
-  else if (entry.command.some((t) => t === 'gemini' || t.endsWith('/gemini'))) importGeminiOptions(entry);
+  else if (entry.command.some(isAntigravity)) importAntigravityOptions(entry);
   return entry;
 }
 
@@ -207,7 +208,7 @@ function importCachedOptions(entry: AcpProfileEntry): AcpProfileEntry {
 
 /** A display name for an ad-hoc argv: the first token that isn't a package
  *  runner or a flag, basename'd (`npx -y @scope/claude-agent-acp` →
- *  `claude-agent-acp`; `gemini --acp` → `gemini`). */
+ *  `claude-agent-acp`; `bunx antigravity-acp` → `antigravity-acp`). */
 export function profileNameFor(command: string[]): string {
   const runners = new Set(['npx', 'pnpx', 'bunx', 'pnpm', 'node']);
   const token = command.find((t) => !runners.has(t) && !t.startsWith('-')) ?? command[0];
