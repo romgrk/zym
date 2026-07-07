@@ -1,7 +1,8 @@
 /*
  * Auto-name — generate a short session name + description from a task prompt, via a
- * one-shot agent (oneshot.ts). Drives auto-rename: on agent launch (gated on
- * `agent.autoName`) or on an empty `/rename`.
+ * one-shot agent (oneshot.ts). Drives on-demand naming: an empty `/rename` generates
+ * a name from the session's task (fresh sessions are otherwise named by the agent's
+ * own ACP topic — see AgentConversation's onTopic).
  *
  * `buildNamePrompt` and `parseAgentName` are pure (unit-tested); `generateAgentName`
  * ties them to a `OneShotAgent`. The parser is deliberately lenient — models tend

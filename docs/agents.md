@@ -302,30 +302,35 @@ the picker (the `R` key in the list). The `acp` kind also handles a typed
 the *first* one seeds the stable name (once) when nothing else has named the
 session. A pinned/auto name still wins.
 
-**Auto-name** — an optional one-shot LLM names a session from its task. A
-**one-shot agent** (`src/agents/oneshot.ts`: `OneShotAgent` interface +
-`createOneShotAgent()`, hardcoded to `claude -p --model sonnet` but behind a
-config-shaped seam) runs a prompt to completion via the process runner and
-returns text; `src/agents/autoName.ts` wraps it to turn a task prompt into
-`{ name, description }` (pure, lenient `buildNamePrompt`/`parseAgentName`).
-Claude Code persists each `claude -p` run as an ordinary session, so the
-one-shot reads the `session_id` from the result envelope and deletes that
-transcript on completion (`oneshot.ts:discardSessionTranscript`, via
-`agentSessions.ts:transcriptDir`) — otherwise these throwaway naming queries
-would pollute the resume picker below.
-Triggers (`acp`): on launch when `agent.autoName` is set, and on an empty
-`/rename` on demand. Both name from the **user's own prompt**, never zym's
-scaffolding: `launchPrompt` returns `{ agentPrompt, userPrompt }` — `agentPrompt`
-(editor instructions + user prompt) is the first turn, `userPrompt` is what the
-namer sees — threaded through `openAgent` → `AgentLaunch.userPrompt` →
-`AgentConversation`. The naming context prefers `userPrompt`, falling back to the
-first genuine user turn (the launch echo is skipped). While the one-shot runs the
-title shows a transient `…` placeholder (in-app only, never persisted); on
-success it's replaced by the `name` (persisted like `/rename`) **silently** — the
-title change in the sidebar/tab is the confirmation; on failure it's dropped,
-reverting to the previous name (the kind default if it had none) plus a warning
-toast. The `description` is captured but not yet surfaced. The one-shot is
-injectable (`AgentConversationOptions.oneShot`) for tests.
+**Naming a fresh session** — new sessions are **not** auto-named by a one-shot on
+launch (that redundant `claude -p` call was removed — ACP is the source of the
+name). A fresh `acp` session names itself from the agent's own **topic**: the
+first non-empty `session_info_update.title` seeds the stable name once (see the
+topic note above). The one-shot namer survives only as an **on-demand** action.
+
+**Auto-name (on demand)** — a one-shot LLM names a session from its task, triggered
+by an **empty `/rename`** (only). A **one-shot agent** (`src/agents/oneshot.ts`:
+`OneShotAgent` interface + `createOneShotAgent()`, hardcoded to `claude -p --model
+sonnet` but behind a config-shaped seam) runs a prompt to completion via the
+process runner and returns text; `src/agents/autoName.ts` wraps it to turn a task
+prompt into `{ name, description }` (pure, lenient
+`buildNamePrompt`/`parseAgentName`). Claude Code persists each `claude -p` run as
+an ordinary session, so the one-shot reads the `session_id` from the result
+envelope and deletes that transcript on completion
+(`oneshot.ts:discardSessionTranscript`, via `agentSessions.ts:transcriptDir`) —
+otherwise these throwaway naming queries would pollute the resume picker below. It
+names from the **user's own prompt**, never zym's scaffolding: `launchPrompt`
+returns `{ agentPrompt, userPrompt }` — `agentPrompt` (editor instructions + user
+prompt) is the first turn, `userPrompt` is what the namer sees — threaded through
+`openAgent` → `AgentLaunch.userPrompt` → `AgentConversation`. The naming context
+prefers `userPrompt`, falling back to the first genuine user turn (the launch echo
+is skipped). While the one-shot runs the title shows a transient `…` placeholder
+(in-app only, never persisted); on success it's replaced by the `name` (persisted
+like `/rename`) **silently** — the title change in the sidebar/tab is the
+confirmation; on failure it's dropped, reverting to the previous name (the kind
+default if it had none) plus a warning toast. The `description` is captured but not
+yet surfaced. The one-shot is injectable (`AgentConversationOptions.oneShot`) for
+tests.
 
 **Tab affordance** — the agent's tab title is prefixed with a status glyph
 (`agentTabTitle` in AppWindow), refreshed on status change; mirrors the sidebar

@@ -611,17 +611,11 @@ export class AgentConversation implements Agent {
   /** Spawn the agent and send the launch prompt (if any). */
   start(): void {
     this.session.start();
-    if (this.launchPrompt) {
-      this.session.prompt(this.launchPrompt);
-      // Auto-name a fresh agent from the user's prompt — namingContext() strips zym's
-      // editor instructions (config-gated, non-blocking, runs alongside the first
-      // turn; most ACP agents also title their sessions via session_info_update,
-      // which lands the same way). No-op if there's no user prompt or it's
-      // somehow already named.
-      if (zym.config.get('agent.autoName') === true && !this._sessionName && !this._displayName) {
-        void this.autoRename(this.namingContext());
-      }
-    }
+    if (this.launchPrompt) this.session.prompt(this.launchPrompt);
+    // A fresh session is named by the agent itself, not a one-shot: most ACP agents
+    // emit an evolving topic (session_info_update.title) whose first value seeds the
+    // stable name (see wireSession's onTopic). The user can still force a generated
+    // name on demand with an empty `/rename` (handleLocalCommand → autoRename).
     this.input.focusInsert(); // ready to type immediately, not vim normal mode
   }
 
