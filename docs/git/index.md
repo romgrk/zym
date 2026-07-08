@@ -248,14 +248,29 @@ agent workbench has its own) and reused across close/reopen — closing the tab
 keeps it alive for the next reveal. `#GitPanel` is the CSS/selector identity.
 (The file tree keeps the right-side dock; `git:` was previously a dock tab.)
 
-The panel `root` carries a **non-zero minimum size** (`setSizeRequest`). Its content
-is a `ScrolledWindow`, whose minimum is `0×0` (it scrolls), so the outer `Gtk.Paned`
-measured `0×0`. On **close → re-add** (the path above), if a git refresh was relaying
-out the change list at that moment, `Adw.TabView` latched that `0` and allocated the
-re-added page's bin `0×0` — the whole tab then painted **blank** (persistently, until
-an unrelated full relayout happened to run; ~4-in-5 reopens under repo activity). A
-small always-satisfied floor stops Adw from ever caching a zero page size. First opens
-and in-place reveals never hit this — only the re-add path does.
+**Sizing (why the panel used to vanish / paint blank).** The page's content bin is an
+`Adw.Bin` (AdwTabView's page host); the panel is fragile to bad size *measures* Adw caches
+into it. Two guards keep the measure valid at all times:
+
+- The panel's two `Gtk.Paned`s (`root` and the inner `split`) keep their children
+  **shrinkable** (`shrink-child = true`, GtkPaned's default) while pinning their *width* with
+  `resize-child = false`. This matters because the change list can't scroll horizontally (its
+  `ScrolledWindow` is `NEVER`-hpolicy), so its **width minimum is the content's** (~240px), and
+  with the embedded diff open the split's minimum is the *sum* (~650px). With `shrink = false`
+  that sum is an **unshrinkable floor**: in any pane narrower than it — a narrow window, a split,
+  the file-tree/agent columns eating the width — Adw gets an *unsatisfiable* measure, caches it,
+  and allocates the page bin a degenerate size, **dropping the child** (the Adw.Bin goes empty)
+  or painting it blank. It comes back on the next reveal (`git-panel:focus` re-adds the orphaned
+  `root`). Making the children shrinkable collapses the panel's measured minimum to ~0, so the
+  measure is always satisfiable. (Verified by `root.measure()`: ~275→657px with `shrink=false`,
+  **120px** — the `setSizeRequest` floor — with `shrink=true`.)
+- `root` also carries a small `setSizeRequest(120, 80)` floor, so even a degenerate 0-measure
+  (e.g. on **close → re-add** while a git refresh is relaying out the list) can't be cached as
+  `0×0` and paint the re-added page blank.
+
+Note the earlier assumption that "the ScrolledWindow's minimum is `0×0`" held only for *height*
+(it scrolls vertically); its **width** minimum is the list content's, which is what the shrink
+guard addresses.
 
 ### Status viewer — `src/ui/git/GitPanel.ts`
 

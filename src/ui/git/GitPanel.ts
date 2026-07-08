@@ -227,9 +227,18 @@ export class GitPanel {
     // Paned shows just the list, no handle.
     this.split = new Gtk.Paned({ orientation: Gtk.Orientation.HORIZONTAL });
     this.split.setStartChild(listColumn);
+    // `resize=false` keeps the list at its width on resize (the diff absorbs growth); `shrink=true`
+    // (GtkPaned's default) lets both children be allocated below their natural size. The latter is
+    // load-bearing: the list column can't scroll horizontally (its ScrolledWindow is NEVER-hpolicy,
+    // so its width minimum is the content's, ~240px; with the diff open the split's minimum is the
+    // SUM, ~650px). With `shrink=false` that sum is an UNSHRINKABLE floor, so a pane narrower than it
+    // hands Adw an unsatisfiable measure — which it caches and then allocates the page bin a
+    // degenerate size, dropping/​blanking the child (the "Git Panel content vanishes" bug). Letting
+    // the children shrink collapses the panel's minimum to the satisfiable `setSizeRequest` floor
+    // below, so Adw always has a valid measure. See docs/git/index.md.
     this.split.setResizeStartChild(false);
-    this.split.setShrinkStartChild(false);
-    this.split.setShrinkEndChild(false);
+    this.split.setShrinkStartChild(true);
+    this.split.setShrinkEndChild(true);
 
     // Outer vertical split: commit editor (start, added by `c c`) over the list/diff area
     // (end). No start child yet → it shows just the area, no handle. The area absorbs extra
@@ -238,13 +247,11 @@ export class GitPanel {
     this.root.addCssClass('GitPanel');
     this.root.setEndChild(this.split);
     this.root.setResizeStartChild(false);
-    this.root.setShrinkStartChild(false);
-    // Give the panel a non-zero MINIMUM size. Its content is a ScrolledWindow, whose minimum is
-    // 0×0 (it can scroll), so the whole Paned measures 0×0 too. When the Git tab is closed and
-    // later re-added while a git refresh is relaying out the list, Adw.TabView latches that 0
-    // measure and allocates the re-added page's bin 0×0 — the tab then paints blank until a full
-    // relayout happens to run. A modest floor (always satisfied in a real center tab) stops Adw
-    // from ever caching a zero size. See docs/git/index.md.
+    this.root.setShrinkStartChild(true); // shrinkable for the same reason as split (see above)
+    // Give the panel a non-zero MINIMUM size, now that its children are shrinkable (their minimum
+    // collapses toward 0). Without a floor a degenerate 0-measure could still be cached by Adw and
+    // paint the tab blank; a modest always-satisfiable floor keeps the measure valid. See
+    // docs/git/index.md.
     this.root.setSizeRequest(120, 80);
 
     this.registerCommands();
