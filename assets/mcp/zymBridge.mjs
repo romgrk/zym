@@ -29,9 +29,11 @@ const SET_WORKTREE = {
   name: 'set_worktree',
   description:
     'Tell the zym editor which git worktree you are now working in, so it re-roots ' +
-    'its file tree and Source Control to match. Call this immediately after you create ' +
-    'or switch into a worktree (e.g. after `git worktree add <path>` then `cd <path>`). ' +
-    'Pass the absolute path of the worktree root.',
+    'its file tree and Source Control to match. You MUST call this the instant you ' +
+    'create or switch into a worktree (e.g. after `git worktree add <path>` then ' +
+    '`cd <path>`), before running any other command — until you do, the editor stays ' +
+    'rooted in the wrong directory and cannot track your work. This is required, not ' +
+    'optional; never skip it. Pass the absolute path of the worktree root.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -45,7 +47,9 @@ const SET_ACTIONS = {
   name: 'set_actions',
   description:
     'Register runnable actions the user can trigger to run, test, or review your work ' +
-    'outside this chat (e.g. open the app). zym shows them as buttons.' +
+    'outside this chat (e.g. open the app). zym shows them as buttons. You MUST call this ' +
+    'whenever you finish work the user could run, test, or review — do not just describe ' +
+    'the commands in chat; register them here, and keep the set current as the work changes. ' +
     'Make each as convenient and direct as possible: open the app on the screen you changed, run the one ' +
     'affected test, hit the endpoint you touched — not just a generic "run everything". ' +
     'Replaces the whole set on each call; pass an empty `actions` list to clear it. List ' +
