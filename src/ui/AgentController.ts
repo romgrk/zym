@@ -424,6 +424,7 @@ export class AgentController {
         command: a.command,
         prompt: a.sessionId ? undefined : a.prompt,
         resume: a.sessionId ? { sessionId: a.sessionId } : undefined,
+        title: a.name,
       });
     } else if (a.sessionId) {
       const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);

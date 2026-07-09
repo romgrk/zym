@@ -394,7 +394,11 @@ Built in `src/agentSessions.ts`, `AgentTerminal`, `AppWindow`:
 - **Persist across editor restarts** — `AgentTerminal.serialize()` records
   `sessionId`; the (Session-management-owned) restore can relaunch a saved
   agent as `--resume <id>` to continue the conversation rather than start
-  fresh. The `TabState` agent variant has an optional `sessionId`.
+  fresh. The `TabState` agent variant has an optional `sessionId`. The `acp`
+  kind additionally serializes its **stable display name** (`name`) and restores
+  it as the title, so a resumed conversation keeps the name the user saw rather
+  than reverting to the kind default (the topic/subtitle stays unpersisted — see
+  [agents/acp.md](agents/acp.md)).
 
 **Open**: surface session branch/cost in the resume list; resume-with-prompt;
 offer fork on resuming a *live* session; honor `cleanupPeriodDays` (transcripts

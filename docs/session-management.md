@@ -189,7 +189,9 @@ Actual shapes (`src/SessionManager.ts`):
 type TabState =
   | { kind: 'file';     path: string; cursor?: [number, number]; scroll?: number; dirty?: boolean }
   | { kind: 'terminal'; cwd: string }
-  | { kind: 'agent';    command: string[]; cwd: string; prompt?: string; sessionId?: string };
+  | { kind: 'agent';    command: string[]; cwd: string; prompt?: string; sessionId?: string; name?: string };
+  //   name = the agent's stable display title, so a restore keeps the name the user saw
+  //   (the evolving topic/subtitle is not persisted — see docs/agents/acp.md).
 
 type PanelNode =
   | { type: 'leaf';  tabs: TabState[]; activeIndex: number; active?: boolean } // active → the focused leaf

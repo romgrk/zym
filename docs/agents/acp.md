@@ -234,7 +234,12 @@ config-option dropdowns (model / effort / …), negotiated per session.
   lands after the restored rows); `session/fork` backs branch and
   restart-of-live; `_meta.claudeCode.options.resume` is the context-only
   fallback for agents without `loadSession`. Agents serialize argv + session
-  id and restore with their *saved* argv.
+  id + the **stable display name** and restore with their *saved* argv. The name
+  (pinned rename / auto-name / topic seed — `_displayName ?? _sessionName`, never the
+  transient auto-naming placeholder) is restored as the display title (`title` option →
+  `_displayName`) so a resumed conversation keeps the name the user saw instead of
+  reverting to the kind default; the evolving *topic* (the subtitle) stays unpersisted and
+  re-emits from the agent (it no longer re-seeds the name, since one is already set).
 - **zymBridge** — `session/new.mcpServers` carries the bundled bridge
   (`set_worktree` / `set_actions`), injected via `acp/bridge.ts` (the Gio
   watcher) so `AcpSession` stays drivable from plain node. **It reaches an agent

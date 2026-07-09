@@ -225,6 +225,10 @@ export interface AgentConversationOptions {
   /** The user's own prompt, free of zym's editor instructions — context for
    *  auto-naming, so a generated title reflects the task and not our scaffolding. */
   userPrompt?: string;
+  /** An authoritative display name to restore (session restore / restart of a renamed
+   *  agent): seeds the stable title so the conversation keeps the name the user saw
+   *  rather than reverting to the default until a fresh topic emits. */
+  title?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
   onOpenFile?: (path: string) => void;
   /** Override the one-shot agent used for auto-naming (test seam; default
@@ -386,6 +390,7 @@ export class AgentConversation implements Agent {
     this.baseCommand = options.command;
     this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
+    this._displayName = options.title?.trim() || null;
     this.session = options.createSession({ cwd: options.cwd, command: options.command, resume: options.resume });
     this.oneShot = options.oneShot ?? createOneShotAgent();
 
@@ -706,6 +711,7 @@ export class AgentConversation implements Agent {
       cwd: this.cwd,
       prompt: this.launchPrompt,
       sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
+      name: this._displayName ?? this._sessionName ?? undefined,
     };
   }
   // A running agent is not "modified" work: nothing to flush, killed on quit, so it

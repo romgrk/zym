@@ -129,6 +129,7 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         prompt: l.prompt,
         userPrompt: l.userPrompt,
         resume: l.resume,
+        title: l.title,
         onOpenFile: l.onOpenFile,
         createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge(), fs: l.fs, model: l.model, permissionMode: l.permissionMode, configOptions: l.configOptions }),
       });

@@ -39,7 +39,10 @@ export type TabState =
   | { kind: 'file'; path: string; cursor?: [number, number]; scroll?: number; dirty?: boolean }
   | { kind: 'terminal'; cwd: string }
   // agentKind 'claude-sdk' is a legacy tag from the retired kind; restore maps it to claude-tui.
-  | { kind: 'agent'; command: string[]; cwd: string; prompt?: string; sessionId?: string; agentKind?: 'claude-tui' | 'claude-sdk' | 'acp' };
+  // `name` is the agent's stable display title (pinned rename / auto-name / topic seed), so a
+  // restored conversation keeps the name the user saw instead of reverting to the kind default;
+  // the evolving topic (sidebar subtitle) is deliberately not persisted (see docs/agents/acp.md).
+  | { kind: 'agent'; command: string[]; cwd: string; prompt?: string; sessionId?: string; name?: string; agentKind?: 'claude-tui' | 'claude-sdk' | 'acp' };
 
 /** The split tree of one workbench: `leaf` tab strips joined by `split` panes. */
 export type PanelNode =
