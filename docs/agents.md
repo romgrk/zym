@@ -323,7 +323,15 @@ otherwise these throwaway naming queries would pollute the resume picker below. 
 names from the **user's own prompt**, never zym's scaffolding: `launchPrompt`
 returns `{ agentPrompt, userPrompt }` — `agentPrompt` (editor instructions + user
 prompt) is the first turn, `userPrompt` is what the namer sees — threaded through
-`openAgent` → `AgentLaunch.userPrompt` → `AgentConversation`. The naming context
+`openAgent` → `AgentLaunch.userPrompt` → `AgentConversation`. The editor
+instructions in `agentPrompt` are wrapped in a `<zym-editor-instructions
+label="…">` tag (`wrapEditorInstructions`, `conversation/format.ts`): the agent
+receives the full scaffolding, but `AgentConversation` splits it back out
+(`parseEditorInstructions`) and renders the `label` as a **condensed,
+collapsible row** (worktree icon + one-liner, exact text behind the reveal)
+instead of dumping the raw prose into the transcript — the user's own text still
+renders as their message bubble. (claude-tui has no native transcript, so it
+shows the tag verbatim in its terminal.) The naming context
 prefers `userPrompt`, falling back to the first genuine user turn (the launch echo
 is skipped). While the one-shot runs the title shows a transient `…` placeholder
 (in-app only, never persisted); on success it's replaced by the `name` (persisted
@@ -544,8 +552,10 @@ can re-root independently. Pieces and how they connect:
   worktree the agent creates mid-session:
   1. agent runs `git worktree add … && cd …`, then calls the **`set_worktree`**
      MCP tool (bundled stdio server `assets/mcp/zymBridge.mjs`, wired via
-     `--mcp-config` + pre-allowed in `--settings`, instructed by
-     `--append-system-prompt`).
+     `--mcp-config` + pre-allowed in `--settings`; the tool's own MCP description
+     carries the strict when/how — the model receives it either way — while
+     `--append-system-prompt` adds only a proactive nudge + the "don't explain the
+     integration" constraint, so nothing is repeated between them).
   2. the bridge writes the path to `$ZYM_STATUS_FILE.cwd` (atomic) — the same
      IPC channel as the status hooks.
   3. `ClaudeSession` watches `.cwd` → `host.onCwd` →

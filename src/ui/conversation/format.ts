@@ -19,6 +19,41 @@ export function parseLocalCommand(text: string): { command: 'rename'; name: stri
   return { command: 'rename', name: (match[1] ?? '').trim() };
 }
 
+/** The tag zym wraps its editor-scaffolding around when it prepends it to a launch turn
+ *  (today: worktree setup). The full body reaches the agent; the conversation UI collapses
+ *  it to the `label` attribute (a condensed one-liner). See parseEditorInstructions. */
+export const EDITOR_INSTRUCTIONS_TAG = 'zym-editor-instructions';
+
+// Anchored at the start (the scaffolding is always prepended) and non-greedy on the body,
+// so only the leading block is peeled and the user's own text (which follows) is kept intact.
+const EDITOR_INSTRUCTIONS_RE = new RegExp(
+  `^\\s*<${EDITOR_INSTRUCTIONS_TAG}(?:\\s+label="([^"]*)")?\\s*>([\\s\\S]*?)</${EDITOR_INSTRUCTIONS_TAG}>\\s*`,
+);
+
+/** Wrap zym's editor `body` with a condensed `label`, so the agent gets the full
+ *  instructions while the UI can show just the label (parseEditorInstructions splits it
+ *  back out). The label is sanitized to a single quote-free line (it rides an attribute). */
+export function wrapEditorInstructions(label: string, body: string): string {
+  const safeLabel = label.replace(/["\r\n]+/g, ' ').trim();
+  return `<${EDITOR_INSTRUCTIONS_TAG} label="${safeLabel}">\n${body}\n</${EDITOR_INSTRUCTIONS_TAG}>`;
+}
+
+/** Split a user turn into zym's prepended editor-instructions block (if any) and the
+ *  user's own text. A launch turn wraps worktree-setup scaffolding in
+ *  `<zym-editor-instructions label="…">…</…>`; the UI renders `label` as a condensed row
+ *  and `userText` as the user's message. `instructions` is null for an ordinary turn (no
+ *  wrapper), with `userText` left equal to the input. */
+export function parseEditorInstructions(text: string): {
+  instructions: { label: string; body: string } | null;
+  userText: string;
+} {
+  const match = EDITOR_INSTRUCTIONS_RE.exec(text);
+  if (!match) return { instructions: null, userText: text };
+  const label = (match[1] ?? '').trim() || 'Editor setup';
+  const body = (match[2] ?? '').trim();
+  return { instructions: { label, body }, userText: text.slice(match[0].length).trimStart() };
+}
+
 /** First `maxLines` lines of `text`, capped at `maxChars`, ellipsised when truncated. */
 export function truncateLines(text: string, maxLines: number, maxChars: number): string {
   if (!text) return '';

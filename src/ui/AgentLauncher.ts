@@ -28,6 +28,7 @@ import { CompositeDisposable } from '../util/eventKit.ts';
 import { AGENT_CONFIGS, type AgentKind, type AgentLaunchOptions } from '../agents/configs.ts';
 import { listAgentProfiles, defaultProfileFor, profileCommand, type AgentProfile } from '../agents/profiles.ts';
 import { repoRoot, listBranches } from '../git.ts';
+import { wrapEditorInstructions } from './conversation/format.ts';
 
 type Overlay = InstanceType<typeof Gtk.Overlay>;
 
@@ -492,12 +493,16 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
 // run the user's prompt.
 const NEW_WORKTREE_INSTRUCTION = outdent`
   Before anything else, create a new git worktree with a descriptive branch
-  name for the following task and switch into it:
+  name for the task below and switch into it. The moment you are in it, you MUST
+  call the set_worktree tool with the worktree's absolute path — before running
+  any other command — so the editor re-roots to it. Then do the task:
 `;
 function branchWorktreeInstruction(branch: string): string {
   return outdent`
-    Before anything else, either go to the existing git worktree or create a new one
-    for the branch ${branch}, then do the following task:
+    Before anything else, switch into the git worktree for the branch ${branch}
+    (create it if it does not exist). The moment you are in it, you MUST call the
+    set_worktree tool with its absolute path — before running any other command —
+    so the editor re-roots to it. Then do the task:
   `;
 }
 
@@ -515,10 +520,15 @@ export interface LaunchPrompt {
 
 /** Assemble the launch prompt for `openAgent` from the user's prompt and the chosen
  *  worktree option (see NEW_WORKTREE_INSTRUCTION). Keeps the user's prompt separate
- *  from the prepended editor instructions so each can be routed independently. */
+ *  from the prepended editor instructions so each can be routed independently, and wraps
+ *  the instructions in `<zym-editor-instructions label="…">` so the conversation shows a
+ *  condensed label instead of the raw scaffolding (see parseEditorInstructions). */
 export function launchPrompt(prompt: string, worktree: WorktreeChoice): LaunchPrompt {
   const userPrompt = prompt || undefined;
   if ('current' in worktree) return { agentPrompt: userPrompt, userPrompt }; // run in the cwd, no worktree setup
-  const instruction = 'create' in worktree ? NEW_WORKTREE_INSTRUCTION : branchWorktreeInstruction(worktree.branch);
+  const { label, body } = 'create' in worktree
+    ? { label: 'Creating a new worktree', body: NEW_WORKTREE_INSTRUCTION }
+    : { label: `Switching to worktree for ${worktree.branch}`, body: branchWorktreeInstruction(worktree.branch) };
+  const instruction = wrapEditorInstructions(label, body);
   return { agentPrompt: prompt ? `${instruction}\n\n${prompt}` : instruction, userPrompt };
 }

@@ -26,13 +26,13 @@ import { createSlashCommandSource } from './TextEditor/createSlashCommandSource.
 import { MarkdownView } from './markdown/MarkdownView.ts';
 import { escapeMarkup, setMarkupSafe, wrappingLabel, clearChildren } from './proseMarkup.ts';
 import { iconSpan } from './icons.ts';
-import { formatCount, formatElapsed, parseLocalCommand } from './conversation/format.ts';
+import { formatCount, formatElapsed, parseLocalCommand, parseEditorInstructions } from './conversation/format.ts';
 import { StickyListPanel } from './conversation/StickyListPanel.ts';
 import { Transcript } from './conversation/Transcript.ts';
 import { Message, type MessageKind } from './conversation/Message.ts';
 import { permissionPrompt, permissionDiffView, choiceActions, type PermissionChoice } from './conversation/cards.ts';
 import { QuestionCard } from './conversation/QuestionCard.ts';
-import { ToolRow } from './conversation/ToolRow.ts';
+import { ToolRow, toolHeaderLabel } from './conversation/ToolRow.ts';
 import { appendToolRow, permissionPromptParts, editDiffLines, diffBlock, EDIT_TOOLS } from './conversation/toolRows.ts';
 import { SubagentView, SUBAGENT_GROUP } from './conversation/SubagentView.ts';
 import { MonitorView } from './conversation/MonitorView.ts';
@@ -135,6 +135,11 @@ addStyles(/* css */`
   /* The resume boundary divider: centered, muted, italic. */
   .AgentConversation .conversation-resume { opacity: var(--dim-opacity); font-style: italic; }
   .AgentConversation .conversation-error { color: var(--t-ui-status-error); }
+  /* zym's editor scaffolding (worktree setup): a muted, condensed row — it's the IDE's
+     doing, not the agent's work, so it sits back visually. The full text is behind its
+     ToolRow reveal; the revealed prose is dimmed too. */
+  .AgentConversation .conversation-editor-instructions { opacity: 0.6; }
+  .AgentConversation .conversation-editor-instructions .tool-row-detail label { font-style: italic; }
   /* An unrecognised stream event, dumped as raw JSON so nothing is silently lost.
      The warning is carried by the ToolRow warning status (icon + header tint). */
   .AgentConversation .conversation-unknown-body { opacity: 0.75; }
@@ -902,13 +907,18 @@ export class AgentConversation implements Agent {
         for (const handler of this.permissionModeHandlers) handler();
       }),
       this.session.onUserMessage(({ text }) => {
+        // Peel off zym's prepended editor scaffolding (worktree setup) so it renders as a
+        // condensed label instead of raw instruction prose, leaving the user's own text.
+        const { instructions, userText } = parseEditorInstructions(text);
         // Capture the first genuine user turn (context for an empty `/rename`), but skip
-        // the launch turn's echo — it may carry zym's editor instructions; `userPrompt`
-        // holds the clean version and is preferred in namingContext().
-        if (this.firstUserText === null && text !== this.launchPrompt) this.firstUserText = text;
+        // the launch turn's echo — it carries zym's editor instructions; `userPrompt` holds
+        // the clean version and is preferred in namingContext(). On replay (no launchPrompt
+        // to match) the parsed `userText` is the clean turn.
+        if (this.firstUserText === null && text !== this.launchPrompt) this.firstUserText = userText || text;
         this.endTurn();
         // The token count + elapsed clock reset on the working transition (startThinkingTimer).
-        this.addMarkdownBlock('user').setMarkdown(text);
+        if (instructions) this.addEditorInstructionRow(instructions.label, instructions.body);
+        if (userText) this.addMarkdownBlock('user').setMarkdown(userText);
       }),
       // Live "Thinking… (N tokens · Ms)" while the model reasons before producing output;
       // the elapsed time is folded in by refreshThinkingLabel.
@@ -1225,6 +1235,23 @@ export class AgentConversation implements Agent {
     const body = this.addRow('conversation-system');
     body.addCssClass('conversation-unknown-body'); // monospace, wrapped
     body.setText(detail);
+  }
+
+  // zym's prepended editor scaffolding (worktree setup) as a condensed, collapsible row:
+  // the leading worktree icon + a one-line summary label, the exact instructions revealed
+  // on click. Keeps the scaffolding legible without dumping raw prose into the transcript.
+  private addEditorInstructionRow(label: string, body: string): void {
+    const header = toolHeaderLabel();
+    header.setText(label);
+    const toolRow = new ToolRow({ icon: NERDFONT.TOOL.WORKTREE, header, subs: this.subs });
+    toolRow.root.addCssClass('conversation-editor-instructions');
+    if (body) {
+      const detail = wrappingLabel({ xalign: 0, selectable: true });
+      detail.setText(body);
+      toolRow.content.append(detail);
+    }
+    this.transcript.appendToolEntry(toolRow.root);
+    this.transcript.scrollToBottom();
   }
 
   // A muted notice that the user interrupted the turn (ctrl-c).
