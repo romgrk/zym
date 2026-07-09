@@ -21,7 +21,7 @@ or done.
 
 *Beta state. Tested on Linux; might not run on macOS or Windows yet.*
 
-![zym running a coding agent side by side with the editor, file tree, and a fuzzy command palette](https://raw.githubusercontent.com/romgrk/zym/master/img/demo-agent-workflow.png)
+![zym running a coding agent side by side with the editor](https://raw.githubusercontent.com/romgrk/zym/master/img/hero.png)
 
 ## Highlights
 
