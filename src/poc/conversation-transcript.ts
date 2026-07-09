@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /*
  * POC: drive the REAL AgentConversation with a scripted, fake session so the whole
- * transcript (bubbles, streaming text/thinking, tool rows, Bash, a plan/Tasks panel,
- * Task subagents + a Monitor — surfaced as count buttons in the agent header bar, a
- * permission prompt that replaces the input, a question card, the footer's mode
- * dropdown + the "…" config-options overflow menu, the actions bar, the context
- * gauge, errors) can be iterated on WITHOUT spawning a real agent. The conversation
- * is wrapped in the real `AgentSidebar` so its header bar is exercised.
+ * transcript (the condensed editor-instructions/worktree-setup row, bubbles, streaming
+ * text/thinking, tool rows, Bash, a plan/Tasks panel, Task subagents + a Monitor —
+ * surfaced as count buttons in the agent header bar, a permission prompt that replaces
+ * the input, a question card, the footer's mode dropdown + the "…" config-options
+ * overflow menu, the actions bar, the context gauge, errors) can be iterated on WITHOUT
+ * spawning a real agent. The conversation is wrapped in the real `AgentSidebar` so its
+ * header bar is exercised.
  *
  * Fidelity comes from reusing production code end-to-end: the entire UI stack
  * (AgentConversation, Transcript, ToolRow, cards, QuestionCard, SubagentView,
@@ -38,8 +39,10 @@ import { theme } from '../theme/theme.ts';
 import { zym } from '../zym.ts';
 import { Emitter, Disposable } from '../util/eventKit.ts';
 import { AgentConversation } from '../ui/AgentConversation.ts';
+import { launchPrompt } from '../ui/AgentLauncher.ts';
 import { AgentSidebar } from '../ui/AgentSidebar.ts';
 import { WorkbenchActions } from '../ui/workbench/WorkbenchActions.ts';
+import { WorkbenchActionsBar } from '../ui/workbench/WorkbenchActionsBar.ts';
 import type {
   ConfigOption, ContextUsage, ConversationSession, MonitorInfo, PermissionDecision,
   PermissionRequest, QuestionRequest, SubagentInfo,
@@ -292,6 +295,17 @@ class FakeSession implements ConversationSession {
       // header subtitle — see the second emit near the end.
       this.emitter.emit('topic', { topic: 'transcript tour' });
 
+      // set_actions (initial): register a couple of runnable actions up front — early, so
+      // the WorkbenchActionsBar (window header) populates before the blocking prompts below.
+      // Piped through bindActions → WorkbenchActions → the bound bar: the default action
+      // (first) is the main SplitButton, the rest fill its dropdown.
+      await wait(300);
+      await this.stream('First, a couple of actions you can run at any time — they appear in the window header (`set_actions`):\n\n');
+      this.emitter.emit('actions', { actions: [
+        { id: 'run-tests', label: 'Run tests', command: 'pnpm test', terminal: true },
+        { id: 'typecheck', label: 'Typecheck', command: 'pnpm typecheck', terminal: true },
+      ] });
+
       // Read (clickable file row — boilerplate result is suppressed).
       await wait(250);
       this.toolUse('t_read', 'Read', { file_path: Path.join(CWD, 'src/ui/AgentConversation.ts') });
@@ -423,10 +437,12 @@ class FakeSession implements ConversationSession {
       await wait(200);
       this.emitter.emit('result', { costUsd: 0.21, contextWindow: 200000 });
 
-      // Actions bar (set_actions): the agent registers a few runnable actions, surfaced
-      // as buttons in the workbench header (piped through bindActions → WorkbenchActions).
+      // set_actions (update): each call REPLACES the whole set, so the header bar
+      // re-renders in place — here the initial two grow to three (a background
+      // `terminal: false` action among them, which toggles run/stop). Demonstrates the
+      // replace semantics and the live re-render.
       await wait(500);
-      await this.stream("I've registered a few actions you can run — they show up on the workbench.\n");
+      await this.stream("Now I've refined the set — `set_actions` replaces the whole list, so the header updates in place (the dev server is a background action; click toggles run/stop).\n");
       this.emitter.emit('actions', { actions: [
         { id: 'run-tests', label: 'Run tests', command: 'pnpm test', terminal: true },
         { id: 'dev-server', label: 'Start dev server', command: 'sleep 5', terminal: false },
@@ -500,9 +516,16 @@ app.on('activate', () => {
     );
 
     const session = new FakeSession();
+    // Build the launch turn through the REAL `launchPrompt` with a "create worktree"
+    // choice, so the transcript opens with the condensed `<zym-editor-instructions>`
+    // row (worktree setup — the collapsible "Creating a new worktree" label) above the
+    // user's own prompt, exercising parseEditorInstructions end-to-end.
+    const TOUR_PROMPT = 'Give me a tour of the conversation transcript so I can iterate on its styling.';
+    const { agentPrompt } = launchPrompt(TOUR_PROMPT, { create: true });
     const agent = new AgentConversation({
       cwd: CWD,
-      prompt: 'Give me a tour of the conversation transcript so I can iterate on its styling.',
+      prompt: agentPrompt,
+      userPrompt: TOUR_PROMPT,
       createSession: () => session,
       onOpenFile: (path) => console.log('[POC] open file:', path),
     });
@@ -517,6 +540,13 @@ app.on('activate', () => {
       onDidChangeRunning: () => () => {},
     });
     agent.bindActions(wbActions);
+    // The REAL WorkbenchActionsBar (the widget that renders set_actions in the app's window
+    // header): an Adw.SplitButton whose main button is the default action and whose dropdown
+    // holds the rest, hidden until the set is non-empty. Bound to the same controller the
+    // agent pipes into, so the scene's set_actions calls drive it live. Mounted in the POC's
+    // window header below (where it lives in AppWindow's HeaderBar).
+    const actionsBar = new WorkbenchActionsBar();
+    actionsBar.bind(wbActions);
 
     // Wrap the conversation in the real agent header bar (AgentSidebar): its Adw header
     // shows the agent title and packs the agent's headerWidgets — the subagent (robot)
@@ -529,12 +559,21 @@ app.on('activate', () => {
     // agent + sidebar are torn down together on window close).
     void agent.onDidChangeTopic(() => sidebar.setTopic(agent.topic));
 
+    // A window header holding the actions bar (mirrors AppWindow's HeaderBar), over the
+    // agent column as content — so set_actions is previewable in the same place it lives.
+    const header = new Adw.HeaderBar();
+    header.setTitleWidget(new Adw.WindowTitle({ title: 'zym POC — conversation', subtitle: 'set_actions →' }));
+    header.packEnd(actionsBar.root);
+    const chrome = new Adw.ToolbarView();
+    chrome.addTopBar(header);
+    chrome.setContent(sidebar.root);
+
     const window = new Adw.ApplicationWindow({ application: app });
     window.setName('AppWindow'); // so the --t-* theme CSS variables resolve
     window.setTitle('zym POC — conversation transcript');
     window.setDefaultSize(900, 920);
-    window.setContent(sidebar.root);
-    window.on('close-request', () => { agent.dispose(); sidebar.dispose(); loop.quit(); app.quit(); return false; });
+    window.setContent(chrome);
+    window.on('close-request', () => { agent.dispose(); actionsBar.dispose(); sidebar.dispose(); loop.quit(); app.quit(); return false; });
     window.present();
 
     agent.start(); // emits init, then the launch prompt plays the scripted scene
