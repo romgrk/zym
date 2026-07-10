@@ -314,3 +314,54 @@ test('live: a file changed after open is folded in on the next git change', asyn
   assert.equal(mbv.fileList().length, 2, 'no phantom duplicate files on a non-growing change');
   mbv.dispose();
 });
+
+test('live: deleting a tracked file folds it in as an all-removed, (deleted)-tagged diff', async () => {
+  const repo = makeTmpDir('livedelete');
+  const run = (...args: string[]) => execFileSync('git', args, { cwd: repo });
+  run('init', '-q');
+  run('config', 'user.email', 't@t');
+  run('config', 'user.name', 'tester');
+  run('config', 'commit.gpgsign', 'false');
+  const fileA = Path.join(repo, 'a.ts');
+  const fileB = Path.join(repo, 'b.ts');
+  Fs.writeFileSync(fileA, 'a\nb\nc\n');
+  Fs.writeFileSync(fileB, 'x\ny\nz\n');
+  run('add', '.');
+  run('commit', '-q', '-m', 'init');
+  Fs.writeFileSync(fileA, 'a\nCHANGED\nc\n');
+  invalidateRepoRoot();
+
+  const changed = new Set<string>([fileA]);
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+  const showHead = (abs: string) => execFileSync('git', ['show', `HEAD:${Path.relative(repo, abs)}`], { cwd: repo }).toString('utf8');
+  // Mirror buildCurrentChangesFiles: a file gone from disk (and not held open) is a deletion.
+  const buildFiles = async () =>
+    [...changed].sort().map((abs) => {
+      let newText = '';
+      let deleted = false;
+      try { newText = Fs.readFileSync(abs, 'utf8'); } catch { deleted = true; }
+      return { path: abs, oldText: showHead(abs), newText, deleted };
+    });
+  const git = {
+    getHead: () => head,
+    onChange: () => () => {},
+    refresh: () => {},
+    getFileStatuses: () => new Map([...changed].map((p) => [p, { kind: 'modified', added: 0, removed: 0 }])),
+  } as unknown as GitRepo;
+
+  const registry = new DocumentRegistry();
+  const mbv = new DiffView({ editable: true, live: true, documents: registry, cwd: repo, git, refreshFiles: buildFiles, files: await buildFiles() });
+
+  // Delete b.ts on disk; the repo model now reports it and a git change fires.
+  Fs.rmSync(fileB);
+  changed.add(fileB);
+  (mbv as any).onGitChange();
+
+  assert.ok(await waitFor(() => mbv.fileList().some((f) => f.path === fileB)), 'the deleted file is folded in');
+  const header = (mbv as any).dmb.headerAnchors.find((h: any) => h.path === fileB);
+  assert.ok(header, 'the deleted file has a header');
+  assert.equal(header.deleted, true, 'its header is flagged deleted (the "(deleted)" tag)');
+  assert.equal(header.added, 0, 'nothing added');
+  assert.ok(header.removed > 0, 'its whole content reads as removed');
+  mbv.dispose();
+});
