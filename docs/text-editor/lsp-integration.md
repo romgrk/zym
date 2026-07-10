@@ -132,7 +132,10 @@ These all work today, driven from the LSP core and surfaced through the editor:
   `valign=END` + margins — no height read). Code blocks are syntax-highlighted by reusing the
   editor's tree-sitter grammars + queries + theme colors
   (`syntax/highlightToMarkup.ts`), in the editor monospace font; prose stays
-  proportional. 3s timeout; dismissed on cursor-move/scroll. Command-triggered.
+  proportional. Content soft-wraps (Pango `WORD_CHAR`) and the card is width-capped
+  (`HOVER_MAX_WIDTH_CHARS`, in chars so it tracks the font) so a long code line wraps
+  to a readable column instead of stretching the card. 3s timeout; dismissed on
+  cursor-move/scroll. Command-triggered.
 - **Completion:** `textDocument/completion` (+ resolve) via the primary server
   (`createLspCompletionSource` / `CompletionController` / `CompletionPopup`),
   trigger-character support (`.`/`::`), and auto-imports (resolved

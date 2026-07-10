@@ -153,6 +153,9 @@ function hasLongLine(text: string, threshold: number): boolean {
 }
 // LSP hover / signature card min width (px) — a size request the label wraps to.
 const HOVER_WIDTH_PX = 300;
+// Max card width (chars): a long code line soft-wraps to this readable column instead of
+// stretching the card across the screen. Chars (not px) so it tracks the editor font size.
+const HOVER_MAX_WIDTH_CHARS = 80;
 // The card's horizontal chrome (1px popover border + 8px contents padding). EditorPopover
 // shifts the card left by this so its text lines up with the code column, not the edge.
 const CARD_CONTENT_INSET_PX = 9;
@@ -1695,10 +1698,10 @@ export class TextEditor implements DocumentHost {
     // LSP hover + signature help: MarkupCards in EditorPopovers pointed at the cursor cell.
     // Prose stays in the proportional UI font; only code spans are monospace; the card has a
     // fixed min width and left-aligns (see showHoverMarkup).
-    this.hoverCard = new MarkupCard({ widthPx: HOVER_WIDTH_PX, highlight: (c, l) => this.cardHighlight(c, l) });
+    this.hoverCard = new MarkupCard({ widthPx: HOVER_WIDTH_PX, maxWidthChars: HOVER_MAX_WIDTH_CHARS, highlight: (c, l) => this.cardHighlight(c, l) });
     this.hoverPopover = new EditorPopover(this.editorModel, this.view, this.hoverCard.label, { chrome: CARD_CONTENT_INSET_PX });
 
-    this.signatureCard = new MarkupCard({ widthPx: HOVER_WIDTH_PX, highlight: (c, l) => this.cardHighlight(c, l) });
+    this.signatureCard = new MarkupCard({ widthPx: HOVER_WIDTH_PX, maxWidthChars: HOVER_MAX_WIDTH_CHARS, highlight: (c, l) => this.cardHighlight(c, l) });
     this.signaturePopover = new EditorPopover(this.editorModel, this.view, this.signatureCard.label, { chrome: CARD_CONTENT_INSET_PX });
 
     // Buffer-only mode: a greyed placeholder over the empty buffer, and no minimap.

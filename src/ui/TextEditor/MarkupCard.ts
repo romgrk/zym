@@ -8,7 +8,7 @@
 import Gtk from 'gi:Gtk-4.0';
 import { fonts } from '../../fonts.ts';
 import { markdownToPango } from '../markdownMarkup.ts';
-import { setMarkupSafe } from '../proseMarkup.ts';
+import { setMarkupSafe, wrappingLabel } from '../proseMarkup.ts';
 
 /** Syntax-highlight a fenced code block to Pango markup; null falls back to plain code. */
 export type CodeHighlighter = (code: string, lang: string | undefined) => string | null;
@@ -16,6 +16,10 @@ export type CodeHighlighter = (code: string, lang: string | undefined) => string
 export interface MarkupCardOptions {
   /** Fixed min width (px); the label wraps to it. */
   widthPx?: number;
+  /** Max natural width in characters; longer content soft-wraps to it so a long code
+   *  line can't stretch the card. Chars (not px) so it scales with the font. Unbounded
+   *  when omitted. */
+  maxWidthChars?: number;
   /** Highlighter for fenced code blocks (omitted → Pango generic monospace). */
   highlight?: CodeHighlighter;
 }
@@ -26,8 +30,10 @@ export class MarkupCard {
   private readonly highlight?: CodeHighlighter;
 
   constructor(opts: MarkupCardOptions = {}) {
-    this.label = new Gtk.Label({ useMarkup: true, wrap: true, xalign: 0 });
+    // WORD_CHAR wrap (via wrappingLabel) so a long code line/token breaks instead of widening the card.
+    this.label = wrappingLabel({ useMarkup: true, xalign: 0 });
     if (opts.widthPx) this.label.setSizeRequest(opts.widthPx, -1);
+    if (opts.maxWidthChars) this.label.setMaxWidthChars(opts.maxWidthChars);
     this.highlight = opts.highlight;
   }
 
