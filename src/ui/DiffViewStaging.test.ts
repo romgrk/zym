@@ -221,3 +221,96 @@ test('staging: staging one of two hunks leaves the other unstaged (partial file)
   assert.deepEqual(stateOf(mbv, 'added'), ['staged', 'unstaged'], 'X staged, Y still unstaged');
   mbv.dispose();
 });
+
+test('setFiles: re-syncing folds a newly-changed file into an already-open live diff', async () => {
+  // Two committed files; only a.ts is changed when the diff opens (its file set is a snapshot).
+  const repo = makeTmpDir('setfiles');
+  const run = (...args: string[]) => execFileSync('git', args, { cwd: repo });
+  run('init', '-q');
+  run('config', 'user.email', 't@t');
+  run('config', 'user.name', 'tester');
+  run('config', 'commit.gpgsign', 'false');
+  const fileA = Path.join(repo, 'a.ts');
+  const fileB = Path.join(repo, 'b.ts');
+  Fs.writeFileSync(fileA, 'a\nb\nc\n');
+  Fs.writeFileSync(fileB, 'x\ny\nz\n');
+  run('add', '.');
+  run('commit', '-q', '-m', 'init');
+  Fs.writeFileSync(fileA, 'a\nCHANGED\nc\n');
+  invalidateRepoRoot();
+
+  const registry = new DocumentRegistry();
+  const mbv = new DiffView({
+    editable: true,
+    live: true,
+    documents: registry,
+    cwd: repo,
+    files: [{ path: fileA, oldText: 'a\nb\nc\n', newText: 'a\nCHANGED\nc\n' }],
+  });
+  assert.deepEqual(mbv.fileList().map((f) => f.path), [fileA], 'opens with only the file changed at build time');
+
+  // b.ts changes AFTER open; re-syncing the set (what openLiveDiff does on reopen) must fold it in.
+  Fs.writeFileSync(fileB, 'x\nDIFFERENT\nz\n');
+  mbv.setFiles([
+    { path: fileA, oldText: 'a\nb\nc\n', newText: 'a\nCHANGED\nc\n', deleted: false },
+    { path: fileB, oldText: 'x\ny\nz\n', newText: 'x\nDIFFERENT\nz\n', deleted: false },
+  ]);
+  assert.deepEqual(
+    mbv.fileList().map((f) => f.path).sort(),
+    [fileA, fileB].sort(),
+    'the newly-changed file is now shown alongside the original',
+  );
+
+  // A no-op re-sync (nothing new) leaves the set untouched.
+  mbv.setFiles([{ path: fileA, oldText: 'a\nb\nc\n', newText: 'a\nCHANGED\nc\n', deleted: false }]);
+  assert.equal(mbv.fileList().length, 2, 're-syncing with no new files keeps the existing set');
+  mbv.dispose();
+});
+
+test('live: a file changed after open is folded in on the next git change', async () => {
+  const repo = makeTmpDir('livefold');
+  const run = (...args: string[]) => execFileSync('git', args, { cwd: repo });
+  run('init', '-q');
+  run('config', 'user.email', 't@t');
+  run('config', 'user.name', 'tester');
+  run('config', 'commit.gpgsign', 'false');
+  const fileA = Path.join(repo, 'a.ts');
+  const fileB = Path.join(repo, 'b.ts');
+  Fs.writeFileSync(fileA, 'a\nb\nc\n');
+  Fs.writeFileSync(fileB, 'x\ny\nz\n');
+  run('add', '.');
+  run('commit', '-q', '-m', 'init');
+  Fs.writeFileSync(fileA, 'a\nCHANGED\nc\n');
+  invalidateRepoRoot();
+
+  // The working-tree change set the (faked) repo model reports — only a.ts at first.
+  const changed = new Set<string>([fileA]);
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+  const showHead = (abs: string) =>
+    execFileSync('git', ['show', `HEAD:${Path.relative(repo, abs)}`], { cwd: repo }).toString('utf8');
+  const buildFiles = async () =>
+    [...changed].sort().map((abs) => ({ path: abs, oldText: showHead(abs), newText: Fs.readFileSync(abs, 'utf8'), deleted: false }));
+  const git = {
+    getHead: () => head,
+    onChange: () => () => {},
+    refresh: () => {},
+    getFileStatuses: () => new Map([...changed].map((p) => [p, { kind: 'modified', added: 0, removed: 0 }])),
+  } as unknown as GitRepo;
+
+  const registry = new DocumentRegistry();
+  const mbv = new DiffView({ editable: true, live: true, documents: registry, cwd: repo, git, refreshFiles: buildFiles, files: await buildFiles() });
+  assert.deepEqual(mbv.fileList().map((f) => f.path), [fileA], 'opens tracking only the file changed at build time');
+
+  // b.ts changes on disk; the repo model now reports it and a git change fires (as onChange would).
+  Fs.writeFileSync(fileB, 'x\nDIFFERENT\nz\n');
+  changed.add(fileB);
+  (mbv as any).onGitChange();
+
+  assert.ok(await waitFor(() => mbv.fileList().some((f) => f.path === fileB)), 'the newly-changed file is folded into the live diff');
+  assert.deepEqual(mbv.fileList().map((f) => f.path).sort(), [fileA, fileB].sort(), 'both files now tracked');
+
+  // A git change that did NOT grow the set folds nothing new in (the common content-only case).
+  (mbv as any).onGitChange();
+  assert.equal(mbv.fileList().length, 2, 'no phantom duplicate files on a non-growing change');
+  mbv.dispose();
+});
