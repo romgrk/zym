@@ -734,7 +734,7 @@ export class AppWindow {
         description: 'Open project search (multibuffer); seeds the selection when one exists',
       },
       'project:search-open-word': {
-        didDispatch: () => this.paneItems.openProjectSearch(this.selectionSeed() || this.wordSeed()),
+        didDispatch: () => this.paneItems.openProjectSearch(this.selectionSeed() || this.wordSeed(), { focusResults: true }),
         description: 'Project search (multibuffer) for the word under the cursor',
       },
       'git:diff-current-changes': {

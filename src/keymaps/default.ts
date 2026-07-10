@@ -401,12 +401,19 @@ export const DEFAULT_KEYMAP: Record<string, Record<string, Binding>> = {
     'ctrl-w h': 'git-log:focus-list',
   },
 
-  // The project-search query field: Down/Enter drop focus into the results multibuffer,
-  // keeping the query (so you can browse/edit without reaching for the mouse).
+  // The project-search query field: Down drops focus into the results multibuffer (at the top);
+  // Enter submits the query and jumps to the first match. Both keep the query text.
   '.ProjectSearchEntry': {
     down: 'project-search:focus-results',
-    enter: 'project-search:focus-results',
-    'kp_enter': 'project-search:focus-results',
+    enter: 'project-search:submit',
+    'kp_enter': 'project-search:submit',
+  },
+
+  // From within the search tab (focus in the results), `space s s` returns to the search box
+  // without clearing the query — nearer scope than the global `space s s` (project:search-open),
+  // so it wins by focus proximity. In the entry `space` types literally (`.has-text-input`).
+  '.ProjectSearchView': {
+    'space s s': 'project-search:focus-search',
   },
 
   // The notification log: while it has focus, bare keys act on the history

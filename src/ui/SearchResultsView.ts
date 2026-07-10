@@ -525,6 +525,21 @@ export class SearchResultsView {
     this.editor.focus();
   }
 
+  /** Move the caret onto the first search hit (the first file's first match) and focus the
+   *  editor. Returns false when there's no match to land on (results not built yet / no matches). */
+  focusFirstMatch(): boolean {
+    for (const input of this.excerptInputs) {
+      const m = input.matches?.[0]; // matches stream in ascending row order, so [0] is the topmost
+      if (!m) continue;
+      const pos = this.projection.documentToScreen(input.path, m.row, m.startCol);
+      if (!pos) continue;
+      this.editor.model.setCursorBufferPosition(pos);
+      this.editor.focus();
+      return true;
+    }
+    return false;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

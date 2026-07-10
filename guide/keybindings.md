@@ -61,6 +61,12 @@ files, `.` toggles hidden files.
 All search bindings (`space /`, `space *`, and the `space s` family) seed the
 search with the visual selection when one exists.
 
+Inside the project-search tab, focus follows the query. A seeded search that runs
+at once (`space s w`) lands the cursor on the **first match**; `space s s` opens
+focused in the search box. From the search box, `enter` jumps to the first match
+and `down` drops into the results at the top. Back in the results, `space s s`
+returns to the search box without clearing the query.
+
 ### Git — `space g`, hunks — `space h`
 
 See [Git & GitHub](git.md) for the full workflow; highlights:

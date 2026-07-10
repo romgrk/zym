@@ -482,8 +482,10 @@ export class PaneItems {
   // --- Project search & diff views (hosted as center tabs) -------------------
 
   /** Open the project-search surface in a tab: a debounced search entry over an editable
-   *  results multibuffer. Seeded with `initialQuery` or empty. */
-  openProjectSearch(initialQuery: string): void {
+   *  results multibuffer. Seeded with `initialQuery` or empty. With `focusResults` (a word/selection
+   *  search that runs at once, `space s w`) focus lands on the first match once results arrive;
+   *  otherwise it lands in the search box to type a query. */
+  openProjectSearch(initialQuery: string, opts: { focusResults?: boolean } = {}): void {
     const view = new ProjectSearchView({
       cwd: this.workbench.cwd,
       documents: this.documentRegistry,
@@ -494,7 +496,8 @@ export class PaneItems {
     const child = this.workbench.center.add(view.root, { title, requireTabBar: true });
     this.projectSearchViews.set(view.root, view); // disposeChild tears it down on close
     child.select();
-    view.focus();
+    if (opts.focusResults) view.focusFirstMatch();
+    else view.focus();
   }
 
   /** Open a read-only diff of the active file (working tree vs git HEAD) in a tab. */

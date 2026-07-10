@@ -126,6 +126,7 @@ export class ProjectSearchView {
   private appliedFileCount = 0;
   // Pending coalesced results refresh (see VIEW_UPDATE_MS).
   private viewUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingFocusFirstMatch = false;
   private disposed = false;
 
   constructor(options: ProjectSearchViewOptions) {
@@ -207,6 +208,17 @@ export class ProjectSearchView {
   focus(): void {
     this.entry.grabFocus();
     this.entry.selectRegion(0, -1);
+  }
+
+  focusSearch(): void {
+    this.entry.grabFocus();
+    this.entry.setPosition(-1); // caret at end, clears the focus-grab selection ("without changing it")
+  }
+
+  focusFirstMatch(): void {
+    if (this.resultsView?.focusFirstMatch()) return;
+    this.pendingFocusFirstMatch = true;
+    this.entry.grabFocus(); // a focus home until results arrive (and where focus stays on no matches)
   }
 
   dispose(): void {
@@ -357,6 +369,7 @@ export class ProjectSearchView {
     if (this.viewUpdateTimer) { clearTimeout(this.viewUpdateTimer); this.viewUpdateTimer = null; }
     this.matches = [];
     this.appliedFileCount = 0;
+    this.pendingFocusFirstMatch = false; // a fresh run drops any arming from a superseded query
     const query = this.entry.getText().trim();
     const generation = ++this.generation;
     if (query === '') {
@@ -418,6 +431,7 @@ export class ProjectSearchView {
       );
     }
     this.appliedFileCount = target;
+    if (this.pendingFocusFirstMatch && this.resultsView?.focusFirstMatch()) this.pendingFocusFirstMatch = false;
     if (target < cap) this.scheduleViewUpdate(); // more files pending — continue next frame
   }
 
@@ -445,14 +459,35 @@ export class ProjectSearchView {
     this.status.setText(text);
   }
 
+  private submitSearch(): void {
+    if (this.searchTimer) {
+      this.runSearch(); // commit immediately instead of waiting out the debounce
+      this.pendingFocusFirstMatch = true; // land on THIS query's first match once it flushes
+    } else {
+      this.focusFirstMatch();
+    }
+  }
+
   private registerCommands(): void {
-    // The search entry's own key: drop focus from the field into the results, keeping the query
-    // (bound to `.ProjectSearchEntry` in the central keymap — Down / Enter).
+    // The search entry's own keys (bound to `.ProjectSearchEntry` in the central keymap): Down drops
+    // focus into the results (keeping the query); Enter submits — commit + land on the first match.
     this.subs.add(
       zym.commands.add(this.entry, {
         'project-search:focus-results': {
           didDispatch: () => this.resultsView?.focus(),
           description: 'Move from the search box into the results',
+        },
+        'project-search:submit': {
+          didDispatch: () => this.submitSearch(),
+          description: 'Search now and jump to the first match',
+        },
+      }),
+    );
+    this.subs.add(
+      zym.commands.add(this.root, {
+        'project-search:focus-search': {
+          didDispatch: () => this.focusSearch(),
+          description: 'Focus the search box (keep the current query)',
         },
       }),
     );

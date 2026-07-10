@@ -40,6 +40,14 @@ All four commands seed the visual selection when one exists (`project:search`,
   `diffMultiBuffer.ts`) without the `@@ -old +new @@` range — the source line-number gutter already
   shows it — falling back to `⋯` (see [diff.md](diff.md) for the diff's full git-patch labels).
   Set `ZYM_SEARCH_PROFILE=1` to log per-step timings (`src/util/profile.ts`).
+  **Focus flow:** a seeded search that auto-runs (`space s w`) lands the caret on the **first match**
+  once results stream in; `space s s` opens focused in the search box to type a query. In the box,
+  Enter (`project-search:submit`) commits the query and jumps to the first match, while Down
+  (`project-search:focus-results`) drops into the results at the top. From within the tab (focus in
+  the results) `space s s` (`project-search:focus-search`, scoped to `.ProjectSearchView`, so it
+  outranks the global leader by focus proximity) returns to the search box **without clearing the
+  query**. Landing on the first match is `SearchResultsView.focusFirstMatch()` (first file's first
+  match); the arm-then-flush handoff (results may still be streaming) is `pendingFocusFirstMatch`.
 
 ## Presets
 
