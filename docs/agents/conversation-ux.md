@@ -16,6 +16,13 @@ accent bubbles (`Message.is-user`), assistant turns as background-blended prose
 Subagents / Monitors panels, and a rounded input card whose footer carries the
 status icon, permission-mode dropdown, and a context-token ring.
 
+Because user bubbles are accent-tinted (`--user-bubble-bg`), the `MarkdownRenderer`
+draws every block fill (blockquote, code block, table header) as a **neutral wash**
+— the view foreground at low opacity — never an opaque or accent-tinted surface
+color, so the fills composite cleanly over any bubble background instead of clashing.
+The colors are owned by the renderer (`src/ui/markdown/MarkdownRenderer.ts`); the
+model just flags whether a block has a background.
+
 The weaknesses are almost all **discoverability and in-the-moment control**: the
 view assumes a keyboard-fluent user who already knows the chords, and it gives
 few on-screen affordances for the actions a user reaches for most (send, stop,

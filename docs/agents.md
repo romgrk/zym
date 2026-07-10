@@ -307,7 +307,13 @@ session. A pinned/auto name still wins.
 launch (that redundant `claude -p` call was removed — ACP is the source of the
 name). A fresh `acp` session names itself from the agent's own **topic**: the
 first non-empty `session_info_update.title` seeds the stable name once (see the
-topic note above). The one-shot namer survives only as an **on-demand** action.
+topic note above). Until then it reads as the picked **agent option** — the
+launcher's profile label (e.g. `codex`), threaded through as
+`AgentConversation`'s `defaultName` (launcher `profileLabel` → `openAgent` →
+`AGENT_CONFIGS.create`); it's the lowest-priority fallback in the `title` getter,
+so any real name (topic seed / auto-name / rename) still wins. Only a launch that
+supplies no label falls back to the generic `acp agent`. The one-shot namer
+survives only as an **on-demand** action.
 
 **Auto-name (on demand)** — a one-shot LLM names a session from its task, triggered
 by an **empty `/rename`** (only). A **one-shot agent** (`src/agents/oneshot.ts`:

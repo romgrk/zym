@@ -100,7 +100,7 @@ interface Seg {
   h: number;
 }
 
-/** A solid fill (block background / table header) drawn behind text. */
+/** A fill (block background / table header) drawn behind text; may be translucent. */
 interface Fill {
   x: number;
   y: number;
@@ -131,6 +131,7 @@ export class MarkdownRenderer extends Gtk.Widget {
   private cBorder: RGBA;
   private cQuoteBar: RGBA;
   private cQuoteBg: RGBA;
+  private cCodeBg: RGBA;
   private cHeaderBg: RGBA;
 
   constructor() {
@@ -157,10 +158,17 @@ export class MarkdownRenderer extends Gtk.Widget {
     this.cSelection.alpha = 0.2;
     this.cBorder = rgba(theme.ui.border);
     this.cQuoteBar = rgba(theme.ui.text.muted);
-    // Blockquote fill: the view foreground at low opacity, like a faint callout tint.
+    // Block backgrounds (blockquote tint, code fill, table header) are all a NEUTRAL
+    // wash — the view foreground at low opacity — never an opaque or accent-tinted
+    // surface color. A translucent neutral tint composites over ANY bubble background
+    // (the accent-tinted user message-bubble, the plain assistant surface, a popover)
+    // and reads consistently; a solid fill clashed on the colored user bubble.
     this.cQuoteBg = rgba(theme.ui.view.fg);
     this.cQuoteBg.alpha = 0.15;
-    this.cHeaderBg = rgba(theme.ui.surface.selected);
+    this.cCodeBg = rgba(theme.ui.view.fg);
+    this.cCodeBg.alpha = 0.08;
+    this.cHeaderBg = rgba(theme.ui.view.fg);
+    this.cHeaderBg.alpha = 0.13;
 
     this.addCssClass('MarkdownRenderer');
     this.setFocusable(true);
@@ -297,7 +305,7 @@ export class MarkdownRenderer extends Gtk.Widget {
         setLayoutMarkup(layout, lineMarkup(block), block.plain);
         const [, h] = layout.getPixelSize();
         if (block.background)
-          this.fills.push({ x: indentPx, y, w: Math.max(0, width - indentPx - RIGHT_PAD), h: h + pad * 2, color: rgba(block.background), radius: BLOCK_RADIUS });
+          this.fills.push({ x: indentPx, y, w: Math.max(0, width - indentPx - RIGHT_PAD), h: h + pad * 2, color: this.cCodeBg, radius: BLOCK_RADIUS });
         this.segs.push({ layout, plain: block.plain, links: block.links, x: indentPx + pad, y: y + pad, w: contentW, h });
         y += h + pad * 2;
       }

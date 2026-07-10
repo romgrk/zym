@@ -73,6 +73,9 @@ export interface AgentLaunch {
   resume?: AgentResume;
   /** Initial title override. */
   title?: string;
+  /** The picked "agent" option (profile label) — the fallback conversation title
+   *  until the agent auto-names or reports a topic (acp only; tui ignores it). */
+  defaultName?: string;
   /** The launcher's model / permission-mode selections, for acp profiles whose
    *  options apply over the protocol rather than argv (`'default'`/absent =
    *  the agent's own default). claude-tui encodes both in `command`. */
@@ -130,6 +133,7 @@ export const AGENT_CONFIGS: Record<AgentKind, AgentConfig> = {
         userPrompt: l.userPrompt,
         resume: l.resume,
         title: l.title,
+        defaultName: l.defaultName,
         onOpenFile: l.onOpenFile,
         createSession: (o) => new AcpSession({ cwd: o.cwd, command, resume: o.resume, bridge: createAcpBridge(), fs: l.fs, model: l.model, permissionMode: l.permissionMode, configOptions: l.configOptions }),
       });

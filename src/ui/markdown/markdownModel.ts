@@ -67,8 +67,9 @@ export type MdBlock =
         /** A named Pango size (e.g. 'x-large') for headings, or '' for body size. */
         size: string;
         bold: boolean;
-        /** A background fill behind the block (fenced code); a hex color or undefined. */
-        background?: string;
+        /** Whether the block draws a code-style background fill (fenced code). The
+         *  renderer owns the fill color (a neutral tint), so this is just a flag. */
+        background?: boolean;
       })
   | (Nesting &
       Spacing & {
@@ -145,7 +146,6 @@ function faceMetrics(family: string): { xHeight: number; stem: number } {
 const LINK_COLOR = theme.ui.text.accent;
 const CODE_COLOR = resolveSyntaxColor('markup.raw') ?? theme.ui.text.accent;
 const MUTED_COLOR = theme.ui.text.muted;
-const CODE_BG = theme.ui.surface.popover;
 
 // Per-document counter handing each blockquote a unique group id (reset per parse).
 let quoteSeq = 0;
@@ -195,7 +195,7 @@ function walkBlocks(tokens: Token[], nest: Nesting, out: MdBlock[], hl?: Highlig
         const inner = hl?.(cb.text, cb.lang ?? undefined) ?? escapeMarkup(cb.text);
         out.push({
           kind: 'line', markup: inner, plain: cb.text, links: [], ...nest,
-          mono: true, bold: false, size: '', background: CODE_BG, marginTop: 6, marginBottom: 8,
+          mono: true, bold: false, size: '', background: true, marginTop: 6, marginBottom: 8,
         });
         break;
       }
