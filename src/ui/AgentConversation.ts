@@ -727,6 +727,10 @@ export class AgentConversation implements Agent {
       prompt: this.launchPrompt,
       sessionId: this.sessionId ?? this.resumeSessionId ?? undefined,
       name: this._displayName ?? this._sessionName ?? undefined,
+      // The live session mode (protocol-applied, so absent from argv): re-applied on
+      // resume as the launcher's `permissionMode` would be, else the agent reverts to
+      // its ask-first default and starts prompting again. Only when it advertises modes.
+      permissionMode: this.session.getModeState?.()?.currentId,
     };
   }
   // A running agent is not "modified" work: nothing to flush, killed on quit, so it

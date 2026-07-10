@@ -425,6 +425,7 @@ export class AgentController {
         prompt: a.sessionId ? undefined : a.prompt,
         resume: a.sessionId ? { sessionId: a.sessionId } : undefined,
         title: a.name,
+        permissionMode: a.permissionMode, // re-apply the saved session mode (protocol-applied, not argv)
       });
     } else if (a.sessionId) {
       const session = listResumableSessions(this.agentSessionRoots()).find((s) => s.id === a.sessionId);
@@ -583,6 +584,7 @@ export class AgentController {
       resume: { sessionId, fork: true },
       title: `${agent.title} (branch)`,
       command: agentCommandOf(agent),
+      permissionMode: agentModeOf(agent),
     });
   }
 
@@ -696,8 +698,9 @@ export class AgentController {
     const resume = agent.sessionId ? { sessionId: agent.sessionId, fork: !agent.exited } : undefined;
     const root = this.agentRoot(agent);
     const command = agentCommandOf(agent);
+    const permissionMode = agentModeOf(agent);
     this.closeAgent(agent);
-    this.openAgent({ kind, resume, title, root, command });
+    this.openAgent({ kind, resume, title, root, command, permissionMode });
   }
 
   // Close an agent for good: SIGTERM a live child, drop its workbench (falling back to
@@ -794,4 +797,13 @@ function agentCommandOf(agent: Agent): string[] | undefined {
   if (agentKindOf(agent) !== 'acp') return undefined;
   const saved = agent.serialize();
   return saved?.kind === 'agent' ? saved.command : undefined;
+}
+
+/** The acp session mode an agent is in (from its serialized state), so
+ *  restart/branch re-apply it — protocol-applied modes aren't in the argv.
+ *  Undefined for the claude kinds (their mode rides `--permission-mode`). */
+function agentModeOf(agent: Agent): string | undefined {
+  if (agentKindOf(agent) !== 'acp') return undefined;
+  const saved = agent.serialize();
+  return saved?.kind === 'agent' ? saved.permissionMode : undefined;
 }

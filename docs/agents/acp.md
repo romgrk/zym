@@ -234,12 +234,20 @@ config-option dropdowns (model / effort / …), negotiated per session.
   lands after the restored rows); `session/fork` backs branch and
   restart-of-live; `_meta.claudeCode.options.resume` is the context-only
   fallback for agents without `loadSession`. Agents serialize argv + session
-  id + the **stable display name** and restore with their *saved* argv. The name
+  id + the **stable display name** + the **session mode** and restore with their
+  *saved* argv. The name
   (pinned rename / auto-name / topic seed — `_displayName ?? _sessionName`, never the
   transient auto-naming placeholder) is restored as the display title (`title` option →
   `_displayName`) so a resumed conversation keeps the name the user saw instead of
   reverting to the kind default; the evolving *topic* (the subtitle) stays unpersisted and
   re-emits from the agent (it no longer re-seeds the name, since one is already set).
+  The **session mode** (`getModeState().currentId`, e.g. `agent-full-access`) is
+  captured into the serialized state and threaded back as the launcher's
+  `permissionMode` on restore / `agent:restart` / `agent:branch`, so the ask-first
+  force re-applies it — protocol-applied modes have empty argv, so without this a
+  resumed agent silently reverts to its ask-first default and starts prompting again.
+  (The claude-tui kind needs none of this: its mode rides `--permission-mode` in the
+  argv, which the saved `command` already carries.)
 - **zymBridge** — `session/new.mcpServers` carries the bundled bridge
   (`set_worktree` / `set_actions`), injected via `acp/bridge.ts` (the Gio
   watcher) so `AcpSession` stays drivable from plain node. **It reaches an agent

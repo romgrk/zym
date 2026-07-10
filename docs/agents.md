@@ -417,10 +417,13 @@ Built in `src/agentSessions.ts`, `AgentTerminal`, `AppWindow`:
   `sessionId`; the (Session-management-owned) restore can relaunch a saved
   agent as `--resume <id>` to continue the conversation rather than start
   fresh. The `TabState` agent variant has an optional `sessionId`. The `acp`
-  kind additionally serializes its **stable display name** (`name`) and restores
-  it as the title, so a resumed conversation keeps the name the user saw rather
-  than reverting to the kind default (the topic/subtitle stays unpersisted — see
-  [agents/acp.md](agents/acp.md)).
+  kind additionally serializes its **stable display name** (`name`) and its
+  **session mode** (`permissionMode`) and restores both — the name as the title,
+  the mode re-applied on resume (also on `agent:restart`/`agent:branch`) so a
+  codex agent kept in `agent-full-access` doesn't silently revert to its
+  sandboxed ask-first default and start prompting again (its modes are
+  protocol-applied, so they aren't in the saved argv; claude-tui's `--permission-mode`
+  is). The topic/subtitle stays unpersisted — see [agents/acp.md](agents/acp.md).
 
 **Open**: surface session branch/cost in the resume list; resume-with-prompt;
 offer fork on resuming a *live* session; honor `cleanupPeriodDays` (transcripts

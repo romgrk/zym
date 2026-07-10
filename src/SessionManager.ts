@@ -42,7 +42,10 @@ export type TabState =
   // `name` is the agent's stable display title (pinned rename / auto-name / topic seed), so a
   // restored conversation keeps the name the user saw instead of reverting to the kind default;
   // the evolving topic (sidebar subtitle) is deliberately not persisted (see docs/agents/acp.md).
-  | { kind: 'agent'; command: string[]; cwd: string; prompt?: string; sessionId?: string; name?: string; agentKind?: 'claude-tui' | 'claude-sdk' | 'acp' };
+  // `permissionMode` is the acp session mode id (e.g. 'agent-full-access') — protocol-applied
+  // modes have empty argv, so without this a resumed agent reverts to its ask-first default; the
+  // claude-tui kind needs it not (its mode rides `--permission-mode` in `command`).
+  | { kind: 'agent'; command: string[]; cwd: string; prompt?: string; sessionId?: string; name?: string; permissionMode?: string; agentKind?: 'claude-tui' | 'claude-sdk' | 'acp' };
 
 /** The split tree of one workbench: `leaf` tab strips joined by `split` panes. */
 export type PanelNode =
