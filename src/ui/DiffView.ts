@@ -886,15 +886,13 @@ export class DiffView {
     // Accumulated review comments: a read-only card under each commented line (source-anchored, so
     // it tracks the line across re-diffs/edits). Reconciled in the same set by stable id.
     this.pending.forEach((p) => {
-      if (p.id === this.editingPendingId) return; // its comment box is open in place of the card
+      if (p.id === this.editingPendingId) return;
       specs.push({
         id: p.id,
         key: p.comment.comment,
         anchor: p.anchor,
         placement: 'below',
-        // Span the full content width (like the gap bands and the editor comment box) so the card's
-        // wrapping label can't collapse to its ~zero minimum width and reflow tall a few frames in.
-        fullWidth: 'content',
+        fullWidth: 'content', // see docs/text-editor/diff.md — the wrapping label needs a forced width
         build: () => buildCommentCard(p.comment.comment),
       });
     });
@@ -1173,9 +1171,9 @@ export class DiffView {
   private editPending(p: { comment: DiffComment; anchor: BlockDecorationAnchor; id: string }): void {
     const anchorRow = this.anchorViewRow(p.anchor) ?? this.cursorRow();
     this.editingPendingId = p.id;
-    this.installOverlays(this.dmb); // suppress the card so the box takes its place
-    // Mutate the model, then close: the card is re-rendered (or dropped) from the current state by the
-    // peek's onClose, which clears `editingPendingId` on every close path (submit, cancel, re-target).
+    this.installOverlays(this.dmb);
+    // onSubmit/onCancel only mutate `pending` then close; the peek's onClose re-renders (or drops) the
+    // card from the resulting state — it's the single hook that fires for every close path.
     const box = new DiffCommentBox({
       reviewing: true, // a pending comment only exists in review mode
       editing: true,
@@ -1209,12 +1207,10 @@ export class DiffView {
       // synchronously is unsafe — see buildDefinitionPeek, which never disposes its peek editor).
       onClose: () => {
         if (this.commentBox === box) this.commentBox = null;
-        // Editing a pending comment suppresses its card while the box is open; restore/rebuild it from
-        // the current `pending` state now the box is gone (fires for every close: submit/cancel/re-target).
         const wasEditing = this.editingPendingId !== null;
         this.editingPendingId = null;
         if (this.disposed) return void box.dispose(); // view tearing down: don't tick a dead view
-        if (wasEditing) this.installOverlays(this.dmb);
+        if (wasEditing) this.installOverlays(this.dmb); // re-render the card now its edit box is gone
         this.editor.sourceView.addTickCallback(() => (box.dispose(), false));
       },
     });
