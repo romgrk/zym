@@ -14,8 +14,12 @@
  *
  * Each tool is advertised only when its IPC file is configured (via the matching
  * env var), so a host that wants only one (e.g. the headless sdk wants actions but
- * not worktree) passes only that env var. Transport: newline-delimited JSON-RPC
- * 2.0 over stdio, per the MCP stdio spec. Pure Node, no deps — runs from assets.
+ * not worktree) passes only that env var. The mandate to *when* to call each tool
+ * ships in the server-level `instructions` field of the initialize result (one
+ * clause per advertised tool), which a client surfaces at startup even while the
+ * tool schemas stay deferred — so the tool descriptions carry only the *what*.
+ * Transport: newline-delimited JSON-RPC 2.0 over stdio, per the MCP stdio spec.
+ * Pure Node, no deps — runs from assets.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -29,11 +33,8 @@ const SET_WORKTREE = {
   name: 'set_worktree',
   description:
     'Tell the zym editor which git worktree you are now working in, so it re-roots ' +
-    'its file tree and Source Control to match. You MUST call this the instant you ' +
-    'create or switch into a worktree (e.g. after `git worktree add <path>` then ' +
-    '`cd <path>`), before running any other command — until you do, the editor stays ' +
-    'rooted in the wrong directory and cannot track your work. This is required, not ' +
-    'optional; never skip it. Pass the absolute path of the worktree root.',
+    'its file tree and Source Control to match. Pass the absolute path of the worktree ' +
+    'root.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -47,10 +48,8 @@ const SET_ACTIONS = {
   name: 'set_actions',
   description:
     'Register runnable actions the user can trigger to run, test, or review your work ' +
-    'outside this chat (e.g. open the app). zym shows them as buttons. You MUST call this ' +
-    'whenever you finish work the user could run, test, or review — do not just describe ' +
-    'the commands in chat; register them here, and keep the set current as the work changes. ' +
-    'Make each as convenient and direct as possible: open the app on the screen you changed, run the one ' +
+    'outside this chat (e.g. open the app). zym shows them as buttons. Make each as ' +
+    'convenient and direct as possible: open the app on the screen you changed, run the one ' +
     'affected test, hit the endpoint you touched — not just a generic "run everything". ' +
     'Replaces the whole set on each call; pass an empty `actions` list to clear it. List ' +
     'the most useful action first — it is the default.',
@@ -80,6 +79,26 @@ const TOOLS = [
   ...(STATUS_FILE ? [SET_WORKTREE] : []),
   ...(ACTIONS_FILE ? [SET_ACTIONS] : []),
 ];
+
+// The tool descriptions cover the *what*; the *when* — the mandate to call each tool —
+// ships in the server-level `instructions` field of the initialize result. A client
+// surfaces that at startup even while the tool schemas stay deferred, so the mandates
+// are seen up front. One clause per advertised tool, mirroring TOOLS.
+const WORKTREE_MANDATE =
+  'The instant you create or switch into a git worktree (e.g. after `git worktree add ' +
+  '<path>` then `cd <path>`), call `set_worktree` with its absolute path before running ' +
+  'any other command. This is required, not optional — until you do, the editor stays ' +
+  'rooted in the wrong directory and cannot track your work.';
+
+const ACTIONS_MANDATE =
+  'Whenever you finish work the user could run, test, or review, call `set_actions` to ' +
+  'register the runnable commands and keep the set current as the work changes — do not ' +
+  'just describe them in chat.';
+
+const INSTRUCTIONS = [
+  ...(STATUS_FILE ? [WORKTREE_MANDATE] : []),
+  ...(ACTIONS_FILE ? [ACTIONS_MANDATE] : []),
+].join('\n\n');
 
 /** Atomically write `text` to `file` (tmp + rename). */
 function writeAtomic(file, text) {
@@ -169,6 +188,7 @@ function handle(msg) {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'zym', version: '1.0.0' },
+        ...(INSTRUCTIONS ? { instructions: INSTRUCTIONS } : {}),
       });
       return;
     case 'tools/list':
