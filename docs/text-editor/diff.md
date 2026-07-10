@@ -86,8 +86,10 @@ keys the band on the displayed text so a live toggle rebuilds it. Markers render
 foreground, same as the filename, on an opaque `--secondary-sidebar-bg-color` band (a shade off the
 header's `--sidebar-bg-color`). The leading file-head gap (`'above'` the first content row) and between-window
 gaps (`'below'` the last shown row) — plus review-comment cards — are ordinary (non-sticky)
-`BlockDecorations`, the gaps `fullWidth: 'content'` so they span the full content width under the
-header and stay full-width while scrolling horizontally with the text (unlike the pinned header).
+`BlockDecorations`, all `fullWidth: 'content'` so they span the full content width under the header
+and stay full-width while scrolling horizontally with the text (unlike the pinned header). The cards
+need it too: their body is a wrapping label, so without a forced width the band collapses to the
+label's ~zero minimum and reflows tall a few frames after placing.
 
 **Per-file folding & navigation** (vim-style, keyed by path in `DiffView.collapsedFiles`). At open, a
 large diff auto-folds: the first build passes `buildDiffMultiBuffer`'s `autoCollapseAtLines`, which

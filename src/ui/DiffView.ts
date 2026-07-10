@@ -888,6 +888,9 @@ export class DiffView {
         key: p.comment.comment,
         anchor: p.anchor,
         placement: 'below',
+        // Span the full content width (like the gap bands and the editor comment box) so the card's
+        // wrapping label can't collapse to its ~zero minimum width and reflow tall a few frames in.
+        fullWidth: 'content',
         build: () => buildCommentCard(p.comment.comment),
       }),
     );
