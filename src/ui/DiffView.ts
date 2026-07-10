@@ -181,6 +181,9 @@ export class DiffView {
   private reviewMode = false;
   private readonly pending: { comment: DiffComment; anchor: BlockDecorationAnchor; id: string }[] = [];
   private pendingSeq = 0;
+  // The pending comment currently being edited, if any: its inline card is suppressed while its
+  // (prefilled) comment box is open, so the box replaces the card rather than stacking over it.
+  private editingPendingId: string | null = null;
   private readonly reviewHandlers: Array<() => void> = [];
   private readonly editable: boolean;
   /** Whether this is a live diff (staging surface): hunk staging + the gutter marker are enabled.
@@ -882,7 +885,8 @@ export class DiffView {
     });
     // Accumulated review comments: a read-only card under each commented line (source-anchored, so
     // it tracks the line across re-diffs/edits). Reconciled in the same set by stable id.
-    this.pending.forEach((p) =>
+    this.pending.forEach((p) => {
+      if (p.id === this.editingPendingId) return; // its comment box is open in place of the card
       specs.push({
         id: p.id,
         key: p.comment.comment,
@@ -892,8 +896,8 @@ export class DiffView {
         // wrapping label can't collapse to its ~zero minimum width and reflow tall a few frames in.
         fullWidth: 'content',
         build: () => buildCommentCard(p.comment.comment),
-      }),
-    );
+      });
+    });
     this.bands.set(specs);
   }
 
@@ -1167,6 +1171,11 @@ export class DiffView {
   /** Re-open the comment box on an existing pending comment, prefilled — Enter updates it in place
    *  (an empty submit deletes it). */
   private editPending(p: { comment: DiffComment; anchor: BlockDecorationAnchor; id: string }): void {
+    const anchorRow = this.anchorViewRow(p.anchor) ?? this.cursorRow();
+    this.editingPendingId = p.id;
+    this.installOverlays(this.dmb); // suppress the card so the box takes its place
+    // Mutate the model, then close: the card is re-rendered (or dropped) from the current state by the
+    // peek's onClose, which clears `editingPendingId` on every close path (submit, cancel, re-target).
     const box = new DiffCommentBox({
       reviewing: true, // a pending comment only exists in review mode
       editing: true,
@@ -1174,15 +1183,18 @@ export class DiffView {
       onStartReview: () => this.setReviewMode(true),
       onSubmit: (text) => {
         const body = text.trim();
+        if (!body) {
+          const idx = this.pending.findIndex((q) => q.id === p.id);
+          if (idx >= 0) this.pending.splice(idx, 1); // cleared → delete
+        } else {
+          p.comment = { ...p.comment, comment: body };
+        }
         this.closeComment();
-        if (!body) return void this.removePending(p.id); // cleared → delete
-        p.comment = { ...p.comment, comment: body };
-        this.installOverlays(this.dmb); // rebuild the card with the new text
         this.emitReview();
       },
       onCancel: () => this.closeComment(),
     });
-    this.openCommentBox(box, this.anchorViewRow(p.anchor) ?? this.cursorRow());
+    this.openCommentBox(box, anchorRow);
   }
 
   /** Show `box` in the focusable peek anchored below `anchorRow`, tracking it as the open box. */
@@ -1197,7 +1209,12 @@ export class DiffView {
       // synchronously is unsafe — see buildDefinitionPeek, which never disposes its peek editor).
       onClose: () => {
         if (this.commentBox === box) this.commentBox = null;
+        // Editing a pending comment suppresses its card while the box is open; restore/rebuild it from
+        // the current `pending` state now the box is gone (fires for every close: submit/cancel/re-target).
+        const wasEditing = this.editingPendingId !== null;
+        this.editingPendingId = null;
         if (this.disposed) return void box.dispose(); // view tearing down: don't tick a dead view
+        if (wasEditing) this.installOverlays(this.dmb);
         this.editor.sourceView.addTickCallback(() => (box.dispose(), false));
       },
     });
