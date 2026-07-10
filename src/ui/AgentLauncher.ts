@@ -156,6 +156,23 @@ addStyles(/* css */`
     border-bottom-left-radius: var(--popover-radius);
     border-bottom-right-radius: var(--popover-radius);
   }
+  /* Render the option comboboxes as one linked, segmented control. Adwaita's own .linked only
+     styles DIRECT-child entry/button nodes (.linked > entry:not(:first-child)), but each
+     Combobox nests its entry as .Combobox > overlay > entry, so that rule never matches and the
+     class alone does nothing. We replicate Adwaita's mechanism one level down: collapse the
+     doubled border with a -1px inset on each non-leading field, and square the interior corners
+     of the nested entry (its outer corners keep the entry's default radius). GTK's :first-child
+     / :last-child skip hidden widgets, so a hidden slot (a permission/effort field left with
+     only the pass-through default) cedes the rounded outer corner to the last VISIBLE field. */
+  .AgentLauncherOptions.linked > .Combobox:not(:first-child) { margin-left: -1px; }
+  .AgentLauncherOptions.linked > .Combobox:not(:first-child) .ComboboxEntry {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+  .AgentLauncherOptions.linked > .Combobox:not(:last-child) .ComboboxEntry {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
   /* Title row above the prompt for the worktree-scoped flows; inset to line up with the
      prompt text and the options row. The worktree combobox sits inline after the label. */
   .AgentLauncherTitle {
@@ -274,16 +291,18 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const permissionDropdown = disposables.use(new Combobox({ title: 'permission', options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
   const effortDropdown = disposables.use(new Combobox({ title: 'effort', options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort }));
 
-  // A fixed model / permission / effort slot with only the pass-through `default`
-  // (an ACP profile with nothing configured/discovered for it) reads as dead UI —
-  // hide it. Its real options ride the generic config dropdowns (below) instead.
+  // The model slot is always shown (right after the agent), so the row keeps a stable
+  // shape and the model is never buried — even an ACP profile that only offers the
+  // pass-through `default` keeps a visible model field. A permission / effort slot with
+  // only that `default` still reads as dead UI, so hide those; their real options ride
+  // the generic config dropdowns (below) instead.
   const applySlotVisibility = (opts: AgentLaunchOptions): void => {
-    modelDropdown.root.setVisible(opts.models.length > 1);
+    modelDropdown.root.setVisible(true);
     permissionDropdown.root.setVisible(opts.permissionModes.length > 1);
     effortDropdown.root.setVisible(opts.efforts.length > 1);
   };
-  // Assigned once the options row exists (it rebuilds the generic config-option
-  // dropdowns for the picked profile). Declared here so the profile onChange can call it.
+  // Assigned once the options row exists (it rebuilds the generic config-option dropdowns for
+  // the picked profile). Declared here so the profile onChange can call it.
   let rebuildConfigDropdowns: (profile: AgentProfile) => void = () => {};
 
   const profileDropdown = disposables.use(new Combobox({
@@ -372,9 +391,12 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   // A WrapBox so the option fields reflow onto another line on a narrow card rather than
   // overflowing. Each combobox carries its own floating title (Adw.EntryRow-like) — no
   // caption row. The worktree field only appears here in the default flow (the worktree
-  // flows surface it in the title).
-  const optionsRow = new Adw.WrapBox({ childSpacing: 10, lineSpacing: 8 });
+  // flows surface it in the title). `linked` renders the fields flush as one segmented
+  // group (childSpacing 0 so they touch; see the CSS above); `lineSpacing` keeps a gap
+  // between wrapped rows so a wrapped group reads as its own segment.
+  const optionsRow = new Adw.WrapBox({ childSpacing: 0, lineSpacing: 8 });
   optionsRow.addCssClass('AgentLauncherOptions');
+  optionsRow.addCssClass('linked');
   optionsRow.append(profileDropdown.root);
   optionsRow.append(modelDropdown.root);
   optionsRow.append(permissionDropdown.root);
@@ -410,6 +432,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     }
     if (worktreeInRow) optionsRow.append(worktreeDropdown!.root);
   };
+
   applySlotVisibility(kindOptions);
   rebuildConfigDropdowns(profile0);
 

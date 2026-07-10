@@ -55,6 +55,18 @@ addStyles(/* css */`
      also apply on the popover's own surface (a separate window from #ComboboxGalleryPoc). */
   .cb-special { color: var(--accent-color); font-weight: bold; }
   .cb-muted { opacity: var(--dim-opacity); }
+  /* Linked options row: mirror AgentLauncher's segmented-group styling so it can be eyeballed
+     here. (The production rules live in AgentLauncher.ts, scoped to its own options row — this
+     is the same mechanism: −1px inset + squared interior corners on the nested entry.) */
+  #ComboboxGalleryPoc .linked > .Combobox:not(:first-child) { margin-left: -1px; }
+  #ComboboxGalleryPoc .linked > .Combobox:not(:first-child) .ComboboxEntry {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+  #ComboboxGalleryPoc .linked > .Combobox:not(:last-child) .ComboboxEntry {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
 `);
 
 // --- realistic option sets (shapes mirror AgentLauncher's, values are illustrative) ---
@@ -127,6 +139,17 @@ function cell(caption: string, widget: InstanceType<typeof Gtk.Widget>): Instanc
   return box;
 }
 
+// A row of comboboxes rendered as one linked, segmented group (mirrors AgentLauncher's
+// options row): childSpacing 0 + the `linked` class. Only the group's outer corners round —
+// GTK's :first-child / :last-child (which skip hidden fields) handle that in CSS, no tagging.
+function linkedRow(combos: Combobox[]): InstanceType<typeof Gtk.Widget> {
+  const row = new Adw.WrapBox({ childSpacing: 0, lineSpacing: 8 });
+  row.addCssClass('linked');
+  row.setHalign(Gtk.Align.START);
+  for (const c of combos) row.append(c.root);
+  return row;
+}
+
 // section header + a horizontal row of cells.
 function section(title: string, note: string, cells: InstanceType<typeof Gtk.Widget>[]): InstanceType<typeof Gtk.Box> {
   const box = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL });
@@ -193,6 +216,19 @@ app.on('activate', () => {
         cell('effort', combo({ title: 'effort', options: EFFORTS, value: 'high' }).root),
         cell('agent', combo({ title: 'agent', options: AGENTS, value: 'claude' }).root),
       ],
+    ));
+
+    // --- The linked options row (this branch) --------------------------------------
+    gallery.append(section(
+      'Linked options row (this branch)',
+      'The same options rendered as one segmented, `linked` group: the fields sit flush and share a single seam, with only the group’s outer corners rounded. Model is always shown, right after Agent.',
+      [linkedRow([
+        combo({ title: 'agent', options: AGENTS, value: 'claude' }),
+        combo({ title: 'model', options: MODELS, value: 'claude-opus-4-8' }),
+        combo({ title: 'permission', options: PERMISSIONS, value: 'default' }),
+        combo({ title: 'effort', options: EFFORTS, value: 'high' }),
+        combo({ title: 'worktree', options: WORKTREES, value: '@@create' }),
+      ])],
     ));
 
     // --- Plain (no title) ----------------------------------------------------------
