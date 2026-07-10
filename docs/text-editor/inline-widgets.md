@@ -66,6 +66,20 @@ leak. The sibling costs the manual scroll-follow that the text-window
 overlay gives for free, but it is the proven hover/squiggle pattern in
 this codebase.
 
+> **These should be one primitive.** `Peek` and `BlockDecorations` are two
+> implementations of the *same* idea — reserve a gap below a line, float a
+> widget in it — differing only in the parenting strategy the IM-focus split
+> above forces (text-window child vs sibling overlay). Because they are
+> separate systems, neither knows about the other's reserved gap, so a peek
+> and a block on the *same* line stack on top of each other: the diff's
+> pending review-comment card (a block) had to be hand-suppressed while its
+> edit box (a peek) is open (`DiffView.editingPendingId`; see
+> [diff.md](diff.md)). The unification: fold `Peek` into `BlockDecorations`
+> as a `focusable` band that internally routes to a sibling-overlay slot, so
+> a single gap-reservation + reconciliation path serves both and same-line
+> widgets can't collide — the IM-focus constraint stays, but as an internal
+> parenting detail rather than a second subsystem.
+
 ### node-gtk overlay-removal constraint
 
 `gtk_text_view_remove` is a **no-op** in this node-gtk/GTK build — it
