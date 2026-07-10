@@ -72,6 +72,9 @@ export interface AgentLaunchRequest {
   cwd: string;
   /** The chosen agent kind. */
   kind: AgentKind;
+  /** The picked "agent" option's label (the profile label, e.g. `codex`) — the
+   *  conversation's fallback title until it auto-names or reports a topic. */
+  profileLabel: string;
   /** The launcher's model / permission-mode selections, for options an acp
    *  profile applies over the protocol rather than argv (`'default'` = the
    *  agent's own — nothing to apply). claude-tui encodes both in `command`. */
@@ -459,7 +462,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
           : { branch: sel };
     card.close(false); // onClose stashes the text…
     savedDraft = ''; // …but it was submitted, so don't restore it next time
-    onLaunch({ prompt, command, cwd, kind, worktree, background, model: selections.model, permissionMode: selections.permissionMode, configOptions });
+    onLaunch({ prompt, command, cwd, kind, profileLabel: profile.label, worktree, background, model: selections.model, permissionMode: selections.permissionMode, configOptions });
   };
 
   // Cycle keyboard focus through the card's controls in their real tab order, wrapping at the

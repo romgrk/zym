@@ -234,6 +234,10 @@ export interface AgentConversationOptions {
    *  agent): seeds the stable title so the conversation keeps the name the user saw
    *  rather than reverting to the default until a fresh topic emits. */
   title?: string;
+  /** The launcher's picked "agent" option (the profile label, e.g. `codex`), used as
+   *  the fallback title until the agent auto-names or reports a topic — so a fresh
+   *  conversation reads as its agent rather than the generic default. */
+  defaultName?: string;
   /** Open a file the agent touched (makes file-tool rows clickable). */
   onOpenFile?: (path: string) => void;
   /** Override the one-shot agent used for auto-naming (test seam; default
@@ -243,7 +247,8 @@ export interface AgentConversationOptions {
   createSession: (opts: { cwd: string; command?: string[]; resume?: AgentResume }) => ConversationSession;
 }
 
-// The kind's default title, shown when nothing has named the session.
+// The kind's default title, shown when nothing has named the session and the launcher
+// supplied no agent-option label (`defaultName`) to fall back to.
 const DEFAULT_TITLE = 'acp agent';
 
 export class AgentConversation implements Agent {
@@ -358,6 +363,10 @@ export class AgentConversation implements Agent {
   private readonly permissionModeHandlers: Array<() => void> = [];
   // A user-pinned override (`agent:rename`); wins over everything when set.
   private _displayName: string | null = null;
+  // The lowest-priority fallback title: the picked "agent" option's label (else the
+  // generic DEFAULT_TITLE). Only shows until a real name (auto-name / topic / rename)
+  // takes over — it never outranks them (see the `title` getter).
+  private readonly _defaultName: string;
   // The stable session name — set by the local `/rename` command, auto-naming, or
   // seeded ONCE from the agent's first reported topic (see the onTopic wiring),
   // so it doesn't churn as the topic evolves. Mirrors AgentTerminal._sessionName.
@@ -396,6 +405,7 @@ export class AgentConversation implements Agent {
     this.resumeSessionId = options.resume?.sessionId;
     this.onOpenFile = options.onOpenFile;
     this._displayName = options.title?.trim() || null;
+    this._defaultName = options.defaultName?.trim() || DEFAULT_TITLE;
     this.session = options.createSession({ cwd: options.cwd, command: options.command, resume: options.resume });
     this.oneShot = options.oneShot ?? createOneShotAgent();
 
@@ -634,7 +644,7 @@ export class AgentConversation implements Agent {
   // A transient auto-naming title (placeholder / failed fallback) wins while set;
   // then a pinned name (`agent:rename`), then Claude's session name (`/rename` /
   // resumed transcript title), then the default. Mirrors AgentTerminal.title.
-  get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? DEFAULT_TITLE; }
+  get title(): string { return this._transientName ?? this._displayName ?? this._sessionName ?? this._defaultName; }
   /** The agent's live topic (ACP session_info_update.title), shown as the sidebar
    *  header's subtitle; null when the agent has reported none. */
   get topic(): string | null { return this._topic; }
