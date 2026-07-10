@@ -19,18 +19,33 @@ by `createEmptyMessage`, `src/ui/createEmptyMessage.ts`) whenever no file has a 
 diff whose changes are all discarded shows "No changes" rather than a blank editor. `reDiff` toggles
 it on `headerAnchors.length === 0`. `git:diff-current-changes` therefore opens the diff even on a
 clean tree (its empty state) instead of a "no changes" toast — `buildCurrentChangesDiff` returns null
-only outside a repo. (The file *set* is still a snapshot taken at open: `onGitChange` re-diffs those
-files live but doesn't add newly-changed ones — reopen to refresh.)
+only outside a repo.
+
+The live diff is a **live mirror of the working tree**, kept current three ways: (1) content edits to
+a file it already tracks arrive for free — the new side is the shared live `Document`, so an edit in
+*any* editor tab reverse-syncs through `Screen` into the view and re-diffs (`setResyncHandler` →
+`reDiff`); (2) a HEAD move re-bases and an index move repaints markers (`onGitChange`); (3) a file
+that becomes changed *after* open is folded in by `onGitChange` → `reconcileFiles`, which — when the
+repo model's change set grew — asks the host to rebuild the `DiffFile[]` (`refreshFiles`, HEAD blob +
+`deleted` flag) and splices the new files in via `DiffView.setFiles`. `setFiles` only ADDS (a file
+that went clean already renders nothing); per-file state (collapse / review / unsaved edits) is
+keyed by path and survives. Every `reDiff` also **pins the top visible line** (by its source
+position) so a reflow that adds/drops rows above the viewport — a commit, a collapse/expand — doesn't
+jump the content under the reader (`topScrollAnchor` → `setTopBufferRow`). Reopening
+(`git:diff-current-changes` again) re-syncs the set explicitly on top of the live path. (External,
+on-disk edits to a file open as a `Document` aren't reflected until it's reloaded — the `Document`
+model doesn't auto-reload; in-app edits are fully live.)
 
 ## Entry points
 
 - **`git:diff-current-changes`** (`space g d d`) — the working tree's changes as
   one editable, stageable diff (the staging surface). `DiffView` in editable
   mode: the new side is a live `Document`, edits write through, hunks stage with
-  `s`/`u`. Only **one live diff per workbench**: re-triggering it reveals + focuses
-  the already-open tab (found by scanning `workbench.center.allChildren()` for a
-  `DiffView.forRoot(w)?.live`) rather than stacking a second one — see
-  `PaneItems.openLiveDiff`.
+  `s`/`u`, and it tracks the working tree live (see above). Only **one live diff per
+  workbench**: re-triggering it reveals + focuses the already-open tab (found by scanning
+  `workbench.center.allChildren()` for a `DiffView.forRoot(w)?.live`) rather than stacking a
+  second one, re-syncing its file set to the current changes first (`DiffView.setFiles`, redundant
+  with the live path but a cheap explicit refresh) — see `PaneItems.openLiveDiff`.
 - **`git:diff-current`** (`space g D`) — just the active file, working tree vs
   HEAD, on the same multibuffer surface (one file, read-only).
 - **`git:diff-commit`** (`space g d c`) / **`git:diff-branch`** (`space g d b`)

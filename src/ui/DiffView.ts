@@ -90,6 +90,8 @@ export interface DiffViewOptions {
   /** The repo model — for a `live` diff: refreshes Source Control after a stage/unstage, and
    *  re-reads the index when it changes externally. */
   git?: GitRepo;
+  /** Live diff only: recompute the current changed-file set (host-built), for `reconcileFiles`. */
+  refreshFiles?: () => Promise<DiffFile[] | null>;
 }
 
 const asIter = (r: any): any => (Array.isArray(r) ? r[r.length - 1] : r);
@@ -191,6 +193,9 @@ export class DiffView {
   // caret→file/row lookup), and the repo model (refresh + external-change subscription).
   private readonly repo: string | null;
   private readonly gitRepo?: GitRepo;
+  private readonly refreshFiles?: () => Promise<DiffFile[] | null>;
+  // Drops a superseded reconcileFiles fetch when git changes burst.
+  private reconcileGen = 0;
   private readonly indexText = new Map<string, string>();
   private dmb: DiffMultiBuffer;
   private gitUnsub?: () => void;
@@ -225,6 +230,7 @@ export class DiffView {
     this.live = !!options.live;
     this.registry = options.documents;
     this.gitRepo = options.git;
+    this.refreshFiles = options.refreshFiles;
     this.repo = options.cwd ? repoRoot(options.cwd) : null;
     if (this.editable && !this.registry) {
       throw new Error('DiffView: editable mode requires a DocumentRegistry');
@@ -334,17 +340,7 @@ export class DiffView {
         if (lineCountChanged) this.scheduleMicroReDiff();
         else this.scheduleReDiff();
       });
-      // Surface each new-side file's modified state as one event (for the tab's unsaved marker)
-      // and refresh the header bands, so the edited file's path picks up the modified marker.
-      for (const entry of this.sources.values()) {
-        if (entry.document)
-          this.modifiedUnsubs.push(
-            entry.document.onModifiedChange(() => {
-              this.emitModified();
-              this.installOverlays(this.dmb);
-            }),
-          );
-      }
+      for (const entry of this.sources.values()) this.watchNewSideModified(entry);
     }
     // Materializing the buffer (setText) leaves the caret at the END; start at the top.
     this.editor.model.setCursorBufferPosition({ row: 0, column: 0 });
@@ -708,17 +704,34 @@ export class DiffView {
    *  identical to the worktree produces no hunks and `buildDiffMultiBuffer` drops it — committing
    *  every change empties the view. A mere index move (staging / unstaging) leaves the worktree↔HEAD
    *  geometry untouched, so it only repaints the staged/unstaged markers (no re-flow, no caret jump
-   *  — see refreshMarkers). The index blobs are refreshed either way (they moved on both). */
+   *  — see refreshMarkers). The index blobs are refreshed either way. `reconcileFiles` additionally
+   *  folds in any file that became changed since open. */
   private onGitChange(): void {
     if (this.disposed) return;
     const head = this.gitRepo?.getHead() ?? null;
     const headMoved = head !== this.lastHead;
     this.lastHead = head;
+    this.reconcileFiles();
     const paths = this.files.map((f) => f.path);
     this.fetchIndexText(paths, () => {
       if (this.disposed) return;
       if (headMoved) this.rebaseToHead(paths);
       else this.refreshMarkers();
+    });
+  }
+
+  /** Fold newly-changed files into the live set via the host-rebuilt `refreshFiles` → `setFiles`.
+   *  Gated on the set actually GROWING so a content-only change pays nothing; `reconcileGen` drops a
+   *  superseded fetch. (Files gone clean aren't removed — they already render nothing.) */
+  private reconcileFiles(): void {
+    if (this.disposed || !this.refreshFiles || !this.gitRepo) return;
+    const known = new Set(this.files.map((f) => f.path));
+    const grew = [...this.gitRepo.getFileStatuses().keys()].some((p) => !known.has(p));
+    if (!grew) return;
+    const gen = ++this.reconcileGen;
+    void this.refreshFiles().then((files) => {
+      if (this.disposed || gen !== this.reconcileGen || !files) return;
+      this.setFiles(files);
     });
   }
 
@@ -898,6 +911,35 @@ export class DiffView {
     return this.sources.get(newKey(file.path))?.document?.getText() ?? file.newText;
   }
 
+  /** Editable mode: re-emit a new-side file's modified state (tab unsaved marker) and refresh the
+   *  header bands when it toggles. No-op on the read-only base side. */
+  private watchNewSideModified(entry: SourceEntry): void {
+    if (!entry.document) return;
+    this.modifiedUnsubs.push(
+      entry.document.onModifiedChange(() => {
+        this.emitModified();
+        this.installOverlays(this.dmb);
+      }),
+    );
+  }
+
+  /** Fold newly-changed files into the live set (adds only; existing files keep their per-file state,
+   *  which is keyed by path). Driven by `reconcileFiles` and reopen (`PaneItems.openLiveDiff`). */
+  setFiles(files: DiffFile[]): void {
+    if (this.disposed || !this.live) return;
+    const known = new Set(this.files.map((f) => f.path));
+    const added = files.filter((f) => !known.has(f.path));
+    if (added.length === 0) return;
+    for (const file of added) {
+      this.files.push(file);
+      this.ensureSources(file);
+      this.watchNewSideModified(this.sources.get(newKey(file.path))!);
+    }
+    this.reDiff();
+    // The added files' index blobs paint their staged/unstaged markers (mirrors the ctor).
+    if (this.repo) this.fetchIndexText(added.map((f) => f.path), () => this.refreshMarkers());
+  }
+
   /** Resolve the old (base, read-only blob) + new (live Document or snapshot) sides of `file`. */
   private ensureSources(file: DiffFile): void {
     if (!this.sources.has(oldKey(file.path))) {
@@ -973,6 +1015,10 @@ export class DiffView {
     // unterminated line, so expanding it appends at the caret and the insert mark rides to the end.
     const headerPath =
       anchor.kind === 'block' && anchor.block === 'header' ? this.fileAtViewRow(caret.row)?.path ?? null : null;
+    // Anchor the top visible line by its SOURCE position (stable across the reflow, unlike a pixel
+    // offset), so rows spliced above the viewport don't jump the content under the reader. Captured
+    // before the splice, restored after — the caret restore below doesn't scroll.
+    const topAnchor = this.topScrollAnchor();
     const dmb = this.buildDiff();
     this.dmb = dmb;
     // No file has any change → show the empty state instead of an empty editor.
@@ -1000,8 +1046,26 @@ export class DiffView {
       const h = this.headerAnchors.find((a) => a.path === headerPath);
       if (h) this.editor.model.setCursorBufferPosition({ row: h.viewRow, column: 0 });
     }
+    // Re-pin the anchored top line (skipped if it was collapsed/dropped — leave the scroll be).
+    if (topAnchor) {
+      const top = this.projection.documentToScreen(topAnchor.documentKey, topAnchor.row, topAnchor.column);
+      if (top) this.editor.model.setTopBufferRow(top.row);
+    }
     // (Header focus follows the caret automatically — owned by `editor.stickyHeaders`.)
     this.lastLineCount = this.screen.buffer.getLineCount(); // reflow changed it
+  }
+
+  /** The stable source anchor for the row to keep pinned to the viewport top across a reflow: the
+   *  topmost visible row, or the first document row just below it when that's a header/gap block
+   *  (which carries no source position). Null when nothing near the top maps to a source line. */
+  private topScrollAnchor(): { documentKey: string; row: number; column: number } | null {
+    const top = this.editor.model.getFirstVisibleScreenRow();
+    const total = this.screen.buffer.getLineCount();
+    for (let r = top; r < total && r < top + 8; r++) {
+      const a = this.projection.screenToDocument(r, 0);
+      if (a.kind === 'document') return { documentKey: a.documentKey, row: a.row, column: a.column };
+    }
+    return null;
   }
 
   /** Added/removed line backgrounds from the per-row diff kinds (header/blank/gap/context get
