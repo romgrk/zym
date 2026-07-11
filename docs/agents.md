@@ -631,6 +631,13 @@ tools (`assets/mcp/zymBridge.mjs`; both kinds get every tool):
 - **`set_worktree(path)`**: update the workbench's cwd to this worktree.
 - **`set_actions([{ label, command, terminal? }])`**: overwrite the  **workbench actions**.
 
+The tool *descriptions* cover only the **what**. The **when** — the mandate to
+call `set_worktree` the instant a worktree is created/switched, and `set_actions`
+whenever there's reviewable work — ships in the server-level **`instructions`**
+field of the MCP initialize result (one clause per advertised tool, mirroring the
+conditional tool advertising). A client surfaces that at startup even while the
+tool schemas stay deferred, so the mandates are always seen up front.
+
 ## More ideas
 
 Backlog beyond the features above, roughly in priority order. The first group

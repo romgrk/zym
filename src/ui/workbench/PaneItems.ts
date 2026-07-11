@@ -27,6 +27,7 @@ import { Terminal, terminalTabTitle } from '../Terminal.ts';
 import { AgentTerminal } from '../AgentTerminal.ts';
 import { AgentConversation } from '../AgentConversation.ts';
 import { DiffView } from '../DiffView.ts';
+import type { DiffFile } from '../multibuffer/diffMultiBuffer.ts';
 import { ProjectSearchView } from '../ProjectSearchView.ts';
 import type { SearchResultsView } from '../SearchResultsView.ts';
 import { GitLogView } from '../git/GitLogView.ts';
@@ -536,19 +537,17 @@ export class PaneItems {
     });
   }
 
-  /** Build a live, editable working-tree DiffView for `workbench`'s changes: NEW side = each
-   *  changed file's current text (an open document's live text incl. unsaved edits, else from
-   *  disk; a deleted file → empty) backed by a live Document, OLD side = the HEAD blob. Null only
-   *  outside a repo. Shared by the `git:diff-current-changes` center tab and the GitPanel's
-   *  embedded diff (via GitPanelOptions.buildDiffView). */
-  async buildCurrentChangesDiff(workbench: Wb): Promise<DiffView | null> {
-    const cwd = workbench.cwd;
-    const root = repoRoot(cwd);
+  /** The current working-tree changed-file set (NEW side = an open document's live text incl.
+   *  unsaved edits, else from disk; a deleted file → empty, `deleted: true`; OLD side = the HEAD
+   *  blob), in sorted path order. Null only outside a repo. The single source of truth for what the
+   *  live diff shows — at open (`buildCurrentChangesDiff`) and on each live re-sync (`refreshFiles`). */
+  private async buildCurrentChangesFiles(workbench: Wb): Promise<DiffFile[] | null> {
+    const root = repoRoot(workbench.cwd);
     if (!root) return null;
     const paths = [...workbench.git.getFileStatuses().keys()].sort();
     const showHead = (rel: string): Promise<string> =>
       new Promise((resolve) => git(root, ['show', `HEAD:${rel}`], (ok, out) => resolve(ok ? out : '')));
-    const files = await Promise.all(
+    return Promise.all(
       paths.map(async (path) => {
         const oldText = await showHead(Path.relative(root, path));
         const open = this.documentRegistry.find(path);
@@ -564,6 +563,15 @@ export class PaneItems {
         return { path, oldText, newText, deleted };
       }),
     );
+  }
+
+  /** Build a live, editable working-tree DiffView for `workbench`'s changes, backed by live
+   *  Documents on the NEW side. Null only outside a repo. Shared by the `git:diff-current-changes`
+   *  center tab and the GitPanel's embedded diff (via GitPanelOptions.buildDiffView). */
+  async buildCurrentChangesDiff(workbench: Wb): Promise<DiffView | null> {
+    const cwd = workbench.cwd;
+    const files = await this.buildCurrentChangesFiles(workbench);
+    if (!files) return null;
     return new DiffView({
       files,
       cwd,
@@ -571,6 +579,8 @@ export class PaneItems {
       live: true, // the staging surface: live worktree+index → staging markers + `space h s`/`space h u`
       documents: this.documentRegistry,
       git: workbench.git, // enables the staged/unstaged gutter marker + `space h s`/`space h u`
+      // Recompute the changed-file set on a git change so files changed after open appear live.
+      refreshFiles: () => this.buildCurrentChangesFiles(workbench),
       onActivate: ({ path, row }) => this.openFile(path).restoreCursor([row, 0]),
       onSend: (message) => this.d.onReview(message),
     });
@@ -581,10 +591,14 @@ export class PaneItems {
   async openLiveDiff(): Promise<void> {
     // Reveal an already-open live diff for this workbench instead of stacking a second one —
     // the staging surface is effectively a singleton (built fresh, but only one shown at a time).
+    // Re-sync its file set on reveal too — a cheap explicit refresh on top of the live path.
     const existing = this.workbench.center.allChildren().find((w) => DiffView.forRoot(w)?.live);
     if (existing) {
+      const view = DiffView.forRoot(existing)!;
+      const files = await this.buildCurrentChangesFiles(this.workbench);
+      if (files) view.setFiles(files);
       this.workbench.center.reveal(existing);
-      DiffView.forRoot(existing)!.focus();
+      view.focus();
       return;
     }
     const view = await this.buildCurrentChangesDiff(this.workbench);
