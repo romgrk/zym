@@ -33,8 +33,12 @@ The launcher's option dropdowns follow the chosen profile. zym **remembers what
 each agent advertised last time it ran** and offers it on the next launch: the
 Claude adapter's permission modes, model, and reasoning effort, Codex its
 sandbox/approval modes. A brand-new agent shows a small built-in set until its first
-session fills these in. You can also switch these live in the agent's footer
-while it runs. Any profile entry can still define its own argv-based lists:
+session fills these in. Repeated labels differing only in capitalization are
+shown as one option, and agent-specific long labels may be shortened (for example,
+the built-in Codex profile displays `Reasoning effort` as `effort`). Profiles can
+define these display-only aliases with `configOptionLabels`. You can also switch
+these live in the agent's footer while it runs. Any profile entry can still define
+its own argv-based lists:
 `"models": [{ "value": "gemini-2.5-pro", "args": ["-m", "gemini-2.5-pro"] }]`
 appends those args to the launch command when picked (`default` always means the
 agent's own), and a configured list wins over the remembered one.
