@@ -36,7 +36,7 @@ function setup(text: string) {
   return { editor, vimState, run, at, yankWord };
 }
 
-test('a second paste cycles to the next yank-history entry (yank-pop)', () => {
+test('the sequential-paste command cycles to the next yank-history entry (yank-pop)', () => {
   const { editor, run, at, yankWord } = setup('a b c .....\n');
   yankWord(0); // yank "a"
   yankWord(2); // yank "b"
@@ -44,13 +44,13 @@ test('a second paste cycles to the next yank-history entry (yank-pop)', () => {
   at(6); // on the first '.'
   run('PutAfter');
   assert.equal(editor.getText(), 'a b c .c....\n');
-  run('PutAfter'); // sequential: replace c with b
+  run('SequentialPaste'); // replace c with b
   assert.equal(editor.getText(), 'a b c .b....\n');
-  run('PutAfter'); // sequential: replace b with a
+  run('SequentialPaste'); // replace b with a
   assert.equal(editor.getText(), 'a b c .a....\n');
 });
 
-test('repeated paste with an empty register is a harmless no-op', () => {
+test('sequential paste with an empty register is a harmless no-op', () => {
   // A first paste with nothing in the register cancels without recording a
   // pasted range, but still becomes the "last command". The next paste must not
   // treat that no-op as a sequence to cycle (which used to crash resolving an
@@ -62,8 +62,19 @@ test('repeated paste with an empty register is a harmless no-op', () => {
   vimState.globalState.reset('clipboardHistory');
   at(6);
   run('PutAfter'); // nothing yanked -> no-op
-  run('PutAfter'); // must not crash, still a no-op
+  run('SequentialPaste'); // must not crash, still a no-op
   assert.equal(editor.getText(), 'a b c .....\n');
+});
+
+test('regular repeated paste never cycles the yank history', () => {
+  const { editor, run, at, yankWord } = setup('a b c .....\n');
+  yankWord(0);
+  yankWord(2);
+  yankWord(4); // history [c, b, a]
+  at(6);
+  run('PutAfter');
+  run('PutAfter');
+  assert.equal(editor.getText(), 'a b c .cc....\n');
 });
 
 test('a non-paste command breaks the sequence (next paste is normal)', () => {
@@ -74,7 +85,7 @@ test('a non-paste command breaks the sequence (next paste is normal)', () => {
   at(6);
   run('PutAfter'); // c
   run('MoveRight'); // breaks the chain
-  run('PutAfter'); // normal paste of the most-recent yank again -> c
+  run('SequentialPaste'); // interruption makes this a fresh paste of c
   assert.equal(editor.getText(), 'a b c .c.c...\n');
 });
 
@@ -85,8 +96,8 @@ test('a whole paste cycle is undone by a single u', () => {
   yankWord(4); // history [c, b, a]
   at(6);
   run('PutAfter'); // c
-  run('PutAfter'); // -> b
-  run('PutAfter'); // -> a
+  run('SequentialPaste'); // -> b
+  run('SequentialPaste'); // -> a
   assert.equal(editor.getText(), 'a b c .a....\n');
   run('Undo'); // one step reverts the initial paste + both cycles
   assert.equal(editor.getText(), 'a b c .....\n');
@@ -100,7 +111,7 @@ test('breaking the chain splits the pastes into separate undo steps', () => {
   at(6);
   run('PutAfter'); // c   (group 1)
   run('MoveRight'); // breaks the chain, commits group 1
-  run('PutAfter'); // c   (group 2)
+  run('SequentialPaste'); // c   (group 2)
   assert.equal(editor.getText(), 'a b c .c.c...\n');
   run('Undo'); // undoes only the second paste
   assert.equal(editor.getText(), 'a b c .c....\n');

@@ -417,13 +417,13 @@ export class OccurrenceManager {
 }
 
 /**
- * Sequential paste (vim-mode-plus's `p`-then-`p` register cycling): when a paste
- * command immediately follows the *same* paste command, the new paste replaces
- * the just-pasted text with the next entry from the yank history (a yank-pop
- * ring), grouped into the first paste's undo step. Any other command in between
- * breaks the chain and paste behaves normally. The register history is fed by
- * `RegisterManager` (gated on the `sequentialPaste` config), and the previously
- * pasted range is reselected through the `LastPastedRange` text object.
+ * Sequential paste is a dedicated yank-pop command: when `SequentialPaste`
+ * immediately follows any paste command, it replaces the just-pasted text with
+ * the next entry from the yank history. Repeated `SequentialPaste` commands keep
+ * cycling, grouped into the first paste's undo step. Any other command breaks the
+ * chain. The register history is fed by `RegisterManager` (gated on the
+ * `sequentialPaste` config), and the previously pasted range is reselected through
+ * the `LastPastedRange` text object.
  */
 // Operations are untyped JS; the manager pokes at operator fields by contract.
 type PasteOperator = {
@@ -442,6 +442,14 @@ export class SequentialPasteManager {
   // True while the cross-operation undo group (the initial paste + every cycle)
   // is open. See onExecute / finalizePasteGroup.
   private pasteGroupOpen = false;
+
+  private static readonly pasteCommandNames = new Set([
+    'PutBefore',
+    'PutAfter',
+    'PutBeforeWithAutoIndent',
+    'PutAfterWithAutoIndent',
+    'SequentialPaste',
+  ]);
 
   constructor(vimState: VimState) {
     this.vimState = vimState;
@@ -464,7 +472,8 @@ export class SequentialPasteManager {
   private isSequentialPaste(operator: PasteOperator): boolean {
     return (
       Boolean(this.vimState.getConfig('sequentialPaste')) &&
-      this.vimState.operationStack.getLastCommandName() === operator.name &&
+      operator.name === 'SequentialPaste' &&
+      SequentialPasteManager.pasteCommandNames.has(this.vimState.operationStack.getLastCommandName() ?? '') &&
       // The previous paste must have actually pasted something. A no-op paste
       // (empty register) leaves the range map empty yet still records its name as
       // the last command, so without this the next paste would target an absent
