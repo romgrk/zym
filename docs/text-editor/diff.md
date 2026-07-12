@@ -171,8 +171,12 @@ a review can always be sent to an agent:
 
 ## Surviving shared pieces
 
-- `src/util/lineDiff.ts` — the minimal Myers O(ND) line diff (degrades to a
-  whole-file replace past size bounds), the basis of every diff.
+- `src/util/lineDiff.ts` — the line diff underlying every diff surface: common
+  prefix/suffix trim, exact Myers on small middles, patience-style unique-line
+  anchoring (recursive) on large ones, and a bounded search that degrades to a
+  *segment-local* replace — so a clean or locally-edited file costs ~nothing
+  regardless of size, and a wildly-diverged one can't stall the UI (the shape
+  rationale lives in the file header).
 - `src/util/wordDiff.ts` — the intra-line ("word-by-word") diff: given a
   removed↔added line pair it reports each side's changed-character spans
   (`WordRange`, the canonical home) via `diffWordsWithSpace`, then refines them for

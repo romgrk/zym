@@ -413,12 +413,15 @@ Not done: sign-off, commit-message length ruler, branch-name placeholder.
 ### Diff gutter + hunk staging — `src/ui/TextEditor/GitGutter.ts`
 
 A `GtkSource.GutterRendererText` subclass drawing a VS Code-style change
-bar per line. Two in-process Myers diffs feed it (`util/lineDiff`): the
+bar per line. Two in-process line diffs feed it (`util/lineDiff`): the
 live buffer vs the file's **index** blob (unstaged changes — green added /
 amber modified / red deletion marker) and the index vs the **HEAD** blob
-(staged changes — blue). Both base blobs are refetched (two `git show`
-spawns) on load and on any `GitRepo.onChange`, debounced and
-generation-guarded against stale async results. The refetch is **skipped
+(staged changes — blue). An edit recomputes only the buffer↔index script
+(one `diffLines` run shared by the hunks and the staged-row alignment,
+150ms-debounced); the HEAD↔index hunks depend only on the bases, so they're
+rebuilt when the bases land, not per keystroke pause. Both base blobs are
+refetched (two `git show` spawns) on load and on any `GitRepo.onChange`,
+debounced and generation-guarded against stale async results. The refetch is **skipped
 while the editor is unmapped** (off-screen tabs/docks) and runs on the
 next `map`, so only visible editors refetch on a repo change.
 
