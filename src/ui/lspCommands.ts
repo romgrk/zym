@@ -114,17 +114,17 @@ async function findReferences() {
   openReferencesPicker(host(), refs, cwd, (path, cursor) => zym.workspace.openFile(path, { cursor }));
 }
 
-// Search project-wide symbols (via the active file's language server) in a
-// picker and jump to the chosen one.
+// Search project-wide symbols in a picker and jump to the chosen one. Project-
+// scoped, so it runs from any tab: the active file's language server when there is
+// one, else the first running server that supports workspace symbols.
 function workspaceSymbolPicker() {
-  const editor = activeEditor();
-  if (!editor) return;
-  if (!zym.lsp.canWorkspaceSymbols(editor.lsp)) {
-    zym.notifications.addInfo('No workspace symbol support for this file');
+  const doc = activeEditor()?.lsp ?? null;
+  if (!zym.lsp.canWorkspaceSymbols(doc)) {
+    zym.notifications.addInfo('No workspace symbol search available (no language server running)');
     return;
   }
   const cwd = zym.workspace.getActiveWorkbench()!.cwd;
-  openWorkspaceSymbolPicker(host(), editor.lsp, cwd, (path, cursor) => zym.workspace.openFile(path, { cursor }));
+  openWorkspaceSymbolPicker(host(), doc, cwd, (path, cursor) => zym.workspace.openFile(path, { cursor }));
 }
 
 // List the current file's symbol outline (via its language server) in a picker

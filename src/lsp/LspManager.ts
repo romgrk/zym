@@ -571,23 +571,23 @@ export class LspManager {
     return server.hasFormatting ? (await server.formatting(path, options)) ?? [] : [];
   }
 
-  /** Whether `doc`'s primary server can search workspace symbols (for command gating). */
-  canWorkspaceSymbols(doc: LspDocument): boolean {
-    const path = doc.getPath();
-    return !!path && !!this.primaryServerForPath(path)?.hasWorkspaceSymbols;
+  /** Whether a workspace-symbol search can run — off `doc`'s primary server, or any
+   *  running server when the active tab is no language file (for command gating). */
+  canWorkspaceSymbols(doc: LspDocument | null): boolean {
+    return !!this.workspaceSymbolServer(doc);
   }
 
   /**
-   * Search project-wide symbols matching `query` against `doc`'s primary server,
-   * resolved to jumpable targets. The query is matched server-side (so the picker
-   * shows the server's ranking); an empty query yields no results on most servers.
+   * Search project-wide symbols matching `query`, resolved to jumpable targets.
+   * Targets `doc`'s primary server, falling back to any running server that supports
+   * it (see `workspaceSymbolServer`), so the search works from any tab. The query is
+   * matched server-side (so the picker shows the server's ranking); an empty query
+   * yields no results on most servers.
    */
-  async workspaceSymbols(doc: LspDocument, query: string): Promise<WorkspaceSymbolResult[]> {
+  async workspaceSymbols(doc: LspDocument | null, query: string): Promise<WorkspaceSymbolResult[]> {
     if (!this.enabled) return [];
-    const path = doc.getPath();
-    if (!path) return [];
-    const server = this.primaryServerForPath(path);
-    if (!server || !server.hasWorkspaceSymbols) return [];
+    const server = this.workspaceSymbolServer(doc);
+    if (!server) return [];
     const result = await server.workspaceSymbol(query);
     if (!result) return [];
     const enc = server.positionEncoding;
@@ -693,6 +693,24 @@ export class LspManager {
   private primaryServerForPath(path: string): LanguageServer | null {
     const primary = this.resolveServers(path).find((r) => r.primary);
     return primary ? this.servers.get(primary.key) ?? null : null;
+  }
+
+  /**
+   * The server a workspace-symbol search should target: `doc`'s primary server when
+   * the active tab is a language file whose server supports it, else the first running
+   * server that does. Workspace symbols are project-scoped (not tied to a cursor), so
+   * the search stays available from a terminal, a non-language file, or any other tab.
+   * A not-yet-ready server reports `hasWorkspaceSymbols` false (empty capabilities), so
+   * this only ever returns an initialized server.
+   */
+  private workspaceSymbolServer(doc: LspDocument | null): LanguageServer | null {
+    const path = doc?.getPath() ?? null;
+    const primary = path ? this.primaryServerForPath(path) : null;
+    if (primary?.hasWorkspaceSymbols) return primary;
+    for (const server of this.servers.values()) {
+      if (server.hasWorkspaceSymbols) return server;
+    }
+    return null;
   }
 
   /** Spawn + initialize the server for a resolved entry if not already running. */

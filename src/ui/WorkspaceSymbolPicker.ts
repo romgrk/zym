@@ -2,9 +2,10 @@
  * Workspace-symbol picker — jump to any project-wide symbol (class, function,
  * method, …) via the LSP `workspace/symbol` request.
  *
- * It's a remote-search picker: each (debounced) keystroke asks the active file's
- * primary language server for symbols matching the query, and the server's own
- * ranking is shown verbatim (`localFilter: false`) — no local fuzzy refinement,
+ * It's a remote-search picker: each (debounced) keystroke asks a language server
+ * (the active file's, or any running one when `doc` is null) for symbols matching
+ * the query, and the server's own ranking is shown verbatim (`localFilter: false`)
+ * — no local fuzzy refinement,
  * since the server already filters. Built on `LocationPicker`, so it gets the
  * source preview and the jump-to-location wiring for free; this file only renders
  * the rows (a muted kind glyph + name on the left, container + relative path,
@@ -23,7 +24,7 @@ type Overlay = InstanceType<typeof Gtk.Overlay>;
 
 export function openWorkspaceSymbolPicker(
   host: Overlay,
-  doc: LspDocument,
+  doc: LspDocument | null,
   cwd: string,
   onJump: (path: string, cursor: [number, number]) => void,
 ): void {

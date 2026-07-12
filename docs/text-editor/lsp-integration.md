@@ -125,7 +125,9 @@ These all work today, driven from the LSP core and surfaced through the editor:
   (`space l d`/`D`/`t`/`i`), find-references (`space l r`,
   `ReferencesPicker`), workspace symbols (`space l s`), document symbols /
   outline (`space l o`), and inline peek-definition (`space l p`, see
-  [inline-widgets.md](inline-widgets.md)).
+  [inline-widgets.md](inline-widgets.md)). Workspace symbols is project-scoped,
+  not cursor-scoped, so it runs from any tab: the active file's server when there
+  is one, else the first running server that supports it (`workspaceSymbolServer`).
 - **Hover** (`space l k` / vim `K`): `textDocument/hover` → markdown rendered
   to Pango (`ui/markdownMarkup.ts`, subset renderer) in a floating overlay
   card, bottom-aligned just above the cursor (a `Gtk.Overlay` child with
