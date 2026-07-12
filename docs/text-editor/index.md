@@ -333,8 +333,8 @@ changed file's old/new sides are stitched into a single scrollable editor via a
 elided to a `⋯` gap widget. Backgrounds come from `editor.decorations`; per-side
 syntax is painted through the projection. See [multibuffer.md](multibuffer.md)
 and [diff.md](diff.md). Diff *data* comes from the **Git** workstream;
-`GitGutter.ts` draws VS Code-style change bars (in-process Myers diff of
-buffer↔index and index↔HEAD).
+`GitGutter.ts` draws VS Code-style change bars (in-process line diffs of
+buffer↔index and index↔HEAD — see [git/index.md](../git/index.md)).
 
 ### Scrolling & open performance — *done; native rendering is the floor*
 
@@ -390,6 +390,48 @@ only lever is the gated custom-widget path (Option C). Current mechanisms:
   full; a sibling view that attaches mid-window reuses the partial tree (the shared
   deferred parse upgrades both). Bench: `src/poc/load-bench.ts`. Small files
   (≤500 lines) still parse fully in one synchronous pass.
+
+### Typing performance — *done; bench: `src/poc/typing-bench.ts`*
+
+Typing in a large file was intermittently slow (stalls approaching 1s). The bench
+(same bootstrap as `scroll-real.ts`; types in bursts with pauses, since pauses are
+what let debounced work fire) + `--cpu-prof` attributed it to four per-keystroke
+costs, each now bounded:
+
+- **Git gutter re-diff blowup (the ~1s stalls).** Every ≥150ms typing pause ran
+  *three* whole-file Myers diffs whose cost explodes with buffer↔index divergence
+  (~215ms *each* at 9k lines with ~1800 changed lines, plus an O((n+m)·D)
+  `Int32Array` trace — hundreds of MB fed to GC). Fixed at the source:
+  `lineDiff.ts` is now trim + Myers-on-small-middles + patience anchoring (see
+  [diff.md](diff.md)), and `GitGutter.recompute` runs **one** diff per update
+  (shared ops via `hunksFromOps`/`rowMapFromOps`; staged HEAD↔index hunks rebuilt
+  only when the bases land). Also fixes clean >10k-line files showing every line
+  modified (the old whole-input size cap degraded them to replace-all). Bench,
+  9k-line file with an 1800-line uncommitted diff: worst keystroke stall
+  **551ms → 37ms**; `BENCH=1 node --test src/util/lineDiff.bench.test.ts`.
+- **Fold rediscovery per keystroke.** `foldRanges()` is a full-tree query + JS
+  walk — O(file), ~109ms/keystroke at 40k lines — and ran on every reparse.
+  Reparse-triggered rebuilds now coalesce on a 200ms trailing debounce
+  (`FOLD_REBUILD_DEBOUNCE_MS`); fold commands call `ensureFoldMap()` so they act
+  on a fresh map; chevrons tolerate the beat of staleness.
+- **Whole-buffer tag clear per repaint.** An edit repaint cleared highlight tags
+  over the entire buffer. Tags only exist inside `paintedRanges`, so the clear is
+  now bounded to those ranges padded by the reparse cycle's tracked line shift
+  (`DocumentSyntax.lastReparseLineShift` — exact even for big pastes); fold
+  splices and language sets still clear everything (their shift isn't tracked).
+- **Error-recovery reparses.** An incremental reparse is ~2ms on a healthy tree
+  at 40k lines, but typing sweeps through transiently-invalid states whose
+  error recovery costs 40–100ms (O(rest-of-file) from the error; web-tree-sitter
+  0.20.8 is ~2.6× worse than 0.22+ here). The reparse debounce is now **adaptive**
+  — `clamp(lastReparseMs × 3, 16ms, 250ms)` — so cheap parses keep the one-frame
+  highlight cadence and expensive ones coalesce a burst into one parse that lands
+  on a (usually valid) pause. Isolation harness: `src/poc/parse-incremental-bench.ts`.
+
+Bench, 40k-line file: keystrokes >100ms late 111/120 → 9/120, >250ms 23 → 0.
+Follow-up (measured, not done): upgrading web-tree-sitter 0.20.8 → 0.24+ (needs
+the `Parser.init` scanner-import shims re-validated + grammar-wasm compat; 0.26
+rejects the current `tree-sitter-wasms` dylink format) would cut both full-parse
+and error-recovery costs ~2×.
 
 Follow-ups (measured, not done): the highlight cache is **unbounded** (far-region
 eviction cap); **startup** ~680ms = module load ~450ms + `preloadGrammars` (all
