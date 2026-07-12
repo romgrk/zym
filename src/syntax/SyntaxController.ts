@@ -82,6 +82,19 @@ const VIEWPORT_MARGIN_LINES = 80;
 // O(viewport) — roughly constant regardless of file size.
 const INITIAL_PAINT_LINES = 250;
 
+// Fold discovery (DocumentSyntax.foldRanges) is a full-tree query + walk — O(file), the
+// dominant per-keystroke cost in a large file if run on every reparse. Nothing needs
+// per-keystroke fold freshness (chevrons tolerate a beat of staleness; fold commands
+// rebuild on demand via ensureFoldMap), so reparse-triggered rebuilds coalesce on this
+// trailing debounce.
+const FOLD_REBUILD_DEBOUNCE_MS = 200;
+
+// When an edit repaint clears its highlight tags, the painted ranges' line numbers may
+// have shifted since the tags were applied (by the edit's own inserted/deleted lines).
+// The clear pads each painted range by the reparse cycle's tracked line shift
+// (DocumentSyntax.lastReparseLineShift, which covers big pastes exactly) plus this margin.
+const REPAINT_CLEAR_PAD_LINES = 8;
+
 // Chars scanned each side of the cursor for the matching bracket — bounds the
 // cost on huge buffers (a far-away or unmatched bracket simply isn't highlighted).
 const BRACKET_SCAN_WINDOW = 5_000;
@@ -212,6 +225,10 @@ export class SyntaxController {
   // A scroll only paints the parts of the new visible range not already in here; an edit
   // (or fold / new document) resets it, since a reparse can change tokens anywhere.
   private paintedRanges: LineRange[] = [];
+  // Pending reparse-triggered fold-map rebuild (see FOLD_REBUILD_DEBOUNCE_MS). Fold
+  // command paths call ensureFoldMap() to resolve it early.
+  private foldMapTimer: NodeJS.Timeout | null = null;
+  private foldMapDirty = false;
   // Whether folding is active at all (chevron gutter + the fold projection). When
   // off (e.g. peek views) there is no folding of any method.
   private readonly foldingEnabled: boolean;
@@ -310,6 +327,7 @@ export class SyntaxController {
     if (this.disposed) return;
     this.disposed = true;
     if (this.viewportThrottleId) { clearTimeout(this.viewportThrottleId); this.viewportThrottleId = null; }
+    if (this.foldMapTimer) { clearTimeout(this.foldMapTimer); this.foldMapTimer = null; }
     this.reparseUnsub?.(); // stop reacting to reparses (else a shared DocumentSyntax pins us)
     this.reparseUnsub = undefined;
     for (const { target, event, cb } of this.connections) {
@@ -424,13 +442,33 @@ export class SyntaxController {
   // --- highlighting (paint shared model-coord captures into this view) -------
 
   /** React to a (debounced) reparse on the shared model: re-translate + repaint this
-   *  view's viewport and rebuild its fold map (a structural edit can add/remove
-   *  discovered fold regions). */
+   *  view's viewport and schedule the fold-map rebuild (a structural edit can add/remove
+   *  discovered fold regions, but discovery is O(file) — see FOLD_REBUILD_DEBOUNCE_MS). */
   private onReparse(): void {
     if (this.disposed) return;
-    this.repaint();
-    this.rebuildFoldMap();
+    this.repaint({ clearShift: this.docSyntax.lastReparseLineShift });
+    this.scheduleFoldRebuild();
     this.view.queueDraw();
+  }
+
+  private scheduleFoldRebuild(): void {
+    if (!this.foldingEnabled) return;
+    this.foldMapDirty = true;
+    if (this.foldMapTimer) clearTimeout(this.foldMapTimer);
+    this.foldMapTimer = setTimeout(() => {
+      this.foldMapTimer = null;
+      if (this.disposed || !this.foldMapDirty) return;
+      this.rebuildFoldMap();
+      this.view.queueDraw(); // refresh the gutter chevrons
+    }, FOLD_REBUILD_DEBOUNCE_MS);
+  }
+
+  /** Resolve a pending deferred fold-map rebuild now — fold command paths call this so
+   *  they act on the current tree, not a stale map. */
+  private ensureFoldMap(): void {
+    if (!this.foldMapDirty) return;
+    if (this.foldMapTimer) { clearTimeout(this.foldMapTimer); this.foldMapTimer = null; }
+    this.rebuildFoldMap();
   }
 
   /**
@@ -441,12 +479,26 @@ export class SyntaxController {
    * so large files only pay for what's on screen; off-screen the whole buffer is done
    * (small files / headless).
    */
-  private repaint(): void {
+  private repaint(opts: { clearShift?: number } = {}): void {
     if (!this.hasContent()) return;
     this.lineTextCache.clear();
     const buffer = this.buffer;
     // Clear only OUR highlight tags (the fold placeholder tags are separate, untouched).
-    this.highlight.clear(buffer, buffer.getStartIter(), buffer.getEndIter());
+    // Tags exist only inside `paintedRanges`, so when the caller can bound how far those
+    // ranges have shifted since painting (`clearShift`, an edit reparse), clear just the
+    // padded ranges instead of the whole buffer — O(painted), not O(file). Callers that
+    // can't bound the shift (fold splices, language set) clear everything.
+    if (opts.clearShift != null && !this.projection && this.paintedRanges.length > 0) {
+      const pad = opts.clearShift + REPAINT_CLEAR_PAD_LINES;
+      const last = buffer.getLineCount() - 1;
+      for (const [a, b] of this.paintedRanges) {
+        const from = asIter(buffer.getIterAtLine(Math.max(0, a - pad)));
+        const to = b + pad >= last ? buffer.getEndIter() : asIter(buffer.getIterAtLine(b + pad + 1));
+        this.highlight.clear(buffer, from, to);
+      }
+    } else {
+      this.highlight.clear(buffer, buffer.getStartIter(), buffer.getEndIter());
+    }
     const range = this.visibleRange() ?? this.initialPaintRange();
     if (range) {
       this.paintViewLines(range[0], range[1]);
@@ -749,6 +801,7 @@ export class SyntaxController {
    *  the body, so the fold IS rediscovered — unlike the old view-buffer parse). */
   private rebuildFoldMap(): void {
     if (!this.foldingEnabled) return;
+    this.foldMapDirty = false; // an explicit rebuild also satisfies a pending deferred one
     const buffer = this.buffer;
     this.foldsByHeaderLine.clear();
     // Collapsed folds first: their placeholder occupies a view line; key by it.
@@ -978,6 +1031,7 @@ export class SyntaxController {
 
   /** Toggle a fold by its header line (used by the gutter renderer's click). */
   toggleHeaderLine(line: number): void {
+    this.ensureFoldMap();
     const region = this.foldsByHeaderLine.get(line);
     if (region) this.toggleFold(region);
   }
@@ -1082,6 +1136,7 @@ export class SyntaxController {
   }
 
   private regionAtCursor(): FoldRegion | null {
+    this.ensureFoldMap();
     const buffer = this.buffer;
     const cursor = asIter(buffer.getIterAtMark(buffer.getInsert()));
     const off = cursor.getOffset();
@@ -1117,6 +1172,7 @@ export class SyntaxController {
    *  not its header) — i.e. the parent fold of whatever sits on `line`. Used by `zc` on an
    *  already-closed fold to close the next level out. */
   private enclosingExpandedRegion(line: number): FoldRegion | null {
+    this.ensureFoldMap();
     let best: FoldRegion | null = null;
     for (const region of this.foldsByHeaderLine.values()) {
       if (region.folded) continue;

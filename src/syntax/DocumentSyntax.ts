@@ -26,14 +26,23 @@ import { tagNamesAt, type TagName } from './tags.ts';
 import { breadcrumbAt, type Crumb } from './breadcrumb.ts';
 import { isFunctionNodeType, isClassNodeType, STRING_COMMENT_RE, RUN_FOLD_RE } from './nodeTypes.ts';
 
-// Reparse this long after the last edit — one debounce per document (was per view). Kept
-// to ~one frame so highlighting tracks typing without a perceptible lag: human keystrokes
-// are tens of ms apart (far longer than this), so a key followed by a pause repaints within
-// a frame and continuous fast typing never freezes the highlight (a longer window did). Its
-// real job now is coalescing the synchronous edits of a single tick (multi-cursor, paste,
-// vim operators) into one reparse — those reset the timer within the tick regardless of its
-// length. Per-keystroke cost stays cheap: an incremental reparse + a viewport-bounded repaint.
-const HIGHLIGHT_DEBOUNCE_MS = 16;
+// Reparse this long after the last edit — one debounce per document (was per view), scaled
+// to the measured cost of the previous reparse cycle (getText + parse + repaints):
+//
+//   delay = clamp(lastReparseMs × HIGHLIGHT_DEBOUNCE_COST_FACTOR, MIN, MAX)
+//
+// The MIN floor is ~one frame: in a small file a reparse costs ~1ms, so highlighting tracks
+// typing without perceptible lag, and the floor's real job is coalescing the synchronous
+// edits of a single tick (multi-cursor, paste, vim operators) into one reparse. The
+// adaptive part exists for LARGE files: an incremental reparse is ~2ms on a healthy tree,
+// but typing sweeps through transiently-invalid states (`const val…`) whose error recovery
+// costs tens of ms at 40k lines — a fixed one-frame debounce pays that per keystroke.
+// Scaling the delay with the observed cost keeps the reparse overhead a bounded fraction
+// of typing time: fast parses stay snappy, slow ones coalesce a burst into one parse that
+// usually lands on a syntactically-complete pause.
+const HIGHLIGHT_DEBOUNCE_MIN_MS = 16;
+const HIGHLIGHT_DEBOUNCE_MAX_MS = 250;
+const HIGHLIGHT_DEBOUNCE_COST_FACTOR = 3;
 
 // On first open (and reload), parse only the HEAD of the file synchronously, then run the
 // full parse deferred (scheduleFullParse) — so a large file opens without a full-file parse
@@ -63,6 +72,15 @@ export class DocumentSyntax {
   // Cached source text from the last parse, reused by the painters' viewport
   // repaints (no edit → no reparse, just re-query over the new visible range).
   private cachedText = '';
+  // Lines inserted/deleted since the last reparse (summed as absolute values), stashed
+  // to `lastReparseLineShift` when it runs: the upper bound on how far any position has
+  // shifted since the painters last painted, so their repaint can clear the padded
+  // painted ranges instead of the whole buffer.
+  private pendingLineShift = 0;
+  private _lastReparseLineShift = 0;
+  // Duration of the last reparse cycle (text fetch + parse + painter notify), driving the
+  // adaptive debounce above.
+  private lastReparseMs = 0;
   // Whether the source holds any astral (surrogate-pair) char, so the painters only
   // convert tree-sitter's UTF-16 columns to codepoints when they must.
   private _hasAstral = false;
@@ -109,6 +127,9 @@ export class DocumentSyntax {
 
   /** Whether the source holds astral chars (drives the painters' column conversion). */
   get hasAstral(): boolean { return this._hasAstral; }
+
+  /** Max lines any position may have shifted during the last reparse's edit batch. */
+  get lastReparseLineShift(): number { return this._lastReparseLineShift; }
 
   private connect(target: any, event: string, cb: (...args: any[]) => any): void {
     target.on(event, cb);
@@ -188,11 +209,13 @@ export class DocumentSyntax {
   // --- incremental-parse edit tracking ---------------------------------------
 
   private onInsert(location: any, text: string): void {
+    let newlines = 0;
+    for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) newlines++;
+    this.pendingLineShift += newlines;
     if (!this.tree || this.treeIsPartial) return; // partial tree is about to be discarded by the full parse
     const startIndex = location.getOffset();
     const startRow = location.getLine();
     const startCol = location.getLineOffset();
-    const newlines = text.split('\n').length - 1;
     const lastNl = text.lastIndexOf('\n');
     this.tree.edit({
       startIndex,
@@ -208,6 +231,7 @@ export class DocumentSyntax {
   }
 
   private onDelete(start: any, end: any): void {
+    this.pendingLineShift += end.getLine() - start.getLine();
     if (!this.tree || this.treeIsPartial) return; // partial tree is about to be discarded by the full parse
     const startIndex = start.getOffset();
     this.tree.edit({
@@ -229,6 +253,10 @@ export class DocumentSyntax {
   private scheduleReparse(): void {
     if (this.disposed || !this.grammar) return;
     if (this.debounceId) clearTimeout(this.debounceId);
+    const delay = Math.min(
+      HIGHLIGHT_DEBOUNCE_MAX_MS,
+      Math.max(HIGHLIGHT_DEBOUNCE_MIN_MS, this.lastReparseMs * HIGHLIGHT_DEBOUNCE_COST_FACTOR),
+    );
     this.debounceId = setTimeout(() => {
       this.debounceId = null;
       // A partial tree can't be reparsed incrementally (it doesn't cover the whole source) —
@@ -236,7 +264,7 @@ export class DocumentSyntax {
       const full = this.fullReparseNext || this.treeIsPartial;
       this.fullReparseNext = false;
       this.reparse({ full });
-    }, HIGHLIGHT_DEBOUNCE_MS);
+    }, delay);
   }
 
   /** Run a deferred whole-file parse on the next loop iteration — a macrotask, so it lands
@@ -260,6 +288,7 @@ export class DocumentSyntax {
    *  reparse-from-scratch-after-fold dance is needed (that was a view-buffer-parse wart). */
   private reparse(opts: { full?: boolean; silent?: boolean; maxLines?: number } = {}): void {
     if (this.disposed || !this.grammar || !this.parser) return;
+    const startedAt = performance.now();
     const buffer = this.source;
     // A bounded first parse (maxLines) reads only the file's head, so a large file parses in
     // O(viewport) not O(file); the deferred full parse follows. maxLines >= line count ⇒ whole file.
@@ -277,7 +306,10 @@ export class DocumentSyntax {
     this.tree = tree;
     this.treeIsPartial = partial;
     this.dirty = false; // the tree now reflects the current source text (its head, if partial)
+    this._lastReparseLineShift = this.pendingLineShift;
+    this.pendingLineShift = 0;
     if (!opts.silent) this.emitReparse();
+    this.lastReparseMs = performance.now() - startedAt;
   }
 
   // --- capture + fold queries (model coordinates) ----------------------------
