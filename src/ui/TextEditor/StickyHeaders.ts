@@ -78,8 +78,10 @@ export class StickyHeaders {
           prev.handle.update({ line: spec.viewRow, widget: prev.widget });
           prev.key = spec.key;
           prev.dispose = spec.dispose;
-        } else {
-          prev.handle.update({ line: spec.viewRow }); // unchanged content — keep the widget, re-anchor
+        } else if (prev.viewRow !== spec.viewRow) {
+          // Unchanged content — keep the widget, re-anchor. An unchanged row needs no update
+          // either (the mark rode any splice); each update is a native mark read.
+          prev.handle.update({ line: spec.viewRow });
         }
         prev.viewRow = spec.viewRow;
       } else {

@@ -365,3 +365,19 @@ test('live: deleting a tracked file folds it in as an all-removed, (deleted)-tag
   assert.ok(header.removed > 0, 'its whole content reads as removed');
   mbv.dispose();
 });
+
+test('setFiles: a file folded in after open renders its content (sources reach the Screen)', async () => {
+  // The live reconcile path (`reconcileFiles` → `setFiles`) adds files AFTER construction; their
+  // buffers must be registered with the Screen, whose source map was built at open — else the
+  // re-diff resolves the new excerpt's rows to blanks (header over empty lines).
+  const { repo, mbv } = open('a1\na2\na3\n', 'a1\nAA\na3\n');
+  const other = Path.join(repo, 'g.ts');
+  Fs.writeFileSync(other, 'g1\nGG\ng3\n');
+  mbv.setFiles([{ path: other, oldText: 'g1\ng2\ng3\n', newText: 'g1\nGG\ng3\n' }]);
+  await waitFor(() => mbv.editor.getText().includes('GG'));
+
+  const text = mbv.editor.getText();
+  assert.ok(text.includes('GG'), 'the added file\'s new side is materialized');
+  assert.ok(text.includes('g2'), 'its removed (old-side) row is materialized');
+  mbv.dispose();
+});

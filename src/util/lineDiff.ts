@@ -23,6 +23,27 @@ function fullReplace(n: number, m: number): DiffOp[] {
 
 /** Diff line arrays `a` (old) → `b` (new). Ops are in forward (file) order. */
 export function diffLines(a: readonly string[], b: readonly string[]): DiffOp[] {
+  // Strip the common prefix/suffix before the O((n+m)·D) search: the typical input (an edit, a
+  // view splice) changes one small region of a large file, so this reduces the search to the
+  // changed core — and lets a huge-but-lightly-changed input diff minimally instead of tripping
+  // the size bound below.
+  const n = a.length;
+  const m = b.length;
+  let prefix = 0;
+  const maxPrefix = Math.min(n, m);
+  while (prefix < maxPrefix && a[prefix] === b[prefix]) prefix++;
+  let suffix = 0;
+  const maxSuffix = Math.min(n, m) - prefix;
+  while (suffix < maxSuffix && a[n - 1 - suffix] === b[m - 1 - suffix]) suffix++;
+  if (prefix === 0 && suffix === 0) return myersDiff(a, b);
+  const core = myersDiff(a.slice(prefix, n - suffix), b.slice(prefix, m - suffix));
+  const ops: DiffOp[] = new Array(prefix).fill('eq');
+  for (const op of core) ops.push(op);
+  for (let i = 0; i < suffix; i++) ops.push('eq');
+  return ops;
+}
+
+function myersDiff(a: readonly string[], b: readonly string[]): DiffOp[] {
   const n = a.length;
   const m = b.length;
 
@@ -30,6 +51,9 @@ export function diffLines(a: readonly string[], b: readonly string[]): DiffOp[] 
   if (n === 0) return Array.from({ length: m }, () => 'ins');
   if (m === 0) return Array.from({ length: n }, () => 'del');
   if (n + m > MAX_LINES) return fullReplace(n, m);
+  // The edit distance is at least |n − m|; past the cap the search below can only end in
+  // `fullReplace` anyway, so skip straight there instead of burning the whole D sweep.
+  if (Math.abs(n - m) > MAX_D) return fullReplace(n, m);
 
   const max = n + m;
   const offset = max; // shift k (which ranges [-max, max]) into a non-negative index

@@ -85,7 +85,7 @@ test('reveal forces elided rows visible (expand-context)', () => {
   const collapsed = buildDiffMultiBuffer([file], undefined, { headers: 'widget' });
   const gapRows = collapsed.gapAnchors[0].revealRows;
   assert.ok(gapRows.length > 0, 'the unchanged middle elides to a gap');
-  const expanded = buildDiffMultiBuffer([file], undefined, { headers: 'widget', reveal: (r) => gapRows.slice(0, 3).includes(r) });
+  const expanded = buildDiffMultiBuffer([file], undefined, { headers: 'widget', reveal: (_path, r) => gapRows.slice(0, 3).includes(r) });
   assert.ok(project(expanded).screenText.length > project(collapsed).screenText.length, 'revealing rows grows the view');
   assert.ok(expanded.gapAnchors[0].revealRows.length < gapRows.length, 'and shrinks the remaining gap');
 });

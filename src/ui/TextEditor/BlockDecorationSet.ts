@@ -54,7 +54,7 @@ export interface BlockDecorationSpec {
 export type AnchorResolver = (anchor: BlockDecorationAnchor) => number | null;
 
 export class BlockDecorationSet {
-  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string; dispose?: () => void }>();
+  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string; line: number; dispose?: () => void }>();
   private readonly blocks: BlockDecorations;
   private readonly resolve: AnchorResolver;
   private lastSpecs: BlockDecorationSpec[] = [];
@@ -68,13 +68,13 @@ export class BlockDecorationSet {
    *  calls the primitive's marks keep each decoration positioned. */
   set(specs: BlockDecorationSpec[]): void {
     this.lastSpecs = specs;
-    this.reconcile();
+    this.reconcile(false);
   }
 
   /** Re-place every decoration from the current projection — for after a re-materialize, where the
    *  marks were lost. Driven by the editor's `onDidMaterialize`. */
   reproject(): void {
-    this.reconcile();
+    this.reconcile(true);
   }
 
   clear(): void {
@@ -86,7 +86,9 @@ export class BlockDecorationSet {
     this.lastSpecs = [];
   }
 
-  private reconcile(): void {
+  /** `force` re-seats a decoration even when its resolved line is unchanged — after a
+   *  re-materialize its anchor mark is gone, so the line comparison alone would wrongly skip it. */
+  private reconcile(force: boolean): void {
     const seen = new Set<string>();
     for (const spec of this.lastSpecs) {
       const line = this.resolve(spec.anchor);
@@ -95,16 +97,19 @@ export class BlockDecorationSet {
       const prev = this.entries.get(spec.id);
       if (prev) {
         if (prev.key === spec.key) {
-          prev.handle.update({ line }); // unchanged content — keep the widget (and its teardown)
+          // Unchanged content — keep the widget (and its teardown). An unchanged line needs no
+          // update either (the mark rode any splice); each update is a native mark read.
+          if (force || prev.line !== line) prev.handle.update({ line });
         } else {
           prev.dispose?.(); // old widget is about to be replaced — sever its rooted controllers
           prev.handle.update({ line, widget: spec.build() });
           prev.key = spec.key;
           prev.dispose = spec.dispose; // adopt the new widget's teardown
         }
+        prev.line = line;
       } else {
         const handle = this.blocks.add({ line, widget: spec.build(), placement: spec.placement, fullWidth: spec.fullWidth });
-        this.entries.set(spec.id, { handle, key: spec.key, dispose: spec.dispose });
+        this.entries.set(spec.id, { handle, key: spec.key, line, dispose: spec.dispose });
       }
     }
     for (const [id, entry] of this.entries) {
