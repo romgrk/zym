@@ -30,6 +30,7 @@ const SPACE_COMMANDS: Record<string, string> = {
   'space o': 'file:find', // fuzzy file picker
   'space f o': 'file:find', // fuzzy file picker
   'space f e': 'file:open-path', // open by path (directory-navigating opener)
+  'space f .': 'file:open-path-here', // open by path from the current file's folder
   'space f m': 'file:move', // move the current file to another folder (folder picker)
   'space f r': 'file:rename', // rename/relocate the current file
 
