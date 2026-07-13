@@ -96,6 +96,7 @@ export class GitGutter {
   // and remember that a refresh is owed — see `refresh` / `notifyVisible`.
   private readonly isVisible: () => boolean;
   private refreshPending = false;
+  private gutterActive = false;
 
   constructor(
     gutter: GutterCellSink,
@@ -111,12 +112,6 @@ export class GitGutter {
     this.git = gitRepo;
     this.viewToModelLine = viewToModelLine ?? ((line) => line);
     this.isVisible = isVisible ?? (() => true);
-
-    // Contribute the change-bar column to the editor's single composite gutter.
-    this.gutter.setGitCell((viewLine) => this.cellFor(viewLine));
-
-    // HEAD / index moved (commit / checkout / staging): re-fetch the bases and re-diff.
-    this.gitUnsub = this.git.onChange(() => this.refresh());
   }
 
   /** Change-bar markup for a VIEW line: unstaged kind color, else staged blue, else ''
@@ -146,22 +141,32 @@ export class GitGutter {
    *  HEAD change. Off-screen editors defer (the two `git show` spawns are the bulk
    *  of the git-poll fan-out cost); the owed refresh runs on the next `notifyVisible`. */
   refresh(): void {
+    const path = this.getPath();
+    const root = path ? this.rootFor(path) : null;
+    const relPath = path && root ? Path.relative(root, path) : null;
+    if (!path || !root || !relPath) {
+      this.disable();
+      return;
+    }
+    if (root !== this.root || relPath !== this.relPath) {
+      this.baseGeneration++;
+      this.root = root;
+      this.relPath = relPath;
+      this.indexLines = null;
+      this.headLines = null;
+      this.clearChanges(this.gutterActive);
+    }
+    if (!this.gutterActive) {
+      this.gutterActive = true;
+      this.gutter.setGitCell((viewLine) => this.cellFor(viewLine));
+    }
+    this.gitUnsub ??= this.git.onChange(() => this.refresh());
     if (!this.isVisible()) {
       this.refreshPending = true;
       return;
     }
     this.refreshPending = false;
-    const path = this.getPath();
-    const root = path ? this.rootFor(path) : null;
-    this.root = root;
-    this.relPath = path && root ? Path.relative(root, path) : null;
-    if (!path || !root || !this.relPath) {
-      this.indexLines = [];
-      this.headLines = [];
-      this.recompute();
-      return;
-    }
-    const rel = this.relPath;
+    const rel = relPath;
     const generation = ++this.baseGeneration;
     // No index/HEAD blob (untracked / new / unborn HEAD) → empty base, so that side
     // reads as fully added. Recompute once both fetches for this generation land.
@@ -189,6 +194,7 @@ export class GitGutter {
 
   /** Debounced re-diff of the live buffer against the cached bases (on edits). */
   scheduleUpdate(): void {
+    if (!this.root) return;
     if (this.updateTimer) clearTimeout(this.updateTimer);
     this.updateTimer = setTimeout(() => {
       this.updateTimer = null;
@@ -213,12 +219,14 @@ export class GitGutter {
 
   /** The unstaged hunk under buffer `row` (stage / revert target), or null. */
   unstagedHunkAtRow(row: number): Hunk | null {
+    if (!this.root) return null;
     this.recompute(); // operate on the live buffer, not a debounced snapshot
     return this.unstagedHunks.find((hunk) => hunkContainsBufferRow(hunk, row)) ?? null;
   }
 
   /** The staged hunk under buffer `row` (unstage target), or null. */
   stagedHunkAtRow(row: number): Hunk | null {
+    if (!this.root) return null;
     this.recompute();
     return this.stagedHunks.find((hunk) => hunkContainsBufferRow(hunk, row)) ?? null;
   }
@@ -248,7 +256,7 @@ export class GitGutter {
 
   dispose(): void {
     if (this.updateTimer) clearTimeout(this.updateTimer);
-    this.gutter.setGitCell(null); // drop our column from the composite gutter
+    if (this.gutterActive) this.gutter.setGitCell(null);
     this.gitUnsub?.();
     this.subs.dispose();
   }
@@ -263,10 +271,38 @@ export class GitGutter {
     return this.cachedRoot;
   }
 
+  private disable(): void {
+    this.baseGeneration++;
+    this.root = null;
+    this.relPath = null;
+    this.indexLines = null;
+    this.headLines = null;
+    this.refreshPending = false;
+    this.gitUnsub?.();
+    this.gitUnsub = undefined;
+    if (this.updateTimer) {
+      clearTimeout(this.updateTimer);
+      this.updateTimer = null;
+    }
+    this.clearChanges(false);
+    if (this.gutterActive) {
+      this.gutterActive = false;
+      this.gutter.setGitCell(null);
+    }
+  }
+
+  private clearChanges(redraw: boolean): void {
+    this.kindByLine.clear();
+    this.stagedLines.clear();
+    this.unstagedHunks = [];
+    this.stagedHunks = [];
+    if (redraw) this.gutter.redrawGutter();
+  }
+
   // Re-diff the live buffer against the bases and rebuild the line→kind map and
   // the cached hunk lists.
   private recompute(): void {
-    if (this.indexLines === null || this.headLines === null) return; // bases not fetched yet
+    if (!this.root || this.indexLines === null || this.headLines === null) return;
     this.kindByLine.clear();
     this.stagedLines.clear();
 
