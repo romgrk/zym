@@ -58,3 +58,35 @@ test('ops reconstruct b and are minimal (random fuzz)', () => {
     assert.ok(editDistance(ops) <= a.length + b.length);
   }
 });
+
+test('ops reconstruct b on large inputs (anchored path fuzz)', () => {
+  let seed = 987654321;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+
+  for (let t = 0; t < 20; t++) {
+    // Mostly-unique lines (code-like) with some repeats, large enough that the
+    // diff takes the anchor + recursion path rather than one exact search.
+    const n = 3000 + Math.floor(rand() * 3000);
+    const a = Array.from({ length: n }, (_, i) =>
+      rand() < 0.1 ? '// separator' : `line ${i} ${Math.floor(rand() * 1e9)}`);
+    const b = a
+      .map((line) => (rand() < 0.2 ? line + ' edited' : line)) // scattered edits
+      .filter(() => rand() > 0.02); // scattered deletions
+    // A few random insertions.
+    for (let i = 0; i < 30; i++) b.splice(Math.floor(rand() * b.length), 0, `inserted ${i}`);
+
+    const ops = diffLines(a, b);
+    assert.deepEqual(reconstruct(a, b, ops), b, `large reconstruct failed (t=${t})`);
+    assert.ok(editDistance(ops) <= a.length + b.length);
+  }
+});
+
+test('scattered edits stay minimal (anchored path quality)', () => {
+  // Every 10th line edited in a large mostly-unique file: the anchored diff must
+  // report ~exactly the edited lines, not degrade toward replace-everything.
+  const a = Array.from({ length: 5000 }, (_, i) => `const value${i} = ${i * 7};`);
+  const b = a.map((line, i) => (i % 10 === 0 ? line + ' // edited' : line));
+  const ops = diffLines(a, b);
+  assert.deepEqual(reconstruct(a, b, ops), b);
+  assert.equal(editDistance(ops), 2 * 500); // one del + one ins per edited line
+});

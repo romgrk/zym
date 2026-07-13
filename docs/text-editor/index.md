@@ -333,8 +333,8 @@ changed file's old/new sides are stitched into a single scrollable editor via a
 elided to a `⋯` gap widget. Backgrounds come from `editor.decorations`; per-side
 syntax is painted through the projection. See [multibuffer.md](multibuffer.md)
 and [diff.md](diff.md). Diff *data* comes from the **Git** workstream;
-`GitGutter.ts` draws VS Code-style change bars (in-process Myers diff of
-buffer↔index and index↔HEAD).
+`GitGutter.ts` draws VS Code-style change bars (in-process line diffs of
+buffer↔index and index↔HEAD — see [git/index.md](../git/index.md)).
 
 ### Scrolling & open performance — *done; native rendering is the floor*
 
@@ -395,6 +395,36 @@ Follow-ups (measured, not done): the highlight cache is **unbounded** (far-regio
 eviction cap); **startup** ~680ms = module load ~450ms + `preloadGrammars` (all
 grammars) ~230ms — lazy per-language load. `UnderlineOverlay` squiggles still
 redraw per frame under diagnostics (marginal).
+
+### Typing performance — *done; bench: `src/poc/typing-bench.ts`*
+
+No edit-driven subscriber does O(file) work per keystroke. The bench boots the
+real app and types in **bursts separated by pauses** — pauses are what let
+debounced work fire and stall the next keystroke — reporting per-keystroke sync
+cost and lateness vs schedule (`TYPE_PROF=` captures a cpuprofile). The bounds:
+
+- **Git gutter** — one buffer↔index `diffLines` per debounced update (its edit
+  script feeds both the hunks and the staged-row alignment); staged HEAD↔index
+  hunks are rebuilt only when the bases move. See [git/index.md](../git/index.md);
+  `lineDiff.ts` itself bounds pathological divergence — see [diff.md](diff.md).
+- **Reparse cadence** — the highlight debounce scales with the measured cost of
+  the previous reparse cycle, so a small file keeps a one-frame cadence while a
+  large file coalesces a typing burst into one parse (rationale at
+  `HIGHLIGHT_DEBOUNCE_*` in `DocumentSyntax.ts`). This matters because a reparse
+  of a transiently-invalid mid-typing state pays tree-sitter error recovery —
+  tens of ms in a large file, vs ~2ms incremental on a healthy tree.
+- **Fold rediscovery** — `foldRanges()` is a full-tree query + walk (O(file)),
+  so reparse-triggered fold-map rebuilds coalesce on a trailing debounce
+  (`FOLD_REBUILD_DEBOUNCE_MS`); fold commands rebuild on demand
+  (`ensureFoldMap`); gutter chevrons tolerate the beat of staleness.
+- **Repaint clear** — an edit repaint clears highlight tags only over the
+  padded `paintedRanges` (pad = `DocumentSyntax.lastReparseLineShift` +
+  `REPAINT_CLEAR_PAD_LINES`), not the whole buffer; fold splices and language
+  sets, whose shift isn't tracked, keep the whole-buffer clear.
+
+Follow-up (measured, not done): upgrade web-tree-sitter 0.20.8 → 0.24+ — ~2× on
+both full-parse and error-recovery cost. Needs the `Parser.init` scanner-import
+shims re-validated; 0.26 rejects the current `tree-sitter-wasms` dylink format.
 
 ### Gutter rendering — *done; one composite renderer*
 

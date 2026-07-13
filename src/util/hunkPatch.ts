@@ -10,7 +10,7 @@
  * diff for one hunk, applied with `git apply --unidiff-zero --recount` (so the
  * exact `@@` counts don't have to be perfect). Pure / GTK-free for unit testing.
  */
-import { diffLines } from './lineDiff.ts';
+import { diffLines, type DiffOp } from './lineDiff.ts';
 
 export interface Hunk {
   /** 0-based row in the base (`a`) where the change begins. */
@@ -25,7 +25,12 @@ export interface Hunk {
 
 /** Group the `a`→`b` edit script into hunks (maximal runs of changed lines). */
 export function computeHunks(a: readonly string[], b: readonly string[]): Hunk[] {
-  const ops = diffLines(a, b);
+  return hunksFromOps(diffLines(a, b), a, b);
+}
+
+/** `computeHunks` over an already-computed edit script, so one `diffLines` run
+ *  can feed both the hunks and the row map (see the git gutter's recompute). */
+export function hunksFromOps(ops: readonly DiffOp[], a: readonly string[], b: readonly string[]): Hunk[] {
   const hunks: Hunk[] = [];
   let ai = 0;
   let bi = 0;
@@ -54,8 +59,12 @@ export function computeHunks(a: readonly string[], b: readonly string[]): Hunk[]
  * row maps to the buffer row that took its place.
  */
 export function buildRowMap(a: readonly string[], b: readonly string[]): number[] {
-  const ops = diffLines(a, b);
-  const map = new Array<number>(a.length);
+  return rowMapFromOps(diffLines(a, b), a.length);
+}
+
+/** `buildRowMap` over an already-computed edit script (see `hunksFromOps`). */
+export function rowMapFromOps(ops: readonly DiffOp[], aLength: number): number[] {
+  const map = new Array<number>(aLength);
   let ai = 0;
   let bi = 0;
   for (const op of ops) {
