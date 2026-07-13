@@ -256,6 +256,7 @@ const OPERATOR_BINDINGS: Record<string, string> = {
   x: 'DeleteRight',
   p: 'PutAfter',
   P: 'PutBefore',
+  'alt-p': 'SequentialPaste',
   // Replace-with-register operator (romgrk/replace.vim): `s{motion}` replaces the
   // target with the register's content; `ss` (same-operator repeat) the line.
   s: 'ReplaceWithRegister',

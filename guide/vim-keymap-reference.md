@@ -103,6 +103,7 @@ toggles regex, `ctrl-p` / `ctrl-n` recall the search history, `esc` cancels.
 |---|---|---|
 | `x` / `X` | DeleteRight / DeleteLeft | delete char right/left |
 | `p` / `P` | PutAfter / PutBefore | paste after/before |
+| `alt-p` | SequentialPaste | replace the last paste with the next yank-history entry; repeat to keep cycling |
 | `r` | ReplaceCharacter | replace `count` chars |
 | `~` | ToggleCaseAndMoveRight | |
 | `S` | ReplaceLineWithRegister | replace whole line (= `ss`) |

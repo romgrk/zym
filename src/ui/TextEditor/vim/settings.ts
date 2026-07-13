@@ -81,7 +81,7 @@ const schema: Record<string, ConfigSchema> = {
     type: 'boolean',
     default: true,
     description:
-      'Pressing the same paste command again replaces the just-pasted text with the next entry in the yank history (a yank-pop ring). Off restores classic `pp` = paste twice.',
+      'Let the sequential-paste command replace the just-pasted text with the next entry in the yank history (a yank-pop ring). Bound to `alt-p`; regular `p` and `P` always paste normally.',
   },
   sequentialPasteMaxHistory: {
     type: 'integer',

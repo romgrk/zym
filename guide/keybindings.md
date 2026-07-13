@@ -142,7 +142,7 @@ See [Agents](agents.md); highlights:
 | `alt-1`…`alt-8`         | go to tab N |
 | `alt-9`                 | go to last tab |
 | `alt-c` / `alt-C`       | close tab / reopen last closed |
-| `alt-p`                 | pin/unpin tab |
+| `alt-p`                 | pin/unpin tab (sequential paste in Vim normal/visual mode) |
 | `ctrl-w g h/j/k/l`      | toggle the dock on that side |
 | `ctrl-w g s`            | toggle the workbench sidebar |
 | `ctrl-w g a`            | toggle the agent sidebar |

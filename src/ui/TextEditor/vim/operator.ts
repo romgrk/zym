@@ -1010,6 +1010,10 @@ class PutAfter extends PutBefore {
   location = 'after'
 }
 
+// Dedicated yank-pop operation. SequentialPasteManager treats this as a cycle
+// only when it immediately follows a paste; otherwise it behaves like PutAfter.
+class SequentialPaste extends PutAfter {}
+
 class PutBeforeWithAutoIndent extends PutBefore {
   pasteLinewise (selection: Selection, text: string): Range | undefined {
     const newRange = super.pasteLinewise(selection, text)
@@ -1153,6 +1157,7 @@ const __operations = {
   DecrementNumber,
   PutBefore,
   PutAfter,
+  SequentialPaste,
   PutBeforeWithAutoIndent,
   PutAfterWithAutoIndent,
   AddBlankLineBelow,

@@ -187,26 +187,18 @@ What already exists and is reused, not rebuilt:
   auto-growing multi-line prompt editor (vim editing, grows to 20 lines then
   scrolls) over a reflowing row of option dropdowns (`Combobox`es) — agent kind,
   model, permission mode, **effort** (`--effort`; the `default` choice omits the
-  flag), and the worktree choice. The fields render as one `linked`, segmented
+  flag), and the worktree choice. Fixed and generic ACP fields are resolved using
+  the precedence and label rules in [agents/acp.md](agents/acp.md#configuration),
+  then rendered as one `linked`, segmented
   group (they sit flush and share a single seam, only the group's outer corners
   rounded). Adwaita's own `.linked` only styles direct-child `entry`/`button` nodes
   and each `Combobox` nests its entry, so the launcher restyles the nested entry
   itself — leaning on GTK's `:first-child`/`:last-child` (which skip hidden widgets)
-  to round the outer ends. The model slot is always shown (right after the agent)
-  so the row's shape is stable; the permission / effort slots hide when the profile
-  offers only the pass-through `default` for them (dead UI — their real options ride
-  the generic config dropdowns). Each dropdown labels itself with a floating
-  `title` (Adw.EntryRow-like — a placeholder while empty, floating above the value
-  once set) and auto-sizes to fit its value, so there's no separate caption row.
+  to round the outer ends.
   Each kind's `AgentLaunchOptions`
   (`agents/configs.ts` + `claudeOptions.ts`) supplies the option lists and the
   `buildCommand` argv builder, so changing the kind re-populates them. `enter`
   launches; the last-used options + an unsent draft persist to the next open.
-  `ctrl-tab` / `ctrl-shift-tab` cycle focus forward / backward through the card's
-  controls in tab order (the `tab` the prompt editor swallows), driven by GTK's
-  own `childFocus` traversal so it follows the layout; bound in the window's
-  capture-phase keymap so they're swallowed before Adw.TabView's built-in
-  ctrl-tab cycles a background panel group's tab.
   A `mode` selects one of four flows, differing only in how the worktree choice is
   surfaced/seeded and where focus starts (the worktree is always realized by the
   agent via `set_worktree` — see `launchPrompt`): `default` (`agent:new`) keeps the

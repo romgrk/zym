@@ -26,7 +26,7 @@ import { Combobox } from './Combobox.ts';
 import { createInput } from './TextEditor/TextEditor.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import { AGENT_CONFIGS, type AgentKind, type AgentLaunchOptions } from '../agents/configs.ts';
-import { listAgentProfiles, defaultProfileFor, profileCommand, type AgentProfile } from '../agents/profiles.ts';
+import { listAgentProfiles, defaultProfileFor, profileCommand, launcherConfigOptions, type AgentProfile } from '../agents/profiles.ts';
 import { repoRoot, listBranches } from '../git.ts';
 import { wrapEditorInstructions } from './conversation/format.ts';
 
@@ -294,15 +294,26 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
   const permissionDropdown = disposables.use(new Combobox({ title: 'permission', options: kindOptions.permissionModes, value: savedPermission || kindOptions.defaultPermissionMode }));
   const effortDropdown = disposables.use(new Combobox({ title: 'effort', options: kindOptions.efforts, value: savedEffort || kindOptions.defaultEffort }));
 
-  // The model slot is always shown (right after the agent), so the row keeps a stable
-  // shape and the model is never buried — even an ACP profile that only offers the
-  // pass-through `default` keeps a visible model field. A permission / effort slot with
-  // only that `default` still reads as dead UI, so hide those; their real options ride
-  // the generic config dropdowns (below) instead.
-  const applySlotVisibility = (opts: AgentLaunchOptions): void => {
-    modelDropdown.root.setVisible(true);
-    permissionDropdown.root.setVisible(opts.permissionModes.length > 1);
-    effortDropdown.root.setVisible(opts.efforts.length > 1);
+  const optionKey = (name: string): string => name.trim().toLocaleLowerCase();
+  // A profile can expose the same setting through a fixed launch list and ACP's
+  // generic config options. Prefer a populated fixed list (it may encode argv);
+  // otherwise prefer the advertised config option over the fixed pass-through
+  // placeholder. Also collapse repeated advertised names case-insensitively.
+  const displayedConfigOptions = (profile: AgentProfile, opts: AgentLaunchOptions) => {
+    const fixed = new Set<string>();
+    if (opts.models.length > 1) fixed.add('model');
+    if (opts.permissionModes.length > 1) fixed.add('permission');
+    if (opts.efforts.length > 1) fixed.add('effort');
+    return launcherConfigOptions(profile, fixed);
+  };
+
+  // Fixed pass-through placeholders yield to equivalently named advertised
+  // controls ("model" and "Model" are one setting). Populated fixed lists win.
+  const applySlotVisibility = (profile: AgentProfile, opts: AgentLaunchOptions): void => {
+    const advertised = new Set(displayedConfigOptions(profile, opts).map((option) => optionKey(option.name)));
+    modelDropdown.root.setVisible(opts.models.length > 1 || !advertised.has('model'));
+    permissionDropdown.root.setVisible(opts.permissionModes.length > 1 && !advertised.has('permission'));
+    effortDropdown.root.setVisible(opts.efforts.length > 1 && !advertised.has('effort'));
   };
   // Assigned once the options row exists (it rebuilds the generic config-option dropdowns for
   // the picked profile). Declared here so the profile onChange can call it.
@@ -318,7 +329,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
       modelDropdown.setOptions(opts.models, opts.defaultModel);
       permissionDropdown.setOptions(opts.permissionModes, opts.defaultPermissionMode);
       effortDropdown.setOptions(opts.efforts, opts.defaultEffort);
-      applySlotVisibility(opts);
+      applySlotVisibility(profile, opts);
       rebuildConfigDropdowns(profile);
     },
   }));
@@ -421,7 +432,8 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     configBag.clear();
     configWidgets = [];
     configDropdowns.clear();
-    for (const option of profile.configOptions ?? []) {
+    const opts = optionsFor(profile);
+    for (const option of displayedConfigOptions(profile, opts)) {
       const saved = savedConfigOptions[option.id];
       const value = option.options.some((o) => o.value === saved) ? saved : option.default;
       const combo = configBag.use(new Combobox({
@@ -436,7 +448,7 @@ export function openAgentLauncher(host: Overlay, options: AgentLauncherOptions):
     if (worktreeInRow) optionsRow.append(worktreeDropdown!.root);
   };
 
-  applySlotVisibility(kindOptions);
+  applySlotVisibility(profile0, kindOptions);
   rebuildConfigDropdowns(profile0);
 
   const submit = (background: boolean) => {

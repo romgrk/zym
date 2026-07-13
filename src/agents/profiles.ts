@@ -70,13 +70,34 @@ export interface AgentProfile {
   configOptions?: ProfileConfigOption[];
 }
 
+/** Config controls to render in the launcher. Fixed controls named in
+ *  `occupiedNames` win; remaining advertised controls are de-duplicated by
+ *  case-insensitive display name. */
+export function launcherConfigOptions(profile: AgentProfile, occupiedNames: Iterable<string> = []): ProfileConfigOption[] {
+  const key = (name: string): string => name.trim().toLocaleLowerCase();
+  const seen = new Set(Array.from(occupiedNames, key));
+  return (profile.configOptions ?? []).filter((option) => {
+    const name = key(option.name);
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
+
 interface AcpProfileEntry {
   name: string;
   command: string[];
+  configOptionLabels?: Record<string, string>;
   models?: ProfileLaunchOption[];
   permissionModes?: ProfileLaunchOption[];
   efforts?: ProfileLaunchOption[];
   configOptions?: ProfileConfigOption[];
+}
+
+function parseConfigOptionLabels(raw: unknown): Record<string, string> | undefined {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const labels = Object.fromEntries(Object.entries(raw).filter(([id, label]) => id.length > 0 && typeof label === 'string' && label.length > 0));
+  return Object.keys(labels).length > 0 ? labels : undefined;
 }
 
 function isArgv(value: unknown): value is string[] {
@@ -120,11 +141,12 @@ function configuredAcpProfiles(): AcpProfileEntry[] {
   const entries: AcpProfileEntry[] = [];
   for (const item of raw) {
     if (item == null || typeof item !== 'object') continue;
-    const { name, command, models, permissionModes, efforts } = item as Record<string, unknown>;
+    const { name, command, configOptionLabels, models, permissionModes, efforts } = item as Record<string, unknown>;
     if (typeof name !== 'string' || name.length === 0 || !isArgv(command)) continue;
     entries.push({
       name,
       command,
+      configOptionLabels: parseConfigOptionLabels(configOptionLabels),
       models: parseOptionList(models),
       permissionModes: parseOptionList(permissionModes),
       efforts: parseOptionList(efforts),
@@ -217,7 +239,8 @@ function importCachedOptions(entry: AcpProfileEntry): AcpProfileEntry {
   if (selects.length) {
     entry.configOptions ??= selects.map((o): ProfileConfigOption => ({
       id: o.id,
-      name: o.name,
+      // Display-only profile metadata; the original id/value still goes to ACP.
+      name: entry.configOptionLabels?.[o.id] ?? o.name,
       options: (o.choices ?? []).map((c) => ({ value: c.value, label: c.name, ...(c.description ? { detail: c.description } : {}), args: [] })),
       default: typeof o.current === 'string' ? o.current : (o.choices?.[0]?.value ?? 'default'),
     }));
