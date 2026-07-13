@@ -175,7 +175,11 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
   'agent.profiles': {
     type: 'array',
     default: [
-      { name: 'codex', command: ['npx', '-y', '@agentclientprotocol/codex-acp'] },
+      {
+        name: 'codex',
+        command: ['npx', '-y', '@agentclientprotocol/codex-acp'],
+        configOptionLabels: { reasoning_effort: 'effort' },
+      },
       { name: 'claude-acp', command: ['npx', '-y', '@agentclientprotocol/claude-agent-acp'] },
     ],
     description:
@@ -184,7 +188,8 @@ const CONFIG_SCHEMA: Record<string, ConfigSchema> = {
       '[{ "name": "codex", "command": ["npx", "-y", "@agentclientprotocol/codex-acp"] }]. ' +
       'Entries may also carry "models"/"permissionModes"/"efforts" ' +
       'launch-option lists ({ "value", "label"?, "args"? } — args are ' +
-      'appended to the argv when picked); recognized agents (codex, the ' +
+      'appended to the argv when picked), plus a "configOptionLabels" map ' +
+      'from advertised option ids to compact launcher labels; recognized agents (codex, the ' +
       'claude adapter) come pre-filled.',
   },
   'agent.acp.command': {

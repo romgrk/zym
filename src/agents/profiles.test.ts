@@ -11,7 +11,7 @@ import * as Fs from 'node:fs';
 import * as Os from 'node:os';
 import * as Path from 'node:path';
 import { zym } from '../zym.ts';
-import { listAgentProfiles, defaultProfileFor, profileNameFor, profileCommand } from './profiles.ts';
+import { listAgentProfiles, defaultProfileFor, profileNameFor, profileCommand, launcherConfigOptions } from './profiles.ts';
 import { acpCommand } from './acp/config.ts';
 import { writeAcpOptionsCache } from './acp/optionsCache.ts';
 
@@ -133,6 +133,7 @@ test('cached options seed the launcher: modes → permission, select config opti
     modes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO', description: 'all' }],
     configOptions: [
       { id: 'model', name: 'Model', category: 'model', kind: 'select', current: 'pro', choices: [{ value: 'pro', name: 'Pro' }, { value: 'flash', name: 'Flash' }] },
+      { id: 'reasoning_effort', name: 'Reasoning effort', category: 'thought_level', kind: 'select', current: 'high', choices: [{ value: 'high', name: 'High' }] },
       { id: 'fast', name: 'Fast', category: 'model_config', kind: 'boolean', current: false }, // boolean → live footer only, not the launcher
     ],
   });
@@ -140,7 +141,9 @@ test('cached options seed the launcher: modes → permission, select config opti
   // Cache modes replace the hardcoded seed (default/read-only/agent-full-access).
   assert.deepEqual(codex.permissionModes?.map((o) => o.value), ['default', 'yolo']);
   // Only the `select` option seeds configOptions; the boolean is excluded.
-  assert.deepEqual(codex.configOptions?.map((o) => o.id), ['model']);
+  assert.deepEqual(codex.configOptions?.map((o) => o.id), ['model', 'reasoning_effort']);
+  assert.deepEqual(codex.configOptions?.map((o) => o.name), ['Model', 'effort']);
+  assert.deepEqual(launcherConfigOptions(codex, ['model']).map((o) => o.id), ['reasoning_effort']);
   assert.equal(codex.configOptions?.[0].default, 'pro');
   assert.deepEqual(codex.configOptions?.[0].options.map((o) => o.value), ['pro', 'flash']);
 });
@@ -165,6 +168,27 @@ test('configured option lists are parsed, default-led, and suppress importing', 
   assert.equal(gemini.models?.[2].label, 'pro');
   // The configured permission list replaced the imported one (default still prepended).
   assert.deepEqual(gemini.permissionModes?.map((o) => o.value), ['default', 'yolo']);
+});
+
+test('configured config-option labels are applied generically by advertised id', () => {
+  const command = ['custom-agent', '--acp'];
+  writeAcpOptionsCache(command, {
+    configOptions: [{
+      id: 'thinking_budget',
+      name: 'Reasoning token budget',
+      kind: 'select',
+      current: 'medium',
+      choices: [{ value: 'medium', name: 'Medium' }],
+    }],
+  });
+  zym.config.set('agent.profiles', [{
+    name: 'custom',
+    command,
+    configOptionLabels: { thinking_budget: 'budget' },
+  }]);
+  const [, custom] = listAgentProfiles();
+  assert.equal(custom.configOptions?.[0].name, 'budget');
+  assert.equal(custom.configOptions?.[0].id, 'thinking_budget');
 });
 
 test('profileCommand appends the chosen options’ args; default appends nothing', () => {

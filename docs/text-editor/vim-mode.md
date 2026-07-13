@@ -64,6 +64,10 @@ standard-vim keys we don't map), see
   cursor (normal) or the selection (visual). `gw` rather than `go` because `go`
   stays the occurrence-preset toggle.
 - System clipboard integration; register prefix (`"`).
+- **Sequential paste** — `p`/`P` always perform regular paste (`pp` pastes
+  twice). `alt-p` is the separate yank-pop command: after any paste it replaces
+  that text with the next yank-history entry, and repeated `alt-p` keeps cycling
+  as one undo step. With no preceding paste, `alt-p` starts with a normal paste.
 - `/` `?` `n` `N` search via the `SearchBar` (incremental highlight, case/regex,
   replace).
 - **Occurrence** — unified with search: `g o` (or the fast `alt-/`) *arms*

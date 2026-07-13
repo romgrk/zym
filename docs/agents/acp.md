@@ -169,6 +169,9 @@ apply there.
   restart-surviving mode configures the argv explicitly (`{ "value": "yolo",
   "args": ["--approval-mode", "yolo"] }`). Protocol-applied selections don't
   survive a restart — argv-encoded ones do (argv is what serializes).
+  `configOptionLabels` is an id→label map for display-only shortening of
+  advertised ACP options; the built-in Codex profile maps `reasoning_effort` to
+  `effort`.
 - **Discovered options + the cache** (`agents/acp/optionsCache.ts`) — the
   launcher can't ask an unspawned agent what it offers, so zym **remembers** what
   each agent advertised last run, keyed by argv, at
@@ -176,7 +179,9 @@ apply there.
   handshake and live config change; `agents/profiles.ts` (`importCachedOptions`)
   seeds a profile from it — advertised **modes** fill the permission dropdown,
   `select` **config options** (model / effort / …) become their own launcher
-  dropdowns, applied at launch via `session/set_config_option`. Precedence:
+  dropdowns, applied at launch via `session/set_config_option`. Case-only label
+  duplicates fold into the corresponding fixed launcher control (or replace a
+  pass-through-only fixed placeholder). Protocol ids remain unchanged. Precedence:
   configured `agent.profiles` list **>** cache **>** the hardcoded first-launch
   seed (`importKnownAgentOptions` — antigravity's `default`/`plan`/
   `bypassPermissions`, the claude adapter's modes) **>** bare `default`. A

@@ -424,6 +424,9 @@ refetched (two `git show` spawns) on load and on any `GitRepo.onChange`,
 debounced and generation-guarded against stale async results. The refetch is **skipped
 while the editor is unmapped** (off-screen tabs/docks) and runs on the
 next `map`, so only visible editors refetch on a repo change.
+For a file outside any repository the git column is not registered with the
+composite gutter, no bases are fetched or diffed, and hunk queries/actions stay
+empty; moving an editor across that boundary clears any prior hunk state.
 
 It also drives **hunk-level staging**: `stageHunk`/`unstageHunk` (`space h
 s` / `space h u`) synthesize a unified diff for the hunk under the cursor
