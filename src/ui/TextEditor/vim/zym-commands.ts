@@ -1,9 +1,7 @@
 /*
  * zym-commands — vim operations original to zym (not vendored from vim-mode-plus).
  *
- *   - GoToFile (`gf`): open the file whose name is under the cursor, resolving the
- *     path against the current file's directory, then the project root, then as an
- *     absolute / `~`-relative path.
+ *   - GoToFile (`gf`): open the file whose name is under the cursor.
  *   - GoogleSearch (`gw`): open a Google search for the word under the cursor
  *     (normal mode) or the current selection (visual mode) in the default browser.
  *

@@ -35,6 +35,9 @@ covers everything else.
 | `space f m` | move the current file to another folder |
 | `space f r` | rename the current file |
 
+`file:open-path-here` is also available from the command palette (or a custom
+keymap) to start the path opener in the current file's folder.
+
 In the file tree: `j`/`k` move, `h` collapses / goes to parent, `l` enters a
 directory or opens a file, `g g`/`G` jump to top/bottom, `,` toggles untracked
 files, `.` toggles hidden files.

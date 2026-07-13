@@ -115,20 +115,18 @@ function openPathPicker(opts: PathPickerOptions): void {
   });
 }
 
-/**
- * Open the path-navigating file opener with paths shortened against `cwd` (the
- * workbench cwd), starting by listing it. `onChoose` is called with the absolute
- * path of the chosen file; folders descend in place instead. The action row
- * creates the typed file (and any missing parent directories) when it doesn't
- * already exist.
- */
-export function openFileOpener(host: Overlay, cwd: string, onChoose: (path: string) => void): void {
+/** Open the path navigator relative to `cwd`, optionally starting in `startDir`. */
+export function openFileOpener(
+  host: Overlay,
+  cwd: string,
+  onChoose: (path: string) => void,
+  opts: { startDir?: string } = {},
+): void {
   openPathPicker({
     host,
     cwd,
     placeholder: 'Open file…',
-    // Seed with the cwd itself — shortened to the empty prompt, listing its contents.
-    query: listSeed(cwd, cwd),
+    query: listSeed(opts.startDir ?? cwd, cwd),
     frecency: 'file',
     onChoose,
     action: {

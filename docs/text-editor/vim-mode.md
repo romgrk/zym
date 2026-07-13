@@ -59,10 +59,10 @@ standard-vim keys we don't map), see
   separate concern (edit positions, not jumps), fed on `onDidChangeText`, and
   keeps marker precision so entries track edits.
 - **zym-original `g`-commands** (`vim/zym-commands.ts`): `gf` opens the file named
-  under the cursor (resolving against the current file's dir, then the project
-  root, then absolute / `~`); `gw` opens a Google search for the word under the
-  cursor (normal) or the selection (visual). `gw` rather than `go` because `go`
-  stays the occurrence-preset toggle.
+  under the cursor. Absolute and `~` paths are used directly; relative paths try
+  the current file's directory first, then the project root. `gw` opens a Google
+  search for the word under the cursor (normal) or the selection (visual). `gw`
+  rather than `go` because `go` stays the occurrence-preset toggle.
 - System clipboard integration; register prefix (`"`).
 - **Sequential paste** — `p`/`P` always perform regular paste (`pp` pastes
   twice). `alt-p` is the separate yank-pop command: after any paste it replaces

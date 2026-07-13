@@ -86,6 +86,26 @@ test('resolveFilePath: relative to the current file directory', () => {
   assert.equal(resolveFilePath('./sibling.ts', currentFile, dir), target);
 });
 
+test('resolveFilePath: current file directory takes precedence over the project root', () => {
+  const root = tmpDir('gf');
+  const currentDir = Path.join(root, 'nested');
+  Fs.mkdirSync(currentDir);
+  const rootTarget = Path.join(root, 'shared.ts');
+  const localTarget = Path.join(currentDir, 'shared.ts');
+  Fs.writeFileSync(rootTarget, 'root');
+  Fs.writeFileSync(localTarget, 'local');
+  assert.equal(resolveFilePath('shared.ts', Path.join(currentDir, 'main.ts'), root), localTarget);
+});
+
+test('resolveFilePath: falls back to the project root from a current file directory', () => {
+  const root = tmpDir('gf');
+  const currentDir = Path.join(root, 'nested');
+  Fs.mkdirSync(currentDir);
+  const target = Path.join(root, 'shared.ts');
+  Fs.writeFileSync(target, 'root');
+  assert.equal(resolveFilePath('shared.ts', Path.join(currentDir, 'main.ts'), root), target);
+});
+
 test('resolveFilePath: relative to the project root', () => {
   const root = tmpDir('gf');
   const target = Path.join(root, 'src', 'thing.ts');

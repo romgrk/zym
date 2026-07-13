@@ -44,6 +44,11 @@ export function registerFileCommands(d: FileCommandsDeps): Disposable {
       didDispatch: () => openFileOpener(host(), cwd(), (path) => zym.workspace.openFile(path)),
       description: 'Open a file by path',
     },
+    'file:open-path-here': {
+      didDispatch: () => openPathHere(),
+      description: "Open a file by path from the current file's folder",
+      when: onEditorFile,
+    },
     'file:move': { didDispatch: () => moveActiveFile(), description: 'Move the current file to another folder', when: onEditorFile },
     'file:rename': { didDispatch: () => renameActiveFile(), description: 'Rename (or relocate) the current file', when: onEditorFile },
     'file:save': {
@@ -53,6 +58,12 @@ export function registerFileCommands(d: FileCommandsDeps): Disposable {
     },
     'file:save-as': { didDispatch: () => saveAsDialog(), description: 'Save the current file as…', when: () => zym.workspace.getActiveTextEditor() !== null },
   });
+}
+
+function openPathHere() {
+  const file = zym.workspace.getActiveTextEditor()?.currentFile;
+  if (!file) return;
+  openFileOpener(host(), cwd(), (path) => zym.workspace.openFile(path), { startDir: Path.dirname(file) });
 }
 
 function saveActive(d: FileCommandsDeps) {

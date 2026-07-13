@@ -66,6 +66,9 @@ Core pieces:
   (`preemptsChord`); see `KeymapManager.compareFullMatches`.
 - A command `when` predicate controls applicability: the palette dims (and
   no-ops) commands not currently applicable.
+- `file:open-path-here` opens the directory-navigating path picker at the active
+  file's folder while keeping paths relative to the active workbench root. It is
+  available only when the active text editor has a file.
 - Keymap introspection: `KeymapManager.keystrokesForCommand(name, elements)`
   + `getPendingBindings(elements, queue)` do reverse lookup over registered
   keymaps.
