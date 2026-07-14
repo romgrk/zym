@@ -85,6 +85,9 @@ function parseColor(hex: string): InstanceType<typeof Gdk.RGBA> {
   return rgba;
 }
 
+// node-gtk returns out-param iters directly or as [ok, iter]; normalize to an iter.
+const unwrap = (res: any): any => (Array.isArray(res) ? res[res.length - 1] : res);
+
 export class TextDecorations {
   private readonly editor: EditorModel;
   private readonly buffer: SourceBuffer;
@@ -189,6 +192,28 @@ export class DecorationLayer {
     this.apply(range, this.tagForStyle(style));
   }
 
+  /** Paint `style` over whole rows `[startRow, endRowExclusive)`, newlines included. The bulk
+   *  fast path for producers that decorate MANY rows (the diff): iters come straight from the row
+   *  indexes — no per-point clamp round trips — and a run past the last (newline-less) row ends at
+   *  the buffer end, which the point-based `decorate` can't express (its end point clamps back to
+   *  the row start, collapsing the range). */
+  decorateRows(startRow: number, endRowExclusive: number, style: DecorationStyle): void {
+    const buffer = this.buffer as any;
+    const start = unwrap(buffer.getIterAtLine(startRow));
+    const end = endRowExclusive < buffer.getLineCount() ? unwrap(buffer.getIterAtLine(endRowExclusive)) : buffer.getEndIter();
+    this.buffer.applyTag(this.tagForStyle(style), start, end);
+  }
+
+  /** Paint `style` over the char span `[startColumn, endColumn)` of `row` — the sibling fast path
+   *  for intra-row spans (the diff's word ranges). Columns are codepoints, clamped by GTK to the
+   *  row's length. */
+  decorateSpan(row: number, startColumn: number, endColumn: number, style: DecorationStyle): void {
+    const buffer = this.buffer as any;
+    const start = unwrap(buffer.getIterAtLineOffset(row, startColumn));
+    const end = unwrap(buffer.getIterAtLineOffset(row, endColumn));
+    this.buffer.applyTag(this.tagForStyle(style), start, end);
+  }
+
   /** Paint an arbitrary background (+ optional foreground) over a range — for producers
    *  (e.g. plugins) whose colors aren't a fixed `DecorationStyle`. By default a char
    *  RANGE (Atom `highlight`); pass `wholeLine` for a full-line paragraph background
@@ -201,6 +226,16 @@ export class DecorationLayer {
   /** Remove every decoration this layer has applied (the re-sync reset). */
   clear(): void {
     const [start, end] = this.buffer.getBounds();
+    for (const tag of this.tags.values()) this.buffer.removeTag(tag, start, end);
+  }
+
+  /** Remove this layer's decorations over rows `[fromRow, toRowExclusive)` only — the scoped
+   *  reset for a producer re-syncing just a changed row window (a buffer-wide removeTag
+   *  invalidates the whole layout). */
+  clearRows(fromRow: number, toRowExclusive: number): void {
+    const buffer = this.buffer as any;
+    const start = unwrap(buffer.getIterAtLine(fromRow));
+    const end = toRowExclusive < buffer.getLineCount() ? unwrap(buffer.getIterAtLine(toRowExclusive)) : buffer.getEndIter();
     for (const tag of this.tags.values()) this.buffer.removeTag(tag, start, end);
   }
 

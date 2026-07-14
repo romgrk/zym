@@ -29,9 +29,16 @@ that becomes changed *after* open is folded in by `onGitChange` → `reconcileFi
 repo model's change set grew — asks the host to rebuild the `DiffFile[]` (`refreshFiles`, HEAD blob +
 `deleted` flag) and splices the new files in via `DiffView.setFiles`. `setFiles` only ADDS (a file
 that went clean already renders nothing); per-file state (collapse / review / unsaved edits) is
-keyed by path and survives. Every `reDiff` also **pins the top visible line** (by its source
+keyed by path and survives, and each added file's source buffers are registered with the live
+`Screen` + syntax painter (whose maps were built at open — skipping this renders the new excerpt
+as blank rows). Every `reDiff` also **pins the top visible line** (by its source
 position) so a reflow that adds/drops rows above the viewport — a commit, a collapse/expand — doesn't
-jump the content under the reader (`topScrollAnchor` → `setTopBufferRow`). Reopening
+jump the content under the reader (`topScrollAnchor` → `setTopBufferRow`). Re-diffs stay cheap on
+a many-file diff: each file's line diff (and staged classification) memoizes in a per-view cache
+keyed by its texts' identity (`DiffLayoutOptions.cache`), so a re-flow only re-diffs files whose
+text changed; decorations re-sync only the spliced row window `retarget` reports; expand-context
+reveals are keyed **per path** (bare row indices collide across files); and gap bands reconcile by
+per-file ids, so one file's fold doesn't churn every later file's band. Reopening
 (`git:diff-current-changes` again) re-syncs the set explicitly on top of the live path. (External,
 on-disk edits to a file open as a `Document` aren't reflected until it's reloaded — the `Document`
 model doesn't auto-reload; in-app edits are fully live.)
@@ -171,8 +178,12 @@ a review can always be sent to an agent:
 
 ## Surviving shared pieces
 
-- `src/util/lineDiff.ts` — the minimal Myers O(ND) line diff (degrades to a
-  whole-file replace past size bounds), the basis of every diff.
+- `src/util/lineDiff.ts` — the line diff underlying every diff surface: common
+  prefix/suffix trim, exact Myers on small middles, patience-style unique-line
+  anchoring (recursive) on large ones, and a bounded search that degrades to a
+  *segment-local* replace — so a clean or locally-edited file costs ~nothing
+  regardless of size, and a wildly-diverged one can't stall the UI (the shape
+  rationale lives in the file header).
 - `src/util/wordDiff.ts` — the intra-line ("word-by-word") diff: given a
   removed↔added line pair it reports each side's changed-character spans
   (`WordRange`, the canonical home) via `diffWordsWithSpace`, then refines them for

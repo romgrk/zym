@@ -79,7 +79,7 @@ export interface DiffMultiBuffer {
    *  there). `revealRows` are the new-side rows it elides; `fromTop` is the chunk a click reveals
    *  first (true = the top chunk, for a between gap; false = the bottom chunk nearest the content, for
    *  a leading gap). */
-  gapAnchors: Array<{ viewRow: number; label: string; revealRows: number[]; placement: 'above' | 'below'; fromTop: boolean }>;
+  gapAnchors: Array<{ path: string; viewRow: number; label: string; revealRows: number[]; placement: 'above' | 'below'; fromTop: boolean }>;
 }
 
 export interface DiffLayoutOptions {
@@ -89,8 +89,9 @@ export interface DiffLayoutOptions {
    *  buffer text. */
   headers?: 'block' | 'widget';
   /** Expand-context: force these (otherwise-elided) NEW-side rows visible. Returns true for a
-   *  new-side row the user has revealed, so it shows as context instead of folding into a gap. */
-  reveal?: (newRow: number) => boolean;
+   *  new-side row of `path` the user has revealed, so it shows as context instead of folding into
+   *  a gap. Keyed by path — row indices alone collide across files. */
+  reveal?: (path: string, newRow: number) => boolean;
   /** Per-file collapse (widget mode): returns true for a file the user has collapsed, which then
    *  contributes ONLY its header row (no windows/gaps/decorations) — a one-line overview entry. */
   collapsed?: (path: string) => boolean;
@@ -100,6 +101,24 @@ export interface DiffLayoutOptions {
    *  into its own collapse set, so later re-diffs (which omit this) keep the user's expand/collapse.
    *  Undefined / ≤ 0 disables. */
   autoCollapseAtLines?: number;
+  /** Re-diff memo, owned by the caller and passed on every build: per path, the line diff (and
+   *  staged classification) keyed by the texts that produced it — so a re-flow that changed no
+   *  text (fold/expand/reveal, and every unedited file of a live re-diff) skips its diffs. */
+  cache?: Map<string, DiffFileCache>;
+}
+
+/** One file's memoized diff work (see `DiffLayoutOptions.cache`). Valid while `oldText`/`newText`
+ *  match the file's current texts; `staged` additionally keys on `indexText`. */
+export interface DiffFileCache {
+  oldText: string;
+  newText: string;
+  oldLines: string[];
+  newLines: string[];
+  recs: DiffRow[];
+  added: number;
+  removed: number;
+  indexText?: string;
+  staged?: ReturnType<typeof classifyStaged>;
 }
 
 const newKey = (path: string): string => `new:${path}`;
@@ -168,24 +187,38 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
   files.forEach((file, fileIndex) => {
     const nKey = newKey(file.path);
     const oKey = oldKey(file.path);
-    const oldLines = split(file.oldText);
-    const newLines = split(file.newText);
+    // The line diff (+ counts) memoizes across builds while the texts are unchanged — the common
+    // re-flow case (fold/expand/reveal) re-windows every file without re-diffing any.
+    let entry = opts.cache?.get(file.path);
+    if (!entry || entry.oldText !== file.oldText || entry.newText !== file.newText) {
+      const oldLines = split(file.oldText);
+      const newLines = split(file.newText);
+      const recs = diffRows(oldLines, newLines);
+      entry = {
+        oldText: file.oldText,
+        newText: file.newText,
+        oldLines,
+        newLines,
+        recs,
+        // Per-file change counts — shown on the header widget (`+N −M`), the only content of a
+        // collapsed file's one-line overview entry.
+        added: recs.reduce((n, r) => n + (r.op === 'ins' ? 1 : 0), 0),
+        removed: recs.reduce((n, r) => n + (r.op === 'del' ? 1 : 0), 0),
+      };
+      opts.cache?.set(file.path, entry);
+    }
+    const { oldLines, newLines, recs, added, removed } = entry;
     sources.set(nKey, newLines);
     sources.set(oKey, oldLines);
     language.set(nKey, file.path);
     language.set(oKey, file.path);
 
-    const recs = diffRows(oldLines, newLines);
     // Skip files with no text change — a "changed files" diff shouldn't list them, and showing
     // a bare `⋯ N unchanged lines` for them (e.g. a mode-only change, or the node_modules
     // symlink whose blob round-trips equal) is just a non-expandable dead entry.
-    if (!recs.some((r) => r.op !== 'eq')) return;
+    if (added === 0 && removed === 0) return;
 
     const label = file.label ?? (cwd ? Path.relative(cwd, file.path) : Path.basename(file.path));
-    // Per-file change counts — shown on the header widget (`+N −M`), the only content of a
-    // collapsed file's one-line overview entry.
-    const added = recs.reduce((n, r) => n + (r.op === 'ins' ? 1 : 0), 0);
-    const removed = recs.reduce((n, r) => n + (r.op === 'del' ? 1 : 0), 0);
     if (widgetHeaders) {
       // The file's first row is an EMPTY, read-only, NAVIGABLE `block` row — the caret target the
       // collapse toggle keys off — that the surface places the filename widget OVER. Empty text so a
@@ -208,8 +241,16 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
 
     // Staged/unstaged classification (the gutter marker), when the index blob is known. A row
     // ADDED vs HEAD is staged iff its worktree line is already in the index; a row REMOVED vs HEAD
-    // is staged iff that HEAD line is also gone from the index.
-    const staged = file.indexText !== undefined ? classifyStaged(oldLines, split(file.indexText), newLines) : null;
+    // is staged iff that HEAD line is also gone from the index. Memoized on the entry (an index
+    // move invalidates via `indexText`; an old/new text change already rebuilt the entry).
+    let staged: ReturnType<typeof classifyStaged> | null = null;
+    if (file.indexText !== undefined) {
+      if (entry.staged === undefined || entry.indexText !== file.indexText) {
+        entry.staged = classifyStaged(oldLines, split(file.indexText), newLines);
+        entry.indexText = file.indexText;
+      }
+      staged = entry.staged;
+    }
     const stagedFor = (rec: DiffRow): StagedState => {
       if (!staged || rec.op === 'eq') return null;
       const inIndex = rec.op === 'ins' ? staged.wtInIndex[rec.newRow] : staged.headRemovedInIndex[rec.oldRow];
@@ -230,9 +271,9 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
         block('gap');
       } else if (leading) {
         // A click reveals from the BOTTOM (the rows nearest the content below it).
-        gapAnchors.push({ viewRow: rowKinds.length, label, revealRows, placement: 'above', fromTop: false });
+        gapAnchors.push({ path: file.path, viewRow: rowKinds.length, label, revealRows, placement: 'above', fromTop: false });
       } else {
-        gapAnchors.push({ viewRow: rowKinds.length - 1, label, revealRows, placement: 'below', fromTop: true });
+        gapAnchors.push({ path: file.path, viewRow: rowKinds.length - 1, label, revealRows, placement: 'below', fromTop: true });
       }
     };
 
@@ -243,7 +284,7 @@ export function buildDiffMultiBuffer(files: DiffFile[], cwd?: string, opts: Diff
       for (let k = Math.max(0, i - CONTEXT); k <= Math.min(recs.length - 1, i + CONTEXT); k++) visible[k] = true;
     });
     // Force user-revealed rows visible (expand-context) — they show as context, not a gap.
-    if (opts.reveal) for (let i = 0; i < recs.length; i++) if (recs[i].op === 'eq' && opts.reveal(recs[i].newRow)) visible[i] = true;
+    if (opts.reveal) for (let i = 0; i < recs.length; i++) if (recs[i].op === 'eq' && opts.reveal(file.path, recs[i].newRow)) visible[i] = true;
     // Show, don't elide, gaps shorter than MIN_ELIDE.
     for (let i = 0; i < recs.length; ) {
       if (visible[i]) { i++; continue; }

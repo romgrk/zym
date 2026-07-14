@@ -42,6 +42,14 @@ Three layers:
   items + splice), and is the **`UndoTarget`** coordinating a multi-file
   edit as one transaction. `setResyncHandler` lets a computed surface
   (the diff) re-derive from scratch on a row-count reverse-sync.
+  **Scale** (an N-file diff re-flows on every fold/edit): the splice applies
+  contiguous inserted/deleted line runs as ONE buffer mutation each (every
+  mutation fires change+cursor signals whose observers do per-event work);
+  `retarget` returns the changed row window so the owner re-syncs its
+  row-derived chrome (decorations, readonly tags) only there — a
+  buffer-wide tag cycle invalidates the whole layout; readonly tags apply
+  per contiguous run; and source lines are read whole-buffer once per
+  source into a cache invalidated by that source's own change signals.
 - **Painter** — `SyntaxController` highlights the view buffer two ways
   (`paintViewLines`):
   - **single-document** (a normal file): pulls the one `DocumentSyntax`'s

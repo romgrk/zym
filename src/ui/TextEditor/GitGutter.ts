@@ -3,7 +3,7 @@
  *
  * Draws a colored bar on each line that differs from the index/HEAD: unstaged
  * changes (added=green, modified=amber, deletion marker=red) and staged changes
- * (blue). Two diffs feed it, both computed in-process (Myers, see util/lineDiff):
+ * (blue). Two diffs feed it, both computed in-process (see util/lineDiff):
  * the live buffer against the file's *index* blob (unstaged hunks — the
  * stage/revert targets) and the index against the *HEAD* blob (staged hunks — the
  * unstage targets). Both base blobs are (re)fetched on load and on any
@@ -22,7 +22,8 @@ import * as Path from 'node:path';
 import { theme } from '../../theme/theme.ts';
 import { CompositeDisposable } from '../../util/eventKit.ts';
 import type { GutterCellSink } from '../../syntax/gutterRenderers.ts';
-import { buildRowMap, computeHunks, formatHunkPatch, hunkContainsBufferRow, type Hunk } from '../../util/hunkPatch.ts';
+import { computeHunks, formatHunkPatch, hunkContainsBufferRow, hunksFromOps, rowMapFromOps, type Hunk } from '../../util/hunkPatch.ts';
+import { diffLines } from '../../util/lineDiff.ts';
 import { applyPatch, git, repoRoot } from '../../git.ts';
 import type { GitRepo } from '../../git.ts';
 
@@ -72,7 +73,9 @@ export class GitGutter {
   // The current file's index / HEAD blobs, split into lines; null until fetched.
   private indexLines: string[] | null = null;
   private headLines: string[] | null = null;
-  // The latest hunk lists, rebuilt on every recompute() and read by the actions.
+  // The latest hunk lists, read by the actions. Unstaged (index → buffer) is
+  // rebuilt on every recompute(); staged (HEAD → index) only depends on the
+  // bases, so it's rebuilt when they are (re)fetched, not per keystroke pause.
   private unstagedHunks: Hunk[] = [];
   private stagedHunks: Hunk[] = [];
   // Repo root + repo-relative path for the current file (set per refresh).
@@ -96,6 +99,7 @@ export class GitGutter {
   // and remember that a refresh is owed — see `refresh` / `notifyVisible`.
   private readonly isVisible: () => boolean;
   private refreshPending = false;
+  private gutterActive = false;
 
   constructor(
     gutter: GutterCellSink,
@@ -111,12 +115,6 @@ export class GitGutter {
     this.git = gitRepo;
     this.viewToModelLine = viewToModelLine ?? ((line) => line);
     this.isVisible = isVisible ?? (() => true);
-
-    // Contribute the change-bar column to the editor's single composite gutter.
-    this.gutter.setGitCell((viewLine) => this.cellFor(viewLine));
-
-    // HEAD / index moved (commit / checkout / staging): re-fetch the bases and re-diff.
-    this.gitUnsub = this.git.onChange(() => this.refresh());
   }
 
   /** Change-bar markup for a VIEW line: unstaged kind color, else staged blue, else ''
@@ -146,29 +144,42 @@ export class GitGutter {
    *  HEAD change. Off-screen editors defer (the two `git show` spawns are the bulk
    *  of the git-poll fan-out cost); the owed refresh runs on the next `notifyVisible`. */
   refresh(): void {
+    const path = this.getPath();
+    const root = path ? this.rootFor(path) : null;
+    const relPath = path && root ? Path.relative(root, path) : null;
+    if (!path || !root || !relPath) {
+      this.disable();
+      return;
+    }
+    if (root !== this.root || relPath !== this.relPath) {
+      this.baseGeneration++;
+      this.root = root;
+      this.relPath = relPath;
+      this.indexLines = null;
+      this.headLines = null;
+      this.clearChanges(this.gutterActive);
+    }
+    if (!this.gutterActive) {
+      this.gutterActive = true;
+      this.gutter.setGitCell((viewLine) => this.cellFor(viewLine));
+    }
+    this.gitUnsub ??= this.git.onChange(() => this.refresh());
     if (!this.isVisible()) {
       this.refreshPending = true;
       return;
     }
     this.refreshPending = false;
-    const path = this.getPath();
-    const root = path ? this.rootFor(path) : null;
-    this.root = root;
-    this.relPath = path && root ? Path.relative(root, path) : null;
-    if (!path || !root || !this.relPath) {
-      this.indexLines = [];
-      this.headLines = [];
-      this.recompute();
-      return;
-    }
-    const rel = this.relPath;
+    const rel = relPath;
     const generation = ++this.baseGeneration;
     // No index/HEAD blob (untracked / new / unborn HEAD) → empty base, so that side
     // reads as fully added. Recompute once both fetches for this generation land.
     let pending = 2;
     const settle = () => {
       if (generation !== this.baseGeneration) return; // superseded by a newer fetch
-      if (--pending === 0) this.recompute();
+      if (--pending === 0) {
+        this.rebaseStagedHunks();
+        this.recompute();
+      }
     };
     git(root, ['show', `:${rel}`], (ok, stdout) => {
       if (generation === this.baseGeneration) this.indexLines = ok ? splitLines(stdout) : [];
@@ -189,6 +200,7 @@ export class GitGutter {
 
   /** Debounced re-diff of the live buffer against the cached bases (on edits). */
   scheduleUpdate(): void {
+    if (!this.root) return;
     if (this.updateTimer) clearTimeout(this.updateTimer);
     this.updateTimer = setTimeout(() => {
       this.updateTimer = null;
@@ -213,12 +225,14 @@ export class GitGutter {
 
   /** The unstaged hunk under buffer `row` (stage / revert target), or null. */
   unstagedHunkAtRow(row: number): Hunk | null {
+    if (!this.root) return null;
     this.recompute(); // operate on the live buffer, not a debounced snapshot
     return this.unstagedHunks.find((hunk) => hunkContainsBufferRow(hunk, row)) ?? null;
   }
 
   /** The staged hunk under buffer `row` (unstage target), or null. */
   stagedHunkAtRow(row: number): Hunk | null {
+    if (!this.root) return null;
     this.recompute();
     return this.stagedHunks.find((hunk) => hunkContainsBufferRow(hunk, row)) ?? null;
   }
@@ -248,7 +262,7 @@ export class GitGutter {
 
   dispose(): void {
     if (this.updateTimer) clearTimeout(this.updateTimer);
-    this.gutter.setGitCell(null); // drop our column from the composite gutter
+    if (this.gutterActive) this.gutter.setGitCell(null);
     this.gitUnsub?.();
     this.subs.dispose();
   }
@@ -263,24 +277,59 @@ export class GitGutter {
     return this.cachedRoot;
   }
 
-  // Re-diff the live buffer against the bases and rebuild the line→kind map and
-  // the cached hunk lists.
+  private disable(): void {
+    this.baseGeneration++;
+    this.root = null;
+    this.relPath = null;
+    this.indexLines = null;
+    this.headLines = null;
+    this.refreshPending = false;
+    this.gitUnsub?.();
+    this.gitUnsub = undefined;
+    if (this.updateTimer) {
+      clearTimeout(this.updateTimer);
+      this.updateTimer = null;
+    }
+    this.clearChanges(false);
+    if (this.gutterActive) {
+      this.gutterActive = false;
+      this.gutter.setGitCell(null);
+    }
+  }
+
+  private clearChanges(redraw: boolean): void {
+    this.kindByLine.clear();
+    this.stagedLines.clear();
+    this.unstagedHunks = [];
+    this.stagedHunks = [];
+    if (redraw) this.gutter.redrawGutter();
+  }
+
+  // Staged hunks live in HEAD→index coordinates: recompute them when the bases
+  // (re)land. recompute() then only maps them onto buffer rows.
+  private rebaseStagedHunks(): void {
+    this.stagedHunks = this.indexLines && this.headLines ? computeHunks(this.headLines, this.indexLines) : [];
+  }
+
+  // Re-diff the live buffer against the index base and rebuild the line→kind map
+  // and the unstaged hunk list.
   private recompute(): void {
-    if (this.indexLines === null || this.headLines === null) return; // bases not fetched yet
+    if (!this.root || this.indexLines === null || this.headLines === null) return;
     this.kindByLine.clear();
     this.stagedLines.clear();
 
     const bufferLines = splitLines(this.getText());
 
-    // Unstaged: index → buffer. These bars sit directly on buffer rows.
-    this.unstagedHunks = computeHunks(this.indexLines, bufferLines);
+    // Unstaged: index → buffer. These bars sit directly on buffer rows. The one
+    // edit script feeds both the hunks and the staged-row alignment below.
+    const indexToBufferOps = diffLines(this.indexLines, bufferLines);
+    this.unstagedHunks = hunksFromOps(indexToBufferOps, this.indexLines, bufferLines);
     for (const hunk of this.unstagedHunks) this.markUnstaged(hunk);
 
-    // Staged: HEAD → index. Computed in index coordinates, then mapped onto buffer
-    // rows through the index→buffer alignment so they land on the right line even
-    // when there are also unstaged edits above them.
-    this.stagedHunks = computeHunks(this.headLines, this.indexLines);
-    const indexToBuffer = buildRowMap(this.indexLines, bufferLines);
+    // Staged: cached HEAD → index hunks, mapped onto buffer rows through the
+    // index→buffer alignment so they land on the right line even when there are
+    // also unstaged edits above them.
+    const indexToBuffer = rowMapFromOps(indexToBufferOps, this.indexLines.length);
     const mapRow = (indexRow: number) =>
       indexToBuffer[Math.min(indexRow, indexToBuffer.length - 1)] ?? bufferLines.length - 1;
     for (const hunk of this.stagedHunks) {

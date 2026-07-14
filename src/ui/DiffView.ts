@@ -24,13 +24,13 @@ import { TextEditor } from './TextEditor/TextEditor.ts';
 import { Document } from './TextEditor/Document.ts';
 import { DocumentRegistry } from './TextEditor/DocumentRegistry.ts';
 import { DocumentSyntax } from '../syntax/DocumentSyntax.ts';
-import { Screen } from './TextEditor/Screen.ts';
+import { Screen, type RowWindow } from './TextEditor/Screen.ts';
 import { CoordinatesMap } from './TextEditor/CoordinatesMap.ts';
 import { ExcerptSyntaxProjection } from './multibuffer/ExcerptSyntaxProjection.ts';
 import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { applyDiffDecorations } from './TextEditor/applyDiffDecorations.ts';
 import { CombinedDiffLineNumberGutter } from './TextEditor/DiffLineNumberGutter.ts';
-import { buildDiffMultiBuffer, type DiffFile, type DiffMultiBuffer } from './multibuffer/diffMultiBuffer.ts';
+import { buildDiffMultiBuffer, type DiffFile, type DiffFileCache, type DiffMultiBuffer } from './multibuffer/diffMultiBuffer.ts';
 import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
 import { createEmptyMessage } from './createEmptyMessage.ts';
 import { DiffCommentBox, buildCommentCard } from './DiffCommentBox.ts';
@@ -155,6 +155,7 @@ export class DiffView {
   private readonly cwd?: string;
   private readonly sources = new Map<string, SourceEntry>();
   private readonly screen: Screen;
+  private readonly painter: ExcerptSyntaxProjection;
   private lineNumbers: CombinedDiffLineNumberGutter | null = null;
   // `⋯` gap widgets + review-comment cards as BlockDecoration bands (file headers ride the separate
   // sticky-header layer). Reconciled (not torn down) on each re-diff: a re-flow moves them and
@@ -163,16 +164,20 @@ export class DiffView {
   // only when its content changed. A computed surface: the structure (which gaps exist) is recomputed
   // per re-diff, so the bands carry direct VIEW-row anchors and are re-`set()` on every reDiff.
   private bands!: BlockDecorationSet;
-  // Expand-context state: NEW-side rows the user forced visible, and a reveal-everything flag.
-  // The current diff's anchors, kept for the keyboard `expandContextAtCursor`.
+  // Expand-context state: per-path NEW-side rows the user forced visible (row indices alone
+  // collide across files), and a reveal-everything flag. The current diff's anchors are kept
+  // for the keyboard `expandContextAtCursor`.
   private revealAll = false;
-  private readonly revealedNewRows = new Set<number>();
+  private readonly revealedNewRows = new Map<string, Set<number>>();
   // Per-file collapse: paths the user has folded to a one-line header (stable across re-diff / live
   // re-diff / HEAD-move rebase — keyed by path, not view row). A collapsed file contributes only its
   // header row (see buildDiff → `collapsed`).
   private readonly collapsedFiles = new Set<string>();
   private gapAnchors: DiffMultiBuffer['gapAnchors'] = [];
   private headerAnchors: DiffMultiBuffer['headerAnchors'] = [];
+  // Per-file diff memo across re-diffs (see DiffLayoutOptions.cache): a re-flow only re-runs the
+  // line diff of files whose text actually changed.
+  private readonly diffCache = new Map<string, DiffFileCache>();
   private readonly onActivate?: (location: { path: string; row: number }) => void;
   private readonly onSend?: (message: string) => void;
   private readonly reviewContext?: string;
@@ -259,8 +264,8 @@ export class DiffView {
     // One editor, natively backed by the multi-source projection (no buffer-mode shim): the
     // `MultiBufferDocument` supplies the view buffer, the per-excerpt syntax painter, and undo
     // (coordinating the touched sources). The editor disposes it on teardown.
-    const painter = new ExcerptSyntaxProjection(() => this.projection, syntaxMap);
-    this.editor = new TextEditor({ source: new MultiBufferDocument(this.screen, painter) });
+    this.painter = new ExcerptSyntaxProjection(() => this.projection, syntaxMap);
+    this.editor = new TextEditor({ source: new MultiBufferDocument(this.screen, this.painter) });
     if (!this.editable) this.editor.model.setReadOnly(true);
     this.bands = this.editor.blockDecorations();
     // Wrap the editor in a Stack so a diff with no changes shows a friendly empty state instead of a
@@ -381,19 +386,28 @@ export class DiffView {
     // `reveal` forces user-expanded (otherwise-elided) new-side rows visible (expand-context).
     // `autoCollapseAtLines` is passed only on the FIRST build (open); re-diffs omit it so they honor
     // the user's collapse set rather than re-folding a large file the user expanded.
-    const reveal = this.revealAll ? () => true : (r: number) => this.revealedNewRows.has(r);
-    return buildDiffMultiBuffer(files, this.cwd, { headers: 'widget', reveal, collapsed: (p) => this.collapsedFiles.has(p), autoCollapseAtLines });
+    const reveal = this.revealAll ? () => true : (path: string, r: number) => this.revealedNewRows.get(path)?.has(r) ?? false;
+    return buildDiffMultiBuffer(files, this.cwd, {
+      headers: 'widget',
+      reveal,
+      collapsed: (p) => this.collapsedFiles.has(p),
+      autoCollapseAtLines,
+      cache: this.diffCache,
+    });
   }
 
   // --- expand context (reveal elided unchanged lines) ------------------------
   private static readonly CHUNK = 10; // lines revealed per click / `zo`
 
-  /** Reveal a chunk of a gap's elided rows. `fromTop` extends the window above the gap (the
-   *  common case); else extends the window below (a leading gap). Re-diffs to re-flow. */
-  private revealChunk(rows: number[], fromTop: boolean): void {
+  /** Reveal a chunk of a gap's elided rows (new-side rows of `path`). `fromTop` extends the window
+   *  above the gap (the common case); else extends the window below (a leading gap). Re-diffs to
+   *  re-flow. */
+  private revealChunk(path: string, rows: number[], fromTop: boolean): void {
     if (!rows.length) return;
     const chunk = fromTop ? rows.slice(0, DiffView.CHUNK) : rows.slice(-DiffView.CHUNK);
-    for (const r of chunk) this.revealedNewRows.add(r);
+    let revealed = this.revealedNewRows.get(path);
+    if (!revealed) this.revealedNewRows.set(path, (revealed = new Set()));
+    for (const r of chunk) revealed.add(r);
     this.reDiff();
   }
 
@@ -405,13 +419,13 @@ export class DiffView {
     const row = this.cursorRow();
     // Every gap (including the leading file-head gap) is a gapAnchor with a reference `viewRow`. The
     // keyboard reveals TOWARD the caret (above the gap → from its top; below → from its bottom).
-    let best: { rows: number[]; fromTop: boolean; dist: number } | null = null;
+    let best: { path: string; rows: number[]; fromTop: boolean; dist: number } | null = null;
     for (const g of this.gapAnchors) {
       const above = row <= g.viewRow; // is the caret above this gap?
       const dist = above ? g.viewRow - row : row - (g.viewRow + 1);
-      if (!best || dist < best.dist) best = { rows: g.revealRows, fromTop: above, dist };
+      if (!best || dist < best.dist) best = { path: g.path, rows: g.revealRows, fromTop: above, dist };
     }
-    if (best) this.revealChunk(best.rows, best.fromTop);
+    if (best) this.revealChunk(best.path, best.rows, best.fromTop);
   }
 
   /** Reveal every elided line (show the full files). */
@@ -880,11 +894,16 @@ export class DiffView {
     // With the line-number gutter on (`editor.diffLineNumbers`) the `@@ -old +new @@` range restates
     // the gutter, so drop it and keep just the trailing section context (see `gapLabel`).
     const showDiffLineNumbers = zym.config.get('editor.diffLineNumbers') === true;
-    dmb.gapAnchors.forEach((g, i) => {
+    // Gap ids are per-FILE ordinals, not a global index: a fold that removes one file's gaps must
+    // not shift every later gap's identity, which would tear down + rebuild all those bands.
+    const gapOrdinals = new Map<string, number>();
+    dmb.gapAnchors.forEach((g) => {
+      const ordinal = gapOrdinals.get(g.path) ?? 0;
+      gapOrdinals.set(g.path, ordinal + 1);
       const scope = new CompositeDisposable();
       const label = DiffView.gapLabel(g.label, showDiffLineNumbers);
       specs.push({
-        id: `gap:${i}`,
+        id: `gap:${g.path}:${ordinal}`,
         key: DiffView.gapKey(g, label), // keyed on the DISPLAYED label so a live line-number toggle rebuilds it
         anchor: { viewRow: g.viewRow },
         placement: g.placement,
@@ -892,7 +911,7 @@ export class DiffView {
         // full-width at any horizontal scroll (like the file header above it, but scrolling not pinned).
         fullWidth: 'content',
         // Clicking the gap reveals a chunk of its elided lines (`fromTop` = which end first).
-        build: () => buildGapWidget(scope, label, () => this.revealChunk(g.revealRows, g.fromTop)),
+        build: () => buildGapWidget(scope, label, () => this.revealChunk(g.path, g.revealRows, g.fromTop)),
         dispose: () => scope.dispose(),
       });
     });
@@ -939,6 +958,13 @@ export class DiffView {
       this.files.push(file);
       this.ensureSources(file);
       this.watchNewSideModified(this.sources.get(newKey(file.path))!);
+      // Register the new sides with the Screen (else the re-diff resolves their rows to blanks —
+      // its source map was built at construction) and the painter (else they never highlight).
+      for (const key of [newKey(file.path), oldKey(file.path)]) {
+        const entry = this.sources.get(key)!;
+        this.screen.addSource(key, entry.buffer);
+        this.painter.addSource(key, { syntax: entry.syntax, ensureParsed: entry.parse });
+      }
     }
     this.reDiff();
     // The added files' index blobs paint their staged/unstaged markers (mirrors the ctor).
@@ -1029,12 +1055,15 @@ export class DiffView {
     // No file has any change → show the empty state instead of an empty editor.
     this.stack.setVisibleChildName(dmb.headerAnchors.length === 0 ? 'empty' : 'diff');
     this.suppressReDiff = true; // retarget's view edits must not re-trigger a re-diff
+    let window: RowWindow | null;
     try {
-      this.screen.retarget(dmb.items);
+      window = this.screen.retarget(dmb.items);
     } finally {
       this.suppressReDiff = false;
     }
-    this.applyDecorations(dmb);
+    // Re-decorate only the spliced rows (tags ride the splice everywhere else). A null window
+    // means the view text didn't change at all — the decorations are exactly as they were.
+    if (window) this.applyDecorations(dmb, window);
     const gw = this.gutterWidths();
     this.lineNumbers?.setData(lineLabels(dmb.oldNums, gw.old), lineLabels(dmb.newNums, gw.new), gutterBg(dmb, 'old'), gutterBg(dmb, 'new'), headerRows(dmb), this.live ? dmb.stagedState : null);
     this.installOverlays(dmb); // re-place header + gap widgets (counts/positions re-flowed)
@@ -1074,15 +1103,13 @@ export class DiffView {
   }
 
   /** Added/removed line backgrounds from the per-row diff kinds (header/blank/gap/context get
-   *  none). The view buffer's last line is unterminated, so decorations span its content. */
-  private applyDecorations(dmb: DiffMultiBuffer): void {
-    const buffer = this.screen.buffer;
+   *  none). `window` scopes a re-diff's re-sync to the spliced rows. */
+  private applyDecorations(dmb: DiffMultiBuffer, window?: RowWindow): void {
     const lines = dmb.rowKinds.map((kind, row) => ({
-      kind: kind === 'added' || kind === 'removed' ? kind : 'context',
-      text: this.lineText(buffer, row),
+      kind,
       wordRanges: dmb.wordRanges[row] ?? undefined, // intra-line word-add/word-del spans
     }));
-    applyDiffDecorations(this.editor.decorations.layer('diff'), lines, /* terminated */ false);
+    applyDiffDecorations(this.editor.decorations.layer('diff'), lines, window);
     // (The read-only header rows hide the caret + read `.focused` — owned by `editor.stickyHeaders`.)
   }
 

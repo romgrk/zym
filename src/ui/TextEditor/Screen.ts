@@ -60,6 +60,13 @@ function lineText(buf: any, row: number): string {
 
 const READONLY_TAG = 'vp:readonly';
 
+/** A contiguous view-row span `[from, toExclusive)` — what a splice reports as changed, so
+ *  row-derived chrome (decorations, readonly tags) re-syncs only there instead of buffer-wide. */
+export interface RowWindow {
+  from: number;
+  toExclusive: number;
+}
+
 interface Connection {
   target: any;
   event: string;
@@ -104,7 +111,7 @@ export class Screen {
     this.buffer.setEnableUndo(false); // the source models own undo (as Document's views do)
     const table = this.buffer.getTagTable();
     table.add(new Gtk.TextTag({ name: READONLY_TAG, editable: false }));
-    this.projection = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
+    this.projection = CoordinatesMap.build(items, this.lineResolver());
     this.materialize();
     this.wireView();
     for (const [key, buf] of this.sources) this.wireSource(key, buf);
@@ -115,12 +122,25 @@ export class Screen {
     return this.projection;
   }
 
-  private sourceLines(seg: { documentKey: string; startRow: number; endRow: number }): string[] {
-    const buf = this.sources.get(seg.documentKey);
-    if (!buf) return [];
-    const out: string[] = [];
-    for (let r = seg.startRow; r <= seg.endRow; r++) out.push(lineText(buf, r));
-    return out;
+  // Source-text cache for `CoordinatesMap.build`: each source's whole text read once (a single
+  // native call) and sliced per segment — a build resolves many segments per source, and reading
+  // them line-by-line through iters is a native round trip per row. Kept across builds; a source's
+  // entry is dropped the moment its buffer signals a mutation (`wireSource`), so a rebuild of an
+  // N-file surface re-reads only the sources that actually changed.
+  private readonly sourceLinesCache = new Map<string, string[]>();
+
+  private lineResolver(): (seg: { documentKey: string; startRow: number; endRow: number }) => string[] {
+    return (seg) => {
+      let lines = this.sourceLinesCache.get(seg.documentKey);
+      if (!lines) {
+        const buf = this.sources.get(seg.documentKey);
+        lines = buf ? (buf.getText(buf.getStartIter(), buf.getEndIter(), true) as string).split('\n') : [];
+        this.sourceLinesCache.set(seg.documentKey, lines);
+      }
+      const out = lines.slice(seg.startRow, seg.endRow + 1);
+      while (out.length < seg.endRow - seg.startRow + 1) out.push(''); // window past the end reads as blank rows
+      return out;
+    };
   }
 
   // --- materialization (build the view text + lock down non-editable rows) ----
@@ -148,19 +168,30 @@ export class Screen {
     return () => this.materializeHandlers.delete(cb);
   }
 
-  /** Tag every non-editable row (block / phantom) so the user can't type there. Identity
-   *  (single editable full-file source) needs none — skip the per-row sweep entirely. */
-  private applyReadonlyTags(): void {
+  /** Tag every non-editable row (block / phantom) in `window` (default: the whole view) so the
+   *  user can't type there. Identity (single editable full-file source) needs none — skip the
+   *  per-row sweep entirely. Contiguous non-editable rows are tagged as ONE range (a read-only
+   *  multibuffer is a single range), since each applyTag is a native round trip. */
+  private applyReadonlyTags(window?: RowWindow): void {
     if (this.projection.isIdentity) return;
     const buffer = this.buffer as any;
     const tag = buffer.getTagTable().lookup(READONLY_TAG);
     const rowCount = this.projection.screenRowCount;
-    for (let row = 0; row < rowCount; row++) {
-      if (this.projection.isScreenPositionEditable(row, 0)) continue;
+    const from = window ? Math.max(0, window.from) : 0;
+    const toExclusive = window ? Math.min(rowCount, window.toExclusive) : rowCount;
+    for (let row = from; row < toExclusive; ) {
+      if (this.projection.isScreenPositionEditable(row, 0)) {
+        row++;
+        continue;
+      }
+      let end = row + 1;
+      while (end < toExclusive && !this.projection.isScreenPositionEditable(end, 0)) end++;
       const start = asIter(buffer.getIterAtLine(row));
-      const end = asIter(buffer.getIterAtLine(row + 1)); // includes the trailing '\n' → spans the row
-      const endIter = end.getLine() === row ? this.endOfLine(row) : end;
+      // End at the next row's start (spanning the run's trailing '\n'), or the buffer end when the
+      // run reaches the final (newline-less) row.
+      const endIter = end < rowCount ? asIter(buffer.getIterAtLine(end)) : buffer.getEndIter();
       buffer.applyTag(tag, start, endIter);
+      row = end;
     }
   }
 
@@ -302,7 +333,7 @@ export class Screen {
    *  Single-source edits use the offset path and never reach here. */
   private resegment(key: string, editRow: number, rowDelta: number): void {
     this.adjustItems(key, editRow, rowDelta);
-    this.projection = CoordinatesMap.build(this.items, (seg) => this.sourceLines(seg));
+    this.projection = CoordinatesMap.build(this.items, this.lineResolver());
   }
 
   // --- reverse-sync (source → view) ------------------------------------------
@@ -318,8 +349,15 @@ export class Screen {
   // segment / crossing a region boundary) falls back to a full re-materialize.
 
   private wireSource(key: string, buf: SourceBuffer): void {
-    this.connect(buf, 'insert-text', (iter: any, text: string) => this.onSourceInsert(key, iter, text));
-    this.connect(buf, 'delete-range', (start: any, end: any) => this.onSourceDelete(key, start, end));
+    // The cache drop must precede any early return (suppressed echoes still mutate the source).
+    this.connect(buf, 'insert-text', (iter: any, text: string) => {
+      this.sourceLinesCache.delete(key);
+      this.onSourceInsert(key, iter, text);
+    });
+    this.connect(buf, 'delete-range', (start: any, end: any) => {
+      this.sourceLinesCache.delete(key);
+      this.onSourceDelete(key, start, end);
+    });
   }
 
   private onSourceInsert(key: string, iter: any, text: string): void {
@@ -656,7 +694,7 @@ export class Screen {
       // segment structure through a row-count change that crosses segment boundaries (an undo
       // over fragmented new-side/phantom segments), so delegate to the owner to re-derive the
       // items from scratch; otherwise (search) retarget the window-adjusted items.
-      if (!resync) this.projection = CoordinatesMap.build(this.items, (seg) => this.sourceLines(seg));
+      if (!resync) this.projection = CoordinatesMap.build(this.items, this.lineResolver());
       else if (this.resyncHandler) this.resyncHandler();
       else this.retarget(this.items);
       // The map is now current — let the owner reconcile projection-dependent chrome (the search
@@ -699,7 +737,7 @@ export class Screen {
    *  segment structure changes (excerpts open/close, or a non-identity source edit). */
   rebuild(items: Item[] = this.items): void {
     this.items = items;
-    this.projection = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
+    this.projection = CoordinatesMap.build(items, this.lineResolver());
     this.materialize();
   }
 
@@ -710,18 +748,22 @@ export class Screen {
    * every highlight tag → a flash, and resetting the caret), this builds the new map, line-diffs
    * its text against the CURRENT view text, and applies only the changed lines. So rows that
    * didn't move keep their caret position, syntax tags, and decorations; only the genuinely
-   * changed rows (usually just the re-flowed phantom rows) are spliced. Block / phantom rows are
-   * re-locked read-only afterwards (they shifted).
+   * changed rows (usually just the re-flowed phantom rows) are spliced. Block / phantom rows in
+   * the spliced span are re-locked read-only (outside it the tags rode the splice).
+   *
+   * Returns the changed view-row window (new coordinates), or null when the text didn't change —
+   * so the owner can scope ITS row-derived chrome (the diff's decorations) the same way.
    */
-  retarget(items: Item[]): void {
-    const next = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
+  retarget(items: Item[]): RowWindow | null {
+    const next = CoordinatesMap.build(items, this.lineResolver());
     this.viewSuppress = true;
     try {
-      this.spliceTo(next.screenText);
+      const window = this.spliceTo(next.screenText);
       this.items = items;
       this.projection = next;
-      this.relockReadonly();
+      if (window) this.relockReadonly(window);
       this.buffer.setModified(false);
+      return window;
     } finally {
       this.viewSuppress = false;
     }
@@ -737,7 +779,7 @@ export class Screen {
    */
   appendItems(items: Item[]): boolean {
     const prevText = this.projection.screenText;
-    const next = CoordinatesMap.build(items, (seg) => this.sourceLines(seg));
+    const next = CoordinatesMap.build(items, this.lineResolver());
     this.items = items;
     this.projection = next;
     if (!next.screenText.startsWith(prevText)) {
@@ -746,10 +788,11 @@ export class Screen {
     }
     const suffix = next.screenText.slice(prevText.length);
     if (suffix.length === 0) return true;
+    const prevLastRow = prevText.split('\n').length - 1; // the row the appended text extends
     this.viewSuppress = true;
     try {
       this.buffer.insert(this.buffer.getEndIter(), suffix, -1);
-      this.relockReadonly();
+      this.relockReadonly({ from: prevLastRow, toExclusive: next.screenRowCount });
       this.buffer.setModified(false);
     } finally {
       this.viewSuppress = false;
@@ -758,65 +801,86 @@ export class Screen {
   }
 
   /** Splice the view buffer to `target` by applying only its line-level diff against the current
-   *  text — leaving unchanged lines (their tags + the caret) in place. */
-  private spliceTo(target: string): void {
+   *  text — leaving unchanged lines (their tags + the caret) in place. Contiguous runs of
+   *  inserted/deleted lines are applied as ONE buffer mutation each: every insert/delete fires the
+   *  buffer's change + cursor signals, whose observers (bracket match, cursor style, selection
+   *  clamps) do per-event work — a per-line splice of a large re-flow stalls on those, not the diff.
+   *  Returns the changed row window in TARGET coordinates (a deletion marks its seam row), or null
+   *  when nothing changed. */
+  private spliceTo(target: string): RowWindow | null {
     const buffer = this.buffer;
     const current = buffer.getText(buffer.getStartIter(), buffer.getEndIter(), true) as string;
-    if (current === target) return;
-    const ops = diffLines(current.split('\n'), target.split('\n'));
+    if (current === target) return null;
     const b = target.split('\n');
+    const ops = diffLines(current.split('\n'), b);
     let viewRow = 0; // row in the (mutating) buffer
     let bi = 0; // index into the target lines
-    for (const op of ops) {
+    let firstChanged = -1;
+    let lastChanged = -1;
+    for (let i = 0; i < ops.length; ) {
+      const op = ops[i];
+      let run = 1;
+      while (i + run < ops.length && ops[i + run] === op) run++;
       if (op === 'eq') {
-        viewRow++;
-        bi++;
+        viewRow += run;
+        bi += run;
       } else if (op === 'del') {
-        this.deleteViewLine(viewRow); // line removed; the next line shifts into viewRow
+        this.deleteViewLines(viewRow, run); // lines removed; the next line shifts into viewRow
+        if (firstChanged < 0) firstChanged = bi;
+        lastChanged = Math.max(lastChanged, bi); // the seam row the deletion joins
       } else {
-        this.insertViewLine(viewRow, b[bi]);
-        viewRow++;
-        bi++;
+        this.insertViewLines(viewRow, b.slice(bi, bi + run));
+        viewRow += run;
+        if (firstChanged < 0) firstChanged = bi;
+        bi += run;
+        lastChanged = bi - 1;
       }
+      i += run;
     }
+    // Clamp: a change at the very end (a trailing deletion's seam) can index one past the last row.
+    const lastRow = b.length - 1;
+    return { from: Math.min(firstChanged, lastRow), toExclusive: Math.min(lastChanged, lastRow) + 1 };
   }
 
-  /** Delete the whole of view line `row` (its text + the newline that joins it to its
-   *  neighbour). The final line has no trailing newline, so swallow the PRECEDING one instead. */
-  private deleteViewLine(row: number): void {
+  /** Delete view lines `[row, row + count)` (their text + the newlines joining them to their
+   *  neighbours). The final line has no trailing newline, so a run that reaches it swallows the
+   *  PRECEDING newline instead. */
+  private deleteViewLines(row: number, count: number): void {
     const buffer = this.buffer;
-    const lastLine = buffer.getLineCount() - 1;
-    let start = asIter(buffer.getIterAtLine(row));
+    const lineCount = buffer.getLineCount();
+    const start = asIter(buffer.getIterAtLine(row));
     let end: any;
-    if (row < lastLine) {
-      end = asIter(buffer.getIterAtLine(row + 1));
+    if (row + count < lineCount) {
+      end = asIter(buffer.getIterAtLine(row + count));
     } else {
       end = buffer.getEndIter();
-      if (row > 0) {
-        start = asIter(buffer.getIterAtLine(row));
-        start.backwardChar(); // consume the '\n' before the last line, leaving no empty row
-      }
+      if (row > 0) start.backwardChar(); // consume the '\n' before the run, leaving no empty row
     }
     buffer.delete(start, end);
   }
 
-  /** Insert `text` as a new view line at `row` (before the line currently there, or as a new
-   *  final line when `row` is past the end). */
-  private insertViewLine(row: number, text: string): void {
+  /** Insert `lines` as new view lines at `row` (before the line currently there, or as new
+   *  final lines when `row` is past the end). */
+  private insertViewLines(row: number, lines: string[]): void {
     const buffer = this.buffer;
     if (row < buffer.getLineCount()) {
-      buffer.insert(asIter(buffer.getIterAtLine(row)), text + '\n', -1);
+      buffer.insert(asIter(buffer.getIterAtLine(row)), lines.join('\n') + '\n', -1);
     } else {
-      buffer.insert(buffer.getEndIter(), '\n' + text, -1); // append past the (unterminated) last line
+      buffer.insert(buffer.getEndIter(), '\n' + lines.join('\n'), -1); // append past the (unterminated) last line
     }
   }
 
-  /** Clear + reapply the read-only tag across the buffer (block/phantom rows moved on retarget). */
-  private relockReadonly(): void {
+  /** Clear + reapply the read-only tag across `window` (default: the whole buffer). A splice's
+   *  changed rows need the re-lock; outside them the tags rode the edits — and a buffer-wide
+   *  tag cycle invalidates the whole layout, which dwarfs the splice itself on a large view. */
+  private relockReadonly(window?: RowWindow): void {
     const buffer = this.buffer as any;
     const tag = buffer.getTagTable().lookup(READONLY_TAG);
-    buffer.removeTag(tag, buffer.getStartIter(), buffer.getEndIter());
-    this.applyReadonlyTags();
+    const rowCount = this.projection.screenRowCount;
+    const start = window && window.from > 0 ? asIter(buffer.getIterAtLine(window.from)) : buffer.getStartIter();
+    const end = window && window.toExclusive < rowCount ? asIter(buffer.getIterAtLine(window.toExclusive)) : buffer.getEndIter();
+    buffer.removeTag(tag, start, end);
+    this.applyReadonlyTags(window);
   }
 
   /** Ignore source-buffer change signals until `resume()` — for a bulk replace the owner
