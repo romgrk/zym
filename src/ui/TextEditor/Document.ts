@@ -23,7 +23,7 @@
  */
 import * as Fs from 'node:fs';
 import * as Path from 'node:path';
-import Gio from 'gi:Gio-2.0';
+import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import Adw from 'gi:Adw-1';
 import GtkSource from 'gi:GtkSource-5';
 type SourceBuffer = InstanceType<typeof GtkSource.Buffer>;
@@ -48,9 +48,6 @@ const SOURCE_KEY = 'model';
 // otherwise apply thousands of tiny edits (slow, and its scroll/caret preservation is moot anyway).
 const RELOAD_SPLICE_MAX_LINES = 2000;
 
-// node-gtk quirk: Gio.File instance methods are undefined on the concrete instance,
-// so reach them through the prototype (see config/load.ts).
-const GioFileProto = (Gio.File as unknown as { prototype: ReturnType<typeof Gio.File.newForPath> }).prototype;
 // node-gtk returns out-param iters directly or as [ok, iter]; normalize.
 const asIter = (res: TextIter | [boolean, TextIter]): TextIter =>
   (Array.isArray(res) ? res[res.length - 1] : res) as TextIter;
@@ -139,12 +136,13 @@ export class Document implements TextEditorSource {
   private diskMtimeMs: number | null = null;
   private diskState: 'synced' | 'changed' | 'deleted' = 'synced';
   private deletionCheckTimer: NodeJS.Timeout | null = null;
-  // The model-buffer signal handlers + the file-monitor handler each capture `this`; node-gtk
-  // roots a connected handler's closure behind a Global handle, so a single un-disconnected one
-  // pins this Document (→ model buffer + LSP doc) forever. `dispose()` drains this bag.
+  // The model-buffer GObject signal handlers capture `this`; node-gtk roots a connected handler's
+  // closure behind a Global handle, so a single un-disconnected one pins this Document (→ model
+  // buffer + LSP doc) forever. The chokidar watcher likewise holds a `this` closure until closed.
+  // `dispose()` drains this bag, severing both.
   private readonly subs = new CompositeDisposable();
-  // The file watch lives in its own re-armable scope: `watchFile` clears it (`.off()` + `.cancel()`
-  // the old monitor) and re-`connect`s, since the monitor is re-created when the path changes.
+  // The file watch lives in its own re-armable scope: `watchFile` clears it (closing the old
+  // chokidar watcher) and re-arms, since the watch is re-created when the path changes.
   private readonly monitorScope = this.subs.nest();
 
   constructor() {
@@ -450,6 +448,7 @@ export class Document implements TextEditorSource {
 
   loadFile(path: string, opts: { silent?: boolean } = {}): void {
     try {
+      const mtimeBeforeRead = this.statMtimeMs(path);
       const content = Fs.readFileSync(path, 'utf8');
       const reload = this.contentLoaded;
       this._currentFile = path;
@@ -469,7 +468,7 @@ export class Document implements TextEditorSource {
         zym.lsp.didOpen(this.lspDocument);
         this.host?.didLoad(content, path, !!opts.silent);
       }
-      this.diskMtimeMs = this.statMtimeMs(path);
+      this.diskMtimeMs = mtimeBeforeRead;
       this.setDiskState('synced');
       this.watchFile(path);
       this.emitTitleChange();
@@ -630,26 +629,20 @@ export class Document implements TextEditorSource {
 
   // --- On-disk change detection ----------------------------------------------
 
-  /** Drop the current file watch (clearing `monitorScope` runs the deferred `.off()` + `.cancel()`,
-   *  which is what releases node-gtk's Global handle on the `changed` closure). */
+  /** Drop the current file watch (clearing `monitorScope` runs the deferred `watcher.close()`). */
   private unwatchFile(): void {
     this.monitorScope.clear();
   }
 
   private watchFile(path: string): void {
     this.unwatchFile();
-    try {
-      const file = Gio.File.newForPath(path);
-      const monitor = GioFileProto.monitorFile.call(
-        file,
-        Gio.FileMonitorFlags.WATCH_MOVES,
-        null,
-      ) as InstanceType<typeof Gio.FileMonitor>;
-      this.monitorScope.connect(monitor, 'changed', () => this.onDiskChanged());
-      this.monitorScope.defer(() => monitor.cancel());
-    } catch (error) {
-      console.warn(`[editor] could not watch ${path}: ${(error as Error).message}`);
-    }
+    // `persistent: false` — the watch delivers events while the app's GTK loop runs but never keeps
+    // the process alive on its own (matching the old Gio monitor's lifecycle), so an undisposed
+    // Document can't hang a headless test the way a persistent chokidar watch would.
+    const watcher: FSWatcher = chokidarWatch(path, { ignoreInitial: true, persistent: false });
+    watcher.on('all', () => this.onDiskChanged());
+    watcher.on('error', () => {}); // transient FS error — the next event/save recovers
+    this.monitorScope.defer(() => void watcher.close());
   }
 
   private onDiskChanged(): void {
