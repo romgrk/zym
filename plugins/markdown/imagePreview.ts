@@ -140,7 +140,14 @@ export function activateImagePreview(ctx: PluginContext, markdownFileTypes: read
           const entry = loadTexture(absPath, cache);
           if (!entry) return;
           const id = `${absPath}#${ordinal}`;
-          specs.push({ id, key: id, anchor: { row: range.start.row }, placement: 'below', build: () => buildPicture(entry) });
+          specs.push({
+            id,
+            key: id,
+            anchor: { row: range.start.row },
+            placement: 'below',
+            height: entry.height + 8,
+            build: () => buildPicture(entry),
+          });
         });
       }
       bands.set(specs);

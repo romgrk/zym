@@ -48,6 +48,11 @@ addStyles(/* css */`
   }
 `);
 
+/** Default widget-free reservation for a filename header. */
+export const HEADER_BAND_HEIGHT = 44;
+/** Default widget-free reservation for an elision gap. */
+export const GAP_BAND_HEIGHT = 33;
+
 /** Per-header look. The defaults reproduce `SearchResultsView`'s header (file-type icon, dimmed
  *  directory, bold basename); `DiffView` overrides them and adds the collapse chevron + stats. */
 export interface HeaderWidgetOptions {
@@ -83,6 +88,7 @@ export function buildHeaderWidget(
   options: HeaderWidgetOptions = {},
 ): InstanceType<typeof Gtk.Widget> {
   const row = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL, spacing: 6 });
+  row.setSizeRequest(-1, HEADER_BAND_HEIGHT);
   row.addCssClass('MultiBufferHeader');
   // A modified (unsaved) file: the `.is-modified` state on the root turns the path labels warning-
   // coloured (see the stylesheet). Toggled here, read by every `.label` below.
@@ -155,6 +161,7 @@ export function buildGapWidget(
   onActivate?: () => void,
 ): InstanceType<typeof Gtk.Widget> {
   const band = new Gtk.Box({ orientation: Gtk.Orientation.HORIZONTAL });
+  band.setSizeRequest(-1, GAP_BAND_HEIGHT);
   band.addCssClass('MultiBufferGap'); // opaque grey fill + padding (the fold-marker band)
   const text = new Gtk.Label({ label, xalign: 0, hexpand: true });
   text.addCssClass('text'); // the dimmed marker text (dim lives here, not on the band)

@@ -56,7 +56,7 @@ function toggleBlock() {
     handle.remove();
     handle = null;
   } else {
-    handle = blocks.add({ line: ANCHOR_LINE, widget: makeCard(), placement: 'below' });
+    handle = blocks.add({ line: ANCHOR_LINE, build: makeCard, placement: 'below' });
   }
 }
 
@@ -91,7 +91,7 @@ app.on('activate', () => {
   view.addController(keys);
 
   // The controller defers placement to `map`, so just add it now.
-  handle = blocks.add({ line: ANCHOR_LINE, widget: makeCard(), placement: 'below' });
+  handle = blocks.add({ line: ANCHOR_LINE, build: makeCard, placement: 'below' });
 
   const scrolled = new Gtk.ScrolledWindow();
   scrolled.setChild(view);
@@ -110,7 +110,7 @@ app.on('activate', () => {
       let ok = true, err = '';
       try {
         handle?.remove();
-        handle = blocks.add({ line: ANCHOR_LINE, widget: makeCard(), placement: 'below' });
+        handle = blocks.add({ line: ANCHOR_LINE, build: makeCard, placement: 'below' });
         handle.invalidate();
         blocks.repositionAll();
       } catch (e) { ok = false; err = String((e as Error)?.stack ?? e); }

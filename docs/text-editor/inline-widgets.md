@@ -113,9 +113,9 @@ band. That was the "diff file headers scroll under the `⋯` fold markers" bug.
 true`) at the queue tail so they always draw on top of the scrolling gap/comment
 bands:
 
-- a sticky band **never reuses a pooled slot** — it always takes a fresh slot
-  appended on top (`add()`), and its slot is **not** re-pooled on removal
-  (it sits on top; a scrolling band reusing it would draw over the headers);
+- sticky slots recycle through a **sticky-only pool**. Each slot records the
+  non-sticky append generation at which it last sat above ordinary content;
+  a stale slot is re-appended before reuse instead of drawing under a gap;
 - whenever a **brand-new non-sticky** overlay is appended (past the pool — a new
   gap on collapse, a review comment), it lands on top, so `place()` calls
   **`restackStickies()`**: each sticky's widget moves into a fresh slot appended
@@ -142,7 +142,9 @@ Lives beside `TextDecorations` (one per editor, `editor.inlineBlocks`).
 ```ts
 const handle = editor.inlineBlocks.add({
   line,                 // anchor row (buffer)
-  widget,               // any Gtk.Widget
+  height,               // widget-free reservation estimate
+  build: () => widget,  // called only near the viewport
+  dispose,              // paired teardown on recycle/replacement/removal
   placement: 'below',   // gap below the anchor line ('above' = pixels-above)
 });
 handle.invalidate();    // re-measure the widget height + reposition (after its size changes)
@@ -159,18 +161,20 @@ Each handle owns three things:
    Position = `get_iter_location(mark).y + .height` (bottom of the anchor
    line), `x = 0` (text origin). Static in the read-only diff; the same
    code serves the live editor.
-2. **A dedicated gap tag** (`pixelsBelowLines = childHeight`) applied only
-   to the anchor line. One tag per block (heights differ); the tag table
-   growing by a handful is fine.
-3. **The overlay child**, placed via `add_overlay(widget, x, bottomY)`.
+2. **A persistent gap-tag application** (`pixelsBelowLines = childHeight`) on
+   the anchor line. Tags are pooled by placement + height; the application
+   remains while the widget is offscreen.
+3. **A viewport-resident overlay child**, built inside one viewport of the
+   visible area and recycled when it leaves that window.
 
 ### The hard part — dynamic height
 
 Fixed-height blocks (a one-line label) are trivial; a variable-height
 child is the work:
 
-- Measure the child (`child.measure(VERTICAL, width)`), set
-  `tag.pixelsBelowLines = H`, then `move_overlay` to the anchor bottom.
+- Reserve the declared estimate before building. Once resident, measure the child
+  (`child.measure(VERTICAL, width)`), update the reservation to H, then
+  `move_overlay` to the anchor bottom.
   `handle.invalidate()` re-runs this.
 - **Guard the loop**: setting the tag relayouts, which can re-emit size
   signals — act only when H differs from the last applied value.

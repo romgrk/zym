@@ -31,7 +31,7 @@ import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { applyDiffDecorations } from './TextEditor/applyDiffDecorations.ts';
 import { CombinedDiffLineNumberGutter } from './TextEditor/DiffLineNumberGutter.ts';
 import { buildDiffMultiBuffer, type DiffFile, type DiffFileCache, type DiffMultiBuffer } from './multibuffer/diffMultiBuffer.ts';
-import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
+import { buildHeaderWidget, buildGapWidget, GAP_BAND_HEIGHT, HEADER_BAND_HEIGHT } from './HeaderBands.ts';
 import { createEmptyMessage } from './createEmptyMessage.ts';
 import { DiffCommentBox, buildCommentCard } from './DiffCommentBox.ts';
 import { formatAgentComment } from './agentComment.ts';
@@ -866,13 +866,15 @@ export class DiffView {
     const headerSpecs: StickyHeaderSpec[] = dmb.headerAnchors.map((h) => {
       const collapsed = this.collapsedFiles.has(h.path);
       const modified = this.isFileModified(h.path);
-      const scope = new CompositeDisposable();
+      let scope: CompositeDisposable | null = null;
       return {
         id: `header:${h.path}`,
         key: DiffView.headerKey(h, collapsed, modified),
         viewRow: h.viewRow,
-        build: () =>
-          buildHeaderWidget(
+        height: HEADER_BAND_HEIGHT,
+        build: () => {
+          scope = new CompositeDisposable();
+          return buildHeaderWidget(
             scope,
             h.label,
             h.path,
@@ -882,8 +884,9 @@ export class DiffView {
             // Diff look: no file-type icon, bold the whole path, flag unsaved edits (warning + dot),
             // plus the collapse chevron + `+N −M` stats, and a `(deleted)` tag for a removed file.
             { icon: false, boldPath: true, modified, collapsed, added: h.added, removed: h.removed, deleted: h.deleted },
-          ),
-        dispose: () => scope.dispose(), // sever the header click controller when the widget is replaced/removed
+          );
+        },
+        dispose: () => { scope?.dispose(); scope = null; },
       };
     });
     this.editor.stickyHeaders.setHeaders(headerSpecs);
@@ -900,7 +903,7 @@ export class DiffView {
     dmb.gapAnchors.forEach((g) => {
       const ordinal = gapOrdinals.get(g.path) ?? 0;
       gapOrdinals.set(g.path, ordinal + 1);
-      const scope = new CompositeDisposable();
+      let scope: CompositeDisposable | null = null;
       const label = DiffView.gapLabel(g.label, showDiffLineNumbers);
       specs.push({
         id: `gap:${g.path}:${ordinal}`,
@@ -910,9 +913,13 @@ export class DiffView {
         // The `⋯ N unchanged lines` band spans the FULL content width and rides the text, so it stays
         // full-width at any horizontal scroll (like the file header above it, but scrolling not pinned).
         fullWidth: 'content',
+        height: GAP_BAND_HEIGHT,
         // Clicking the gap reveals a chunk of its elided lines (`fromTop` = which end first).
-        build: () => buildGapWidget(scope, label, () => this.revealChunk(g.path, g.revealRows, g.fromTop)),
-        dispose: () => scope.dispose(),
+        build: () => {
+          scope = new CompositeDisposable();
+          return buildGapWidget(scope, label, () => this.revealChunk(g.path, g.revealRows, g.fromTop));
+        },
+        dispose: () => { scope?.dispose(); scope = null; },
       });
     });
     // Accumulated review comments: a read-only card under each commented line (source-anchored, so
@@ -925,6 +932,7 @@ export class DiffView {
         anchor: p.anchor,
         placement: 'below',
         fullWidth: 'content', // see docs/text-editor/diff.md — the wrapping label needs a forced width
+        height: 48,
         build: () => buildCommentCard(p.comment.comment),
       });
     });

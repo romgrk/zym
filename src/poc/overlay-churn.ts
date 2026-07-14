@@ -49,7 +49,12 @@ app.on('activate', () => {
     window.on('close-request', () => { loop.quit(); app.quit(); return false; });
     window.present();
 
-    const handles: BlockDecorationHandle[] = LINES.map((line) => blocks.add({ line, widget: makeCard(`block @${line}`), placement: 'below' }));
+    const handles: BlockDecorationHandle[] = LINES.map((line) => blocks.add({
+      line,
+      build: () => makeCard(`block @${line}`),
+      height: 40,
+      placement: 'below',
+    }));
 
     // After the view is realized + blocks placed: remove half, force redraws, scroll.
     setTimeout(() => {
@@ -65,7 +70,7 @@ app.on('activate', () => {
 
     // A second churn round (re-add at a removed slot), then quit.
     setTimeout(() => {
-      blocks.add({ line: 8, widget: makeCard('re-added @8'), placement: 'below' });
+      blocks.add({ line: 8, build: () => makeCard('re-added @8'), height: 40, placement: 'below' });
       view.queueDraw();
     }, 800);
     setTimeout(() => {

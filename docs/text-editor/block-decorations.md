@@ -34,9 +34,9 @@ ride the marks between explicit `set()` calls.
 
 ```
 TextEditor
-├─ inlineBlocks : BlockDecorations              generic primitive — place/update/remove a widget at
-│                                                a VIEW line; owns mark, space reservation, placement
-│                                                & reposition timing, slot pooling, node-gtk quirks.
+├─ inlineBlocks : BlockDecorations              generic primitive — declare/update/remove lazy content at
+│                                                a VIEW line; owns mark, persistent reservation,
+│                                                viewport residency, slot pooling, node-gtk quirks.
 │                                                Used directly by the fold placeholder.
 └─ blockDecorations() : BlockDecorationSet      declarative — SOURCE-anchored specs, set-reconcile by
                                                  id/key, projects anchor→view line ONCE per set(),
@@ -44,8 +44,11 @@ TextEditor
 ```
 
 - **`BlockDecorations` (primitive) is generic.** Public surface:
-  `add({ line, widget, placement, sticky?, fullWidth? }) → handle { update({line?,widget?}),
-  invalidate(), remove() }`. No header/gap/key/projection/"band" concepts.
+  `add({ line, build, dispose?, height?, placement, sticky?, fullWidth? }) → handle {
+  update({line?,build?,dispose?,height?}), widget(), invalidate(), remove() }`. `height` is the
+  widget-free reservation estimate; the measured resident height replaces it. `dispose` is paired
+  with each successful `build` and runs whenever that widget is recycled, replaced, or removed.
+  No header/gap/key/projection/"band" concepts.
   `placement` is `'above'`/`'below'` (a blank band over/under the line, the widget
   floats in it) or `'on'` (the line is grown to the widget height and the widget
   COVERS it — the caret rests on the line). `sticky` (generic: pin to the viewport
@@ -73,7 +76,9 @@ interface BlockDecorationSpec {
   key: string;                      // content identity — rebuild the widget only when it changes
   anchor: BlockDecorationAnchor;
   placement?: 'above' | 'below';
+  height?: number;                    // widget-free reservation estimate
   build: () => Gtk.Widget;
+  dispose?: () => void;               // paired with each materialized build
 }
 
 const decos = editor.blockDecorations();   // a fresh set, registered with the editor
@@ -100,6 +105,24 @@ Between `set()` calls the editor does **nothing**: positions ride the
 primitive's marks. The editor re-runs each registered set's `set(lastSpecs)`
 only on a new narrow `Screen.onDidMaterialize` (initial build /
 `rebuild` / reload) — the one case marks are lost.
+
+## Viewport residency
+
+Every declaration always keeps its anchor mark and line-height reservation; only the widget side is
+virtualized. Reservation tags are shared by placement + height and applied to each anchor line, so
+offscreen content occupies the same layout space without creating one native tag per declaration.
+Tag range changes are coalesced onto a GTK tick and land before paint.
+
+Once line geometry is valid, `BlockDecorations` materializes declarations intersecting the viewport
+plus one viewport of overscan. It keeps declarations ordered by their marks and finds the resident
+window with binary searches; per-frame reposition and width loops visit only resident blocks. Sticky
+content additionally retains the nearest header above the visible top so pinning never disappears.
+
+Recycling runs the build-paired `dispose` before detaching the widget, then hides and pools the
+overlay slot. Sticky slots use their own pool plus an overlay-generation check: a stale slot is
+restacked before reuse, preserving the append-only rule that every sticky overlay remains above
+ordinary content. A visible `key` replacement keeps its handle, reservation, and placed slot, so a
+re-diff does not collapse and re-expand the line.
 
 ## Who calls `set()`, and when (logical-model changes only)
 
@@ -131,7 +154,7 @@ reflow), not decorations.
 ## Notes / risks
 
 - The primitive self-heals position on `changed` (`scheduleReserve`) and on
-  the vadjustment `changed` (`scheduleReposition`); the declarative layer
+  the vadjustment `changed` (`scheduleReposition`); both paths are resident-window bounded. The declarative layer
   must not duplicate that.
 - `onDidMaterialize` must fire after `materialize` has run (marks already
   gone) so the re-projection reads the rebuilt buffer.

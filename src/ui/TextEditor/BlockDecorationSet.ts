@@ -41,6 +41,8 @@ export interface BlockDecorationSpec {
   /** Make a non-sticky band span the row while scrolling with the text — `'viewport'` (visible width)
    *  or `'content'` (full content width, so it stays full-width at any hscroll). See `BlockDecorationOptions`. */
   fullWidth?: BlockWidth;
+  /** Widget-free line-height reservation, replaced with the measured height while resident. */
+  height?: number;
   build: () => InstanceType<typeof Gtk.Widget>;
   /** Called when THIS spec's built widget is dropped — replaced on a `key` change, removed when
    *  the decoration leaves the set, or on `clear()`. Use it to sever anything node-gtk roots on
@@ -54,7 +56,7 @@ export interface BlockDecorationSpec {
 export type AnchorResolver = (anchor: BlockDecorationAnchor) => number | null;
 
 export class BlockDecorationSet {
-  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string; line: number; dispose?: () => void }>();
+  private readonly entries = new Map<string, { handle: BlockDecorationHandle; key: string; line: number }>();
   private readonly blocks: BlockDecorations;
   private readonly resolve: AnchorResolver;
   private lastSpecs: BlockDecorationSpec[] = [];
@@ -68,20 +70,19 @@ export class BlockDecorationSet {
    *  calls the primitive's marks keep each decoration positioned. */
   set(specs: BlockDecorationSpec[]): void {
     this.lastSpecs = specs;
-    this.reconcile(false);
+    this.blocks.transact(() => this.reconcile(false));
   }
 
   /** Re-place every decoration from the current projection — for after a re-materialize, where the
    *  marks were lost. Driven by the editor's `onDidMaterialize`. */
   reproject(): void {
-    this.reconcile(true);
+    this.blocks.transact(() => this.reconcile(true));
   }
 
   clear(): void {
-    for (const entry of this.entries.values()) {
-      entry.dispose?.(); // sever the widget's controllers before dropping it
-      entry.handle.remove();
-    }
+    this.blocks.transact(() => {
+      for (const entry of this.entries.values()) entry.handle.remove();
+    });
     this.entries.clear();
     this.lastSpecs = [];
   }
@@ -97,24 +98,33 @@ export class BlockDecorationSet {
       const prev = this.entries.get(spec.id);
       if (prev) {
         if (prev.key === spec.key) {
-          // Unchanged content — keep the widget (and its teardown). An unchanged line needs no
-          // update either (the mark rode any splice); each update is a native mark read.
+          // The primitive verifies a changed logical row against the mark; when the splice already
+          // carried it this is a native no-op, while ambiguous structural insertions get re-seated.
           if (force || prev.line !== line) prev.handle.update({ line });
         } else {
-          prev.dispose?.(); // old widget is about to be replaced — sever its rooted controllers
-          prev.handle.update({ line, widget: spec.build() });
+          prev.handle.update({
+            line,
+            build: spec.build,
+            dispose: spec.dispose,
+            height: spec.height,
+          });
           prev.key = spec.key;
-          prev.dispose = spec.dispose; // adopt the new widget's teardown
         }
         prev.line = line;
       } else {
-        const handle = this.blocks.add({ line, widget: spec.build(), placement: spec.placement, fullWidth: spec.fullWidth });
-        this.entries.set(spec.id, { handle, key: spec.key, line, dispose: spec.dispose });
+        const handle = this.blocks.add({
+          line,
+          build: spec.build,
+          dispose: spec.dispose,
+          height: spec.height,
+          placement: spec.placement,
+          fullWidth: spec.fullWidth,
+        });
+        this.entries.set(spec.id, { handle, key: spec.key, line });
       }
     }
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
-        entry.dispose?.(); // removed from the set — sever before dropping the widget
         entry.handle.remove();
         this.entries.delete(id);
       }

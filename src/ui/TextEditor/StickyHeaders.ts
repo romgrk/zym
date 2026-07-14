@@ -32,6 +32,8 @@ export interface StickyHeaderSpec {
   id: string;
   key: string;
   viewRow: number;
+  /** Widget-free line-height reservation, replaced with the measured height while resident. */
+  height?: number;
   build: () => InstanceType<typeof Gtk.Widget>;
   /** Sever anything node-gtk roots on the built widget (the click controller) when it's replaced or
    *  removed — paired with `build` (see docs/lifecycle-and-disposal.md rule 9). */
@@ -40,10 +42,8 @@ export interface StickyHeaderSpec {
 
 interface Entry {
   handle: BlockDecorationHandle;
-  widget: any;
   key: string;
   viewRow: number;
-  dispose?: () => void;
 }
 
 export class StickyHeaders {
@@ -67,32 +67,41 @@ export class StickyHeaders {
    *  `viewRow`s. */
   setHeaders(specs: StickyHeaderSpec[]): void {
     this.subscribeOnce();
+    this.blocks.transact(() => this.reconcile(specs));
+  }
+
+  private reconcile(specs: StickyHeaderSpec[]): void {
     const seen = new Set<string>();
     for (const spec of specs) {
       seen.add(spec.id);
       const prev = this.entries.get(spec.id);
+      const build = () => {
+        const widget = spec.build();
+        if (this.entries.get(spec.id)?.viewRow === this.focusedRow) widget.addCssClass(FOCUSED_CLASS);
+        return widget;
+      };
       if (prev) {
         if (prev.key !== spec.key) {
-          prev.dispose?.(); // old widget is about to be replaced — sever its rooted controllers
-          prev.widget = spec.build();
-          prev.handle.update({ line: spec.viewRow, widget: prev.widget });
+          prev.handle.update({ line: spec.viewRow, build, dispose: spec.dispose, height: spec.height });
           prev.key = spec.key;
-          prev.dispose = spec.dispose;
         } else if (prev.viewRow !== spec.viewRow) {
-          // Unchanged content — keep the widget, re-anchor. An unchanged row needs no update
-          // either (the mark rode any splice); each update is a native mark read.
           prev.handle.update({ line: spec.viewRow });
         }
         prev.viewRow = spec.viewRow;
       } else {
-        const widget = spec.build();
-        const handle = this.blocks.add({ line: spec.viewRow, widget, placement: 'on', sticky: true });
-        this.entries.set(spec.id, { handle, widget, key: spec.key, viewRow: spec.viewRow, dispose: spec.dispose });
+        const handle = this.blocks.add({
+          line: spec.viewRow,
+          build,
+          dispose: spec.dispose,
+          height: spec.height,
+          placement: 'on',
+          sticky: true,
+        });
+        this.entries.set(spec.id, { handle, key: spec.key, viewRow: spec.viewRow });
       }
     }
     for (const [id, entry] of this.entries) {
       if (!seen.has(id)) {
-        entry.dispose?.();
         entry.handle.remove();
         this.entries.delete(id);
       }
@@ -103,10 +112,9 @@ export class StickyHeaders {
   }
 
   clear(): void {
-    for (const entry of this.entries.values()) {
-      entry.dispose?.(); // sever the widget's controllers before dropping it
-      entry.handle.remove();
-    }
+    this.blocks.transact(() => {
+      for (const entry of this.entries.values()) entry.handle.remove();
+    });
     this.entries.clear();
     if (this.subscribed) this.decorations.setNoCursorRanges([]);
     this.focusedRow = null;
@@ -152,8 +160,10 @@ export class StickyHeaders {
   private applyFocus(): void {
     for (const entry of this.entries.values()) {
       const on = this.focusedRow != null && entry.viewRow === this.focusedRow;
-      if (on) entry.widget.addCssClass(FOCUSED_CLASS);
-      else entry.widget.removeCssClass(FOCUSED_CLASS);
+      const widget = entry.handle.widget();
+      if (!widget) continue;
+      if (on) widget.addCssClass(FOCUSED_CLASS);
+      else widget.removeCssClass(FOCUSED_CLASS);
     }
   }
 }

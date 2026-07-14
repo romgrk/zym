@@ -73,7 +73,7 @@ app.on('activate', () => {
   buffer.setText(SAMPLE, -1);
   buffer.placeCursor(buffer.getStartIter());
 
-  blocks.add({ line: ANCHOR_LINE, widget: makeGap(), placement: 'below', fullWidth: 'content' });
+  blocks.add({ line: ANCHOR_LINE, build: makeGap, placement: 'below', fullWidth: 'content' });
 
   const scrolled = new Gtk.ScrolledWindow();
   scrolled.setChild(view);

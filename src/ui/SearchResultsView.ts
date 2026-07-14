@@ -34,7 +34,7 @@ import { enclosingSection } from './multibuffer/diffMultiBuffer.ts';
 import { ExcerptSyntaxProjection } from './multibuffer/ExcerptSyntaxProjection.ts';
 import { MultiBufferDocument } from './multibuffer/MultiBufferDocument.ts';
 import { SourceLineNumberGutter } from './SourceLineNumberGutter.ts';
-import { buildHeaderWidget, buildGapWidget } from './HeaderBands.ts';
+import { buildHeaderWidget, buildGapWidget, GAP_BAND_HEIGHT, HEADER_BAND_HEIGHT } from './HeaderBands.ts';
 import { Range } from '../text/Range.ts';
 import { CompositeDisposable } from '../util/eventKit.ts';
 import { prof } from '../util/profile.ts';
@@ -213,14 +213,18 @@ export class SearchResultsView {
       const collapsed = this.collapsed.has(ei);
       // A `▸` chevron marks a collapsed file; an expanded one keeps the plain filename.
       const label = collapsed ? `▸ ${excerpt.header}` : excerpt.header;
-      const headerScope = new CompositeDisposable();
+      let headerScope: CompositeDisposable | null = null;
       specs.push({
         id: `header:${ei}`,
         key: label,
         anchor: { documentKey: first.documentKey, row: first.startRow },
         placement: 'above',
-        build: () => buildHeaderWidget(headerScope, label, first.documentKey, () => this.onActivate?.({ path: first.documentKey, row: first.startRow })),
-        dispose: () => headerScope.dispose(),
+        height: HEADER_BAND_HEIGHT,
+        build: () => {
+          headerScope = new CompositeDisposable();
+          return buildHeaderWidget(headerScope, label, first.documentKey, () => this.onActivate?.({ path: first.documentKey, row: first.startRow }));
+        },
+        dispose: () => { headerScope?.dispose(); headerScope = null; },
       });
       // Gaps only when expanded (a collapsed excerpt is a single row — no gaps). Anchor the gap
       // ABOVE the NEXT segment's first row (a start-anchor), not below the previous segment's last
@@ -240,6 +244,7 @@ export class SearchResultsView {
             key: gapLabel,
             anchor: { documentKey: seg.documentKey, row: seg.startRow },
             placement: 'above',
+            height: GAP_BAND_HEIGHT,
             build: () => buildGapWidget(new CompositeDisposable(), gapLabel), // no onActivate → no controller to sever
           });
         }
